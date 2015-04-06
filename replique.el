@@ -6,9 +6,49 @@
 (require 'comint)
 (require 'clojure-mode)
 
+
+
+
+
+
+
+
+
+
+
+(defun ht-map (function table)
+  "Apply FUNCTION to each key-value pair of TABLE, and make a list of the results.
+FUNCTION is called with two arguments, KEY and VALUE.
+Taken from ht.el."
+  (let (results)
+    (maphash
+     (lambda (key value)
+       (push (funcall function key value) results))
+     table)
+    results))
+
+
+
+
+
+
+
+
+
+
+
+
 (defgroup replique nil
   ""
   :group 'clojure)
+
+
+
+
+
+
+
+
 
 
 
@@ -35,21 +75,51 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
 (defun replique-repl-cmd-raw (clojure-jar)
   (concat "java -cp " clojure-jar " clojure.main"))
 
-(defvar replique-clojure-build-tools
-  (list #s(hash-table test equal
-                      data ("name" "leiningen"
-                            "project-file" "project.clj"
-                            "default-repl-cmd" (lambda () "lein repl")))
-        #s(hash-table test equal
-                      data ("name" "boot"
-                            "project-file" "boot.build"
-                            "default-repl-cmd" (lambda () "boot repl")))
-        #s(hash-table test equal
-                      data ("name" "raw"
-                            "default-repl-cmd" (replique-repl-cmd-raw )))))
+(cl-flet ((clojure-jar () (car (first (replique-clojure-jars-in-path)))))
+  (defvar replique-clojure-build-tools
+    #s(hash-table test equal data
+                  ("leiningen" #s(hash-table test equal
+                                              data ("project-file" "project.clj"
+                                                    "default-repl-cmd" (lambda () "lein repl")))
+                   "boot" #s(hash-table test equal
+                                         data ("project-file" "boot.build"
+                                               "default-repl-cmd" (lambda () "boot repl")))
+                   "raw" #s(hash-table test equal
+                                        data ()))))
+  (puthash "default-repl-cmd" (lambda ()
+                               (replique-repl-cmd-raw (clojure-jar)))
+           (gethash "raw" replique-clojure-build-tools)))
+
+(defun replique-build-files ()
+  (delete nil (ht-map (lambda (k build-tool-map)
+                        (gethash "project-file" build-tool-map))
+                      replique-clojure-build-tools)))
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -126,14 +196,24 @@ done
                    (mapcar (lambda
                              (file)
                              (locate-dominating-file default-directory file))
-                           replique-project-root-files)))
+                           (replique-build-files))))
       default-directory))
 
+(defun replique-project-repl-cmd (root-dir)
+  (or (car
+       (delete nil
+               (ht-map (lambda (k build-tool-map)
+                         (when (locate-file (or (gethash "project-file" build-tool-map) "")
+                                            (list root-dir))
+                           (funcall (gethash "default-repl-cmd" build-tool-map))))
+                       replique-clojure-build-tools)))
+      (funcall (gethash "default-repl-cmd" (gethash "raw" replique-clojure-build-tools)))))
 
 
 
-(defun replique-project-repl-cmd (project-root-dir)
-  (print (directory-files project-root-dir "project.clj")))
+
+
+
 
 ;;;###autoload
 (defun replique-repl (repl-cmd root-dir)
@@ -142,16 +222,20 @@ done
                ;;           (read-string "Run Clojure: " replique-repl-cmd)
    ;;         replique-repl-cmd))
    (progn
-     (let* ((root-dir (if (boundp 'root-dir)
-                          root-dir
-                        (replique-project-root-dir)))
-            (repl-cmd (if (boundp 'repl-cmd)
-                          repl-cmd
-                        (replique-project-repl-cmd root-dir))))
+     (let* ((root-dir (cond ((boundp 'root-dir) root-dir)
+                            (current-prefix-arg (read-string "REPL process initial directory: " (replique-project-root-dir)))
+                            (t (replique-project-root-dir))))
+            (repl-cmd (cond ((boundp 'repl-cmd) repl-cmd)
+                            (current-prefix-arg (read-string "REPL launch command: " (replique-project-repl-cmd root-dir)))
+                            (t (replique-project-repl-cmd root-dir)))))
        (list repl-cmd root-dir))))
-  (prin1 (concat "prefix " current-prefix-arg)) (print "")
-  (prin1 "root-dir ") (prin1 root-dir) (print "")
-  (prin1 "repl-cmd ") (prin1 repl-cmd))
+  (if (not (comint-check-proc "*replique*"))
+      ;; run the new process in the project's root when in a project folder
+      (let ((default-directory root-dir)
+            (repl-cmd (split-string repl-cmd)))
+        (set-buffer (apply #'make-comint
+                           "replique" (car repl-cmd) nil (cdr repl-cmd)))))
+  (pop-to-buffer-same-window "*replique*"))
 
 
 
