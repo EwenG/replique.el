@@ -54,7 +54,7 @@ Taken from ht.el."
 
 
 
-(defcustom inf-clojure-prompt "^[^=> \n]+=> *"
+(defcustom replique-prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
   :type 'regexp
   :group 'replique)
@@ -218,9 +218,7 @@ done
 ;;;###autoload
 (defun replique-repl (repl-cmd root-dir)
   "Run a Clojure REPL, input and output via buffer `*replique*'."
-  (interactive ;; (list (if current-prefix-arg
-               ;;           (read-string "Run Clojure: " replique-repl-cmd)
-   ;;         replique-repl-cmd))
+  (interactive
    (progn
      (let* ((root-dir (cond ((boundp 'root-dir) root-dir)
                             (current-prefix-arg (read-string "REPL process initial directory: " (replique-project-root-dir)))
@@ -234,8 +232,52 @@ done
       (let ((default-directory root-dir)
             (repl-cmd (split-string repl-cmd)))
         (set-buffer (apply #'make-comint
-                           "replique" (car repl-cmd) nil (cdr repl-cmd)))))
+                           "replique" (car repl-cmd) nil (cdr repl-cmd)))
+        (replique-mode)))
+  (setq replique-buffer "*replique*")
   (pop-to-buffer-same-window "*replique*"))
+
+(defvar replique-buffer nil)
+
+(defun replique-proc ()
+  (let ((proc (get-buffer-process (if (derived-mode-p 'replique-mode)
+                                      (current-buffer)
+                                    replique-buffer))))
+    (or proc
+        (error "No Clojure subprocess; see variable `replique-buffer'"))))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(defun replique-eval-region (start end)
+  (interactive "r")
+  (comint-send-region (replique-proc) start end)
+  (comint-send-string (replique-proc) "\n"))
+
+
+
+
+
+
+
+
+
+
+
 
 
 
