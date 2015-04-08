@@ -65,12 +65,16 @@ Taken from ht.el."
 
 
 
+(defun replique-input-sender (proc string)
+  (comint-simple-send proc (replace-regexp-in-string "\n" "" string)))
+
 (defvar replique-mode-hook '()
   "Hook for customizing replique mode.")
 
 (define-derived-mode replique-mode comint-mode "Replique"
   ""
-  (setq comint-prompt-regexp inf-clojure-prompt)
+  (setq comint-prompt-regexp replique-prompt)
+  (setq comint-input-sender 'replique-input-sender)
   (setq mode-line-process '(":%s")))
 
 
@@ -265,8 +269,10 @@ done
 
 (defun replique-eval-region (start end)
   (interactive "r")
-  (comint-send-region (replique-proc) start end)
-  (comint-send-string (replique-proc) "\n"))
+  (append-to-buffer replique-buffer start end)
+  (with-current-buffer
+      replique-buffer
+    (comint-send-input)))
 
 
 
