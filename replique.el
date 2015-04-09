@@ -4,6 +4,7 @@
 ;;; Code:
 
 (require 'comint)
+(require 'replique-comint)
 (require 'clojure-mode)
 
 
@@ -98,7 +99,7 @@ Taken from ht.el."
     #s(hash-table test equal data
                   ("leiningen" #s(hash-table test equal
                                               data ("project-file" "project.clj"
-                                                    "default-repl-cmd" (lambda () "lein repl")))
+                                                    "default-repl-cmd" (lambda () "lein run -m clojure.main/main")))
                    "boot" #s(hash-table test equal
                                          data ("project-file" "boot.build"
                                                "default-repl-cmd" (lambda () "boot repl")))
@@ -269,11 +270,10 @@ done
 
 (defun replique-eval-region (start end)
   (interactive "r")
-  (append-to-buffer replique-buffer start end)
-  (with-current-buffer
-      replique-buffer
-    (comint-send-input)))
-
+  (let ((input (filter-buffer-substring start end)))
+    (with-current-buffer
+        replique-buffer
+      (replique-comint-send-input input))))
 
 
 
