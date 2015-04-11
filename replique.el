@@ -66,17 +66,37 @@ Taken from ht.el."
 
 
 
-(defun replique-input-sender (proc string)
-  (comint-simple-send proc (replace-regexp-in-string "\n" "" string)))
+
+
+
+
+
+
+
+
+
+
+
 
 (defvar replique-mode-hook '()
   "Hook for customizing replique mode.")
 
+(defvar replique-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map comint-mode-map)
+    (define-key map "\C-m" 'replique-comint-send-input)
+    map))
+
+
 (define-derived-mode replique-mode comint-mode "Replique"
-  ""
+  "Commands:\\<replique-mode-map>
+\\[replique-comint-send-input] after the end of the process' output sends the text from the
+    end of process to point."
   (setq comint-prompt-regexp replique-prompt)
-  (setq comint-input-sender 'replique-input-sender)
-  (setq mode-line-process '(":%s")))
+  (setq mode-line-process '(":%s"))
+  (clojure-mode-variables)
+  (clojure-font-lock-setup)
+  (add-hook 'paredit-mode-hook #'clojure-paredit-setup))
 
 
 
@@ -273,7 +293,7 @@ done
   (let ((input (filter-buffer-substring start end)))
     (with-current-buffer
         replique-buffer
-      (replique-comint-send-input input))))
+      (replique-comint-send-input-from-source input))))
 
 
 
