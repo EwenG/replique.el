@@ -93,6 +93,7 @@ Taken from ht.el."
 \\[replique-comint-send-input] after the end of the process' output sends the text from the
     end of process to point."
   (setq comint-prompt-regexp replique-prompt)
+  (setq comint-read-only t)
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
