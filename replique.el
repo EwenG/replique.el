@@ -76,7 +76,9 @@ Taken from ht.el."
 
 
 
-
+(defun replique-comint-input-sender (proc string)
+  (comint-simple-send proc
+   (replace-regexp-in-string "\n" "" string)))
 
 (defvar replique-mode-hook '()
   "Hook for customizing replique mode.")
@@ -84,7 +86,8 @@ Taken from ht.el."
 (defvar replique-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
-    (define-key map "\C-m" 'replique-comint-send-input)
+    (define-key map "\C-m" #'replique-comint-send-input)
+    (define-key map "\C-x\C-e" #'replique-eval-last-sexp)
     map))
 
 
@@ -94,6 +97,7 @@ Taken from ht.el."
     end of process to point."
   (setq comint-prompt-regexp replique-prompt)
   (setq comint-read-only t)
+  (setq comint-input-sender #'replique-comint-input-sender)
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
@@ -296,10 +300,40 @@ done
         replique-buffer
       (replique-comint-send-input-from-source input))))
 
+(defun replique-eval-last-sexp ()
+  "Send the previous sexp to the replique process."
+  (interactive)
+  (replique-eval-region (save-excursion (backward-sexp) (point)) (point)))
 
 
 
 
+
+
+
+
+
+
+
+
+(defvar replique-minor-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "\C-x\C-e" #'replique-eval-last-sexp)
+    (easy-menu-define replique-minor-mode-menu map
+      "Replique Minor Mode Menu"
+      '("Replique"
+        ["Eval region" replique-eval-region t]
+        ["Eval last sexp" replique-eval-last-sexp t]))
+    map))
+
+;;;###autoload
+(define-minor-mode replique-minor-mode
+  "Minor mode for interacting with the replique process buffer.
+
+The following commands are available:
+
+\\{replique-minor-mode-map}"
+  :lighter "Replique" :keymap replique-minor-mode-map)
 
 
 
