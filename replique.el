@@ -21,18 +21,6 @@
     (setq alist (cdr (assoc (pop keys) alist))))
   alist)
 
-(defun ht-map (function table)
-  "Apply FUNCTION to each key-value pair of TABLE, and make a list of the results.
-FUNCTION is called with two arguments, KEY and VALUE.
-Taken from ht.el."
-  (let (results)
-    (maphash
-     (lambda (key value)
-       (push (funcall function key value) results))
-     table)
-    results))
-
-
 
 
 
