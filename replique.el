@@ -15,7 +15,11 @@
 
 
 
-
+(defun assoc-recursive (alist &rest keys)
+  "Recursively find KEYs in ALIST."
+  (while keys
+    (setq alist (cdr (assoc (pop keys) alist))))
+  alist)
 
 (defun ht-map (function table)
   "Apply FUNCTION to each key-value pair of TABLE, and make a list of the results.
@@ -121,23 +125,20 @@ Taken from ht.el."
 
 (cl-flet ((clojure-jar () (car (first (replique-clojure-jars-in-path)))))
   (defvar replique-clojure-build-tools
-    #s(hash-table test equal data
-                  ("leiningen" #s(hash-table test equal
-                                              data ("project-file" "project.clj"
-                                                    "default-repl-cmd" (lambda () "lein run -m clojure.main/main")))
-                   "boot" #s(hash-table test equal
-                                         data ("project-file" "boot.build"
-                                               "default-repl-cmd" (lambda () "boot repl")))
-                   "raw" #s(hash-table test equal
-                                        data ()))))
-  (puthash "default-repl-cmd" (lambda ()
-                               (replique-repl-cmd-raw (clojure-jar)))
-           (gethash "raw" replique-clojure-build-tools)))
+    `((leiningen . ((project-file . "project.clj")
+                    (default-repl-cmd . ,(lambda ()
+                                          "lein run -m clojure.main/main"))))
+      (boot . ((project-file . "boot.clj")
+               (default-repl-cmd . ,(lambda ()
+                                     "boot repl"))))
+      (raw . ((default-repl-cmd . ,(lambda ()
+                                    (replique-repl-cmd-raw (clojure-jar)))))))))
 
 (defun replique-build-files ()
-  (delete nil (ht-map (lambda (k build-tool-map)
-                        (gethash "project-file" build-tool-map))
+  (delete nil (mapcar (lambda (project-props)
+                        (cdr (assoc 'project-file (cdr project-props))))
                       replique-clojure-build-tools)))
+
 
 
 
@@ -201,7 +202,7 @@ Taken from ht.el."
 
 (defun replique-clojure-jars-in-path ()
   (let* ((shell-cmd-out (shell-command-to-string
-                         "for dir in `echo $PATH | sed \"s/:/ /g\"`
+"for dir in `echo $PATH | sed \"s/:/ /g\"`
 do
     if [ -d \"$dir\" ];
     then JARS=`find $dir -maxdepth 1 -name \"clojure-*.jar\"`;
@@ -232,12 +233,12 @@ done
 (defun replique-project-repl-cmd (root-dir)
   (or (car
        (delete nil
-               (ht-map (lambda (k build-tool-map)
-                         (when (locate-file (or (gethash "project-file" build-tool-map) "")
+               (mapcar (lambda (project-props)
+                         (when (locate-file (or (cdr (assoc 'project-file (cdr project-props))) "")
                                             (list root-dir))
-                           (funcall (gethash "default-repl-cmd" build-tool-map))))
+                           (funcall (cdr (assoc 'default-repl-cmd (cdr project-props))))))
                        replique-clojure-build-tools)))
-      (funcall (gethash "default-repl-cmd" (gethash "raw" replique-clojure-build-tools)))))
+      (funcall (assoc-recursive replique-clojure-build-tools 'raw 'default-repl-cmd))))
 
 
 
