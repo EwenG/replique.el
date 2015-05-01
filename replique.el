@@ -26,6 +26,7 @@
   nil)
 
 (defun replique/safe-s-split (separator s &optional omit-nulls)
+  "Same as s-split but restore the global value of the match data"
   (save-match-data
     (s-split separator s omit-nulls)))
 
@@ -53,7 +54,7 @@
 
 
 
-(defcustom replique-prompt "^[^=> \n]+=> *"
+(defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
   :type 'regexp
   :group 'replique)
@@ -74,28 +75,28 @@
 
 
 
-(defun replique-comint-input-sender (proc string)
+(defun replique/comint-input-sender (proc string)
   (comint-simple-send proc
    (replace-regexp-in-string "\n" "" string)))
 
-(defvar replique-mode-hook '()
+(defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
-(defvar replique-mode-map
+(defvar replique/mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
-    (define-key map "\C-m" #'replique-comint-send-input)
-    (define-key map "\C-x\C-e" #'replique-eval-last-sexp)
+    (define-key map "\C-m" #'replique/comint-send-input)
+    (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
     map))
 
 
-(define-derived-mode replique-mode comint-mode "Replique"
-  "Commands:\\<replique-mode-map>
-\\[replique-comint-send-input] after the end of the process' output sends the text from the
+(define-derived-mode replique/mode comint-mode "Replique"
+  "Commands:\\<replique/mode-map>
+\\[replique/comint-send-input] after the end of the process' output sends the text from the
     end of process to point."
-  (setq comint-prompt-regexp replique-prompt)
+  (setq comint-prompt-regexp replique/prompt)
   (setq comint-read-only t)
-  (setq comint-input-sender #'replique-comint-input-sender)
+  (setq comint-input-sender #'replique/comint-input-sender)
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
@@ -114,7 +115,7 @@
 
 
 
-(defun replique-repl-cmd-raw (clojure-jar)
+(defun replique/repl-cmd-raw (clojure-jar)
   (concat "java -cp " clojure-jar " clojure.main"))
 
 (defvar replique/clojure-build-tools
@@ -126,9 +127,9 @@
                (default-repl-cmd . ,(lambda ()
                                       "boot repl"))))
       (raw . ((default-repl-cmd . ,(lambda ()
-                                     (replique-repl-cmd-raw (clojure-jar)))))))))
+                                     (replique/repl-cmd-raw (clojure-jar)))))))))
 
-(defun replique-build-files ()
+(defun replique/build-files ()
   (delete nil (mapcar (lambda (project-props)
                         (cdr (assoc 'project-file (cdr project-props))))
                       replique/clojure-build-tools)))
@@ -223,15 +224,15 @@
 
 
 
-(defun replique-project-root-dir ()
+(defun replique/project-root-dir ()
   (or (car (remove nil
                    (mapcar (lambda
                              (file)
                              (locate-dominating-file default-directory file))
-                           (replique-build-files))))
+                           (replique/build-files))))
       default-directory))
 
-(defun replique-project-repl-cmd (root-dir)
+(defun replique/project-repl-cmd (root-dir)
   (or (car
        (delete nil
                (mapcar (lambda (project-props)
@@ -248,16 +249,16 @@
 
 
 ;;;###autoload
-(defun replique-repl (repl-cmd root-dir)
+(defun replique/repl (repl-cmd root-dir)
   "Run a Clojure REPL, input and output via buffer `*replique*'."
   (interactive
    (progn
      (let* ((root-dir (cond ((boundp 'root-dir) root-dir)
-                            (current-prefix-arg (read-string "REPL process initial directory: " (replique-project-root-dir)))
-                            (t (replique-project-root-dir))))
+                            (current-prefix-arg (read-string "REPL process initial directory: " (replique/project-root-dir)))
+                            (t (replique/project-root-dir))))
             (repl-cmd (cond ((boundp 'repl-cmd) repl-cmd)
-                            (current-prefix-arg (read-string "REPL launch command: " (replique-project-repl-cmd root-dir)))
-                            (t (replique-project-repl-cmd root-dir)))))
+                            (current-prefix-arg (read-string "REPL launch command: " (replique/project-repl-cmd root-dir)))
+                            (t (replique/project-repl-cmd root-dir)))))
        (list repl-cmd root-dir))))
   (if (not (comint-check-proc "*replique*"))
       ;; run the new process in the project's root when in a project folder
@@ -265,18 +266,18 @@
             (repl-cmd (split-string repl-cmd)))
         (set-buffer (apply #'make-comint
                            "replique" (car repl-cmd) nil (cdr repl-cmd)))
-        (replique-mode)))
-  (setq replique-buffer "*replique*")
+        (replique/mode)))
+  (setq replique/buffer "*replique*")
   (pop-to-buffer-same-window "*replique*"))
 
-(defvar replique-buffer nil)
+(defvar replique/buffer nil)
 
-(defun replique-proc ()
-  (let ((proc (get-buffer-process (if (derived-mode-p 'replique-mode)
+(defun replique/proc ()
+  (let ((proc (get-buffer-process (if (derived-mode-p 'replique/mode)
                                       (current-buffer)
-                                    replique-buffer))))
+                                    replique/buffer))))
     (or proc
-        (error "No Clojure subprocess; see variable `replique-buffer'"))))
+        (error "No Clojure subprocess; see variable `replique/buffer'"))))
 
 
 
@@ -295,17 +296,17 @@
 
 
 
-(defun replique-eval-region (start end)
+(defun replique/eval-region (start end)
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
     (with-current-buffer
-        replique-buffer
-      (replique-comint-send-input-from-source input))))
+        replique/buffer
+      (replique/comint-send-input-from-source input))))
 
-(defun replique-eval-last-sexp ()
+(defun replique/eval-last-sexp ()
   "Send the previous sexp to the replique process."
   (interactive)
-  (replique-eval-region (save-excursion (backward-sexp) (point)) (point)))
+  (replique/eval-region (save-excursion (backward-sexp) (point)) (point)))
 
 
 
@@ -318,24 +319,24 @@
 
 
 
-(defvar replique-minor-mode-map
+(defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "\C-x\C-e" #'replique-eval-last-sexp)
-    (easy-menu-define replique-minor-mode-menu map
+    (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
+    (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
-        ["Eval region" replique-eval-region t]
-        ["Eval last sexp" replique-eval-last-sexp t]))
+        ["Eval region" replique/eval-region t]
+        ["Eval last sexp" replique/eval-last-sexp t]))
     map))
 
 ;;;###autoload
-(define-minor-mode replique-minor-mode
+(define-minor-mode replique/minor-mode
   "Minor mode for interacting with the replique process buffer.
 
 The following commands are available:
 
-\\{replique-minor-mode-map}"
-  :lighter "Replique" :keymap replique-minor-mode-map)
+\\{replique/minor-mode-map}"
+  :lighter "Replique" :keymap replique/minor-mode-map)
 
 
 
