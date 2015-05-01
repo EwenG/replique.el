@@ -1,14 +1,14 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
+;;; Package-Requires: ((dash "2.10.0") (dash-functional "1.2.0") (emacs "24"))
 ;;; Commentary:
 
 ;;; Code:
 
+(require 'dash)
+(require 's)
 (require 'comint)
 (require 'replique-comint)
 (require 'clojure-mode)
-
-
-
 
 
 
@@ -21,7 +21,13 @@
     (setq alist (cdr (assoc (pop keys) alist))))
   alist)
 
+(defmacro comment (&rest body)
+  "Comment out one or more s-expressions."
+  nil)
 
+(defun replique/safe-s-split (separator s &optional omit-nulls)
+  (save-match-data
+    (s-split separator s omit-nulls)))
 
 
 
@@ -111,21 +117,21 @@
 (defun replique-repl-cmd-raw (clojure-jar)
   (concat "java -cp " clojure-jar " clojure.main"))
 
-(cl-flet ((clojure-jar () (car (first (replique-clojure-jars-in-path)))))
-  (defvar replique-clojure-build-tools
+(defvar replique/clojure-build-tools
+  (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
     `((leiningen . ((project-file . "project.clj")
                     (default-repl-cmd . ,(lambda ()
-                                          "lein run -m clojure.main/main"))))
+                                           "lein run -m clojure.main/main"))))
       (boot . ((project-file . "boot.clj")
                (default-repl-cmd . ,(lambda ()
-                                     "boot repl"))))
+                                      "boot repl"))))
       (raw . ((default-repl-cmd . ,(lambda ()
-                                    (replique-repl-cmd-raw (clojure-jar)))))))))
+                                     (replique-repl-cmd-raw (clojure-jar)))))))))
 
 (defun replique-build-files ()
   (delete nil (mapcar (lambda (project-props)
                         (cdr (assoc 'project-file (cdr project-props))))
-                      replique-clojure-build-tools)))
+                      replique/clojure-build-tools)))
 
 
 
@@ -141,23 +147,38 @@
 
 
 
+(defconst replique/clojure-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
+
+(comment
+ (replique/clojure-jar->version  "clojure-1.6.0-beta45.jar")
+ )
 
 
-(defun replique-clojure-jar->version (jar-file)
+(defun replique/clojure-jar->version (jar-name)
   (save-match-data
-    (string-match "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar" jar-file)
-    (cons jar-file (list (or (match-string 1 jar-file) "0")
-                         (match-string 2 jar-file)
-                         (or (match-string 3 jar-file) "0")))))
+    (string-match replique/clojure-jar-regex jar-name)
+    (list jar-name
+          (->> (or (match-string 1 jar-name) "0")
+               (replique/safe-s-split "\\.")
+               (-map 'string-to-number))
+          (match-string 2 jar-name)
+          (-> (or (match-string 3 jar-name) "0")
+              string-to-number))))
 
-(defun replique-normalize-version-strings (x y)
-  (let* ((diff-length (- (length x) (length y)))
-         (abs-diff-length (abs diff-length)))
-    (cond ((equal 0 diff-length) (list x y))
-          ((< diff-length 0) (list (concat x (make-string abs-diff-length ?0)) y))
-          ((> diff-length 0) (list x (concat y (make-string abs-diff-length ?0)))))))
+(comment
+ (replique/release-version< '(4 6) '(3 5))
+ )
 
-(defun replique-release-type< (x y)
+(defun replique/release-version< (x y)
+  (-let (((v1 . r1) x)
+         ((v2 . r2) y))
+    (cond ((not v1) t)
+          ((not v2) nil)
+          ((< v1 v2) t)
+          ((> v1 v2) nil)
+          (t (replique/release-version< r1 r2)))))
+
+(defun replique/release-type< (x y)
   (cond ((equal x y) nil)
         ((equal x nil) nil)
         ((equal y nil) t)
@@ -168,45 +189,37 @@
         ((and (equal y "SNAPSHOT") (equal x "beta")) nil)
         ((and (equal y "alpha") (equal x "beta")) nil)
         (t nil)))
+(comment
+ ("clojure-1.6.0-beta45.jar" (1 6 0) "beta" 0)
+ )
 
-(defun replique-jar-version<  (x y)
-  (let ((normalized-versions (replique-normalize-version-strings (car x) (car y))))
-    (cond ((and (equal (car normalized-versions) (cadr normalized-versions))
-                (equal (nth 1 x) (nth 1 y)))
-           (string< (nth 2 x) (nth 2 y)))
-          ((equal (car normalized-versions) (cadr normalized-versions))
-           (replique-release-type< (nth 1 x) (nth 1 y)))
-          (t (string< (car x) (car y))))))
+(defun replique/jar-version<  (x y)
+  (-let (((jar-name-1 v1 type-1 type-v-1) x)
+         ((jar-name-2 v2 type-2 type-v-2) y))
+    (cond ((and (equal v1 v2) (equal type-1 type-2))
+           (< type-v-1 type-v-2))
+          ((equal v1 v2)
+           (replique/release-type< type-1 type-2))
+          (t (replique/release-version< v1 v2)))))
 
-(defun replique-jar-version> (x y)
-  (not (replique-jar-version< x y)))
+(defun replique/jar-version> (x y)
+  (not (replique/jar-version< x y)))
 
-(defun replique-cmd-out->list (c-out)
-  (if (> (length c-out) 0)
-      (split-string
-       c-out
-       " ")
-    nil))
+(comment
+ (replique/clojure-jars-in-path)
+ )
 
-(defun replique-clojure-jars-in-path ()
-  (let* ((shell-cmd-out (shell-command-to-string
-"for dir in `echo $PATH | sed \"s/:/ /g\"`
-do
-    if [ -d \"$dir\" ];
-    then JARS=`find $dir -maxdepth 1 -name \"clojure-*.jar\"`;
-    else JARS=\"\";
-    fi
-    #Exclude empty strings
-    if [ \"x$JARS\" != \"x\" ];
-    then echo -n $JARS;
-    fi
-done
-"))
-         (clojure-jars (replique-cmd-out->list shell-cmd-out))
-         (clojure-jar-versions (mapcar 'replique-clojure-jar->version clojure-jars)))
-    (sort clojure-jar-versions 'replique-jar-version>)))
-
-
+(defun replique/clojure-jars-in-path ()
+  (-let* ((path (eshell-command-result "echo $PATH"))
+          (path-dirs (split-string path ":"))
+          (clojure-jars (-> (-keep (lambda (dir)
+                                     (directory-files
+                                      dir t replique/clojure-jar-regex))
+                                   path-dirs)
+                            -flatten))
+          (clojure-jar-versions (-map 'replique/clojure-jar->version
+                                      clojure-jars)))
+    (-sort 'replique/jar-version< clojure-jar-versions)))
 
 
 
@@ -225,8 +238,8 @@ done
                          (when (locate-file (or (cdr (assoc 'project-file (cdr project-props))) "")
                                             (list root-dir))
                            (funcall (cdr (assoc 'default-repl-cmd (cdr project-props))))))
-                       replique-clojure-build-tools)))
-      (funcall (assoc-recursive replique-clojure-build-tools 'raw 'default-repl-cmd))))
+                       replique/clojure-build-tools)))
+      (funcall (assoc-recursive replique/clojure-build-tools 'raw 'default-repl-cmd))))
 
 
 
