@@ -82,11 +82,16 @@
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
       (let* ((pmark (process-mark proc)))
-        (cond ((and (equal (point) (point-max))
+        (cond (;; Point is at the end of the line and the sexpr is
+               ;; terminated
+               (and (equal (point) (point-max))
                     (replique/comint-is-closed-sexpr pmark (point)))
                (comint-send-input no-newline artificial))
+              ;; Point is after the prompt but (before the end of line or
+              ;; the sexpr is not terminated)
               ((comint-after-pmark-p) (comint-accumulate))
-              (t (comint-send-input no-newline artificial)))))))
+              ;Point is before the prompt. Do nothing.
+              (t nil))))))
 
 (defun replique/comint-send-input-from-source (input &optional no-newline artificial)
   (interactive)
@@ -130,7 +135,7 @@
 \\[replique/comint-send-input] after the end of the process' output sends
 the text from the end of process to point."
   (setq comint-prompt-regexp replique/prompt)
-  (setq comint-read-only t)
+  (setq comint-prompt-read-only t)
   (setq comint-input-sender #'replique/comint-input-sender)
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
