@@ -10,10 +10,8 @@
 (require 'clojure-mode)
 (require 'edn)
 
-(defvar ooo (edn-read "(:foo bar :bar 12 )"))
-(cadr ooo)
 
-(plist-get ooo ':foo)
+
 
 
 
@@ -31,6 +29,14 @@
   "Same as s-split but restore the global value of the match data"
   (save-match-data
     (s-split separator s omit-nulls)))
+
+(defun replique/replique-root-dir ()
+  (-> (locate-library "replique")
+      file-name-directory))
+
+(defun replique/last (seq)
+  (cond ((equal 0 (length seq)) nil)
+        (t (elt seq (- (length seq) 1)))))
 
 
 
@@ -118,9 +124,19 @@
       ;; but that scrolled the buffer in undesirable ways.
       (run-hook-with-args 'comint-output-filter-functions ""))))
 
+(comment
+ (let ((msg (edn-read "#ewen.replique.init.ToolingMsg{:type \"my-type\" :data 3}")))
+   (cdr (assoc 'type msg)))
+ )
+
+(edn-add-reader :ewen.replique.init.ToolingMsg
+                (-lambda (msg)
+                  `((type . ,(gethash :type msg))
+                    (data . ,(gethash :data msg)))))
+
 (defun replique/comint-input-sender (proc string)
   (comint-simple-send proc
-   (replace-regexp-in-string "\n" "" string)))
+                      (replace-regexp-in-string "\n" "" string)))
 
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
@@ -134,16 +150,13 @@
 
 
 (define-derived-mode replique/mode comint-mode "Replique"
-  "Commands:\\<replique/mode-map>
-\\[replique/comint-send-input] after the end of the process' output sends
-the text from the end of process to point."
+  "Commands:\\<replique/mode-map>"
   (setq comint-prompt-regexp replique/prompt)
   (setq comint-prompt-read-only t)
   (setq comint-input-sender #'replique/comint-input-sender)
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
-  (clojure-font-lock-setup)
-  (add-hook 'paredit-mode-hook #'clojure-paredit-setup))
+  (clojure-font-lock-setup))
 
 
 
@@ -159,13 +172,17 @@ the text from the end of process to point."
 
 
 (defun replique/repl-cmd-raw (clojure-jar)
-  '("java" "-cp" clojure-jar "clojure.main" "-e" "(binding [*data-readers* (assoc *data-readers* 'replique/result identity)] (clojure.main/repl))"))
+  `("java" "-cp" ,clojure-jar "clojure.main" "-e"
+    ,(format "(load-file \"%sclojure/ewen/replique/init.clj\")"
+             (replique/replique-root-dir))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
     `((leiningen . ((project-file . "project.clj")
                     (default-repl-cmd . ,(lambda ()
-                                           '("lein" "run" "-m" "clojure.main/main" "-e" "(binding [*data-readers* (assoc *data-readers* 'replique/result identity)] (clojure.main/repl))")))))
+                                           `("lein" "run" "-m" "clojure.main/main" "-e"
+                                             ,(format "(load-file \"%sclojure/ewen/replique/init.clj\")"
+                                                      (replique/replique-root-dir)))))))
       ;; (boot . ((project-file . "boot.clj")
       ;;          (default-repl-cmd . ,(lambda ()
       ;;                                 '("boot" "repl)"))))
@@ -289,7 +306,17 @@ the text from the end of process to point."
 
 
 
-
+(defun replique/comint-output-filter (proc string)
+  (cond ;; Tooling output messages
+   ((s-starts-with? "#ewen.replique.init.ToolingMsg" string)
+    (-let* ((msg (edn-read string))
+            (type (-> (assoc 'type msg)
+                      cdr))
+            (handler (-> (assoc type replique/tooling-handlers)
+                         cdr)))
+      (funcall handler msg)))
+   ;; All other outputs
+   (t (comint-output-filter proc string))))
 
 ;;;###autoload
 (defun replique/repl (repl-cmd root-dir)
@@ -309,6 +336,7 @@ the text from the end of process to point."
         (set-buffer (apply #'make-comint
                            "replique" (car repl-cmd) nil (cdr repl-cmd)))
         (replique/mode)))
+  (set-process-filter (replique/proc) 'replique/comint-output-filter)
   (setq replique/buffer "*replique*")
   (pop-to-buffer "*replique*"))
 
@@ -389,6 +417,20 @@ The following commands are available:
 
 
 
+
+
+
+;; Tooling messages
+
+(defvar replique/tooling-handlers
+  `(("ee" . print)))
+
+(defun replique/send-msg ()
+  (let ((proc (replique/proc)))
+    (funcall
+     comint-input-sender
+     proc
+     "(ewen.replique.init.ToolingMsg. \"ee\" 3)")))
 
 
 
