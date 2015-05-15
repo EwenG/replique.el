@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((dash "2.10.0") (dash-functional "1.2.0") (emacs "24"))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (dash-functional "1.2.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -8,9 +8,12 @@
 (require 's)
 (require 'comint)
 (require 'clojure-mode)
+(require 'edn)
 
+(defvar ooo (edn-read "(:foo bar :bar 12 )"))
+(cadr ooo)
 
-
+(plist-get ooo ':foo)
 
 
 
@@ -156,16 +159,16 @@ the text from the end of process to point."
 
 
 (defun replique/repl-cmd-raw (clojure-jar)
-  (concat "java -cp " clojure-jar " clojure.main"))
+  '("java" "-cp" clojure-jar "clojure.main" "-e" "(binding [*data-readers* (assoc *data-readers* 'replique/result identity)] (clojure.main/repl))"))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
     `((leiningen . ((project-file . "project.clj")
                     (default-repl-cmd . ,(lambda ()
-                                           "lein run -m clojure.main/main"))))
-      (boot . ((project-file . "boot.clj")
-               (default-repl-cmd . ,(lambda ()
-                                      "boot repl"))))
+                                           '("lein" "run" "-m" "clojure.main/main" "-e" "(binding [*data-readers* (assoc *data-readers* 'replique/result identity)] (clojure.main/repl))")))))
+      ;; (boot . ((project-file . "boot.clj")
+      ;;          (default-repl-cmd . ,(lambda ()
+      ;;                                 '("boot" "repl)"))))
       (raw . ((default-repl-cmd . ,(lambda ()
                                      (replique/repl-cmd-raw (clojure-jar)))))))))
 
@@ -302,13 +305,12 @@ the text from the end of process to point."
        (list repl-cmd root-dir))))
   (if (not (comint-check-proc "*replique*"))
       ;; run the new process in the project's root when in a project folder
-      (let ((default-directory root-dir)
-            (repl-cmd (split-string repl-cmd)))
+      (let ((default-directory root-dir))
         (set-buffer (apply #'make-comint
                            "replique" (car repl-cmd) nil (cdr repl-cmd)))
         (replique/mode)))
   (setq replique/buffer "*replique*")
-  (pop-to-buffer-same-window "*replique*"))
+  (pop-to-buffer "*replique*"))
 
 (defvar replique/buffer nil)
 
@@ -361,12 +363,17 @@ the text from the end of process to point."
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
+    (define-key map "\C-c\C-r" #'replique/eval-region)
     (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
+    (define-key map "\C-c\C-e" #'replique/eval-last-sexp)
+    (define-key map "\C-c\C-l" #'replique/load-file)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
         ["Eval region" replique/eval-region t]
-        ["Eval last sexp" replique/eval-last-sexp t]))
+        ["Eval last sexp" replique/eval-last-sexp t]
+        "--"
+        ["Load file" replique/load-file t]))
     map))
 
 ;;;###autoload
