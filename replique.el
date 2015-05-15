@@ -125,18 +125,20 @@
       (run-hook-with-args 'comint-output-filter-functions ""))))
 
 (comment
- (let ((msg (edn-read "#ewen.replique.init.ToolingMsg{:type \"my-type\" :data 3}")))
-   (cdr (assoc 'type msg)))
+ (let ((msg (edn-read "#ewen.replique.init.ToolingMsg{:type \"load-file\" :param \"/dir/file.clj\" :result \"#'test-project.core/foo\"}"))
+       (cdr (assoc 'type msg))))
  )
 
 (edn-add-reader :ewen.replique.init.ToolingMsg
                 (-lambda (msg)
                   `((type . ,(gethash :type msg))
-                    (data . ,(gethash :data msg)))))
+                    (param . ,(gethash :param msg))
+                    (result . ,(gethash :result msg)))))
 
 (defun replique/comint-input-sender (proc string)
-  (comint-simple-send proc
-                      (replace-regexp-in-string "\n" "" string)))
+  (comint-simple-send
+   proc
+   (replace-regexp-in-string "\n" "" string)))
 
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
@@ -307,7 +309,8 @@
 
 
 (defun replique/comint-output-filter (proc string)
-  (cond ;; Tooling output messages
+  (cond
+   ;; Tooling output messages
    ((s-starts-with? "#ewen.replique.init.ToolingMsg" string)
     (-let* ((msg (edn-read string))
             (type (-> (assoc 'type msg)
@@ -378,7 +381,26 @@
   (interactive)
   (replique/eval-region (save-excursion (backward-sexp) (point)) (point)))
 
+(defvar replique/prev-l/c-dir/file nil
+  "Record last directory and file used in loading or compiling.
+This holds a cons cell of the form `(DIRECTORY . FILE)'
+describing the last `replique/load-file' command.")
 
+(defun replique/load-file (file-name)
+  "Load a Clojure file into the Clojure process."
+  (interactive (comint-get-source "Load Clojure file: "
+                                  replique/prev-l/c-dir/file
+                                  '(clojure-mode)
+                                  ;; nil because LOAD doesn't need
+                                  ;; an exact name
+                                  nil))
+  ;; Check to see if buffer needs saved.
+  (comint-check-source file-name)
+  (setq replique/prev-l/c-dir/file
+        (cons (file-name-directory file-name)
+              (file-name-nondirectory file-name)))
+  (message "Loading Clojure file: %s ..." file-name)
+  (replique/send-load-file file-name))
 
 
 
@@ -422,15 +444,30 @@ The following commands are available:
 
 ;; Tooling messages
 
-(defvar replique/tooling-handlers
-  `(("ee" . print)))
+(defun replique/handler-load-file (msg)
+  (print msg)
+  (-let ((((type . type)
+           (param . file-name)
+           (result . result)) msg))
+    (message "Loading Clojure file: %s ... Done." file-name)))
 
-(defun replique/send-msg ()
+(defvar replique/tooling-handlers
+  `(("load-file" . replique/handler-load-file)))
+
+(defun replique/tooling-msg (type param result)
+  (format "(ewen.replique.init.ToolingMsg. \"%s\" \"%s\" %s)"
+          type param result))
+
+(defun replique/send-load-file (file-name)
   (let ((proc (replique/proc)))
     (funcall
      comint-input-sender
      proc
-     "(ewen.replique.init.ToolingMsg. \"ee\" 3)")))
+     (replique/tooling-msg
+      "load-file"
+      file-name
+      (format "(str (clojure.core/load-file \"%s\"))"
+              file-name)))))
 
 
 
