@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (dash-functional "1.2.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
 ;;; Commentary:
 
 ;;; Code:
@@ -37,6 +37,14 @@
 (defun replique/last (seq)
   (cond ((equal 0 (length seq)) nil)
         (t (elt seq (- (length seq) 1)))))
+
+;;; Reads a string from the user.
+(defun replique/symprompt (prompt default)
+  (list (let* ((prompt (if default
+                           (format "%s (default %s): " prompt default)
+                         (concat prompt ": ")))
+               (ans (read-string prompt)))
+          (if (zerop (length ans)) default ans))))
 
 
 
@@ -102,8 +110,8 @@
               ;Point is before the prompt. Do nothing.
               (t nil))))))
 
-(defun replique/comint-send-input-from-source (input &optional no-newline artificial)
-  (interactive)
+(defun replique/comint-send-input-from-source
+    (input &optional no-newline artificial)
   (let ((proc (get-buffer-process (current-buffer))))
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
@@ -123,6 +131,16 @@
       ;; This used to call comint-output-filter-functions,
       ;; but that scrolled the buffer in undesirable ways.
       (run-hook-with-args 'comint-output-filter-functions ""))))
+
+(defun replique/comint-refresh-prompt ()
+  (let ((old-input (funcall comint-get-old-input))
+        (process (get-buffer-process (current-buffer))))
+    (if (not process)
+	(user-error "Current buffer has no process")
+      (comint-kill-input)
+      (comint-send-input)
+      (goto-char (process-mark process))
+      (insert old-input))))
 
 (comment
  (let ((msg (edn-read "#ewen.replique.init.ToolingMsg{:type \"load-file\" :param \"/dir/file.clj\" :result \"#'test-project.core/foo\"}"))
@@ -402,7 +420,11 @@ describing the last `replique/load-file' command.")
   (message "Loading Clojure file: %s ..." file-name)
   (replique/send-load-file file-name))
 
-
+(defun replique/set-ns (ns)
+  "Set the ns of the Clojure process.
+Defaults to the ns of the current buffer."
+  (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
+  (replique/send-set-ns ns))
 
 
 
@@ -417,13 +439,16 @@ describing the last `replique/load-file' command.")
     (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
     (define-key map "\C-c\C-e" #'replique/eval-last-sexp)
     (define-key map "\C-c\C-l" #'replique/load-file)
+    (define-key map "\C-c\M-n" #'replique/set-ns)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
         ["Eval region" replique/eval-region t]
         ["Eval last sexp" replique/eval-last-sexp t]
         "--"
-        ["Load file" replique/load-file t]))
+        ["Load file" replique/load-file t]
+        "--"
+        ["Set REPL ns" replique/set-ns t]))
     map))
 
 ;;;###autoload
@@ -445,29 +470,46 @@ The following commands are available:
 ;; Tooling messages
 
 (defun replique/handler-load-file (msg)
-  (print msg)
   (-let ((((type . type)
            (param . file-name)
            (result . result)) msg))
     (message "Loading Clojure file: %s ... Done." file-name)))
 
+(defun replique/handler-set-ns (msg)
+  (-let ((((type . type)
+           (param . ns)
+           (result . result)) msg))
+    (with-current-buffer
+        replique/buffer
+      (replique/comint-refresh-prompt))
+    (message "Namespace set to %s." ns)))
+
 (defvar replique/tooling-handlers
-  `(("load-file" . replique/handler-load-file)))
+  `(("load-file" . replique/handler-load-file)
+    ("set-ns" . replique/handler-set-ns)))
 
 (defun replique/tooling-msg (type param result)
   (format "(ewen.replique.init.ToolingMsg. \"%s\" \"%s\" %s)"
           type param result))
 
-(defun replique/send-load-file (file-name)
+(defun replique/tooling-send-msg (msg)
   (let ((proc (replique/proc)))
-    (funcall
-     comint-input-sender
-     proc
-     (replique/tooling-msg
-      "load-file"
-      file-name
-      (format "(str (clojure.core/load-file \"%s\"))"
-              file-name)))))
+    (funcall comint-input-sender proc msg)))
+
+(defun replique/send-load-file (file-name)
+  (replique/tooling-send-msg
+   (replique/tooling-msg
+    "load-file"
+    file-name
+    (format "(clojure.core/str (clojure.core/load-file \"%s\"))"
+            file-name))))
+
+(defun replique/send-set-ns (ns)
+  (replique/tooling-send-msg
+   (replique/tooling-msg
+    "set-ns" ns
+    (format "(clojure.core/str (clojure.core/in-ns '%s))"
+            ns))))
 
 
 
