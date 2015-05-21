@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
 ;;; Commentary:
 
 ;;; Code:
@@ -177,8 +177,7 @@
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
-  (add-hook 'completion-at-point-functions
-            'replique/completion-at-point nil t))
+  (add-to-list 'company-backends 'replique/company-backend))
 
 
 
@@ -441,7 +440,6 @@ Defaults to the ns of the current buffer."
   (let ((map (make-sparse-keymap)))
     (define-key map "\C-c\C-r" #'replique/eval-region)
     (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
-    (define-key map "\C-c\C-e" #'replique/eval-last-sexp)
     (define-key map "\C-c\C-l" #'replique/load-file)
     (define-key map "\C-c\M-n" #'replique/set-ns)
     (easy-menu-define replique/minor-mode-menu map
@@ -463,8 +461,7 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
-  (make-local-variable 'completion-at-point-functions)
-  (add-to-list 'completion-at-point-functions 'replique/completion-at-point))
+  (make-local-variable 'company-backends))
 
 
 
@@ -490,9 +487,19 @@ The following commands are available:
       (replique/comint-refresh-prompt))
     (message "Namespace set to %s." ns)))
 
+(defun replique/handler-completions (msg)
+  (-let ((((type . type)
+           (param . ns)
+           (result . result)) msg))
+    (with-current-buffer
+        replique/buffer
+      (replique/comint-refresh-prompt))
+    (message "Namespace set to %s." ns)))
+
 (defvar replique/tooling-handlers
   `(("load-file" . replique/handler-load-file)
-    ("set-ns" . replique/handler-set-ns)))
+    ("set-ns" . replique/handler-set-ns)
+    ("completions" . replique/handler-completions)))
 
 (defun replique/tooling-msg (type param result)
   (format "(ewen.replique.core.ToolingMsg. \"%s\" \"%s\" %s)"
@@ -517,6 +524,13 @@ The following commands are available:
     (format "(clojure.core/str (clojure.core/in-ns '%s))"
             ns))))
 
+(defun replique/send-completions (prefix)
+  (replique/tooling-send-msg
+   (replique/tooling-msg
+    "completions" prefix
+    (format "(ewen.replique.core/completions %s)"
+            prefix))))
+
 
 
 
@@ -535,17 +549,21 @@ The following commands are available:
   (skip-chars-backward (concat "^" " \t\n\";{}()[]^\@/`~"))
   (replique/skip-regexp-forward "#_\\|#\\|'"))
 
-(defun replique/bounds-of-symbol-at-point ()
+(defun replique/symbol-backward ()
   (save-excursion
     (let ((end (point)))
       (replique/skip-symbol-backward)
-      (cons (point) end))))
+      (when (not (equal end (point)))
+        (buffer-substring-no-properties (point) end)))))
 
-(defun replique/completion-at-point ()
-  (-let (((start . end)
-          (replique/bounds-of-symbol-at-point)))
-    (when (not (equal start end))
-      `(,start ,end ("aaaa" "bbbbb")))))
+(defun replique/company-backend (command &optional arg &rest ignored)
+  (interactive (list 'interactive))
+  (case command
+    (interactive (company-begin-backend 'replique/company-backend))
+    (prefix (when (or (derived-mode-p 'clojure-mode)
+                      (derived-mode-p 'replique/mode))
+              (replique/symbol-backward)))
+    (candidates '("aaaa" "bbbb"))))
 
 
 
