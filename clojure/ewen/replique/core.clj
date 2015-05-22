@@ -4,7 +4,7 @@
            [java.util.jar JarEntry]
            [java.util.jar JarFile]))
 
-(defrecord ToolingMsg [type param result])
+(defrecord ToolingMsg [type id result])
 
 (defn init []
   (clojure.main/main))

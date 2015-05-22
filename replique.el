@@ -143,14 +143,14 @@
       (insert old-input))))
 
 (comment
- (let ((msg (edn-read "#ewen.replique.core.ToolingMsg{:type \"load-file\" :param \"/dir/file.clj\" :result \"#'test-project.core/foo\"}"))
+ (let ((msg (edn-read "#ewen.replique.core.ToolingMsg{:type \"load-file\" :id 3 :result \"#'test-project.core/foo\"}"))
        (cdr (assoc 'type msg))))
  )
 
 (edn-add-reader :ewen.replique.core.ToolingMsg
                 (-lambda (msg)
                   `((type . ,(gethash :type msg))
-                    (param . ,(gethash :param msg))
+                    (id . ,(gethash :id msg))
                     (result . ,(gethash :result msg)))))
 
 (defun replique/comint-input-sender (proc string)
@@ -334,10 +334,9 @@
    ;; Tooling output messages
    ((s-starts-with? "#ewen.replique.core.ToolingMsg" string)
     (-let* ((msg (edn-read string))
-            (type (-> (assoc 'type msg)
+            (id (-> (assoc 'id msg)
                       cdr))
-            (handler (-> (assoc type replique/tooling-handlers)
-                         cdr)))
+            (handler (replique/tooling-rem-hander id)))
       (funcall handler msg)))
    ;; All other outputs
    (t (comint-output-filter proc string))))
@@ -427,6 +426,7 @@ describing the last `replique/load-file' command.")
   "Set the ns of the Clojure process.
 Defaults to the ns of the current buffer."
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
+  (message "Setting namespace to: %s ..." ns)
   (replique/send-set-ns ns))
 
 
@@ -472,64 +472,86 @@ The following commands are available:
 
 ;; Tooling messages
 
-(defun replique/handler-load-file (msg)
+(defun replique/handler-load-file (file-name msg)
   (-let ((((type . type)
-           (param . file-name)
+           (id . id)
            (result . result)) msg))
     (message "Loading Clojure file: %s ... Done." file-name)))
 
-(defun replique/handler-set-ns (msg)
+(defun replique/handler-set-ns (ns msg)
   (-let ((((type . type)
-           (param . ns)
+           (id . id)
            (result . result)) msg))
     (with-current-buffer
         replique/buffer
       (replique/comint-refresh-prompt))
-    (message "Namespace set to %s." ns)))
+    (message "Setting namespace to: %s ... Done." ns)))
 
-(defun replique/handler-completions (msg)
+(defun replique/handler-completions (callback msg)
   (-let ((((type . type)
-           (param . ns)
+           (id . id)
            (result . result)) msg))
-    (with-current-buffer
-        replique/buffer
-      (replique/comint-refresh-prompt))
-    (message "Namespace set to %s." ns)))
+    (funcall callback (edn-read result))))
 
-(defvar replique/tooling-handlers
-  `(("load-file" . replique/handler-load-file)
-    ("set-ns" . replique/handler-set-ns)
-    ("completions" . replique/handler-completions)))
+(defvar replique/tooling-counter 0)
+(defvar replique/tooling-handlers '())
 
-(defun replique/tooling-msg (type param result)
-  (format "(ewen.replique.core.ToolingMsg. \"%s\" \"%s\" %s)"
-          type param result))
+(defun replique/tooling-add-hander (id callback)
+  (setq replique/tooling-handlers
+        (cons `(,id . ,callback)
+              replique/tooling-handlers)))
 
-(defun replique/tooling-send-msg (msg)
-  (let ((proc (replique/proc)))
-    (funcall comint-input-sender proc msg)))
+(defun replique/tooling-rem-hander (id)
+  (let ((handler (-> (assoc id replique/tooling-handlers)
+                     cdr)))
+    (setq replique/tooling-handlers
+          (delete `(,id . ,handler)
+                  replique/tooling-handlers))
+    handler))
+
+(defun replique/tooling-msg (type result)
+  (let ((id (->> (1+ replique/tooling-counter)
+                 (setq replique/tooling-counter))))
+    `((type . ,type)
+      (id . ,id)
+      (result . ,result))))
+
+(defun replique/tooling-msg-convert (msg)
+  (format "(ewen.replique.core.ToolingMsg. \"%s\" %s %s)"
+          (-> (assoc 'type msg) cdr)
+          (-> (assoc 'id msg) cdr)
+          (-> (assoc 'result msg) cdr)))
+
+(defun replique/tooling-send-msg (msg callback)
+  (let ((proc (replique/proc))
+        (id (-> (assoc 'id msg) cdr)))
+    (replique/tooling-add-hander id callback)
+    (->> (replique/tooling-msg-convert msg)
+         (funcall comint-input-sender proc))))
 
 (defun replique/send-load-file (file-name)
-  (replique/tooling-send-msg
-   (replique/tooling-msg
-    "load-file"
-    file-name
-    (format "(clojure.core/str (clojure.core/load-file \"%s\"))"
-            file-name))))
+  (-> (replique/tooling-msg
+       "load-file"
+       (format "(clojure.core/pr-str (clojure.core/load-file \"%s\"))"
+               file-name))
+      (replique/tooling-send-msg
+       (-partial 'replique/handler-load-file file-name))))
 
 (defun replique/send-set-ns (ns)
-  (replique/tooling-send-msg
-   (replique/tooling-msg
-    "set-ns" ns
-    (format "(clojure.core/str (clojure.core/in-ns '%s))"
-            ns))))
+  (-> (replique/tooling-msg
+       "set-ns"
+       (format "(clojure.core/pr-str (clojure.core/in-ns '%s))"
+               ns))
+      (replique/tooling-send-msg
+       (-partial 'replique/handler-set-ns ns))))
 
-(defun replique/send-completions (prefix)
-  (replique/tooling-send-msg
-   (replique/tooling-msg
-    "completions" prefix
-    (format "(ewen.replique.core/completions %s)"
-            prefix))))
+(defun replique/send-completions (prefix company-callback)
+  (-> (replique/tooling-msg
+       "completions"
+       (format "(clojure.core/pr-str (ewen.replique.core/completions \"%s\"))"
+               prefix))
+      (replique/tooling-send-msg
+       (-partial 'replique/handler-completions company-callback))))
 
 
 
@@ -563,7 +585,9 @@ The following commands are available:
     (prefix (when (or (derived-mode-p 'clojure-mode)
                       (derived-mode-p 'replique/mode))
               (replique/symbol-backward)))
-    (candidates '("aaaa" "bbbb"))))
+    (candidates `(:async . ,(-partial
+                             'replique/send-completions
+                             (replique/symbol-backward))))))
 
 
 
