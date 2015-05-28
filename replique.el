@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
+;;; Package-Requires: ((emacs "24") (cl-lib "0.5") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
 ;;; Commentary:
 
 ;;; Code:
@@ -8,7 +8,7 @@
 (require 's)
 (require 'comint)
 (require 'clojure-mode)
-(require 'edn)
+(require 'replique-edn)
 
 
 
@@ -136,22 +136,26 @@
   (let ((old-input (funcall comint-get-old-input))
         (process (get-buffer-process (current-buffer))))
     (if (not process)
-	(user-error "Current buffer has no process")
+        (user-error "Current buffer has no process")
       (comint-kill-input)
       (comint-send-input)
       (goto-char (process-mark process))
       (insert old-input))))
 
+
+
+(defvar replique/edn-tag-readers
+  `((:readers . ((ewen.replique.core.ToolingMsg . ,(-lambda (msg)
+                                                     `((type . ,(gethash :type msg))
+                                                       (result . ,(gethash :result msg)))))))))
+
 (comment
- (let ((msg (edn-read "#ewen.replique.core.ToolingMsg{:type \"load-file\" :id 3 :result \"#'test-project.core/foo\"}"))
-       (cdr (assoc 'type msg))))
+ (let* ((rdr (replique-edn/reader nil :str "#ewen.replique.core.ToolingMsg{:type \"load-file\" :result \"#'test-project.core/foo\"}"))
+        (msg (replique-edn/read rdr replique/edn-tag-readers)))
+                                        ;(cdr (assoc 'type msg))
+   (cdr (assoc 'type msg)))
  )
 
-(edn-add-reader :ewen.replique.core.ToolingMsg
-                (-lambda (msg)
-                  `((type . ,(gethash :type msg))
-                    (id . ,(gethash :id msg))
-                    (result . ,(gethash :result msg)))))
 
 (defun replique/comint-input-sender (proc string)
   (comint-simple-send
@@ -326,20 +330,33 @@
       (funcall (assoc-recursive replique/clojure-build-tools 'raw 'default-repl-cmd))))
 
 
-
-
-
 (defun replique/comint-output-filter (proc string)
-  (cond
-   ;; Tooling output messages
-   ((s-starts-with? "#ewen.replique.core.ToolingMsg" string)
-    (-let* ((msg (edn-read string))
-            (id (-> (assoc 'id msg)
-                      cdr))
-            (handler (replique/tooling-rem-hander id)))
-      (funcall handler msg)))
-   ;; All other outputs
-   (t (comint-output-filter proc string))))
+  (let ((msg (cond ((replique-edn/continuation-p
+                     (car replique/tooling-handlers-queue))
+                    (catch 'continuation
+                      (replique-edn/contcall
+                       (pop replique/tooling-handlers-queue)
+                       (replique-edn/reader
+                        nil :str string))))
+                   ((s-starts-with?
+                     "#ewen.replique.core.ToolingMsg"
+                     (s-trim-left string))
+                    (catch 'continuation
+                      (replique-edn/read
+                       (replique-edn/reader
+                        nil :str string)
+                       replique/edn-tag-readers)))
+                   (t nil))))
+    (cond ((replique-edn/continuation-p msg)
+           (if replique/tooling-handlers-queue
+               (push msg replique/tooling-handlers-queue)
+             (setq replique/tooling-handlers-queue (list msg))))
+          (msg (funcall
+                (pop replique/tooling-handlers-queue)
+                msg))
+          (t (comint-output-filter proc string)))))
+
+
 
 ;;;###autoload
 (defun replique/repl (repl-cmd root-dir)
@@ -474,13 +491,11 @@ The following commands are available:
 
 (defun replique/handler-load-file (file-name msg)
   (-let ((((type . type)
-           (id . id)
            (result . result)) msg))
     (message "Loading Clojure file: %s ... Done." file-name)))
 
 (defun replique/handler-set-ns (ns msg)
   (-let ((((type . type)
-           (id . id)
            (result . result)) msg))
     (with-current-buffer
         replique/buffer
@@ -489,43 +504,25 @@ The following commands are available:
 
 (defun replique/handler-completions (callback msg)
   (-let ((((type . type)
-           (id . id)
            (result . result)) msg))
-    (funcall callback (edn-read result))))
+    (funcall callback result)))
 
-(defvar replique/tooling-counter 0)
-(defvar replique/tooling-handlers '())
-
-(defun replique/tooling-add-hander (id callback)
-  (setq replique/tooling-handlers
-        (cons `(,id . ,callback)
-              replique/tooling-handlers)))
-
-(defun replique/tooling-rem-hander (id)
-  (let ((handler (-> (assoc id replique/tooling-handlers)
-                     cdr)))
-    (setq replique/tooling-handlers
-          (delete `(,id . ,handler)
-                  replique/tooling-handlers))
-    handler))
+(defvar replique/tooling-handlers-queue '())
 
 (defun replique/tooling-msg (type result)
-  (let ((id (->> (1+ replique/tooling-counter)
-                 (setq replique/tooling-counter))))
-    `((type . ,type)
-      (id . ,id)
-      (result . ,result))))
+  `((type . ,type)
+    (result . ,result)))
 
 (defun replique/tooling-msg-convert (msg)
-  (format "(ewen.replique.core.ToolingMsg. \"%s\" %s %s)"
+  (format "(ewen.replique.core.ToolingMsg. \"%s\" %s)"
           (-> (assoc 'type msg) cdr)
-          (-> (assoc 'id msg) cdr)
           (-> (assoc 'result msg) cdr)))
 
 (defun replique/tooling-send-msg (msg callback)
-  (let ((proc (replique/proc))
-        (id (-> (assoc 'id msg) cdr)))
-    (replique/tooling-add-hander id callback)
+  (let ((proc (replique/proc)))
+    (if replique/tooling-handlers-queue
+        (nconc replique/tooling-handlers-queue (list callback))
+      (setq replique/tooling-handlers-queue (list callback)))
     (->> (replique/tooling-msg-convert msg)
          (funcall comint-input-sender proc))))
 
@@ -548,7 +545,7 @@ The following commands are available:
 (defun replique/send-completions (prefix company-callback)
   (-> (replique/tooling-msg
        "completions"
-       (format "(clojure.core/pr-str (ewen.replique.core/completions \"%s\"))"
+       (format "(ewen.replique.core/completions \"%s\")"
                prefix))
       (replique/tooling-send-msg
        (-partial 'replique/handler-completions company-callback))))
