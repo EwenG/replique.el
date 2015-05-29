@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (cl-lib "0.5") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
 ;;; Commentary:
 
 ;;; Code:
@@ -37,6 +37,13 @@
 (defun replique/last (seq)
   (cond ((equal 0 (length seq)) nil)
         (t (elt seq (- (length seq) 1)))))
+
+(defun replique/alist-to-map (alist)
+  (let ((m (make-hash-table :test 'equal)))
+    (mapcar (-lambda ((k . v))
+              (puthash k v m))
+            alist)
+    m))
 
 ;;; Reads a string from the user.
 (defun replique/symprompt (prompt default)
@@ -143,7 +150,6 @@
       (insert old-input))))
 
 
-
 (defvar replique/edn-tag-readers
   `((:readers . ((ewen.replique.core.ToolingMsg . ,(-lambda (msg)
                                                      `((type . ,(gethash :type msg))
@@ -198,8 +204,8 @@
 
 (defun replique/repl-cmd-raw (clojure-jar)
   `("java" "-cp" ,clojure-jar "clojure.main" "-e"
-    ,(format "(do (load-file \"%sclojure/ewen/replique/core.clj\")
-(ewen.replique.core/init \"%s\"))"
+    ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\")
+(ewen.replique.init/init \"%s\"))"
              (replique/replique-root-dir)
 (replique/replique-root-dir))))
 
@@ -208,8 +214,8 @@
     `((leiningen . ((project-file . "project.clj")
                     (default-repl-cmd . ,(lambda ()
                                            `("lein" "run" "-m" "clojure.main/main" "-e"
-                                             ,(format "(do (load-file \"%sclojure/ewen/replique/core.clj\")
-(ewen.replique.core/init))"
+                                             ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\")
+(ewen.replique.init/init))"
                                                       (replique/replique-root-dir)))))))
       ;; (boot . ((project-file . "boot.clj")
       ;;          (default-repl-cmd . ,(lambda ()
@@ -509,44 +515,33 @@ The following commands are available:
 
 (defvar replique/tooling-handlers-queue '())
 
-(defun replique/tooling-msg (type result)
-  `((type . ,type)
-    (result . ,result)))
-
-(defun replique/tooling-msg-convert (msg)
-  (format "(ewen.replique.core.ToolingMsg. \"%s\" %s)"
-          (-> (assoc 'type msg) cdr)
-          (-> (assoc 'result msg) cdr)))
-
 (defun replique/tooling-send-msg (msg callback)
   (let ((proc (replique/proc)))
     (if replique/tooling-handlers-queue
         (nconc replique/tooling-handlers-queue (list callback))
       (setq replique/tooling-handlers-queue (list callback)))
-    (->> (replique/tooling-msg-convert msg)
+    (->> (format "(ewen.replique.core/tooling-msg-handle %s)"
+                 (replique-edn/pr-str msg))
          (funcall comint-input-sender proc))))
 
 (defun replique/send-load-file (file-name)
-  (-> (replique/tooling-msg
-       "load-file"
-       (format "(clojure.core/pr-str (clojure.core/load-file \"%s\"))"
-               file-name))
+  (-> (replique/alist-to-map
+       `((:type . "load-file")
+         (:file-path . ,file-name)))
       (replique/tooling-send-msg
        (-partial 'replique/handler-load-file file-name))))
 
 (defun replique/send-set-ns (ns)
-  (-> (replique/tooling-msg
-       "set-ns"
-       (format "(clojure.core/pr-str (clojure.core/in-ns '%s))"
-               ns))
+  (-> (replique/alist-to-map
+       `((:type . "set-ns")
+         (:ns . ,ns)))
       (replique/tooling-send-msg
        (-partial 'replique/handler-set-ns ns))))
 
 (defun replique/send-completions (prefix company-callback)
-  (-> (replique/tooling-msg
-       "completions"
-       (format "(ewen.replique.compliment.core/completions \"%s\")"
-               prefix))
+  (-> (replique/alist-to-map
+       `((:type . "completions")
+         (:prefix . ,prefix)))
       (replique/tooling-send-msg
        (-partial 'replique/handler-completions company-callback))))
 
