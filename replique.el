@@ -199,8 +199,9 @@
 (defun replique/repl-cmd-raw (clojure-jar)
   `("java" "-cp" ,clojure-jar "clojure.main" "-e"
     ,(format "(do (load-file \"%sclojure/ewen/replique/core.clj\")
-(ewen.replique.core/init))"
-             (replique/replique-root-dir))))
+(ewen.replique.core/init \"%s\"))"
+             (replique/replique-root-dir)
+(replique/replique-root-dir))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
@@ -312,11 +313,12 @@
 
 
 (defun replique/project-root-dir ()
-  (or (car (remove nil
-                   (mapcar (lambda
-                             (file)
-                             (locate-dominating-file default-directory file))
-                           (replique/build-files))))
+  (or (car (remove
+            nil
+            (mapcar (lambda
+                      (file)
+                      (locate-dominating-file default-directory file))
+                    (replique/build-files))))
       default-directory))
 
 (defun replique/project-repl-cmd (root-dir)
@@ -545,7 +547,7 @@ The following commands are available:
 (defun replique/send-completions (prefix company-callback)
   (-> (replique/tooling-msg
        "completions"
-       (format "(ewen.replique.core/completions \"%s\")"
+       (format "(ewen.replique.compliment.core/completions \"%s\")"
                prefix))
       (replique/tooling-send-msg
        (-partial 'replique/handler-completions company-callback))))
