@@ -350,9 +350,7 @@
                        replique/edn-tag-readers)))
                    (t nil))))
     (cond ((replique-edn/continuation-p msg)
-           (if replique/tooling-handlers-queue
-               (push msg replique/tooling-handlers-queue)
-             (setq replique/tooling-handlers-queue (list msg))))
+           (push msg replique/tooling-handlers-queue))
           (msg (funcall
                 (pop replique/tooling-handlers-queue)
                 msg))
