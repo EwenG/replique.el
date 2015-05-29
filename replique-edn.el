@@ -3,38 +3,61 @@
 
 ;;; Code:
 
-(require 'cl-lib)
-
 (defvar replique-edn/default-data-readers
   (make-hash-table :test #'equal))
 
-(cl-defstruct
-    (replique-edn/inst
-     (:type list)
-     :named
-     (:constructor nil)
-     (:constructor replique-edn/make-inst (high low)))
-  high low)
+(defclass replique-edn/printable ()
+  ()
+  :abstract t)
 
-(cl-defstruct
-    (replique-edn/uuid
-     (:type list)
-     :named
-     (:constructor nil)
-     (:constructor replique-edn/make-uuid (uuid)))
-  uuid)
+(defmethod replique-edn/print-method ((o replique-edn/printable))
+  (let ((slots (mapcar (lambda (s)
+                         (intern (concat ":" (symbol-name s))))
+                (object-slots o)))
+        (l nil))
+    (mapcar (lambda (s)
+              (push (slot-value o s) l)
+              (push s l))
+            slots)
+    (format "#%s %s"
+            (object-class o)
+            (replique-edn/pr-str
+             (replique-edn/list-to-map l)))))
+
+(defclass replique-edn/inst (replique-edn/printable)
+  ((high :initarg :high
+         :type number)
+   (low :initarg :low
+        :type number)))
+
+(defmethod replique-edn/print-method ((o replique-edn/inst))
+  (format
+   "#inst %s"
+   (format-time-string "\"%Y-%m-%dT%H:%M:%S.52Z\""
+                       (list (oref o :high) (oref o :low))
+                       :utc)))
+
+(defclass replique-edn/uuid (replique-edn/printable)
+  ((uuid :initarg :uuid
+         :type string)))
+
+(defmethod replique-edn/print-method ((o replique-edn/uuid))
+  (format
+   "#uuid %s"
+   (oref o :uuid)))
+
 
 (puthash 'inst
          (lambda (inst)
            (let ((time (date-to-time inst)))
-             (replique-edn/make-inst
-              (car time)
-              (cadr time))))
+             (replique-edn/inst nil
+                                :high (car time)
+                                :low (cadr time))))
          replique-edn/default-data-readers)
 
 (puthash 'uuid
          (lambda (uuid)
-           (replique-edn/make-uuid uuid))
+           (replique-edn/uuid nil :uuid uuid))
          replique-edn/default-data-readers)
 
 (defclass replique-edn/continuation ()
@@ -469,17 +492,17 @@
                 (replique-edn/read-vector rdr sb opts l)))))
     (apply 'vector l)))
 
-(defun replique-edn/vector-to-map* (idx v m)
-  (if (> (length v) idx)
-      (let ((k (elt v idx))
-            (val (elt v (1+ idx))))
+(defun replique-edn/list-to-map* (idx l m)
+  (if (> (length l) idx)
+      (let ((k (elt l idx))
+            (val (elt l (1+ idx))))
         (puthash k val m)
-        (replique-edn/vector-to-map* (+ 2 idx) v m))
+        (replique-edn/list-to-map* (+ 2 idx) l m))
     m))
 
-(defun replique-edn/vector-to-map (v)
+(defun replique-edn/list-to-map (l)
   (let ((m (make-hash-table :test 'equal)))
-    (replique-edn/vector-to-map* 0 v m)))
+    (replique-edn/list-to-map* 0 l m)))
 
 (defun replique-edn/read-map (rdr sb opts &optional cont)
   (let ((l (catch 'continuation
@@ -494,7 +517,7 @@
                      (replique-edn/read-map rdr sb opts l)))))
           ((equal 1 (logand 1 (length l)))
            (error "Map literal must contain an even number of forms"))
-          (t (replique-edn/vector-to-map l)))))
+          (t (replique-edn/list-to-map l)))))
 
 (defun replique-edn/read-unmatched-delimiter (rdr sb opts)
   (error "Unmatched delimiter %s" sb))
@@ -547,26 +570,29 @@
                   uc)))))
          (t (error "Unsupported character: \\%s" token)))))))
 
-(cl-defstruct
-    (replique-edn/set
-     (:type list)
-     :named
-     (:constructor nil)
-     (:constructor replique-edn/make-set (vals)))
-  vals)
+(defclass replique-edn/set (replique-edn/printable)
+  ((vals :initarg :vals
+         :type (or null cons))))
+
+(defmethod replique-edn/print-method ((o replique-edn/set))
+  (format
+   "#{%s}"
+   (s-join " " (mapcar
+                'replique-edn/pr-str
+                (oref o :vals)))))
 
 (defun replique-edn/read-set (rdr sb opts &optional cont)
-  (let ((v (catch 'continuation
+  (let ((l (catch 'continuation
              (if cont
                  (replique-edn/contcall cont rdr)
                (replique-edn/read-delimited ?\} rdr nil opts)))))
-    (cond ((replique-edn/continuation-p v)
+    (cond ((replique-edn/continuation-p l)
            (throw 'continuation
                   (replique-edn/continuation
                    nil :f
                    (lambda (rdr)
-                     (replique-edn/read-set rdr sb opts v)))))
-          (t (replique-edn/make-set v)))))
+                     (replique-edn/read-set rdr sb opts l)))))
+          (t (replique-edn/set :nil :vals l)))))
 
 (defun replique-edn/read-discard (rdr sb opts &optional cont)
   (let ((o (catch 'continuation
@@ -730,6 +756,36 @@
                              (t res)))
                  (replique-edn/read-symbol reader ch))))
           (t nil))))
+
+
+(defun replique-edn/pr-str (data)
+  (cond ((null data) nil)
+        ((replique-edn/printable-child-p data)
+         (replique-edn/print-method data))
+        ((numberp data) (format "%s" data))
+        ((stringp data) (format "\"%s\"" data))
+        ((symbolp data) (format "%s" data))
+        ((vectorp data)
+         (format
+          "[%s]"
+          (s-join " " (mapcar 'replique-edn/pr-str data))))
+        ((hash-table-p data)
+         (let ((l nil))
+           (maphash
+            (lambda (x y)
+              (push y l)
+              (push x l))
+            data)
+           (format
+            "{%s}"
+            (s-join
+             " "
+             (mapcar 'replique-edn/pr-str l)))))
+        ((listp data)
+         (format
+          "(%s)"
+          (s-join " " (mapcar 'replique-edn/pr-str data))))
+        (t (error "%s cannot be printed to EDN." data))))
 
 
 (comment
@@ -903,7 +959,6 @@
     (replique-edn/contcall
      conti
      (replique-edn/reader nil :str "12T23:20:50.52Z\") "))))
-
  )
 
 (provide 'replique-edn)
