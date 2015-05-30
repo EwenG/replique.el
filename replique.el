@@ -376,24 +376,65 @@
                             (current-prefix-arg (read-string "REPL launch command: " (replique/project-repl-cmd root-dir)))
                             (t (replique/project-repl-cmd root-dir)))))
        (list repl-cmd root-dir))))
-  (if (not (comint-check-proc "*replique*"))
-      ;; run the new process in the project's root when in a project folder
-      (let ((default-directory root-dir))
-        (set-buffer (apply #'make-comint
-                           "replique" (car repl-cmd) nil (cdr repl-cmd)))
-        (replique/mode)))
-  (set-process-filter (replique/proc) 'replique/comint-output-filter)
-  (setq replique/buffer "*replique*")
-  (pop-to-buffer "*replique*"))
+  ;; run the new process in the project's root when in a project folder
+  (let* ((default-directory root-dir)
+         (buffer-name (replique/gen-buffer-name))
+         (comint-buffer (apply #'make-comint
+                               buffer-name
+                               (car repl-cmd) nil (cdr repl-cmd))))
+    (set-buffer comint-buffer)
+    (replique/mode)
+    (set-process-filter (replique/proc) 'replique/comint-output-filter)
+    (push (cons buffer-name comint-buffer) replique/buffers)
+    (setq replique/active-buffer (cons buffer-name comint-buffer))
+    (pop-to-buffer comint-buffer)
+    (when (not replique/buffers-hook-added)
+      (add-hook
+       'kill-buffer-hook
+       (lambda ()
+         (let ((b (current-buffer)))
+           (setq replique/buffers
+                 (-remove
+                  (-lambda ((k . v))
+                    (equal v b))
+                  replique/buffers))
+           (when (equal b (cdr replique/active-buffer))
+             (setq replique/active-buffer
+                   (car replique/buffers)))))))
+    (setq replique/buffers-hook-added t)))
 
-(defvar replique/buffer nil)
+(defvar replique/buffers-hook-added nil)
+(defvar replique/buffers nil)
+(defvar replique/active-buffer nil)
+
+(defun replique/gen-buffer-name ()
+  (let* ((buffer-prefix "replique")
+         (buffer-names (mapcar 'car replique/buffers))
+         (new-buffer-name buffer-prefix)
+         (buffer-nb 0))
+    (while (member new-buffer-name buffer-names)
+      (setq buffer-nb (1+ buffer-nb))
+      (setq new-buffer-name (format "%s<%d>" buffer-prefix buffer-nb)))
+    new-buffer-name))
+
+(defun replique/set-active-buffer (buffer-name)
+  (interactive
+   (let ((buffer-names (mapcar 'car replique/buffers)))
+     (list
+      (ido-completing-read
+       "Set active buffer to: "
+       buffer-names nil t))))
+  (setq replique/active-buffer
+        (assoc buffer-name replique/buffers))
+  (message "Active buffer switched to: %s" buffer-name))
 
 (defun replique/proc ()
-  (let ((proc (get-buffer-process (if (derived-mode-p 'replique/mode)
-                                      (current-buffer)
-                                    replique/buffer))))
+  (let ((proc (get-buffer-process
+               (if (derived-mode-p 'replique/mode)
+                   (current-buffer)
+                 (cdr replique/active-buffer)))))
     (or proc
-        (error "No Clojure subprocess; see variable `replique/buffer'"))))
+        (error "No Clojure subprocess"))))
 
 
 
@@ -416,7 +457,7 @@
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
     (with-current-buffer
-        replique/buffer
+        (cdr replique/active-buffer)
       (replique/comint-send-input-from-source input))))
 
 (defun replique/eval-last-sexp ()
@@ -504,7 +545,7 @@ The following commands are available:
   (-let ((((type . type)
            (result . result)) msg))
     (with-current-buffer
-        replique/buffer
+        (cdr replique/active-buffer)
       (replique/comint-refresh-prompt))
     (message "Setting namespace to: %s ... Done." ns)))
 
