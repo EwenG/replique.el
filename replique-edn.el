@@ -247,13 +247,13 @@
                    nil :f
                    (lambda (rdr)
                      (replique-edn/escape-char rdr)))))
-          ((equal ?t ch) "\t")
-          ((equal ?r ch) "\r")
-          ((equal ?n ch) "\n")
-          ((equal ?\\ ch) "\\")
-          ((equal ?\" ch) "\"")
-          ((equal ?b ch) "\b")
-          ((equal ?f ch) "\f")
+          ((equal ?t ch) ?\t)
+          ((equal ?r ch) ?\r)
+          ((equal ?n ch) ?\n)
+          ((equal ?\\ ch) ?\\)
+          ((equal ?\" ch) ?\")
+          ((equal ?b ch) ?\b)
+          ((equal ?f ch) ?\f)
           ((equal ?u ch)
            (let ((ch (replique-edn/reader-read rdr)))
              (cond ((equal 0 ch)
@@ -959,6 +959,10 @@
     (replique-edn/contcall
      conti
      (replique-edn/reader nil :str "12T23:20:50.52Z\") "))))
+
+ (replique-edn/read (replique-edn/reader
+                     nil :str "\"\\\"#ob\\\"\" "))
+
  )
 
 (provide 'replique-edn)
