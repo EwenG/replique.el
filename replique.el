@@ -204,10 +204,7 @@
 
 (defun replique/repl-cmd-raw (clojure-jar)
   `("java" "-cp" ,clojure-jar "clojure.main" "-e"
-    ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\")
-(ewen.replique.init/init \"%s\"))"
-             (replique/replique-root-dir)
-(replique/replique-root-dir))))
+    ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) (replique/replique-root-dir))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
@@ -217,7 +214,7 @@
           (default-repl-cmd
             . ,(lambda ()
                  `("lein" "run" "-m" "clojure.main/main" "-e"
-                   ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init))" (replique/replique-root-dir)))))))
+                   ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) (replique/replique-root-dir)))))))
       (raw . ((project-file . nil)
               (default-repl-cmd
                 . ,(lambda ()
@@ -343,7 +340,8 @@
                         (cond ((null project-file)
                                (funcall default-repl-cmd))
                               ((locate-file project-file
-                                            (list root-dir)))
+                                            (list root-dir))
+                               (funcall default-repl-cmd))
                               (t nil))))
                     replique/clojure-build-tools)))
     (-> (-remove 'null repl-cmds)
