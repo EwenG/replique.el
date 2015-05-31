@@ -405,8 +405,11 @@
     (set-buffer comint-buffer)
     (replique/mode)
     (set-process-filter (replique/proc) 'replique/comint-output-filter)
-    (push (cons buffer-name comint-buffer) replique/buffers)
-    (setq replique/active-buffer (cons buffer-name comint-buffer))
+    (push `((name . ,buffer-name)
+            (buffer . ,comint-buffer)
+            (active . t))
+          replique/buffers)
+    (replique/set-active-buffer buffer-name)
     (pop-to-buffer comint-buffer)
     (when (not replique/buffers-hook-added)
       (add-hook
@@ -415,21 +418,23 @@
          (let ((b (current-buffer)))
            (setq replique/buffers
                  (-remove
-                  (-lambda ((k . v))
-                    (equal v b))
+                  (-lambda ((&alist 'buffer buffer))
+                    (equal buffer b))
                   replique/buffers))
-           (when (equal b (cdr replique/active-buffer))
-             (setq replique/active-buffer
-                   (car replique/buffers)))))))
+           (when (equal b (replique/get-active-buffer))
+             (replique/set-active-buffer
+              (->> (car replique/buffers)
+                   (assoc 'name))))))))
     (setq replique/buffers-hook-added t)))
 
 (defvar replique/buffers-hook-added nil)
 (defvar replique/buffers nil)
-(defvar replique/active-buffer nil)
 
 (defun replique/gen-buffer-name ()
   (let* ((buffer-prefix "replique")
-         (buffer-names (mapcar 'car replique/buffers))
+         (buffer-names (mapcar (-lambda ((&alist 'name name))
+                                 name)
+                               replique/buffers))
          (new-buffer-name buffer-prefix)
          (buffer-nb 0))
     (while (member new-buffer-name buffer-names)
@@ -437,22 +442,46 @@
       (setq new-buffer-name (format "%s<%d>" buffer-prefix buffer-nb)))
     new-buffer-name))
 
-(defun replique/set-active-buffer (buffer-name)
+(defun replique/set-active-buffer (buffer-name &optional display-msg)
   (interactive
-   (let ((buffer-names (mapcar 'car replique/buffers)))
+   (let ((buffer-names (mapcar
+                        (-lambda ((&alist 'name name))
+                          name)
+                        replique/buffers)))
      (list
       (ido-completing-read
        "Set active buffer to: "
-       buffer-names nil t))))
-  (setq replique/active-buffer
-        (assoc buffer-name replique/buffers))
-  (message "Active buffer switched to: %s" buffer-name))
+       buffer-names nil t)
+      t)))
+  (setq replique/buffers
+        (mapcar
+         (-lambda ((&alist 'name name
+                     'buffer buffer
+                     'active active))
+           (if (equal buffer-name name)
+               `((name . ,name)
+                 (buffer . ,buffer)
+                 (active . t))
+             `((name . ,name)
+               (buffer . ,buffer)
+               (active . nil))))
+         replique/buffers))
+  (when display-msg
+    (message "Active buffer switched to: %s" buffer-name)))
+
+(defun replique/get-active-buffer ()
+  (->> (-first
+       (-lambda ((&alist 'active active))
+         active)
+       replique/buffers)
+       (assoc 'buffer)
+       cdr))
 
 (defun replique/proc ()
   (let ((proc (get-buffer-process
                (if (derived-mode-p 'replique/mode)
                    (current-buffer)
-                 (cdr replique/active-buffer)))))
+                 (replique/get-active-buffer)))))
     (or proc
         (error "No Clojure subprocess"))))
 
@@ -477,7 +506,7 @@
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
     (with-current-buffer
-        (cdr replique/active-buffer)
+        (replique/get-active-buffer)
       (replique/comint-send-input-from-source input))))
 
 (defun replique/eval-last-sexp ()
@@ -565,7 +594,7 @@ The following commands are available:
   (-let ((((type . type)
            (result . result)) msg))
     (with-current-buffer
-        (cdr replique/active-buffer)
+        (replique/get-active-buffer)
       (replique/comint-refresh-prompt))
     (message "Setting namespace to: %s ... Done." ns)))
 
