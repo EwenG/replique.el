@@ -502,6 +502,7 @@
 
 
 
+
 (defun replique/eval-region (start end)
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
@@ -586,27 +587,23 @@ The following commands are available:
 ;; Tooling messages
 
 (defun replique/handler-load-file (file-name msg)
-  (-let ((((type . type)
-           (result . result)) msg))
-    (message "Loading Clojure file: %s ... Done." file-name)))
+  (message "Loading Clojure file: %s ... Done." file-name))
 
 (defun replique/handler-set-ns (ns msg)
-  (-let ((((type . type)
-           (result . result)) msg))
-    (with-current-buffer
-        (replique/get-active-buffer)
-      (replique/comint-refresh-prompt))
-    (message "Setting namespace to: %s ... Done." ns)))
+  (with-current-buffer
+      (replique/get-active-buffer)
+    (replique/comint-refresh-prompt))
+  (message "Setting namespace to: %s ... Done." ns))
 
 (defun replique/handler-completions (callback msg)
-  (-let ((((type . type)
-           (result . result)) msg))
+  (-let (((&alist 'result result) msg))
     (funcall callback result)))
 
 (defvar replique/tooling-handlers-queue '())
 
 (defun replique/tooling-send-msg (msg callback)
-  (let ((proc (replique/proc)))
+  (let* ((proc (replique/proc))
+         (msg (replique/alist-to-map msg)))
     (if replique/tooling-handlers-queue
         (nconc replique/tooling-handlers-queue (list callback))
       (setq replique/tooling-handlers-queue (list callback)))
@@ -615,23 +612,20 @@ The following commands are available:
          (funcall comint-input-sender proc))))
 
 (defun replique/send-load-file (file-name)
-  (-> (replique/alist-to-map
-       `((:type . "load-file")
-         (:file-path . ,file-name)))
+  (-> `((:type . "load-file")
+        (:file-path . ,file-name))
       (replique/tooling-send-msg
        (-partial 'replique/handler-load-file file-name))))
 
 (defun replique/send-set-ns (ns)
-  (-> (replique/alist-to-map
-       `((:type . "set-ns")
-         (:ns . ,ns)))
+  (-> `((:type . "set-ns")
+        (:ns . ,ns))
       (replique/tooling-send-msg
        (-partial 'replique/handler-set-ns ns))))
 
 (defun replique/send-completions (prefix company-callback)
-  (-> (replique/alist-to-map
-       `((:type . "completions")
-         (:prefix . ,prefix)))
+  (-> `((:type . "completions")
+        (:prefix . ,prefix))
       (replique/tooling-send-msg
        (-partial 'replique/handler-completions company-callback))))
 

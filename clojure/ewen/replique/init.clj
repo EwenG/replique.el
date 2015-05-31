@@ -14,7 +14,15 @@
    "clojure/ewen/replique/compliment/core.clj"])
 
 (defn init [replique-root-dir]
-  (doseq [init-file init-files]
-    (load-file (str replique-root-dir init-file)))
-  (load-file (str replique-root-dir "clojure/ewen/replique/core.clj"))
-  (clojure.main/main))
+  (println "Clojure" (clojure-version))
+  (let [init-fn (fn []
+                  (apply require
+                         '[[clojure.repl :refer [source apropos dir
+                                                 pst doc find-doc]]
+                           [clojure.java.javadoc :refer [javadoc]]
+                           [clojure.pprint :refer [pp pprint]]])
+                  (doseq [init-file init-files]
+                    (load-file (str replique-root-dir init-file)))
+                  (load-file (str replique-root-dir
+                                  "clojure/ewen/replique/core.clj")))]
+    (clojure.main/repl :init init-fn)))
