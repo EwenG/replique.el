@@ -202,23 +202,24 @@
 
 
 
-(defun replique/repl-cmd-raw (clojure-jar)
-  `("java" "-cp" ,clojure-jar "clojure.main" "-e"
+(defun replique/repl-cmd-raw (clj-jar)
+  `("java" "-cp" ,clj-jar "clojure.main" "-e"
     ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) (replique/replique-root-dir))))
 
 (defvar replique/clojure-build-tools
-  (cl-flet ((clojure-jar () (caar (replique/clojure-jars-in-path))))
+  (cl-flet ((clj-jar () (caar (replique/jars-in-path "clj")))
+            (cljs-jar () (caar (replique/jars-in-path "cljs"))))
     `((leiningen
        . ((project-file
            . "project.clj")
           (default-repl-cmd
-            . ,(lambda ()
+            . ,(lambda (platform)
                  `("lein" "run" "-m" "clojure.main/main" "-e"
                    ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) (replique/replique-root-dir)))))))
       (raw . ((project-file . nil)
               (default-repl-cmd
-                . ,(lambda ()
-                     (replique/repl-cmd-raw (clojure-jar))))))
+                . ,(lambda (platform)
+                     (replique/repl-cmd-raw (clj-jar))))))
 ;; (boot . ((project-file . "boot.clj")
 ;;          (default-repl-cmd . ,(lambda ()
 ;;                                 '("boot" "repl)"))))
@@ -243,22 +244,34 @@
 
 
 
-(defconst replique/clojure-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
+(defconst replique/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
+(defconst replique/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-?\\([0-9]+\\)?.jar$")
 
 (comment
- (replique/clojure-jar->version  "clojure-1.6.0-beta45.jar")
+ (replique/clj-jar->version  "clojure-1.6.0-beta45.jar")
+ (replique/cljs-jar->version  "clojurescript-0.0-3297.jar")
  )
 
 
-(defun replique/clojure-jar->version (jar-name)
+(defun replique/clj-jar->version (jar-name)
   (save-match-data
-    (string-match replique/clojure-jar-regex jar-name)
+    (string-match replique/clj-jar-regex jar-name)
     (list jar-name
           (->> (or (match-string 1 jar-name) "0")
                (replique/safe-s-split "\\.")
                (-map 'string-to-number))
           (match-string 2 jar-name)
           (-> (or (match-string 3 jar-name) "0")
+              string-to-number))))
+
+(defun replique/cljs-jar->version (jar-name)
+  (save-match-data
+    (string-match replique/cljs-jar-regex jar-name)
+    (list jar-name
+          (->> (or (match-string 1 jar-name) "0")
+               (replique/safe-s-split "\\.")
+               (-map 'string-to-number))
+          (-> (or (match-string 2 jar-name) "0")
               string-to-number))))
 
 (comment
@@ -285,9 +298,10 @@
         (t nil)))
 (comment
  ("clojure-1.6.0-beta45.jar" (1 6 0) "beta" 0)
+ ("clojurescript-0.0-3297.jar" (0 0) 3287)
  )
 
-(defun replique/jar-version<  (x y)
+(defun replique/clj-jar-version<  (x y)
   (-let (((jar-name-1 v1 type-1 type-v-1) x)
          ((jar-name-2 v2 type-2 type-v-2) y))
     (cond ((and (equal v1 v2) (equal type-1 type-2))
@@ -296,24 +310,51 @@
            (replique/release-type< type-1 type-2))
           (t (replique/release-version< v1 v2)))))
 
-(defun replique/jar-version> (x y)
-  (not (replique/jar-version< x y)))
+(defun replique/cljs-jar-version<  (x y)
+  (-let (((jar-name-1 v11 v12) x)
+         ((jar-name-2 v21 v22) y))
+    (cond ((and (equal v11 v21))
+           (< v12 v22))
+          (t (replique/release-version< v11 v21)))))
+
+(defun replique/clj-jar-version> (x y)
+  (not (replique/clj-jar-version< x y)))
+
+(defun replique/cljs-jar-version> (x y)
+  (not (replique/cljs-jar-version< x y)))
 
 (comment
- (replique/clojure-jars-in-path)
+ (replique/jars-in-path "clj")
  )
 
-(defun replique/clojure-jars-in-path ()
+(defun replique/jars-in-path (platform)
   (-let* ((path (eshell-command-result "echo $PATH"))
           (path-dirs (split-string path ":"))
-          (clojure-jars (-> (-keep (lambda (dir)
-                                     (directory-files
-                                      dir t replique/clojure-jar-regex))
-                                   path-dirs)
-                            -flatten))
-          (clojure-jar-versions (-map 'replique/clojure-jar->version
-                                      clojure-jars)))
-    (-sort 'replique/jar-version< clojure-jar-versions)))
+          (jar-regex (cond ((string= "clj" platform)
+                            replique/clj-jar-regex)
+                           ((string= "cljs" platform)
+                            replique/cljs-jar-regex)
+                           (t (error "Unsupported platform: %s"
+                                     platform))))
+          (version-parse-fn (cond ((string= "clj" platform)
+                                   'replique/clj-jar->version)
+                                  ((string= "cljs" platform)
+                                   'replique/cljs-jar->version)
+                                  (t (error "Unsupported platform: %s"
+                                            platform))))
+          (jar-version< (cond ((string= "clj" platform)
+                               'replique/clj-jar-version<)
+                              ((string= "cljs" platform)
+                               'replique/cljs-jar-version<)
+                              (t (error "Unsupported platform: %s"
+                                        platform))))
+          (jars (-> (-keep (lambda (dir)
+                             (directory-files
+                              dir t jar-regex))
+                           path-dirs)
+                    -flatten))
+          (jars-versions (-map version-parse-fn jars)))
+    (-sort jar-version< jars-versions)))
 
 
 
@@ -326,7 +367,7 @@
                     (replique/build-files))))
       default-directory))
 
-(defun replique/project-repl-cmd (root-dir)
+(defun replique/project-repl-cmd (root-dir platform)
   (let ((repl-cmds (mapcar
                     (-lambda ((build-tool-name . project-props))
                       (let ((project-file (-> (assoc
@@ -338,10 +379,10 @@
                                                    project-props)
                                                   cdr)))
                         (cond ((null project-file)
-                               (funcall default-repl-cmd))
+                               (funcall default-repl-cmd platform))
                               ((locate-file project-file
                                             (list root-dir))
-                               (funcall default-repl-cmd))
+                               (funcall default-repl-cmd platform))
                               (t nil))))
                     replique/clojure-build-tools)))
     (-> (-remove 'null repl-cmds)
@@ -374,25 +415,24 @@
 
 
 
-;;;###autoload
-(defun replique/repl (repl-cmd root-dir)
-  "Run a Clojure REPL, input and output via buffer `*replique*'."
-  (interactive
-   (progn
-     (let* ((root-dir (cond ((boundp 'root-dir) root-dir)
-                            (current-prefix-arg
-                             (read-string
-                              "REPL process initial directory: "
-                              (replique/project-root-dir)))
-                            (t (replique/project-root-dir))))
-            (repl-cmd (cond ((boundp 'repl-cmd) repl-cmd)
-                            (current-prefix-arg
-                             (read-string
-                              "REPL launch command: "
-                              (replique/project-repl-cmd root-dir)))
-                            (t (replique/project-repl-cmd root-dir)))))
-       (list repl-cmd root-dir))))
-  ;; run the new process in the project's root when in a project folder
+
+(defun replique/compute-root-dir (&optional root-dir prefix-arg)
+  (cond (root-dir root-dir)
+        (prefix-arg
+         (read-string
+          "REPL process initial directory: "
+          (replique/project-root-dir)))
+        (t (replique/project-root-dir))))
+
+(defun replique/compute-repl-cmd (root-dir &optional repl-cmd prefix-arg)
+  (cond (repl-cmd repl-cmd)
+        (current-prefix-arg
+         (read-string
+          "REPL launch command: "
+          (replique/project-repl-cmd root-dir)))
+        (t (replique/project-repl-cmd root-dir))))
+
+(defun replique/repl* (root-dir repl-cmd)
   (when (not repl-cmd)
     (error "Clojure process cannot be started"))
   (let* ((default-directory root-dir)
@@ -424,6 +464,16 @@
               (->> (car replique/buffers)
                    (assoc 'name))))))))
     (setq replique/buffers-hook-added t)))
+
+;;;###autoload
+(defun replique/repl (&optional repl-cmd root-dir)
+  "Run a Clojure REPL, input and output via buffer `*replique*'."
+  (interactive
+   (progn
+     (let* ((root-dir (replique/compute-root-dir))
+            (repl-cmd (replique/compute-repl-cmd root-dir)))
+       (list repl-cmd root-dir))))
+  (replique/repl* root-dir repl-cmd))
 
 (defvar replique/buffers-hook-added nil)
 (defvar replique/buffers nil)
