@@ -201,33 +201,31 @@
 
 
 
-(defun replique/repl-cmd-raw (jar-list platform)
-  (let ((platform-suffix (if (string= "clj" platform) "" "-cljs")))
-    `("java" "-cp" ,(s-join ":" jar-list) "clojure.main" "-e"
+(defun replique/repl-cmd-raw (jar platform)
+  (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
+    `("java" "-cp" ,jar "clojure.main" "-e"
       ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))
 
 (defvar replique/clojure-build-tools
-  (cl-flet ((clj-jar () (caar (replique/jars-in-path "clj")))
-            (cljs-jar () (caar (replique/jars-in-path "cljs"))))
-    `((leiningen
-       . ((project-file
-           . "project.clj")
-          (default-repl-cmd
-            . ,(lambda (platform)
-                 `("lein" "run" "-m" "clojure.main/main" "-e"
-                   ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))))
-      (raw . ((project-file . nil)
-              (default-repl-cmd
-                . ,(lambda (platform)
-                     (replique/repl-cmd-raw
-                      (if (string= platform "cljs")
-                          `(,(cljs-jar))
-                        `(,(clj-jar)))
-                      platform)))))
-;; (boot . ((project-file . "boot.clj")
-;;          (default-repl-cmd . ,(lambda ()
-;;                                 '("boot" "repl)"))))
-)))
+  (cl-flet ((platform-jar (platform)
+                          (caar (replique/jars-in-path platform))))
+            `((leiningen
+               . ((project-file
+                   . "project.clj")
+                  (default-repl-cmd
+                    . ,(lambda (platform)
+                         `("lein" "run" "-m" "clojure.main/main" "-e"
+                           ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))))
+              (raw . ((project-file . nil)
+                      (default-repl-cmd
+                        . ,(lambda (platform)
+                             (replique/repl-cmd-raw
+                              (platform-jar platform)
+                              platform)))))
+              ;; (boot . ((project-file . "boot.clj")
+              ;;          (default-repl-cmd . ,(lambda ()
+              ;;                                 '("boot" "repl)"))))
+              )))
 
 (defun replique/build-files ()
   (delete nil (mapcar (lambda (project-props)
