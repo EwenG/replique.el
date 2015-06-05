@@ -7,16 +7,27 @@
 (defmethod tooling-msg-handle "load-file"
   [{:keys [type file-path load-file-fn]
     :or {load-file-fn load-file}}]
-  (map->ToolingMsg
-   {:type type
-    :result (pr-str (load-file-fn file-path))}))
+  (try (map->ToolingMsg
+        {:type type
+         :result (pr-str (load-file-fn file-path))})
+       (catch Exception e
+         (map->ToolingMsg
+          {:type type
+           :result nil
+           :error e}))))
 
 (defmethod tooling-msg-handle "set-ns"
   [{:keys [type ns in-ns-fn]
     :or {in-ns-fn in-ns}}]
-  (map->ToolingMsg
-   {:type type
-    :result (pr-str (-> ns symbol in-ns-fn pr-str))}))
+  (try
+    (map->ToolingMsg
+     {:type type
+      :result (pr-str (-> ns symbol in-ns-fn pr-str))})
+    (catch Exception e
+      (map->ToolingMsg
+       {:type type
+        :result nil
+        :error e}))))
 
 #_(defmethod tooling-msg-handle "completions"
   [{:keys [type prefix ns] :as msg}]
@@ -27,6 +38,11 @@
 
 (defmethod tooling-msg-handle "completions"
   [{:keys [type prefix] :as msg}]
-  (map->ToolingMsg
-   {:type type
-    :result (pr-str "e")}))
+  (try (map->ToolingMsg
+        {:type type
+         :result (pr-str "e")})
+       (catch Exception e
+         (map->ToolingMsg
+          {:type type
+           :result nil
+           :error e}))))

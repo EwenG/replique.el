@@ -5,6 +5,7 @@
 ;;; Code:
 
 (require 'dash)
+(require 'dash-functional)
 (require 's)
 (require 'comint)
 (require 'clojure-mode)
@@ -149,11 +150,15 @@
       (goto-char (process-mark process))
       (insert old-input))))
 
-
 (defvar replique/edn-tag-readers
   `((:readers . ((ewen.replique.core.ToolingMsg . ,(-lambda (msg)
                                                      `((type . ,(gethash :type msg))
-                                                       (result . ,(gethash :result msg)))))))))
+                                                       (result . ,(gethash :result msg))
+                                                       (error . ,(gethash :error msg)))))
+                 (error . ,(-lambda (msg)
+                             `((message . ,(->> (gethash :via msg)
+                                                (funcall (-rpartial 'elt 0))
+                                                (gethash :message))))))))))
 
 (comment
  (let* ((rdr (replique-edn/reader nil :str "#ewen.replique.core.ToolingMsg{:type \"load-file\" :result \"#'test-project.core/foo\"}"))
@@ -412,7 +417,10 @@
            (push msg replique/tooling-handlers-queue))
           (msg (funcall
                 (pop replique/tooling-handlers-queue)
-                msg))
+                msg)
+               (-let (((&alist 'error (&alist 'message err-msg)) msg))
+                 (when err-msg
+                   (comint-output-filter proc (concat err-msg "\n")))))
           (t (comint-output-filter proc string)))))
 
 
@@ -648,17 +656,25 @@ The following commands are available:
 ;; Tooling messages
 
 (defun replique/handler-load-file (file-name msg)
-  (message "Loading Clojure file: %s ... Done." file-name))
+  (-let (((&alist 'error err) msg))
+    (if err
+        (message "Loading Clojure file: %s ... Failed." file-name)
+      (message "Loading Clojure file: %s ... Done." file-name))))
 
 (defun replique/handler-set-ns (ns msg)
-  (with-current-buffer
-      (replique/get-active-buffer)
-    (replique/comint-refresh-prompt))
-  (message "Setting namespace to: %s ... Done." ns))
+  (-let (((&alist 'error err) msg))
+    (if err
+        (message "Setting namespace to: %s ... Failed." ns)
+      (progn
+        (with-current-buffer
+            (replique/get-active-buffer)
+          (replique/comint-refresh-prompt))
+        (message "Setting namespace to: %s ... Done." ns)))))
 
 (defun replique/handler-completions (callback msg)
-  (-let (((&alist 'result result) msg))
-    (funcall callback result)))
+  (-let (((&alist 'result result 'error err) msg))
+    (when (not err)
+      (funcall callback result))))
 
 (defvar replique/tooling-handlers-queue '())
 
