@@ -5,8 +5,9 @@
            [cljs.compiler :as comp]
            [cljs.analyzer :as ana]))
 
-(create-ns 'ewen.replique.core)
-(intern 'ewen.replique.core 'tooling-msg-handle nil)
+(when (not (find-ns 'ewen.replique.core))
+  (create-ns 'ewen.replique.core)
+  (intern 'ewen.replique.core 'tooling-msg-handle nil))
 
 (defn make-in-ns-fn [repl-env env]
   (fn [ns-name]
