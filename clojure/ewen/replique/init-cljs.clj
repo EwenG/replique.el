@@ -27,7 +27,7 @@
      ([repl-env env form]
       (self repl-env env form nil))
      ([repl-env env [_ msg] opts]
-      (print (ewen.replique.core/tooling-msg-handle
+      (prn (ewen.replique.core/tooling-msg-handle
               (assoc msg
                      :load-file-fn
                      #(cljs.repl/load-file repl-env % opts)

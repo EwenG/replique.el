@@ -158,7 +158,8 @@
                  (error . ,(-lambda (msg)
                              `((message . ,(->> (gethash :via msg)
                                                 (funcall (-rpartial 'elt 0))
-                                                (gethash :message))))))))))
+                                                (gethash :message))))))
+                 (object . identity)))))
 
 (comment
  (let* ((rdr (replique-edn/reader nil :str "#ewen.replique.core.ToolingMsg{:type \"load-file\" :result \"#'test-project.core/foo\"}"))
