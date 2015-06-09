@@ -29,18 +29,14 @@
         :result nil
         :error e}))))
 
-#_(defmethod tooling-msg-handle "completions"
-  [{:keys [type prefix ns] :as msg}]
-  (map->ToolingMsg
-   {:type type
-    :result (ewen.replique.compliment.core/completions
-             prefix (select-keys msg [:ns]))}))
-
 (defmethod tooling-msg-handle "completions"
-  [{:keys [type prefix] :as msg}]
+  [{:keys [type prefix completion-fn]
+    :or {completion-fn ewen.replique.completion/completions}
+    :as msg}]
   (try (map->ToolingMsg
         {:type type
-         :result (pr-str "e")})
+         :result (completion-fn
+                  prefix (select-keys msg [:ns]))})
        (catch Exception e
          (map->ToolingMsg
           {:type type
