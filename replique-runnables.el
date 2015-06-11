@@ -19,6 +19,15 @@
 
 
 
+(defcustom replique-runnables/clj-url "https://repo1.maven.org/maven2/org/clojure/clojure/1.7.0-RC1/clojure-1.7.0-RC1.jar"
+  "The URL to use when dowloading the Clojure jar."
+  :type 'string
+  :group 'replique)
+
+(defcustom replique-runnables/cljs-url "https://raw.githubusercontent.com/EwenG/replique.el/master/runnables/clojurescript-0.0-3308-standalone.jar"
+  "The URL to use when dowloading the Clojurescriptjar."
+  :type 'string
+  :group 'replique)
 
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
@@ -132,6 +141,48 @@
                     -flatten))
           (jars-versions (-map version-parse-fn jars)))
     (-sort jar-version< jars-versions)))
+
+
+
+
+
+
+
+
+
+
+
+
+
+;; Jar downloading
+
+(defun replique-runnables/download-jar (download-dir platform callback)
+  (let* ((url (cond ((equal platform "clj") replique-runnables/clj-url)
+                    ((equal platform "cljs") replique-runnables/cljs-url)
+                    (t (error "Unsupported platform: %s" platform))))
+         (jar-path (format
+                   "%s%s"
+                   download-dir
+                   (url-file-nondirectory url))))
+    (url-retrieve
+     url
+     (lambda (status)
+       (if (not (null status))
+           (error "Error while downloading %s" status)
+         (progn (ignore-errors
+                  (write-file jar-path t))
+                (kill-buffer)
+                (funcall callback jar-path)))))
+    jar-path))
+
+(comment
+ (replique-runnables/download-jar
+  "/home/egr/Downloads/"
+  "cljs"
+  (lambda (jar-path)
+    (print jar-path)))
+ )
+
 
 (provide 'replique-runnables)
 

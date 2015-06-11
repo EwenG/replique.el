@@ -204,21 +204,25 @@
 
 
 (defun replique/repl-cmd-raw (jar platform)
-  (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
-    `("java" "-cp" ,jar "clojure.main" "-e"
-      ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))
+  (if (null jar)
+      nil
+      (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
+        `("java" "-cp" ,jar "clojure.main" "-e"
+          ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir))))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((platform-jar (platform)
                           (caar
                            (replique-runnables/jars-in-path platform))))
             `((leiningen
-               . ((project-file
-                   . "project.clj")
+               . ((project-file . "project.clj")
                   (default-repl-cmd
                     . ,(lambda (platform)
-                         `("lein" "run" "-m" "clojure.main/main" "-e"
-                           ,(format "(do (load-file \"%sclojure/ewen/replique/init.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))))
+                         (let ((platform-suffix
+                                (if (string= "cljs" platform)
+                                    "-cljs" "")))
+                           `("lein" "run" "-m" "clojure.main/main" "-e"
+                             ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir))))))))
               (raw . ((project-file . nil)
                       (default-repl-cmd
                         . ,(lambda (platform)
@@ -263,7 +267,7 @@
       default-directory))
 
 (defun replique/project-repl-cmd (root-dir platform)
-  (let ((repl-cmds (mapcar
+  (let* ((repl-cmds (mapcar
                     (-lambda ((build-tool-name . project-props))
                       (let ((project-file (-> (assoc
                                                'project-file
@@ -279,9 +283,10 @@
                                             (list root-dir))
                                (funcall default-repl-cmd platform))
                               (t nil))))
-                    replique/clojure-build-tools)))
-    (-> (-remove 'null repl-cmds)
-        car)))
+                    replique/clojure-build-tools))
+         (repl-cmd (-> (-remove 'null repl-cmds)
+                       car)))
+    (or repl-cmd 'runnable-jar-not-found)))
 
 
 (defun replique/comint-output-filter (proc string)
@@ -314,72 +319,90 @@
 
 
 
-(defun replique/compute-root-dir (&optional root-dir prefix-arg)
-  (cond (root-dir root-dir)
-        (prefix-arg
-         (read-string
-          "REPL process initial directory: "
-          (replique/project-root-dir)))
-        (t (replique/project-root-dir))))
-
-(defun replique/compute-repl-cmd (root-dir platform &optional repl-cmd prefix-arg)
-  (cond (repl-cmd repl-cmd)
-        (current-prefix-arg
-         (read-string
-          "REPL launch command: "
-          (replique/project-repl-cmd root-dir platform)))
-        (t (replique/project-repl-cmd root-dir platform))))
-
 (defun replique/repl* (root-dir repl-cmd)
   (when (not repl-cmd)
     (error "Clojure process cannot be started"))
-  (let* ((default-directory root-dir)
-         (buffer-name (replique/gen-buffer-name))
-         (comint-buffer (apply #'make-comint
-                               buffer-name
-                               (car repl-cmd) nil (cdr repl-cmd))))
-    (set-buffer comint-buffer)
-    (replique/mode)
-    (set-process-filter (replique/proc) 'replique/comint-output-filter)
-    (push `((name . ,buffer-name)
-            (buffer . ,comint-buffer)
-            (active . t))
-          replique/buffers)
-    (replique/set-active-buffer buffer-name)
-    (pop-to-buffer comint-buffer)
-    (when (not replique/buffers-hook-added)
-      (add-hook
-       'kill-buffer-hook
-       (lambda ()
-         (let ((b (current-buffer)))
-           (setq replique/buffers
-                 (-remove
-                  (-lambda ((&alist 'buffer buffer))
-                    (equal buffer b))
-                  replique/buffers))
-           (when (equal b (replique/get-active-buffer))
-             (replique/set-active-buffer
-              (->> (car replique/buffers)
-                   (assoc 'name))))))))
-    (setq replique/buffers-hook-added t)))
+  (if (equal repl-cmd 'runnable-jar-not-found)
+      nil
+    (let* ((default-directory root-dir)
+           (buffer-name (replique/gen-buffer-name))
+           (comint-buffer (apply #'make-comint
+                                 buffer-name
+                                 (car repl-cmd) nil (cdr repl-cmd))))
+      (set-buffer comint-buffer)
+      (replique/mode)
+      (set-process-filter (replique/proc) 'replique/comint-output-filter)
+      (push `((name . ,buffer-name)
+              (buffer . ,comint-buffer)
+              (active . t))
+            replique/buffers)
+      (replique/set-active-buffer buffer-name)
+      (pop-to-buffer comint-buffer)
+      (when (not replique/buffers-hook-added)
+        (add-hook
+         'kill-buffer-hook
+         (lambda ()
+           (let ((b (current-buffer)))
+             (setq replique/buffers
+                   (-remove
+                    (-lambda ((&alist 'buffer buffer))
+                      (equal buffer b))
+                    replique/buffers))
+             (when (equal b (replique/get-active-buffer))
+               (replique/set-active-buffer
+                (->> (car replique/buffers)
+                     (assoc 'name))))))))
+      (setq replique/buffers-hook-added t))))
+
+(defun replique/platform-to-name (platform)
+  (cond ((equal platform "cljs")
+         "Clojurescript")
+        ((equal platform "clj")
+         "Clojure")
+        (t (error "Unknown platform: %s" platform))))
+
+(defun replique/handle-jar-not-found (root-dir platform)
+  (when (yes-or-no-p (format "Sorry, I could not find a %s jar on the filesystem in order to start the REPL. Would you like me to download it now?"
+                             (replique/platform-to-name platform)))
+    (-> (ido-read-directory-name
+         (format "Please enter the directory where the %s jar should be saved: "
+                 (replique/platform-to-name platform)))
+        (replique-runnables/download-jar
+         platform
+         (lambda (jar-path)
+           (replique/repl
+            (replique/repl-cmd-raw jar-path platform)
+            root-dir))))))
 
 ;;;###autoload
 (defun replique/repl (&optional repl-cmd root-dir)
   "Run a Clojure REPL, input and output via buffer `*replique*'."
   (interactive
    (progn
-     (let* ((root-dir (replique/compute-root-dir))
-            (repl-cmd (replique/compute-repl-cmd root-dir "clj")))
+     (let* ((root-dir (ido-read-directory-name
+                       "REPL root directory: "
+                       (replique/project-root-dir)))
+            (repl-cmd (replique/project-repl-cmd root-dir "clj"))
+            (repl-cmd (progn
+                        (when (equal 'runnable-jar-not-found repl-cmd)
+                          (replique/handle-jar-not-found root-dir "clj"))
+                        repl-cmd)))
        (list repl-cmd root-dir))))
   (replique/repl* root-dir repl-cmd))
 
 ;;;###autoload
 (defun replique/repl-cljs (&optional repl-cmd root-dir)
-  "Run a Clojure REPL, input and output via buffer `*replique*'."
+  "Run a Clojurescript REPL, input and output via buffer `*replique*'."
   (interactive
    (progn
-     (let* ((root-dir (replique/compute-root-dir))
-            (repl-cmd (replique/compute-repl-cmd root-dir "cljs")))
+     (let* ((root-dir (ido-read-directory-name
+                       "REPL root directory: "
+                       (replique/project-root-dir)))
+            (repl-cmd (replique/project-repl-cmd root-dir "cljs"))
+            (repl-cmd (progn
+                        (when (equal 'runnable-jar-not-found repl-cmd)
+                          (replique/handle-jar-not-found root-dir "cljs"))
+                        repl-cmd)))
        (list repl-cmd root-dir))))
   (replique/repl* root-dir repl-cmd))
 
