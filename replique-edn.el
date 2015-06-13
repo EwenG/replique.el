@@ -109,6 +109,19 @@
       (replique-edn/reader-read r ch))
     ch))
 
+(defmethod replique-edn/reader-rest-string
+  ((r replique-edn/reader))
+  (cond ((and
+          (null (oref r unread-char))
+          (equal
+           (oref r index)
+           (length (oref r str))))
+         nil)
+        ((not (null (oref r unread-char)))
+         (concat (char-to-string (oref r unread-char))
+                 (substring (oref r str) (oref r index))))
+        (t (substring (oref r str) (oref r index)))))
+
 (defun replique-edn/is-separator (ch)
   (or (equal ?\s ch)
       (equal ?\, ch)

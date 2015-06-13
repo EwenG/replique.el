@@ -10,11 +10,11 @@
   (try (map->ToolingMsg
         {:type type
          :result (pr-str (load-file-fn file-path))})
-       (catch Exception e
+       (catch Throwable t
          (map->ToolingMsg
           {:type type
            :result nil
-           :error e}))))
+           :error t}))))
 
 (defmethod tooling-msg-handle "set-ns"
   [{:keys [type ns in-ns-fn]
@@ -23,11 +23,11 @@
     (map->ToolingMsg
      {:type type
       :result (pr-str (-> ns symbol in-ns-fn pr-str))})
-    (catch Exception e
+    (catch Throwable t
       (map->ToolingMsg
        {:type type
         :result nil
-        :error e}))))
+        :error t}))))
 
 (defmethod tooling-msg-handle "completions"
   [{:keys [type prefix completion-fn]
@@ -37,8 +37,25 @@
         {:type type
          :result (completion-fn
                   prefix (select-keys msg [:ns]))})
-       (catch Exception e
+       (catch Throwable t
          (map->ToolingMsg
           {:type type
            :result nil
-           :error e}))))
+           :error t}))))
+
+(defmethod tooling-msg-handle "add-classpath"
+  [{:keys [type path classloader-hierarchy-fn]
+    :or {classloader-hierarchy-fn
+         (partial ewen.replique.classpath/classloader-hierarchy
+                  (.. clojure.lang.RT baseLoader))}
+    :as msg}]
+  (try (map->ToolingMsg
+        {:type type
+         :result (-> (classloader-hierarchy-fn)
+                     ewen.replique.classpath/choose-classloader
+                     (ewen.replique.classpath/add-classpath path))})
+       (catch Throwable t
+         (map->ToolingMsg
+          {:type type
+           :result nil
+           :error t}))))
