@@ -24,10 +24,12 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique-runnables/cljs-url "https://raw.githubusercontent.com/EwenG/replique.el/master/runnables/clojurescript-0.0-3308-standalone.jar"
+(defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r3308/cljs.jar"
   "The URL to use when dowloading the Clojurescriptjar."
   :type 'string
   :group 'replique)
+
+(defvar replique-runnables/cljs-file-name "clojurescript-0.0-3308-standalone.jar")
 
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
@@ -163,7 +165,11 @@
          (jar-path (format
                    "%s%s"
                    download-dir
-                   (url-file-nondirectory url))))
+                   (cond ((equal platform "clj")
+                          (url-file-nondirectory url))
+                         ((equal platform "cljs")
+                          replique-runnables/cljs-file-name)
+                         (t (error "Unsupported platform: %s" platform))))))
     (url-retrieve
      url
      (lambda (status)
