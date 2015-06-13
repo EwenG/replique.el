@@ -11,6 +11,9 @@
 (when (not (find-ns 'ewen.replique.completion))
   (create-ns 'ewen.replique.completion)
   (intern 'ewen.replique.completion 'completions nil))
+(when (not (find-ns 'ewen.replique.classpath))
+  (create-ns 'ewen.replique.classpath)
+  (intern 'ewen.replique.classpath 'classloader-hierarchy nil))
 
 (defn make-in-ns-fn [repl-env env]
   (fn [ns-name]
@@ -41,7 +44,13 @@
                        (ewen.replique.completion/completions
                         prefix (assoc options-map
                                       :cljs-comp-env
-                                      @cljs-env/*compiler*))))))))})
+                                      @cljs-env/*compiler*)))
+                     :classloader-hierarchy-fn
+                     (partial
+                      ewen.replique.classpath/classloader-hierarchy
+                      (.. Thread currentThread
+                          getContextClassLoader)))))))})
+
 
 (alter-var-root #'cljs.repl/default-special-fns
                   #(merge % special-fns))
@@ -55,10 +64,19 @@
 (def ^:const init-files
   ["clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
+   "clojure/ewen/replique/classpath.clj"
    "clojure/ewen/replique/core.clj"])
+
+(when (not (find-ns 'ewen.replique.classpath))
+  (create-ns 'ewen.replique.classpath)
+  (intern 'ewen.replique.classpath 'classloader-hierarchy nil)
+  (intern 'ewen.replique.classpath 'choose-classloader nil))
 
 ;;/home/egr/replique.el/
 (defn init [replique-root-dir]
+  (let [cl (.getContextClassLoader (Thread/currentThread))]
+    (.setContextClassLoader (Thread/currentThread)
+                            (clojure.lang.DynamicClassLoader. cl)))
   (let [repl-requires '[[cljs.repl
                          :refer-macros [source doc
                                         find-doc apropos

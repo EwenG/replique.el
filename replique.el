@@ -558,6 +558,11 @@ Defaults to the ns of the current buffer."
   (message "Setting namespace to: %s ..." ns)
   (replique/send-set-ns ns))
 
+(defun replique/add-sourcepath (path)
+  (interactive (list (ido-read-file-name "Add sourcepath: ")))
+  (message "Adding sourcepath: %s ..." path)
+  (replique/send-add-sourcepath path))
+
 
 
 
@@ -654,6 +659,12 @@ The following commands are available:
         (:prefix . ,prefix))
       (replique/tooling-send-msg
        (-partial 'replique/handler-completions company-callback))))
+
+(defun replique/send-add-sourcepath (path)
+  (-> `((:type . "add-classpath")
+        (:path . ,path))
+      (replique/tooling-send-msg
+       (-partial 'replique/handler-add-sourcepath path))))
 
 
 
