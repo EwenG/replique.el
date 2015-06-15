@@ -48,23 +48,24 @@
       (self repl-env env form nil))
      ([repl-env env [_ msg] opts]
       (prn (ewen.replique.core/tooling-msg-handle
-              (assoc msg
-                     :load-file-fn
-                     #(cljs-env/with-compiler-env compiler-env
-                        (cljs.repl/load-file repl-env % opts))
-                     :in-ns-fn
-                     (make-in-ns-fn repl-env env)
-                     :completion-fn
-                     (fn [prefix options-map]
-                       (ewen.replique.completion/completions
-                        prefix (assoc options-map
-                                      :cljs-comp-env
-                                      @cljs-env/*compiler*)))
-                     :classloader-hierarchy-fn
-                     (partial
-                      ewen.replique.classpath/classloader-hierarchy
-                      (.. Thread currentThread
-                          getContextClassLoader)))))))})
+            (assoc msg
+                   :platform "cljs"
+                   :load-file-fn
+                   #(cljs-env/with-compiler-env compiler-env
+                      (cljs.repl/load-file repl-env % opts))
+                   :in-ns-fn
+                   (make-in-ns-fn repl-env env)
+                   :completion-fn
+                   (fn [prefix options-map]
+                     (ewen.replique.completion/completions
+                      prefix (assoc options-map
+                                    :cljs-comp-env
+                                    @cljs-env/*compiler*)))
+                   :classloader-hierarchy-fn
+                   (partial
+                    ewen.replique.classpath/classloader-hierarchy
+                    (.. Thread currentThread
+                        getContextClassLoader)))))))})
 
 
 (alter-var-root #'cljs.repl/default-special-fns

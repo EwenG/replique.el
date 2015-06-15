@@ -150,6 +150,7 @@
   `((:readers . ((ewen.replique.core.ToolingMsg . ,(-lambda (msg)
                                                      `((type . ,(gethash :type msg))
                                                        (result . ,(gethash :result msg))
+                                                       (platform . ,(gethash :platform msg))
                                                        (error . ,(gethash :error msg)))))
                  (error . ,(-lambda (msg)
                              `((message . ,(->> (gethash :via msg)
@@ -297,24 +298,26 @@
                 msg)
                (-let (((&alist 'type type
                         'error (&alist 'message err-msg))
-                       msg))
+                       msg)
+                      (rest-str (replique-edn/reader-rest-string rdr)))
                  (cond (err-msg
                         (comint-output-filter proc err-msg)
-                        (when (replique-edn/reader-rest-string rdr)
+                        (when rest-str
                           (replique/comint-output-filter
                            proc
-                           (replique-edn/reader-rest-string rdr))))
+                           rest-str)))
+
                        ((or (string= "load-file" type)
                             (string= "completions" type)
                             (string= "add-classpath" type))
-                        (when (replique-edn/reader-rest-string rdr)
-                          (->> (replique-edn/reader-rest-string rdr)
+                        (when rest-str
+                          (->> rest-str
                                (s-chop-prefix "\n")
                                (replique/comint-output-filter proc))))
-                       (t (when (replique-edn/reader-rest-string rdr)
+                       (t (when rest-str
                             (replique/comint-output-filter
                              proc
-                             (replique-edn/reader-rest-string rdr)))))))
+                             rest-str))))))
           (t (comint-output-filter proc string)))))
 
 (defun replique/comint-output-filter-dispatch (proc string)
