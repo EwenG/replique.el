@@ -24,6 +24,11 @@
   :type 'string
   :group 'replique)
 
+(defcustom replique-runnables/clj-dep [org.clojure/clojure "1.7.0-RC1"]
+  "The default Clojure dependency."
+  :type 'string
+  :group 'replique)
+
 (defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r3308/cljs.jar"
   "The URL to use when dowloading the Clojurescriptjar."
   :type 'string
@@ -31,15 +36,41 @@
 
 (defvar replique-runnables/cljs-file-name "clojurescript-0.0-3308-standalone.jar")
 
+(defcustom replique-runnables/cljs-dep
+  [org.clojure/clojurescript "0.0-3308"]
+  "The default Clojurescript dependency."
+  :type 'string
+  :group 'replique)
+
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
 (defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-?\\([0-9]+\\)?-standalone.jar$")
+
+(defun replique-runnables/default-dep (platform)
+  (cond ((string= platform "clj")
+         replique-runnables/clj-dep)
+        ((string= platform "cljs")
+         replique-runnables/cljs-dep)
+        (t (error "Unsupported platform: %s" platform))))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 (comment
  (replique-runnables/clj-jar->version  "clojure-1.6.0-beta45.jar")
  (replique-runnables/cljs-jar->version  "clojurescript-0.0-3308-standalone.jar")
  )
-
 
 (defun replique-runnables/clj-jar->version (jar-name)
   (save-match-data

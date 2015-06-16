@@ -326,7 +326,7 @@
          s-list)))
 
 
-(defun replique/repl* (root-dir repl-cmd)
+(defun replique/repl* (root-dir platform repl-cmd)
   (when (not repl-cmd)
     (error "Clojure process cannot be started"))
   (if (equal repl-cmd 'runnable-jar-not-found)
@@ -343,7 +343,10 @@
       (push `((name . ,buffer-name)
               (buffer . ,comint-buffer)
               (root-dir . ,root-dir)
-              (active . t))
+              (platform . ,platform)
+              (active . t)
+              (sourcepaths . nil)
+              (resourcepaths . nil))
             replique/buffers)
       (replique/set-active-buffer buffer-name)
       (pop-to-buffer comint-buffer)
@@ -397,7 +400,7 @@
                           (replique/handle-jar-not-found root-dir "clj"))
                         repl-cmd)))
        (list repl-cmd root-dir))))
-  (replique/repl* root-dir repl-cmd))
+  (replique/repl* root-dir "clj" repl-cmd))
 
 ;;;###autoload
 (defun replique/repl-cljs (&optional repl-cmd root-dir)
@@ -413,7 +416,7 @@
                           (replique/handle-jar-not-found root-dir "cljs"))
                         repl-cmd)))
        (list repl-cmd root-dir))))
-  (replique/repl* root-dir repl-cmd))
+  (replique/repl* root-dir "cljs" repl-cmd))
 
 
 (defvar replique/buffers-hook-added nil)
@@ -447,16 +450,25 @@
          (-lambda ((&alist 'name name
                      'buffer buffer
                      'active active
-                     'root-dir root-dir))
+                     'root-dir root-dir
+                     'platform platform
+                     'sourcepaths sourcepaths
+                     'resourcepaths resourcepaths))
            (if (equal buffer-name name)
                `((name . ,name)
                  (buffer . ,buffer)
                  (active . t)
-                 (root-dir . ,root-dir))
+                 (root-dir . ,root-dir)
+                 (platform . ,platform)
+                 (sourcepaths . ,sourcepaths)
+                 (resourcepaths . ,resourcepaths))
              `((name . ,name)
                (buffer . ,buffer)
                (active . nil)
-               (root-dir . ,root-dir))))
+               (root-dir . ,root-dir)
+               (platform . ,platform)
+               (sourcepaths . ,sourcepaths)
+               (resourcepaths . ,resourcepaths))))
          replique/buffers))
   (when display-msg
     (message "Active buffer switched to: %s" buffer-name)))
@@ -480,21 +492,29 @@
        (assoc 'root-dir)
        cdr))
 
-(defun replique/get-project-type ()
-  (if (null replique/buffers)
-      nil
-    (let* ((root-dir (replique/get-project-root-dir))
-           (project-props (-first
-                           (-lambda ((&alist 'project-file project-file
-                                       'default-repl-cmd default-repl-cmd))
-                             (and
-                              (not (null project-file))
-                              (not (null (locate-file project-file
-                                                      (list root-dir))))))
-                           replique/clojure-build-tools)))
-      (if project-props
-          (car (assoc 'name project-props))
-        "raw"))))
+(defun replique/get-project-type (&optional error-on-nil)
+  (let* ((root-dir (replique/get-project-root-dir error-on-nil))
+         (project-props (-first
+                         (-lambda ((&alist 'project-file project-file
+                                     'default-repl-cmd default-repl-cmd))
+                           (and
+                            (not (null project-file))
+                            (not (null (locate-file project-file
+                                                    (list root-dir))))))
+                         replique/clojure-build-tools)))
+    (if project-props
+        (cdr (assoc 'name project-props))
+      "raw")))
+
+(defun replique/get-project-platform (&optional error-on-nil)
+  (->> (replique/get-active-buffer-props error-on-nil)
+       (assoc 'platform)
+       cdr))
+
+(defun replique/get-in-project (prop &optional error-on-nil)
+  (->> (replique/get-active-buffer-props error-on-nil)
+       (assoc prop)
+       cdr))
 
 
 (defun replique/proc ()
@@ -562,9 +582,34 @@ Defaults to the ns of the current buffer."
   (replique/send-set-ns ns))
 
 (defun replique/add-sourcepath (path)
-  (interactive (list (ido-read-file-name "Add sourcepath: ")))
-  (message "Adding sourcepath: %s ..." path)
-  (replique/send-add-sourcepath path))
+  (interactive
+   (let ((project-type (replique/get-project-type t)))
+     (if (string= project-type "raw")
+         (list (ido-read-file-name "Add sourcepath: "))
+       (list 'error))))
+  (if (equal 'error path)
+      (find-file-other-window
+       (->
+        (replique/get-project-root-dir t)
+        (concat "project.clj")))
+      (progn
+        (message "Adding sourcepath: %s ..." path)
+        (replique/send-add-sourcepath path))))
+
+(defun replique/add-resourcepath (path)
+  (interactive
+   (let ((project-type (replique/get-project-type t)))
+     (if (string= project-type "raw")
+         (list (ido-read-file-name "Add resourcepath: "))
+       (list 'error))))
+  (if (equal 'error path)
+      (find-file-other-window
+       (->
+        (replique/get-project-root-dir t)
+        (concat "project.clj")))
+    (progn
+      (message "Adding resourcepath: %s ..." path)
+      (replique/send-add-resourcepath path))))
 
 
 
@@ -626,12 +671,25 @@ The following commands are available:
     (when (not err)
       (funcall callback result))))
 
-(defun replique/handler-add-sourcepath (sourcepath msg)
+(defun replique/handler-add-sourcepath (buffer sourcepath msg)
   (-let (((&alist 'result result 'error err) msg))
     (if (and (not (null result))
              (not err))
-        (message "Adding sourcepath: %s ... Done." sourcepath)
+        (let ((sourcepaths (assoc 'sourcepaths buffer)))
+          (setcdr sourcepaths
+                  (-union (cdr sourcepaths) (list sourcepath)))
+          (message "Adding sourcepath: %s ... Done." sourcepath))
       (message "Adding sourcepath: %s ... Failed." sourcepath))))
+
+(defun replique/handler-add-resourcepath (buffer resourcepath msg)
+  (-let (((&alist 'result result 'error err) msg))
+    (if (and (not (null result))
+             (not err))
+        (let ((resourcepaths (assoc 'resourcepaths buffer)))
+          (setcdr resourcepaths
+                  (-union (cdr resourcepaths) (list resourcepath)))
+          (message "Adding sourcepath: %s ... Done." resourcepath))
+      (message "Adding resourcepath: %s ... Failed." resourcepath))))
 
 (defvar replique/tooling-handlers-queue '())
 
@@ -667,7 +725,19 @@ The following commands are available:
   (-> `((:type . "add-classpath")
         (:path . ,path))
       (replique/tooling-send-msg
-       (-partial 'replique/handler-add-sourcepath path))))
+       (-partial
+        'replique/handler-add-sourcepath
+        (replique/get-active-buffer-props t)
+        path))))
+
+(defun replique/send-add-resourcepath (path)
+  (-> `((:type . "add-classpath")
+        (:path . ,path))
+      (replique/tooling-send-msg
+       (-partial
+        'replique/handler-add-resourcepath
+        (replique/get-active-buffer-props t)
+        path))))
 
 
 
@@ -705,6 +775,63 @@ The following commands are available:
                              'replique/send-completions
                              (replique/symbol-backward))))))
 
+
+
+
+
+
+
+(defun replique/format-dependencies (dependencies)
+  (let ((suffix "\n                 ")
+        deps-str)
+    (dolist (dep dependencies deps-str)
+      (setq deps-str (concat
+                      deps-str
+                      (replique-edn/pr-str dep)))
+      (setq deps-str (concat
+                      deps-str
+                      suffix)))
+    (or (s-chop-suffix suffix deps-str)
+        "")))
+
+(defun replique/format-src-res-paths (paths)
+  (let ((suffix "\n                   ")
+        paths-str)
+    (dolist (path paths paths-str)
+      (setq paths-str (concat paths-str (format "\"%s\"" path)))
+      (setq paths-str (concat paths-str suffix)))
+    (or (s-chop-suffix suffix paths-str)
+        "")))
+
+(defun replique/format-project-file (dependencies src-paths res-paths)
+  (format
+   "(defproject org.example/sample \"0.0.1-SNAPSHOT\"
+  :dependencies [%s]
+  :source-paths   [%s]
+  :resource-paths [%s])"
+   (replique/format-dependencies dependencies)
+   (replique/format-src-res-paths src-paths)
+   (replique/format-src-res-paths res-paths)))
+
+(defun replique/project-file ()
+  (interactive)
+  (let ((project-type (replique/get-project-type t))
+        (platform (replique/get-project-platform t)))
+    (if (string= project-type "raw")
+        (let ((project-def (replique/format-project-file
+                            (-> (replique-runnables/default-dep platform)
+                                list)
+                            (replique/get-in-project 'sourcepaths t)
+                            (replique/get-in-project 'resourcepaths t))))
+          (find-file-other-window
+           (format "%sproject.clj"
+                   (replique/get-project-root-dir t)))
+          (erase-buffer)
+          (insert project-def))
+      (find-file-other-window
+       (->
+        (replique/get-project-root-dir t)
+        (concat "project.clj"))))))
 
 
 (provide 'replique)
