@@ -7,7 +7,7 @@
    "clojure/ewen/replique/lein.clj"
    "clojure/ewen/replique/core.clj"])
 
-(defn init [replique-root-dir]
+(defn init [replique-root-dir & rest]
   (println "Clojure" (clojure-version))
   (let [init-fn (fn []
                   (apply require

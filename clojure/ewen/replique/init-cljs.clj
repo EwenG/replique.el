@@ -20,13 +20,8 @@
   (create-ns 'ewen.replique.classpath)
   (intern 'ewen.replique.classpath 'classloader-hierarchy nil))
 
-(defonce opts {:output-dir "out"
-               :output-to "out/main.js"
-               :optimizations :none
-               :recompile-dependents false
-               :main 'ewen.replique.cljs-env.browser})
-(defonce compiler-env (cljs-env/default-compiler-env opts))
-(defonce repl-env (cljs.repl.browser/repl-env))
+(def compiler-env (atom nil))
+(def repl-env (atom nil))
 (defonce env {:context :expr :locals {}})
 
 (defn make-in-ns-fn [repl-env env]
@@ -51,7 +46,7 @@
             (assoc msg
                    :platform "cljs"
                    :load-file-fn
-                   #(cljs-env/with-compiler-env compiler-env
+                   #(cljs-env/with-compiler-env @compiler-env
                       (cljs.repl/load-file repl-env % opts))
                    :in-ns-fn
                    (make-in-ns-fn repl-env env)
@@ -86,12 +81,17 @@
   (intern 'ewen.replique.classpath 'choose-classloader nil))
 
 ;;/home/egr/replique.el/
-(defn init [replique-root-dir]
+(defn init [replique-root-dir comp-opts repl-opts]
   (let [cl (.getContextClassLoader (Thread/currentThread))]
     (.setContextClassLoader (Thread/currentThread)
                             (clojure.lang.DynamicClassLoader. cl)))
 
-  (let [in-env-browser (io/file replique-root-dir env-browser-path)
+  (let [opts (-> (read-string comp-opts)
+                 (assoc :optimizations :none))
+        repl-opts (-> (read-string repl-opts)
+                      (assoc :optimizations :none
+                             :serve-static true))
+        in-env-browser (io/file replique-root-dir env-browser-path)
         env-browser-ns-infos (ana/parse-ns in-env-browser)
         out-env-browser-js (util/to-target-file
                             (:output-dir opts)
@@ -100,11 +100,14 @@
                               (:output-dir opts)
                               env-browser-ns-infos
                               "cljs")]
+    (reset! compiler-env (cljs-env/default-compiler-env opts))
+    (reset! repl-env (apply cljs.repl.browser/repl-env
+                            (apply concat repl-opts)))
     (util/mkdirs out-env-browser-cljs)
     (.createNewFile out-env-browser-cljs)
     (io/copy in-env-browser out-env-browser-cljs)
 
-    (cljs-env/with-compiler-env compiler-env
+    (cljs-env/with-compiler-env @compiler-env
       (as-> (slurp in-env-browser) $
         (str "[" $ "]")
         (read-string $)
@@ -115,39 +118,39 @@
       (->> (assoc env-browser-ns-infos
                   :file (.getAbsolutePath out-env-browser-js))
            (closure/add-dependencies opts)
-           (apply closure/output-unoptimized opts))))
+           (apply closure/output-unoptimized opts)))
 
-  (closure/output-one-file {:output-to (str (:output-dir opts)
-                                            "/index.html")}
-                           (str "<html>
+    (closure/output-one-file {:output-to (str (:output-dir opts)
+                                              "/index.html")}
+                             (str "<html>
     <body>
-        <script type=\"text/javascript\" src=\"out/main.js\"></script>
+        <script type=\"text/javascript\" src=\"main.js\"></script>
     </body>
 </html>"))
 
-  (let [repl-requires '[[cljs.repl
-                         :refer-macros [source doc
-                                        find-doc apropos
-                                        dir pst]]
-                        [cljs.pprint :refer [pprint]
-                         :refer-macros [pp]]]
-        init-fn (fn []
-                  (cljs.repl/evaluate-form
-                   repl-env
-                   env
-                   "<cljs repl>"
-                   (with-meta
-                     `(~'ns ~'cljs.user
-                        (:require ~@repl-requires))
-                     {:line 1 :column 1})
-                   identity opts))]
-    (doseq [init-file init-files]
-      (load-file (str replique-root-dir init-file)))
-    (apply
-     (partial cljs.repl/repl repl-env)
-     (->> (merge
-           opts
-           {:compiler-env compiler-env
-            :init init-fn})
-          (into [])
-          flatten))))
+    (let [repl-requires '[[cljs.repl
+                           :refer-macros [source doc
+                                          find-doc apropos
+                                          dir pst]]
+                          [cljs.pprint :refer [pprint]
+                           :refer-macros [pp]]]
+          init-fn (fn []
+                    (cljs.repl/evaluate-form
+                     @repl-env
+                     env
+                     "<cljs repl>"
+                     (with-meta
+                       `(~'ns ~'cljs.user
+                          (:require ~@repl-requires))
+                       {:line 1 :column 1})
+                     identity opts))]
+      (doseq [init-file init-files]
+        (load-file (str replique-root-dir init-file)))
+      (apply
+       (partial cljs.repl/repl @repl-env)
+       (->> (merge
+             opts
+             {:compiler-env @compiler-env
+              :init init-fn})
+            (into [])
+            flatten)))))

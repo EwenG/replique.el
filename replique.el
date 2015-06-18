@@ -79,6 +79,31 @@
   :type 'regexp
   :group 'replique)
 
+(defcustom replique/cljs-comp-opts
+  '((:output-dir . "out")
+    (:output-to . "out/main.js")
+    (:recompile-dependents . nil)
+    (:main . ewen.replique.cljs-env.browser)
+    (:asset-path . "."))
+  "Clojurescript compiler options."
+  :type '(alist :output-dir string
+                :output-to string
+                :recompile-dependents boolean
+                :main symbol
+                :asset-path string)
+  :group 'replique)
+
+(defcustom replique/cljs-browser-repl-opts
+  '((:port . 9000)
+    (:static-dir . ("out/"))
+    (:src . nil))
+  "Clojurescript browser REPL options."
+  :type '(alist :port integer
+                :static-dir (repeat string)
+                :src (choice (const :tag "None" nil)
+                             string))
+  :group 'replique)
+
 
 
 
@@ -203,7 +228,18 @@
       nil
       (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
         `("java" "-cp" ,jar "clojure.main" "-e"
-          ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir))))))
+          ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\" %s %s))"
+                   (replique/replique-root-dir)
+                   platform-suffix
+                   (replique/replique-root-dir)
+                   (-> replique/cljs-comp-opts
+                       replique/alist-to-map
+                       replique-edn/pr-str
+                       replique-edn/pr-str)
+                   (-> replique/cljs-browser-repl-opts
+                       replique/alist-to-map
+                       replique-edn/pr-str
+                       replique-edn/pr-str))))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((platform-jar (platform)
@@ -217,7 +253,18 @@
                      (if (string= "cljs" platform)
                          "-cljs" "")))
                 `("lein" "run" "-m" "clojure.main/main" "-e"
-                  ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\"))" (replique/replique-root-dir) platform-suffix (replique/replique-root-dir)))))))
+                  ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\" %s %s))"
+                           (replique/replique-root-dir)
+                           platform-suffix
+                           (replique/replique-root-dir)
+                           (-> replique/cljs-comp-opts
+                               replique/alist-to-map
+                               replique-edn/pr-str
+                               replique-edn/pr-str)
+                           (-> replique/cljs-browser-repl-opts
+                               replique/alist-to-map
+                               replique-edn/pr-str
+                               replique-edn/pr-str)))))))
 
       ((name . "raw")
        (project-file . nil)
