@@ -791,7 +791,8 @@
 
 
 (defun replique-edn/pr-str (data)
-  (cond ((null data) nil)
+  (cond ((null data) "nil")
+        ((equal t data) "true")
         ((replique-edn/printable-child-p data)
          (replique-edn/print-method data))
         ((numberp data) (format "%s" data))
