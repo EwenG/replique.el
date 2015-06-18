@@ -611,6 +611,14 @@ Defaults to the ns of the current buffer."
       (message "Adding resourcepath: %s ..." path)
       (replique/send-add-resourcepath path))))
 
+(defun replique/reload-project ()
+  (interactive)
+  (if (string= "raw" (replique/get-project-type t))
+      (message "Reloading project ... Nothing to do")
+    (let ((file-path (-> (replique/get-project-root-dir t)
+                         (concat "project.clj"))))
+      (message "Reloading project ...")
+      (replique/send-reload-project file-path))))
 
 
 
@@ -691,6 +699,13 @@ The following commands are available:
           (message "Adding sourcepath: %s ... Done." resourcepath))
       (message "Adding resourcepath: %s ... Failed." resourcepath))))
 
+(defun replique/handler-reload-project (file-path msg)
+  (-let (((&alist 'result result 'error err) msg))
+    (if (and (not (null result))
+             (not err))
+        (message "Reloading project %s ... Done." file-path)
+      (message "Reloading project %s ... Failed." file-path))))
+
 (defvar replique/tooling-handlers-queue '())
 
 (defun replique/tooling-send-msg (msg callback)
@@ -737,6 +752,14 @@ The following commands are available:
        (-partial
         'replique/handler-add-resourcepath
         (replique/get-active-buffer-props t)
+        path))))
+
+(defun replique/send-reload-project (path)
+  (-> `((:type . "reload-project")
+        (:file-path . ,path))
+      (replique/tooling-send-msg
+       (-partial
+        'replique/handler-reload-project
         path))))
 
 

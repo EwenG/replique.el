@@ -75,6 +75,7 @@
   ["clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
    "clojure/ewen/replique/classpath.clj"
+   "clojure/ewen/replique/lein.clj"
    "clojure/ewen/replique/core.clj"])
 
 (def ^:const env-browser-path "clojure/ewen/replique/cljs_env/browser.cljs")

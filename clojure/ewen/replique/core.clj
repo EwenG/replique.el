@@ -1,4 +1,7 @@
-(ns ewen.replique.core)
+(ns ewen.replique.core
+  (:require [clojure.java.io :as io]
+            [clojure.set])
+  (:import [java.net URI]))
 
 (defrecord ToolingMsg [type platform result])
 
@@ -71,3 +74,41 @@
            :platform platform
            :result nil
            :error t}))))
+
+(defmethod tooling-msg-handle "reload-project"
+  [{:keys [type file-path classloader-hierarchy-fn platform]
+    :or {classloader-hierarchy-fn
+         (partial ewen.replique.classpath/classloader-hierarchy
+                  (.. clojure.lang.RT baseLoader))
+         platform "clj"}
+    :as msg}]
+  (let [path->url-str (fn [path]
+                        (-> (io/file path)
+                            .toURI
+                            .toURL
+                            .toString))]
+    (try (map->ToolingMsg
+          {:type type
+           :platform platform
+           :result (let [cp-urls
+                         (ewen.replique.classpath/get-classpath
+                          (classloader-hierarchy-fn))
+                         {:keys [resource-paths source-paths]}
+                         (ewen.replique.lein/read-raw file-path)
+                         urls (->> (concat resource-paths source-paths)
+                                   (map path->url-str))
+                         urls (clojure.set/difference (set urls)
+                                                      (set cp-urls))
+                         cl (->
+                             (classloader-hierarchy-fn)
+                             ewen.replique.classpath/choose-classloader)]
+                     (doseq [url urls]
+                       (ewen.replique.classpath/add-classpath
+                        cl (URI. url)))
+                     urls)})
+         (catch Throwable t
+           (map->ToolingMsg
+            {:type type
+             :platform platform
+             :result nil
+             :error t})))))

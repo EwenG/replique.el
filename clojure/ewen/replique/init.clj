@@ -4,6 +4,7 @@
   ["clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
    "clojure/ewen/replique/classpath.clj"
+   "clojure/ewen/replique/lein.clj"
    "clojure/ewen/replique/core.clj"])
 
 (defn init [replique-root-dir]
