@@ -851,6 +851,30 @@ The following commands are available:
 
 
 
+
+
+
+(defun replique/read-defproject ()
+  (if (string= (replique/get-project-type) "leiningen")
+      (let* ((f-path (-> (replique/get-project-root-dir)
+                         (concat "project.clj")))
+             (defproject (with-temp-buffer
+                           (insert-file-contents f-path)
+                           (search-forward "defproject " nil t)
+                           (->> (when (not (bobp))
+                                  (backward-char)
+                                  (thing-at-point 'defun))
+                                (replique-edn/reader nil :str)
+                                (replique-edn/read))))
+             (args (cdddr defproject))
+             (keys (mapcar 'car (-partition 2 args)))
+             (unique-keys (-distinct keys)))
+        (if (equal (length unique-keys) (length keys))
+            (->> (-partition 2 args)
+                 (mapcar (-lambda ((k v))
+                           (cons k v))))
+          (error "Found duplicate keys in project.clj")))))
+
 (defun replique/format-dependencies (dependencies)
   (let ((suffix "\n                 ")
         deps-str)
