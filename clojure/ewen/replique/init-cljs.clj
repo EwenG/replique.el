@@ -66,6 +66,26 @@
 (alter-var-root #'cljs.repl/default-special-fns
                   #(merge % special-fns))
 
+(alter-var-root #'cljs.repl.browser/compile-client-js
+                (constantly
+                 (fn [opts]
+                   (let [copts {:optimizations :simple
+                                :output-dir (:working-dir opts)}]
+                     ;; we're inside the REPL process where
+                     ;; cljs.env/*compiler* is already
+                     ;; established, need to construct a new one to avoid
+                     ;; mutating the one the REPL uses
+                     (closure/build
+                      '[(ns clojure.browser.repl.client
+                          (:require [goog.events :as event]
+                                    [clojure.browser.repl :as repl]))
+                        (defn start [url]
+                          (event/listen js/window
+                                        "load"
+                                        (fn []
+                                          (repl/start-evaluator url))))]
+                      copts (cljs-env/default-compiler-env copts))))))
+
 (def ^:const init-files
   ["clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
