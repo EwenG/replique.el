@@ -83,19 +83,19 @@
   '((:output-dir . "out")
     (:output-to . "out/main.js")
     (:recompile-dependents . nil)
-    (:main . ewen.replique.cljs-env.browser)
+    (:main . (ewen.replique.cljs-env.browser))
     (:asset-path . "."))
   "Clojurescript compiler options."
   :type '(alist :output-dir string
                 :output-to string
                 :recompile-dependents boolean
-                :main symbol
+                :main (repeat symbol)
                 :asset-path string)
   :group 'replique)
 
 (defcustom replique/cljs-browser-repl-opts
   '((:port . 9000)
-    (:static-dir . ("out/"))
+    (:static-dir . ("out"))
     (:src . nil))
   "Clojurescript browser REPL options."
   :type '(alist :port integer
@@ -103,6 +103,29 @@
                 :src (choice (const :tag "None" nil)
                              string))
   :group 'replique)
+
+(defun replique/get-cljs-comp-opts (cljs-env overrides)
+  (cond ((string= "browser-env" cljs-env)
+         replique/cljs-comp-opts)
+        ((string= "webapp-env" cljs-env)
+         (-let (((&alist ':output-dir output-dir
+                         ':output-to output-to
+                         ':main mains) overrides)
+                ((&alist ':recompile-dependents
+                         recompile-dependents
+                         ':asset-path asset-path)
+                 replique/cljs-comp-opts))
+           `((:output-dir . ,output-dir)
+             (:output-to . ,output-to)
+             (:recompile-dependents . ,recompile-dependents)
+             (:main . ,mains)
+             (:asset-path . ,asset-path))))
+        (t (error "Unsupported environement: %s" cljs-env))))
+
+(defun replique/to-js-file-name (file-name)
+  (if (s-ends-with? ".js" file-name)
+      file-name
+    (concat file-name ".js")))
 
 
 
@@ -223,23 +246,17 @@
 
 
 
-(defun replique/repl-cmd-raw (jar platform)
+(defun replique/repl-cmd-raw (jar platform init-opts)
   (if (null jar)
       nil
       (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
         `("java" "-cp" ,jar "clojure.main" "-e"
-          ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\" %s %s))"
+          ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init %s %s))"
                    (replique/replique-root-dir)
                    platform-suffix
-                   (replique/replique-root-dir)
-                   (-> replique/cljs-comp-opts
-                       replique/alist-to-map
-                       replique-edn/pr-str
+                   (-> (replique/replique-root-dir)
                        replique-edn/pr-str)
-                   (-> replique/cljs-browser-repl-opts
-                       replique/alist-to-map
-                       replique-edn/pr-str
-                       replique-edn/pr-str))))))
+                   init-opts)))))
 
 (defvar replique/clojure-build-tools
   (cl-flet ((platform-jar (platform)
@@ -248,31 +265,25 @@
     `(((name . "leiningen")
        (project-file . "project.clj")
        (default-repl-cmd
-         . ,(lambda (platform)
+         . ,(lambda (platform init-opts)
               (let ((platform-suffix
                      (if (string= "cljs" platform)
                          "-cljs" "")))
                 `("lein" "run" "-m" "clojure.main/main" "-e"
-                  ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init \"%s\" %s %s))"
+                  ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init %s %s))"
                            (replique/replique-root-dir)
                            platform-suffix
-                           (replique/replique-root-dir)
-                           (-> replique/cljs-comp-opts
-                               replique/alist-to-map
-                               replique-edn/pr-str
+                           (-> (replique/replique-root-dir)
                                replique-edn/pr-str)
-                           (-> replique/cljs-browser-repl-opts
-                               replique/alist-to-map
-                               replique-edn/pr-str
-                               replique-edn/pr-str)))))))
-
+                           init-opts))))))
       ((name . "raw")
        (project-file . nil)
        (default-repl-cmd
-         . ,(lambda (platform)
+         . ,(lambda (platform init-opts)
               (replique/repl-cmd-raw
                (platform-jar platform)
-               platform)))))))
+               platform
+               init-opts)))))))
 
 (defun replique/build-files ()
   (->> (mapcar (-lambda ((&alist 'project-file project-file))
@@ -306,15 +317,22 @@
        car
        (or default-directory)))
 
-(defun replique/project-repl-cmd (root-dir platform)
-  (let* ((repl-cmds (mapcar
+(defun replique/project-repl-cmd (root-dir platform init-opts)
+  (let* ((init-opts (-> (replique/alist-to-map init-opts)
+                        replique-edn/pr-str
+                        replique-edn/pr-str))
+         (repl-cmds (mapcar
                      (-lambda ((&alist 'project-file project-file
                                  'default-repl-cmd default-repl-cmd))
                        (cond ((null project-file)
-                              (funcall default-repl-cmd platform))
+                              (funcall default-repl-cmd
+                                       platform
+                                       init-opts))
                              ((locate-file project-file
                                            (list root-dir))
-                              (funcall default-repl-cmd platform))
+                              (funcall default-repl-cmd
+                                       platform
+                                       init-opts))
                              (t nil)))
                      replique/clojure-build-tools))
          (repl-cmd (-> (-remove 'null repl-cmds)
@@ -441,7 +459,7 @@
      (let* ((root-dir (ido-read-directory-name
                        "REPL root directory: "
                        (replique/guess-project-root-dir)))
-            (repl-cmd (replique/project-repl-cmd root-dir "clj"))
+            (repl-cmd (replique/project-repl-cmd root-dir "clj" nil))
             (repl-cmd (progn
                         (when (equal 'runnable-jar-not-found repl-cmd)
                           (replique/handle-jar-not-found root-dir "clj"))
@@ -457,7 +475,41 @@
      (let* ((root-dir (ido-read-directory-name
                        "REPL root directory: "
                        (replique/guess-project-root-dir)))
-            (repl-cmd (replique/project-repl-cmd root-dir "cljs"))
+            (cljs-env (ido-completing-read
+                       "Clojurescript execution environment: "
+                       '("browser-env" "webapp-env")
+                       nil t))
+            (output-dir (when (string= "webapp-env" cljs-env)
+                          (ido-read-directory-name
+                           "Clojurescript output-dir: ")))
+            (output-to (when (string= "webapp-env" cljs-env)
+                         (print (concat root-dir output-dir))
+                         (-> (ido-read-file-name
+                              "Clojurescript output-to file: "
+                              output-dir
+                              nil
+                              nil
+                              "main.js")
+                             replique/to-js-file-name)))
+            (mains (when (string= "webapp-env" cljs-env)
+                     (->> (helm-read-file-name
+                           nil
+                           :buffer "Clojurescript main namespaces"
+                           :must-match t
+                           :marked-candidates t)
+                          (mapcar 'replique/ns-from-file))))
+            (overrides (when (string= "webapp-env" cljs-env)
+                         `((:output-dir . ,output-dir)
+                           (:output-to . ,output-to)
+                           (:main . ,mains))))
+            (comp-opts (replique/get-cljs-comp-opts cljs-env overrides))
+            (init-opts `((:cljs-env-name . ,cljs-env)
+                         (:comp-opts . ,(replique/alist-to-map
+                                         comp-opts))
+                         (:repl-opts
+                          . ,(replique/alist-to-map
+                              replique/cljs-browser-repl-opts))))
+            (repl-cmd (replique/project-repl-cmd root-dir "cljs" init-opts))
             (repl-cmd (progn
                         (when (equal 'runnable-jar-not-found repl-cmd)
                           (replique/handle-jar-not-found root-dir "cljs"))
@@ -855,17 +907,17 @@ The following commands are available:
 
 
 (defun replique/read-defproject ()
-  (if (string= (replique/get-project-type) "leiningen")
+  (when (string= (replique/get-project-type) "leiningen")
       (let* ((f-path (-> (replique/get-project-root-dir)
                          (concat "project.clj")))
              (defproject (with-temp-buffer
                            (insert-file-contents f-path)
                            (search-forward "defproject " nil t)
-                           (->> (when (not (bobp))
-                                  (backward-char)
-                                  (thing-at-point 'defun))
-                                (replique-edn/reader nil :str)
-                                (replique-edn/read))))
+                           (when (not (bobp))
+                             (backward-char)
+                             (->> (thing-at-point 'defun)
+                                  (replique-edn/reader nil :str)
+                                  replique-edn/read))))
              (args (cdddr defproject))
              (keys (mapcar 'car (-partition 2 args)))
              (unique-keys (-distinct keys)))
@@ -874,6 +926,18 @@ The following commands are available:
                  (mapcar (-lambda ((k v))
                            (cons k v))))
           (error "Found duplicate keys in project.clj")))))
+
+
+(defun replique/ns-from-file (file-path)
+  (with-temp-buffer
+    (insert-file-contents file-path)
+    (search-forward "(ns " nil t)
+    (when (not (bobp))
+      (backward-char)
+      (->> (thing-at-point 'defun)
+           (replique-edn/reader nil :str)
+           replique-edn/read
+           cadr))))
 
 (defun replique/format-dependencies (dependencies)
   (let ((suffix "\n                 ")
