@@ -8,7 +8,6 @@
             [clojure.java.io :as io]
             [cljs.js-deps :as deps]
             [cljs.util :as util]
-            [cljs.compiler :as cljc]
             [clojure.string :as string])
   (:import [java.io File]))
 
@@ -25,7 +24,6 @@
 (def compiler-env (atom nil))
 (def repl-env (atom nil))
 (defonce env {:context :expr :locals {}})
-
 
 (defn refresh-cljs-deps [opts]
   (let [parse-js-fn (fn [js-file]
@@ -68,51 +66,36 @@
      ([repl-env env form]
       (self repl-env env form nil))
      ([repl-env env [_ msg] opts]
-      (prn (ewen.replique.core/tooling-msg-handle
-            (assoc msg
-                   :platform "cljs"
-                   :load-file-fn
-                   #(cljs-env/with-compiler-env @compiler-env
-                      (cljs.repl/load-file repl-env % opts)
-                      (try (refresh-cljs-deps opts)
-                           (catch AssertionError e (.printStackTrace e))))
-                   :in-ns-fn
-                   (make-in-ns-fn repl-env env)
-                   :completion-fn
-                   (fn [prefix options-map]
-                     (ewen.replique.completion/completions
-                      prefix (assoc options-map
-                                    :cljs-comp-env
-                                    @cljs-env/*compiler*)))
-                   :classloader-hierarchy-fn
-                   (partial
-                    ewen.replique.classpath/classloader-hierarchy
-                    (.. Thread currentThread
-                        getContextClassLoader)))))))})
+      ;; The cljs REPL uses "print" to print values evaluated in the
+      ;; browser and returned by the browser after a call to "pr-str".
+      ;; This is why clojurescript ToolingMsg are wrapped in a "pr-str"
+      ;; call.
+      (pr-str
+       (ewen.replique.core/tooling-msg-handle
+        (assoc msg
+               :platform "cljs"
+               :load-file-fn
+               #(cljs-env/with-compiler-env @compiler-env
+                  (cljs.repl/load-file repl-env % opts)
+                  (try (refresh-cljs-deps opts)
+                       (catch AssertionError e (.printStackTrace e))))
+               :in-ns-fn
+               (make-in-ns-fn repl-env env)
+               :completion-fn
+               (fn [prefix options-map]
+                 (ewen.replique.completion/completions
+                  prefix (assoc options-map
+                                :cljs-comp-env
+                                @cljs-env/*compiler*)))
+               :classloader-hierarchy-fn
+               (partial
+                ewen.replique.classpath/classloader-hierarchy
+                (.. Thread currentThread
+                    getContextClassLoader)))))))})
 
 
 (alter-var-root #'cljs.repl/default-special-fns
                   #(merge % special-fns))
-
-(alter-var-root #'cljs.repl.browser/compile-client-js
-                (constantly
-                 (fn compile-client-js [opts]
-                   (let [copts {:optimizations :simple
-                                :output-dir (:working-dir opts)}]
-                     ;; we're inside the REPL process where
-                     ;; cljs.env/*compiler* is already
-                     ;; established, need to construct a new one to avoid
-                     ;; mutating the one the REPL uses
-                     (closure/build
-                      '[(ns clojure.browser.repl.client
-                          (:require [goog.events :as event]
-                                    [clojure.browser.repl :as repl]))
-                        (defn start [url]
-                          (event/listen js/window
-                                        "load"
-                                        (fn []
-                                          (repl/start-evaluator url))))]
-                      copts (cljs-env/default-compiler-env copts))))))
 
 (alter-var-root
  #'cljs.closure/output-main-file
@@ -160,6 +143,7 @@
    "clojure/ewen/replique/completion.clj"
    "clojure/ewen/replique/classpath.clj"
    "clojure/ewen/replique/lein.clj"
+   "clojure/ewen/replique/cljs.clj"
    "clojure/ewen/replique/core.clj"])
 
 (def ^:const env-browser-path "clojure/ewen/replique/cljs_env/browser.cljs")
@@ -168,6 +152,13 @@
   (create-ns 'ewen.replique.classpath)
   (intern 'ewen.replique.classpath 'classloader-hierarchy nil)
   (intern 'ewen.replique.classpath 'choose-classloader nil))
+
+(defn init-opts* [opts]
+  (-> opts
+      (assoc-in [:comp-opts :optimizations] :none)
+      (update-in [:comp-opts :main]
+                 #(-> (into #{} %)
+                      (conj 'ewen.replique.cljs-env.browser)))))
 
 (defn init-cljs-env*
   [replique-root-dir
@@ -245,19 +236,16 @@
     cljs-env-name))
 
 (defmethod init-cljs-env "browser-env"
-  [replique-root-dir
-   {:keys [cljs-env-name comp-opts repl-opts]}]
-  (let [init-opts
-        (init-cljs-env*
-         replique-root-dir
-         {:cljs-env-name cljs-env-name
-          :comp-opts comp-opts
-          :repl-opts (assoc repl-opts
-                            :serve-static true
-                            :static-dir (:output-dir comp-opts))})]
-    (closure/output-one-file {:output-to (str (-> init-opts
-                                                  :comp-opts
-                                                  :output-dir)
+  [replique-root-dir init-opts]
+  (let [{{output-dir :output-dir} :comp-opts} init-opts
+        init-opts (init-opts* init-opts)]
+    (init-cljs-env*
+     replique-root-dir
+     (update-in init-opts [:repl-opts]
+                #(assoc %
+                        :serve-static true
+                        :static-dir output-dir)))
+    (closure/output-one-file {:output-to (str output-dir
                                               "/index.html")}
                              (str "<html>
     <body>
@@ -267,14 +255,12 @@
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
 (defmethod init-cljs-env "webapp-env"
-  [replique-root-dir
-   {:keys [cljs-env-name comp-opts repl-opts]}]
-  (let [init-opts
-        (init-cljs-env*
-         replique-root-dir
-         {:cljs-env-name cljs-env-name
-          :comp-opts comp-opts
-          :repl-opts (assoc repl-opts :serve-static false)})]
+  [replique-root-dir init-opts]
+  (let [{{output-dir :output-dir} :comp-opts} init-opts
+        init-opts (init-opts* init-opts)]
+    (init-cljs-env*
+     replique-root-dir
+     (assoc-in init-opts [:repl-opts :serve-static] false))
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
 ;;/home/egr/replique.el/

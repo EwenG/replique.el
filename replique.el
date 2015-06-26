@@ -439,7 +439,7 @@
         (t (error "Unknown platform: %s" platform))))
 
 (defun replique/handle-jar-not-found (root-dir platform)
-  (when (yes-or-no-p (format "Sorry, I could not find a %s jar on the filesystem in order to start the REPL. Would you like me to download it now?"
+  (when (yes-or-no-p (format "Sorry, No %s jar could be find on the filesystem in order to start the REPL. Would you like to download it now?"
                              (replique/platform-to-name platform)))
     (-> (ido-read-directory-name
          (format "Please enter the directory where the %s jar should be saved: "
@@ -481,9 +481,9 @@
                        nil t))
             (output-dir (when (string= "webapp-env" cljs-env)
                           (ido-read-directory-name
-                           "Clojurescript output-dir: ")))
+                           "Clojurescript output-dir: "
+                           root-dir)))
             (output-to (when (string= "webapp-env" cljs-env)
-                         (print (concat root-dir output-dir))
                          (-> (ido-read-file-name
                               "Clojurescript output-to file: "
                               output-dir
