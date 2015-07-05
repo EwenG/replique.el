@@ -19,12 +19,12 @@
 
 
 
-(defcustom replique-runnables/clj-url "https://repo1.maven.org/maven2/org/clojure/clojure/1.7.0-RC1/clojure-1.7.0-RC1.jar"
+(defcustom replique-runnables/clj-url "https://repo1.maven.org/maven2/org/clojure/clojure/1.7.0/clojure-1.7.0.jar"
   "The URL to use when dowloading the Clojure jar."
   :type 'string
   :group 'replique)
 
-(defcustom replique-runnables/clj-dep [org.clojure/clojure "1.7.0-RC1"]
+(defcustom replique-runnables/clj-dep [org.clojure/clojure "1.7.0"]
   "The default Clojure dependency."
   :type 'string
   :group 'replique)
