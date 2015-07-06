@@ -189,6 +189,27 @@
 
 ;; Jar downloading
 
+(defun replique-runnables/url-retrieve (url callback)
+  (url-retrieve
+   url
+   (lambda (status)
+     (cond ((null status)
+            (funcall callback status))
+           ((not (null (plist-get status :redirect)))
+            (kill-buffer)
+            (sleep-for 1)
+            (replique-runnables/url-retrieve
+             (plist-get status :redirect)
+             callback))
+           (t (error "Error while downloading %s" status))))))
+
+(defun replique-runnables/remove-http-header ()
+  (beginning-of-buffer)
+  (let ((beg (point)))
+    (search-forward-regexp "^$")
+    (forward-char)
+    (delete-region beg (point))))
+
 (defun replique-runnables/download-jar (download-dir platform callback)
   (let* ((url (cond ((equal platform "clj") replique-runnables/clj-url)
                     ((equal platform "cljs") replique-runnables/cljs-url)
@@ -201,24 +222,15 @@
                          ((equal platform "cljs")
                           replique-runnables/cljs-file-name)
                          (t (error "Unsupported platform: %s" platform))))))
-    (url-retrieve
+    (replique-runnables/url-retrieve
      url
      (lambda (status)
-       (if (not (null status))
-           (error "Error while downloading %s" status)
-         (progn (ignore-errors
-                  (write-file jar-path t))
-                (kill-buffer)
-                (funcall callback jar-path)))))
+       (replique-runnables/remove-http-header)
+       (ignore-errors
+         (write-file jar-path t))
+       (kill-buffer)
+       (funcall callback jar-path)))
     jar-path))
-
-(comment
- (replique-runnables/download-jar
-  "/home/egr/Downloads/"
-  "cljs"
-  (lambda (jar-path)
-    (print jar-path)))
- )
 
 
 (provide 'replique-runnables)

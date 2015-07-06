@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0") (edn "1.1))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -438,7 +438,7 @@
          "Clojure")
         (t (error "Unknown platform: %s" platform))))
 
-(defun replique/handle-jar-not-found (root-dir platform)
+(defun replique/handle-jar-not-found (root-dir platform init-opts)
   (when (yes-or-no-p (format "Sorry, No %s jar could be find on the filesystem in order to start the REPL. Would you like to download it now?"
                              (replique/platform-to-name platform)))
     (-> (ido-read-directory-name
@@ -448,7 +448,10 @@
          platform
          (lambda (jar-path)
            (replique/repl
-            (replique/repl-cmd-raw jar-path platform)
+            (replique/repl-cmd-raw jar-path platform
+                                   (-> (replique/alist-to-map init-opts)
+                                       replique-edn/pr-str
+                                       replique-edn/pr-str))
             root-dir))))))
 
 ;;;###autoload
@@ -462,7 +465,9 @@
             (repl-cmd (replique/project-repl-cmd root-dir "clj" nil))
             (repl-cmd (progn
                         (when (equal 'runnable-jar-not-found repl-cmd)
-                          (replique/handle-jar-not-found root-dir "clj"))
+                          (replique/handle-jar-not-found root-dir
+                                                         "clj"
+                                                         nil))
                         repl-cmd)))
        (list repl-cmd root-dir))))
   (replique/repl* root-dir "clj" repl-cmd))
@@ -512,7 +517,9 @@
             (repl-cmd (replique/project-repl-cmd root-dir "cljs" init-opts))
             (repl-cmd (progn
                         (when (equal 'runnable-jar-not-found repl-cmd)
-                          (replique/handle-jar-not-found root-dir "cljs"))
+                          (replique/handle-jar-not-found root-dir
+                                                         "cljs"
+                                                         init-opts))
                         repl-cmd)))
        (list repl-cmd root-dir))))
   (replique/repl* root-dir "cljs" repl-cmd))
