@@ -29,8 +29,10 @@
 (extend-protocol Namespace
   CljsNamespace
   (ns-publics [ns cljs-comp-env]
-    (->> (:defs ns)
-         (filter (comp not :private second))
+    (->> (merge
+          (:defs ns)
+          (:macros ns))
+         (remove (fn [[k v]] (:private v)))
          (into {})))
   (ns-map [ns cljs-comp-env]
     (->> (select-keys ns [:imports :uses :defs])
