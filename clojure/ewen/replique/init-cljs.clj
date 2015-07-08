@@ -139,9 +139,9 @@
 
 
 (def ^:const init-files
-  ["clojure/ewen/replique/reflection.clj"
+  ["clojure/ewen/replique/classpath.clj"
+   "clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
-   "clojure/ewen/replique/classpath.clj"
    "clojure/ewen/replique/lein.clj"
    "clojure/ewen/replique/cljs.clj"
    "clojure/ewen/replique/core.clj"])
@@ -263,7 +263,19 @@
      (assoc-in init-opts [:repl-opts :serve-static] false))
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
-;;/home/egr/replique.el/
+;;
+(comment
+  "/home/egr/replique.el/"
+  (str {:comp-opts {:output-dir "out"
+                    :output-to "out/main.js"
+                    :recompile-dependents nil
+                    :main '(ewen.replique.cljs-env.browser)
+                    :asset-path "."}
+        :repl-opts {:src nil
+                    :static-dir '("out")
+                    :port 9000}
+        :cljs-env-name "browser-env"})
+  )
 (defn init [replique-root-dir init-opts]
   (init-cljs-env
    replique-root-dir

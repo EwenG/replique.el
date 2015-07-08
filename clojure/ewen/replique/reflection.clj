@@ -1,8 +1,16 @@
 (ns ewen.replique.reflection
-  (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases]))
+  (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases all-ns]))
+
+(defn all-ns
+  ([]
+   (all-ns nil))
+  ([cljs-comp-env]
+   (if-not cljs-comp-env
+     (clojure.core/all-ns)
+     (keys (:cljs.analyzer/namespaces cljs-comp-env)))))
 
 (defrecord CljsNamespace [name doc excludes use-macros require-macros uses
-                      requires imports defs])
+                          requires imports defs])
 
 (defn find-ns
   ([ns]

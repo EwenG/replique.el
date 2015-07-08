@@ -1,9 +1,9 @@
 (ns ewen.replique.init)
 
 (def ^:const init-files
-  ["clojure/ewen/replique/reflection.clj"
+  ["clojure/ewen/replique/classpath.clj"
+   "clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
-   "clojure/ewen/replique/classpath.clj"
    "clojure/ewen/replique/lein.clj"
    "clojure/ewen/replique/core.clj"])
 

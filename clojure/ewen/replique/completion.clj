@@ -50,7 +50,7 @@
                  (or sym "") s)]
     [scope-name scope prefix]))
 
-(defn candidates
+(defn candidates-ns-mappings
   "Returns a list of namespace-bound candidates, with namespace being
   either the scope (if prefix is scoped), `ns` arg or the namespace
   extracted from context if inside `ns` declaration."
@@ -73,6 +73,61 @@
         (if scope
           (str scope-name "/" var-name)
           var-name)))))
+
+
+
+
+
+
+
+
+
+
+
+(defn nscl-symbol?
+  "Tests if prefix looks like a namespace or classname."
+  [x]
+  (re-matches #"[^\/\:\.][^\/\:]+" x))
+
+(defn nscl-matches?
+  "Tests if prefix partially matches a var name with periods as
+  separators."
+  [prefix namespace]
+  (fuzzy-matches? prefix namespace \.))
+
+(defn candidates-ns
+  "Returns a list of namespace completions"
+  [^String prefix ns context cljs-comp-env]
+  (when (nscl-symbol? prefix)
+    (let [has-dot (> (.indexOf prefix ".") -1)]
+      ((comp distinct concat)
+       (for [ns-str (concat (map (comp name ns-name)
+                                 (ewen.replique.reflection/all-ns
+                                  cljs-comp-env))
+                            (when-not has-dot
+                              (->> (ewen.replique.reflection/ns-aliases
+                                    ns
+                                    cljs-comp-env)
+                                   keys
+                                   (map name))))
+             :when (nscl-matches? prefix ns-str)]
+         ns-str)
+       (if has-dot
+         (for [ns-str (ewen.replique.classpath/namespaces-on-classpath
+                       (if cljs-comp-env
+                         (.. Thread currentThread
+                             getContextClassLoader)
+                         (.. clojure.lang.RT baseLoader)))
+               :when (nscl-matches? prefix ns-str)]
+           ns-str)
+         (for [^String ns-str
+               (ewen.replique.classpath/namespaces-on-classpath
+                (if cljs-comp-env
+                  (.. Thread currentThread
+                      getContextClassLoader)
+                  (.. clojure.lang.RT baseLoader)))
+               :when (.startsWith ns-str prefix)]
+           ns-str))))))
 
 (defn user-ns [cljs-comp-env]
   (if-not cljs-comp-env
@@ -105,7 +160,9 @@
    (completions prefix {}))
   ([prefix {:keys [ns cljs-comp-env] :as options-map}]
    (let [ns (ensure-ns ns cljs-comp-env)]
-     (candidates prefix ns nil cljs-comp-env))))
+     '()
+     #_(candidates-ns-mappings prefix ns nil cljs-comp-env)
+     (candidates-ns prefix ns nil cljs-comp-env))))
 
 
 (comment
