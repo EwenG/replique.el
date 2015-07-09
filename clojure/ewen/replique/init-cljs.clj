@@ -75,10 +75,13 @@
         (assoc msg
                :platform "cljs"
                :load-file-fn
-               #(cljs-env/with-compiler-env @compiler-env
-                  (cljs.repl/load-file repl-env % opts)
-                  (try (refresh-cljs-deps opts)
-                       (catch AssertionError e (.printStackTrace e))))
+               (fn [path]
+                 (if (.endsWith path "clj")
+                   (load-file path)
+                   (cljs-env/with-compiler-env @compiler-env
+                     (cljs.repl/load-file repl-env path opts)
+                     (try (refresh-cljs-deps opts)
+                          (catch AssertionError e (.printStackTrace e))))))
                :in-ns-fn
                (make-in-ns-fn repl-env env)
                :completion-fn
