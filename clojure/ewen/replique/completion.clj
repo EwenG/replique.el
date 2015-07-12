@@ -160,9 +160,8 @@
    (completions prefix {}))
   ([prefix {:keys [ns cljs-comp-env] :as options-map}]
    (let [ns (ensure-ns ns cljs-comp-env)]
-     '()
-     #_(candidates-ns-mappings prefix ns nil cljs-comp-env)
-     (candidates-ns prefix ns nil cljs-comp-env))))
+     (into (candidates-ns-mappings prefix ns nil cljs-comp-env)
+           (candidates-ns prefix ns nil cljs-comp-env)))))
 
 
 (comment
