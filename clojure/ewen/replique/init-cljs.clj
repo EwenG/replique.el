@@ -60,45 +60,46 @@
          (str "goog.provide('" (comp/munge ns-name) "');")))
       (set! ana/*cljs-ns* ns-name))))
 
-(def special-fns
-  {'ewen.replique.core/tooling-msg-handle
-   (fn self
-     ([repl-env env form]
-      (self repl-env env form nil))
-     ([repl-env env [_ msg] opts]
-      ;; The cljs REPL uses "print" to print values evaluated in the
-      ;; browser and returned by the browser after a call to "pr-str".
-      ;; This is why clojurescript ToolingMsg are wrapped in a "pr-str"
-      ;; call.
-      (pr-str
-       (ewen.replique.core/tooling-msg-handle
-        (assoc msg
-               :platform "cljs"
-               :load-file-fn
-               (fn [path]
-                 (if (.endsWith path "clj")
-                   (load-file path)
-                   (cljs-env/with-compiler-env @compiler-env
-                     (cljs.repl/load-file repl-env path opts)
-                     (try (refresh-cljs-deps opts)
-                          (catch AssertionError e (.printStackTrace e))))))
-               :in-ns-fn
-               (make-in-ns-fn repl-env env)
-               :completion-fn
-               (fn [prefix options-map]
-                 (ewen.replique.completion/completions
-                  prefix (assoc options-map
-                                :cljs-comp-env
-                                @cljs-env/*compiler*)))
-               :classloader-hierarchy-fn
-               (partial
-                ewen.replique.classpath/classloader-hierarchy
-                (.. Thread currentThread
-                    getContextClassLoader)))))))})
+(defn tooling-msg-handle
+  ([repl-env env form]
+   (tooling-msg-handle repl-env env form nil))
+  ([repl-env env [_ msg] opts]
+   ;; The cljs REPL uses "print" to print values evaluated in the
+   ;; browser and returned by the browser after a call to "pr-str".
+   ;; This is why clojurescript ToolingMsg are wrapped in a "pr-str"
+   ;; call.
+   (pr-str
+    (ewen.replique.core/tooling-msg-handle
+     (assoc msg
+            :platform "cljs"
+            :load-file-fn
+            (fn [path]
+              (if (.endsWith path "clj")
+                (load-file path)
+                (cljs-env/with-compiler-env @compiler-env
+                  (cljs.repl/load-file repl-env path opts)
+                  (try (refresh-cljs-deps opts)
+                       (catch AssertionError e (.printStackTrace e))))))
+            :in-ns-fn
+            (make-in-ns-fn repl-env env)
+            :completion-fn
+            (fn [prefix options-map]
+              (ewen.replique.completion/completions
+               prefix (assoc options-map
+                             :cljs-comp-env
+                             @cljs-env/*compiler*)))
+            :classloader-hierarchy-fn
+            (partial
+             ewen.replique.classpath/classloader-hierarchy
+             (.. Thread currentThread
+                 getContextClassLoader)))))))
 
-
-(alter-var-root #'cljs.repl/default-special-fns
-                  #(merge % special-fns))
+(defn eval-cljs [repl-env env form opts]
+  (if (and (seq? form)
+           (= 'ewen.replique.core/tooling-msg-handle
+              (first form)))
+    (tooling-msg-handle repl-env env form opts)
+    (#'cljs.repl/eval-cljs repl-env env form opts)))
 
 (alter-var-root
  #'cljs.closure/output-main-file
@@ -230,7 +231,8 @@
      (->> (merge
            opts
            {:compiler-env @compiler-env
-            :init init-fn})
+            :init init-fn
+            :eval eval-cljs})
           (apply concat)))))
 
 (defmulti init-cljs-env
