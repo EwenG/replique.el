@@ -664,10 +664,7 @@ describing the last `replique/load-file' command.")
   "Load a Clojure file into the Clojure process."
   (interactive (comint-get-source "Load Clojure file: "
                                   replique/prev-l/c-dir/file
-                                  '(clojure-mode)
-                                  ;; nil because LOAD doesn't need
-                                  ;; an exact name
-                                  nil))
+                                  (list major-mode) t))
   ;; Check to see if buffer needs saved.
   (comint-check-source file-name)
   (setq replique/prev-l/c-dir/file
@@ -745,6 +742,17 @@ Defaults to the ns of the current buffer."
         ["Set REPL ns" replique/set-ns t]))
     map))
 
+(defvar replique/generic-minor-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "\C-c\C-l" #'replique/load-file)
+    (easy-menu-define replique/generic-minor-mode-menu map
+      "Replique Minor Mode Menu"
+      '("Replique"
+        ["Load file" replique/load-file t]))
+    map))
+
+
+
 ;;;###autoload
 (define-minor-mode replique/minor-mode
   "Minor mode for interacting with the replique process buffer.
@@ -754,6 +762,15 @@ The following commands are available:
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
   (make-local-variable 'company-backends))
+
+;;;###autoload
+(define-minor-mode replique/generic-minor-mode
+  "Minor mode for interacting with the replique process buffer.
+
+The following commands are available:
+
+\\{replique/generic-minor-mode-map}"
+  :lighter "Replique" :keymap replique/generic-minor-mode-map)
 
 
 

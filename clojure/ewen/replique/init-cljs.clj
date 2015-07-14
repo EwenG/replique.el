@@ -61,14 +61,12 @@
       (set! ana/*cljs-ns* ns-name))))
 
 (defn file-extension [path]
-  (let [after-last-slash (->> (.lastIndexOf path "/")
-                              inc
-                              (.substring path))
-        after-last-backslash (inc (.lastIndexOf after-last-slash "\\"))
-        dot-index (.indexOf after-last-slash "." after-last-backslash)]
-    (if (= dot-index -1)
-      ""
-      (.substring after-last-slash (inc dot-index)))))
+  (let [last-dot-idx (.lastIndexOf path ".")
+        last-separator-idx (Math/max (.lastIndexOf path "/")
+                                     (.lastIndexOf path "\\"))]
+    (if (> last-dot-idx last-separator-idx)
+      (.substring path (inc last-dot-idx))
+      "")))
 
 (defmulti load-file-fn (fn [repl-env env opts path]
                          (file-extension path)))
@@ -81,6 +79,9 @@
     (cljs.repl/load-file repl-env path opts)
     (try (refresh-cljs-deps opts)
          (catch AssertionError e (.printStackTrace e)))))
+
+(defmethod load-file-fn "js" [repl-env env opts path]
+  (cljs.repl/-evaluate repl-env nil nil (slurp path)))
 
 (defn tooling-msg-handle
   ([repl-env env form]
