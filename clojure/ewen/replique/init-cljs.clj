@@ -60,6 +60,28 @@
          (str "goog.provide('" (comp/munge ns-name) "');")))
       (set! ana/*cljs-ns* ns-name))))
 
+(defn file-extension [path]
+  (let [after-last-slash (->> (.lastIndexOf path "/")
+                              inc
+                              (.substring path))
+        after-last-backslash (inc (.lastIndexOf after-last-slash "\\"))
+        dot-index (.indexOf after-last-slash "." after-last-backslash)]
+    (if (= dot-index -1)
+      ""
+      (.substring after-last-slash (inc dot-index)))))
+
+(defmulti load-file-fn (fn [repl-env env opts path]
+                         (file-extension path)))
+
+(defmethod load-file-fn "clj" [repl-env env opts path]
+  (load-file path))
+
+(defmethod load-file-fn "cljs" [repl-env env opts path]
+  (cljs-env/with-compiler-env @compiler-env
+    (cljs.repl/load-file repl-env path opts)
+    (try (refresh-cljs-deps opts)
+         (catch AssertionError e (.printStackTrace e)))))
+
 (defn tooling-msg-handle
   ([repl-env env form]
    (tooling-msg-handle repl-env env form nil))
@@ -73,15 +95,8 @@
      (assoc msg
             :platform "cljs"
             :load-file-fn
-            (fn [path]
-              (if (.endsWith path "clj")
-                (load-file path)
-                (cljs-env/with-compiler-env @compiler-env
-                  (cljs.repl/load-file repl-env path opts)
-                  (try (refresh-cljs-deps opts)
-                       (catch AssertionError e (.printStackTrace e))))))
-            :in-ns-fn
-            (make-in-ns-fn repl-env env)
+            (partial load-file-fn repl-env env opts)
+            :in-ns-fn (make-in-ns-fn repl-env env)
             :completion-fn
             (fn [prefix options-map]
               (ewen.replique.completion/completions
