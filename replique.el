@@ -1,5 +1,5 @@
 ;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.10.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.11.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -11,6 +11,7 @@
 (require 'clojure-mode)
 (require 'replique-runnables)
 (require 'replique-edn)
+(require 'replique-helm)
 
 
 
@@ -497,12 +498,7 @@
                               "main.js")
                              replique/to-js-file-name)))
             (mains (when (string= "webapp-env" cljs-env)
-                     (->> (helm-read-file-name
-                           nil
-                           :buffer "Clojurescript main namespaces"
-                           :must-match t
-                           :marked-candidates t)
-                          (mapcar 'replique/ns-from-file))))
+                     (replique-helm/cljs-select-ns root-dir)))
             (overrides (when (string= "webapp-env" cljs-env)
                          `((:output-dir . ,output-dir)
                            (:output-to . ,output-to)
@@ -934,17 +930,6 @@ The following commands are available:
                            (cons k v))))
           (error "Found duplicate keys in project.clj")))))
 
-
-(defun replique/ns-from-file (file-path)
-  (with-temp-buffer
-    (insert-file-contents file-path)
-    (search-forward "(ns " nil t)
-    (when (not (bobp))
-      (backward-char)
-      (->> (thing-at-point 'defun)
-           (replique-edn/reader nil :str)
-           replique-edn/read
-           cadr))))
 
 (defun replique/format-dependencies (dependencies)
   (let ((suffix "\n                 ")

@@ -1000,4 +1000,4 @@
 
 (provide 'replique-edn)
 
-;;; replique.el ends here
+;;; replique-edn.el ends here
