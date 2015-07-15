@@ -200,7 +200,9 @@
                               (:output-dir opts)
                               env-browser-ns-infos
                               "cljs")]
-    (reset! compiler-env (cljs-env/default-compiler-env opts))
+    (reset! compiler-env (-> opts
+                             closure/add-implicit-options
+                             cljs-env/default-compiler-env))
     (reset! repl-env (apply cljs.repl.browser/repl-env
                             (apply concat repl-opts)))
     (util/mkdirs out-env-browser-cljs)
