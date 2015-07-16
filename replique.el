@@ -660,18 +660,37 @@
 This holds a cons cell of the form `(DIRECTORY . FILE)'
 describing the last `replique/load-file' command.")
 
-(defun replique/load-file (file-name)
-  "Load a Clojure file into the Clojure process."
-  (interactive (comint-get-source "Load Clojure file: "
-                                  replique/prev-l/c-dir/file
-                                  (list major-mode) t))
+(defun replique/init-load-file (file-type file-name)
   ;; Check to see if buffer needs saved.
   (comint-check-source file-name)
   (setq replique/prev-l/c-dir/file
         (cons (file-name-directory file-name)
               (file-name-nondirectory file-name)))
-  (message "Loading Clojure file: %s ..." file-name)
-  (replique/send-load-file file-name))
+  (message "Loading %s file: %s ..." file-type file-name))
+
+(defun replique/load-file (file-name)
+  (interactive (comint-get-source
+                "Load file: "
+                replique/prev-l/c-dir/file
+                (list major-mode) t))
+  "Load a Clojure file into the Clojure process."
+  (replique/init-load-file "Clojure" file-name)
+  (replique/send-load-file (replique/get-in-project 'platform)
+                           file-name))
+
+(defun replique/load-file-generic (file-name)
+  (interactive (comint-get-source
+                "Load file: "
+                replique/prev-l/c-dir/file
+                (list major-mode) t))
+  (cond ((string-suffix-p ".js" file-name t)
+         (if (string= "cljs" (replique/get-in-project 'platform))
+             (progn (replique/init-load-file "Javascript" file-name)
+                    (replique/send-load-file "js" file-name))
+           (message
+            "Can only load Javascript in a Clojurescript process")))
+        (t (message "Cannot recognize the type of the file: %s"
+                    file-name))))
 
 (defun replique/set-ns (ns)
   "Set the ns of the Clojure process.
@@ -748,7 +767,7 @@ Defaults to the ns of the current buffer."
     (easy-menu-define replique/generic-minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
-        ["Load file" replique/load-file t]))
+        ["Load file" replique/load-file-generic t]))
     map))
 
 
@@ -837,8 +856,9 @@ The following commands are available:
                  (replique-edn/pr-str msg))
          (funcall comint-input-sender proc))))
 
-(defun replique/send-load-file (file-name)
+(defun replique/send-load-file (file-type file-name)
   (-> `((:type . "load-file")
+        (:file-type . ,file-type)
         (:file-path . ,file-name))
       (replique/tooling-send-msg
        (-partial 'replique/handler-load-file file-name))))

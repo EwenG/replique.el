@@ -60,27 +60,19 @@
          (str "goog.provide('" (comp/munge ns-name) "');")))
       (set! ana/*cljs-ns* ns-name))))
 
-(defn file-extension [path]
-  (let [last-dot-idx (.lastIndexOf path ".")
-        last-separator-idx (Math/max (.lastIndexOf path "/")
-                                     (.lastIndexOf path "\\"))]
-    (if (> last-dot-idx last-separator-idx)
-      (.substring path (inc last-dot-idx))
-      "")))
+(defmulti load-file-fn (fn [repl-env env opts file-type path]
+                         file-type))
 
-(defmulti load-file-fn (fn [repl-env env opts path]
-                         (file-extension path)))
-
-(defmethod load-file-fn "clj" [repl-env env opts path]
+(defmethod load-file-fn "clj" [repl-env env opts file-type path]
   (load-file path))
 
-(defmethod load-file-fn "cljs" [repl-env env opts path]
+(defmethod load-file-fn "cljs" [repl-env env opts file-type path]
   (cljs-env/with-compiler-env @compiler-env
     (cljs.repl/load-file repl-env path opts)
     (try (refresh-cljs-deps opts)
          (catch AssertionError e (.printStackTrace e)))))
 
-(defmethod load-file-fn "js" [repl-env env opts path]
+(defmethod load-file-fn "js" [repl-env env opts file-type path]
   (cljs.repl/-evaluate repl-env nil nil (slurp path)))
 
 (defn tooling-msg-handle
@@ -96,7 +88,8 @@
      (assoc msg
             :platform "cljs"
             :load-file-fn
-            (partial load-file-fn repl-env env opts)
+            (partial load-file-fn repl-env env opts
+                     (:file-type msg))
             :in-ns-fn (make-in-ns-fn repl-env env)
             :completion-fn
             (fn [prefix options-map]
