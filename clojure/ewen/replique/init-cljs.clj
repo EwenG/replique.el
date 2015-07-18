@@ -25,6 +25,12 @@
 (def repl-env (atom nil))
 (defonce env {:context :expr :locals {}})
 
+(defn foreign->output-file [foreign opts]
+  (let [output-path (closure/rel-output-path
+                     (assoc foreign :foreign true)
+                     opts)]
+    (assoc foreign :file output-path)))
+
 (defn refresh-cljs-deps [opts]
   (let [parse-js-fn (fn [js-file]
                       (-> js-file
@@ -35,12 +41,16 @@
         is-goog (fn [js-file]
                   (some #(.startsWith % "goog.")
                         (:provides js-file)))
+        ups-foreign-libs (:ups-foreign-libs opts)
         js-files (deps/find-js-fs (:output-dir opts))
         js-files (map parse-js-fn js-files)
         js-files (filter #(and (seq (:provides %))
                                (not (is-goog %)))
                          js-files)
         js-files (map closure/map->javascript-file js-files)
+        js-files (->> ups-foreign-libs
+                      (map #(foreign->output-file % opts))
+                      (into js-files))
         js-files (deps/dependency-order js-files)]
     (closure/output-deps-file
      (assoc opts :output-to
@@ -66,11 +76,60 @@
 (defmethod load-file-fn "clj" [repl-env env opts file-type path]
   (load-file path))
 
+(defn f->src [f]
+  (cond (util/url? f) f
+        (.exists (io/file f)) (io/file f)
+        :else (io/resource f)))
+
+(defn repl-compile-cljs [repl-env f opts]
+  (prn (:ups-foreign-libs opts))
+  (let [src (f->src f)
+        compiled (binding [ana/*reload-macros* true]
+                   (closure/compile
+                    src
+                    (assoc opts
+                           :output-file
+                           (closure/src-file->target-file src)
+                           :force true
+                           :mode :interactive)))]
+    ;; copy over the original source file if source maps enabled
+    (when-let [ns (and (:source-map opts) (first (:provides compiled)))]
+      (spit
+       (io/file (io/file (util/output-directory opts))
+                (util/ns->relpath ns (util/ext (:source-url compiled))))
+       (slurp src)))
+    compiled))
+
+
+
+(defn repl-cljs-on-disk [compiled repl-env opts]
+  (let [sources (closure/add-dependencies
+                 (merge
+                  (#'cljs.repl/env->opts repl-env) opts)
+                 compiled)]
+    (doseq [source sources]
+      (closure/source-on-disk opts source))))
+
+(defn repl-eval-cljs [compiled repl-env f opts]
+  (let [src (f->src f)]
+    (cljs.repl/-evaluate
+     repl-env "<cljs repl>" 1
+     (slurp (str (util/output-directory opts)
+                 File/separator "cljs_deps.js")))
+    (cljs.repl/-evaluate
+     repl-env f 1 (closure/add-dep-string opts compiled))
+    (cljs.repl/-evaluate
+     repl-env f 1
+     (closure/src-file->goog-require
+      src {:wrap true :reload true :macros-ns (:macros-ns compiled)}))))
+
+
 (defmethod load-file-fn "cljs" [repl-env env opts file-type path]
   (cljs-env/with-compiler-env @compiler-env
-    (cljs.repl/load-file repl-env path opts)
-    (try (refresh-cljs-deps opts)
-         (catch AssertionError e (.printStackTrace e)))))
+    (let [compiled (repl-compile-cljs repl-env path opts)]
+      (repl-cljs-on-disk compiled repl-env opts)
+      (refresh-cljs-deps opts)
+      (repl-eval-cljs compiled repl-env path opts))))
 
 (defmethod load-file-fn "js" [repl-env env opts file-type path]
   (cljs.repl/-evaluate repl-env nil nil (slurp path)))

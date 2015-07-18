@@ -675,8 +675,12 @@ describing the last `replique/load-file' command.")
                 (list major-mode) t))
   "Load a Clojure file into the Clojure process."
   (replique/init-load-file "Clojure" file-name)
-  (replique/send-load-file (replique/get-in-project 'platform)
-                           file-name))
+  (let (;;Handle Clojurescript macros reloading
+        (file-type (if (and (string-suffix-p ".clj" file-name t)
+                            (string= 'platform "cljs"))
+                       "clj"
+                     (replique/get-in-project 'platform))))
+    (replique/send-load-file file-type file-name)))
 
 (defun replique/load-file-generic (file-name)
   (interactive (comint-get-source
