@@ -82,7 +82,6 @@
         :else (io/resource f)))
 
 (defn repl-compile-cljs [repl-env f opts]
-  (prn (:ups-foreign-libs opts))
   (let [src (f->src f)
         compiled (binding [ana/*reload-macros* true]
                    (closure/compile
