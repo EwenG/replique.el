@@ -51,6 +51,31 @@
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
+(defun replique/uri-compare (path1 path2)
+  (when (or (not (string-prefix-p "/" path1 t))
+            (not (string-prefix-p "/" path2 t)))
+    (error "Paths must be absolute"))
+  (let* ((uri1 (-> (split-string path1 "/")
+                   cdr))
+         (uri2 (-> (split-string path2 "/")
+                   cdr))
+         (l1 (list-length uri1))
+         (l2 (list-length uri2))
+         (uri1 (-slice uri1 (- l1 (min l1 l2)) l1))
+         (uri2 (-slice uri2 (- l2 (min l1 l2)) l2))
+         (uri1 (apply 'concat uri1))
+         (uri2 (apply 'concat uri2))
+         (res (compare-strings uri1 0 (length uri1) uri2 0 (length uri2))))
+    (if (equal t res)
+        0 res)))
+
+(defun replique/uri-sort-fn (reference uri1 uri2)
+  (let ((diff1 (replique/uri-compare reference uri1))
+        (diff2 (replique/uri-compare reference uri2)))
+    (cond ((equal diff1 0) t)
+          ((equal diff2 0) nil)
+          ((>= (abs diff1) (abs diff2)) t)
+          (t nil))))
 
 
 
@@ -372,10 +397,11 @@
                           (replique/comint-output-filter
                            proc
                            rest-str)))
-
+                       ;Avoid REPL newline printing
                        ((or (string= "load-file" type)
                             (string= "completions" type)
-                            (string= "add-classpath" type))
+                            (string= "add-classpath" type)
+                            (string= "list-css" type))
                         (when rest-str
                           (->> rest-str
                                (s-chop-prefix "\n")
@@ -675,24 +701,37 @@ describing the last `replique/load-file' command.")
                 (list major-mode) t))
   "Load a Clojure file into the Clojure process."
   (replique/init-load-file "Clojure" file-name)
-  (let (;;Handle Clojurescript macros reloading
-        (file-type (if (and (string-suffix-p ".clj" file-name t)
-                            (string= 'platform "cljs"))
-                       "clj"
-                     (replique/get-in-project 'platform))))
-    (replique/send-load-file file-type file-name)))
+  (replique/send-load-file file-name))
 
 (defun replique/load-file-generic (file-name)
-  (interactive (comint-get-source
-                "Load file: "
-                replique/prev-l/c-dir/file
-                (list major-mode) t))
+  (interactive (if (string-suffix-p ".css" (buffer-file-name) t)
+                   (list (buffer-file-name))
+                 (comint-get-source
+                  "Load file: "
+                  replique/prev-l/c-dir/file
+                  (list major-mode) t)))
   (cond ((string-suffix-p ".js" file-name t)
          (if (string= "cljs" (replique/get-in-project 'platform))
-             (progn (replique/init-load-file "Javascript" file-name)
-                    (replique/send-load-file "js" file-name))
-           (message
-            "Can only load Javascript in a Clojurescript process")))
+             (progn
+               (replique/init-load-file "Javascript" file-name)
+               (replique/send-load-file-generic "js" file-name))
+           (error "Not a Clojurescript process")))
+        ((string-suffix-p ".css" file-name t)
+         (if (string= "cljs" (replique/get-in-project 'platform))
+             (replique/send-list-css
+              (lambda (css-list)
+                (let* ((candidates (-sort (-partial
+                                           'replique/uri-sort-fn
+                                           file-name)
+                                          css-list))
+                       (css-file (ido-completing-read
+                                  "Reload css file: "
+                                  candidates
+                                  nil t)))
+                  (message "Loading css file: %s ..." file-name)
+                  (replique/send-load-file-generic
+                   "css" file-name `((:css-file . ,css-file))))))
+           (error "Not a Clojurescript process")))
         (t (message "Cannot recognize the type of the file: %s"
                     file-name))))
 
@@ -741,6 +780,7 @@ Defaults to the ns of the current buffer."
                          (concat "project.clj"))))
       (message "Reloading project ...")
       (replique/send-reload-project file-path))))
+
 
 
 
@@ -810,6 +850,12 @@ The following commands are available:
         (message "Loading Clojure file: %s ... Failed." file-name)
       (message "Loading Clojure file: %s ... Done." file-name))))
 
+(defun replique/handler-load-file-generic (file-type file-name msg)
+  (-let (((&alist 'error err) msg))
+    (if err
+        (message "Loading %s file: %s ... Failed." file-type file-name)
+      (message "Loading %s file: %s ... Done." file-type file-name))))
+
 (defun replique/handler-set-ns (ns msg)
   (-let (((&alist 'error err) msg))
     (if err
@@ -848,6 +894,12 @@ The following commands are available:
         (message "Reloading project %s ... Done." file-path)
       (message "Reloading project %s ... Failed." file-path))))
 
+(defun replique/handler-list-css (callback msg)
+  (-let (((&alist 'result result 'error err) msg))
+    (if (not err)
+        (funcall callback result)
+      (message "List css failed."))))
+
 (defvar replique/tooling-handlers-queue '())
 
 (defun replique/tooling-send-msg (msg callback)
@@ -860,12 +912,20 @@ The following commands are available:
                  (replique-edn/pr-str msg))
          (funcall comint-input-sender proc))))
 
-(defun replique/send-load-file (file-type file-name)
+(defun replique/send-load-file (file-name)
   (-> `((:type . "load-file")
-        (:file-type . ,file-type)
         (:file-path . ,file-name))
       (replique/tooling-send-msg
        (-partial 'replique/handler-load-file file-name))))
+
+(defun replique/send-load-file-generic
+    (file-type file-name &optional params)
+  (-> `((:type . "load-file-generic")
+        (:file-type . ,file-type)
+        (:file-path . ,file-name))
+      (-concat params)
+      (replique/tooling-send-msg
+       (-partial 'replique/handler-load-file-generic file-type file-name))))
 
 (defun replique/send-set-ns (ns)
   (-> `((:type . "set-ns")
@@ -904,6 +964,21 @@ The following commands are available:
        (-partial
         'replique/handler-reload-project
         path))))
+
+(defun replique/send-list-css (callback)
+  (if (string=
+       "cljs"
+       (replique/get-in-project 'platform t))
+      (-> `((:type . "list-css"))
+          (replique/tooling-send-msg
+           (-partial
+            'replique/handler-list-css
+            callback)))
+    (error "Not a Clojurescript process")))
+
+
+
+
 
 
 
