@@ -201,7 +201,7 @@
     (:value
      (cljs.repl/-evaluate
       repl-env "<cljs repl>" 1
-      "ewen.replique.cljs_env.browser.list_css_stylesheets();"))))
+      "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();"))))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]
