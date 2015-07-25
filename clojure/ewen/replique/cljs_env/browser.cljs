@@ -10,6 +10,7 @@
 (defn list-css-stylesheet-paths []
   (->> (goog.cssom.getAllCssStyleSheets)
        (filter #(.-href %))
+       (filter #(.-insertRule %))
        (map css->path)))
 
 (comment
@@ -32,16 +33,11 @@
             (goog.dom.removeNode css-node)
             (goog.dom.appendChild head css-node))
           css-rule
-          (let [head (.querySelector js/document "head")
-                css-node (goog.dom.createDom
-                          "link"
-                          #js {:rel "stylesheet"
-                               :type "text/css"
-                               :href css-path})]
+          (let [css (goog.cssom.getParentStyleSheet css-rule)]
             (goog.cssom.removeCssRule
-             (goog.cssom.getParentStyleSheet css-rule)
-             (goog.cssom.getCssRuleIndexInParentStyleSheet css-rule))
-            (goog.dom.appendChild head css-node))
+             css (goog.cssom.getCssRuleIndexInParentStyleSheet css-rule))
+            (.insertRule
+             css (goog.cssom.getCssTextFromCssRule css-rule) 0))
           :else nil)))
 
 (defonce conn
