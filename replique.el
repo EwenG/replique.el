@@ -412,6 +412,10 @@
                              rest-str))))))
           (t (comint-output-filter proc string)))))
 
+;; comint-output-filter does not necessarily receive EDN formatted data,
+;; thus the splitting on #ewen.replique.core.ToolingMsg. Strings starting
+;; with #ewen.replique.core.ToolingMsg are EDN and can be read by
+;; replique-edn. Others cannot.
 (defun replique/comint-output-filter-dispatch (proc string)
   (let ((s-list (s-slice-at "#ewen.replique.core.ToolingMsg" string)))
     (mapcar (-partial 'replique/comint-output-filter proc)
