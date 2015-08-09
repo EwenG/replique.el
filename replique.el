@@ -391,15 +391,16 @@
                      (t nil)))
           ((&alist :result result
                    :result-state result-state)
-           msg))
+           msg)
+          (result (car (symbol-value result))))
     (cond ((equal :waiting (symbol-value result-state))
            (setq replique/waiting-edn-state msg))
           (msg (funcall
                 (pop replique/tooling-handlers-queue)
-                (car (symbol-value result)))
+                result)
                (-let (((&alist 'type type
                                'error (&alist 'message err-msg))
-                       msg)
+                       result)
                       (rest-str (replique-edn/reader-rest-string reader)))
                  (cond (err-msg
                         (comint-output-filter proc err-msg)
@@ -939,7 +940,8 @@ The following commands are available:
         (:file-path . ,file-name))
       (-concat params)
       (replique/tooling-send-msg
-       (-partial 'replique/handler-load-file-generic file-type file-name))))
+       (-partial 'replique/handler-load-file-generic
+                 file-type file-name))))
 
 (defun replique/send-set-ns (ns)
   (-> `((:type . "set-ns")
