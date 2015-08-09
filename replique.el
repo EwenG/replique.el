@@ -221,21 +221,25 @@
       (insert old-input))))
 
 (defvar replique/edn-tag-readers
-  `((:readers . ((ewen.replique.core.ToolingMsg . ,(-lambda (msg)
-                                                     `((type . ,(gethash :type msg))
-                                                       (result . ,(gethash :result msg))
-                                                       (platform . ,(gethash :platform msg))
-                                                       (error . ,(gethash :error msg)))))
-                 (error . ,(-lambda (msg)
-                             `((message . ,(->> (gethash :via msg)
-                                                (funcall (-rpartial 'elt 0))
-                                                (gethash :message))))))
-                 (object . identity)))))
+  `((ewen.replique.core.ToolingMsg
+     . ,(-lambda (msg)
+          `((type . ,(gethash :type msg))
+            (result . ,(gethash :result msg))
+            (platform . ,(gethash :platform msg))
+            (error . ,(gethash :error msg)))))
+    (error . ,(-lambda (msg)
+                `((message . ,(->> (gethash :via msg)
+                                   (funcall (-rpartial 'elt 0))
+                                   (gethash :message))))))
+    (object . identity)))
 
 (comment
- (let* ((rdr (replique-edn/reader nil :str "#ewen.replique.core.ToolingMsg{:type \"load-file\" :result \"#'test-project.core/foo\"}"))
-        (msg (replique-edn/read rdr replique/edn-tag-readers)))
-                                        ;(cdr (assoc 'type msg))
+ (let* ((state (-> (replique-edn/reader nil :str "#ewen.replique.core.ToolingMsg{:type \"load-file\" :result \"#'test-project.core/foo\"}")
+                   replique-edn/init-state
+                   (replique-edn/set-tagged-readers
+                    replique/edn-tag-readers)))
+        (msg (-> (replique-edn/read state)
+                 replique-edn/result)))
    (cdr (assoc 'type msg)))
  )
 
@@ -365,39 +369,45 @@
                        car)))
     (or repl-cmd 'runnable-jar-not-found)))
 
+(defvar replique/waiting-edn-state nil)
+
 (defun replique/comint-output-filter (proc string)
-  (let* ((rdr (replique-edn/reader
-               nil :str string))
-         (msg (cond ((replique-edn/continuation-p
-                     (car replique/tooling-handlers-queue))
-                    (catch 'continuation
-                      (replique-edn/contcall
-                       (pop replique/tooling-handlers-queue)
-                       rdr)))
-                   ((s-starts-with?
-                     "#ewen.replique.core.ToolingMsg"
-                     (s-trim-left string))
-                    (catch 'continuation
-                      (replique-edn/read
-                       rdr
-                       replique/edn-tag-readers)))
-                   (t nil))))
-    (cond ((replique-edn/continuation-p msg)
-           (push msg replique/tooling-handlers-queue))
+  (-let* ((reader (replique-edn/reader
+                   nil :str string))
+          (msg (cond (replique/waiting-edn-state
+                      (-> replique/waiting-edn-state
+                          (replique-edn/set-reader reader)
+                          replique-edn/read
+                          symbol-value))
+                     ((s-starts-with?
+                       "#ewen.replique.core.ToolingMsg"
+                       (s-trim-left string))
+                      (-> reader
+                          replique-edn/init-state
+                          (replique-edn/set-tagged-readers
+                           replique/edn-tag-readers)
+                          replique-edn/read
+                          symbol-value))
+                     (t nil)))
+          ((&alist :result result
+                   :result-state result-state)
+           msg))
+    (cond ((equal :waiting (symbol-value result-state))
+           (setq replique/waiting-edn-state msg))
           (msg (funcall
                 (pop replique/tooling-handlers-queue)
-                msg)
+                (car (symbol-value result)))
                (-let (((&alist 'type type
-                        'error (&alist 'message err-msg))
+                               'error (&alist 'message err-msg))
                        msg)
-                      (rest-str (replique-edn/reader-rest-string rdr)))
+                      (rest-str (replique-edn/reader-rest-string reader)))
                  (cond (err-msg
                         (comint-output-filter proc err-msg)
                         (when rest-str
                           (replique/comint-output-filter
                            proc
                            rest-str)))
-                       ;Avoid REPL newline printing
+                       ;;Avoid REPL newline printing
                        ((or (string= "load-file" type)
                             (string= "completions" type)
                             (string= "add-classpath" type)
@@ -1040,7 +1050,9 @@ The following commands are available:
                              (backward-char)
                              (->> (thing-at-point 'defun)
                                   (replique-edn/reader nil :str)
-                                  replique-edn/read))))
+                                  replique-edn/init-state
+                                  replique-edn/read
+                                  replique-edn/result))))
              (args (cdddr defproject))
              (keys (mapcar 'car (-partition 2 args)))
              (unique-keys (-distinct keys)))

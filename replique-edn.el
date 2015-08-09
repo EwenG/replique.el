@@ -3,68 +3,8 @@
 
 ;;; Code:
 
-(defvar replique-edn/default-data-readers
-  (make-hash-table :test #'equal))
-
-(defclass replique-edn/printable ()
-  ()
-  :abstract t)
-
-(defmethod replique-edn/print-method ((o replique-edn/printable))
-  (let ((slots (mapcar (lambda (s)
-                         (intern (concat ":" (symbol-name s))))
-                (object-slots o)))
-        (l nil))
-    (mapcar (lambda (s)
-              (push (slot-value o s) l)
-              (push s l))
-            slots)
-    (format "#%s %s"
-            (object-class o)
-            (replique-edn/pr-str
-             (replique-edn/list-to-map l)))))
-
-(defclass replique-edn/inst (replique-edn/printable)
-  ((high :initarg :high
-         :type number)
-   (low :initarg :low
-        :type number)))
-
-(defmethod replique-edn/print-method ((o replique-edn/inst))
-  (format
-   "#inst %s"
-   (format-time-string "\"%Y-%m-%dT%H:%M:%S.52Z\""
-                       (list (oref o :high) (oref o :low))
-                       :utc)))
-
-(defclass replique-edn/uuid (replique-edn/printable)
-  ((uuid :initarg :uuid
-         :type string)))
-
-(defmethod replique-edn/print-method ((o replique-edn/uuid))
-  (format
-   "#uuid %s"
-   (oref o :uuid)))
-
-
-(puthash 'inst
-         (lambda (inst)
-           (let ((time (date-to-time inst)))
-             (replique-edn/inst nil
-                                :high (car time)
-                                :low (cadr time))))
-         replique-edn/default-data-readers)
-
-(puthash 'uuid
-         (lambda (uuid)
-           (replique-edn/uuid nil :uuid uuid))
-         replique-edn/default-data-readers)
-
-(defclass replique-edn/continuation ()
-  ((f :initarg :f)))
-
-(defmethod replique-edn/contcall ((cont replique-edn/continuation) rdr)
-  (funcall (oref cont f) rdr))
+(require 'dash)
+(require 'dash-functional)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -83,15 +23,25 @@
    (unread-char :initarg :unread-char
                 :initform nil
                 :type (or null character))
+   (unread-char2 :initarg :unread-char2
+                 :initform nil
+                 :type (or null character))
    (index :initarg :index
           :initform 0
           :type number)))
 
 (defmethod replique-edn/reader-read
   ((r replique-edn/reader) &optional u-char)
-  (cond ((and u-char (oref r unread-char))
-         (error "Cannot unread multiple characters."))
-        (u-char (oset r unread-char u-char))
+  (cond ((and u-char (oref r unread-char2))
+         (error "Cannot unread more than 2 characters."))
+        ((and u-char (oref r unread-char))
+         (oset r unread-char2 u-char))
+        (u-char
+         (oset r unread-char u-char))
+        ((oref r unread-char2)
+         (let ((ret (oref r unread-char2)))
+           (oset r unread-char2 nil)
+           ret))
         ((oref r unread-char)
          (let ((ret (oref r unread-char)))
            (oset r unread-char nil)
@@ -111,16 +61,44 @@
 
 (defmethod replique-edn/reader-rest-string
   ((r replique-edn/reader))
-  (cond ((and
-          (null (oref r unread-char))
-          (equal
-           (oref r index)
-           (length (oref r str))))
-         nil)
-        ((not (null (oref r unread-char)))
-         (concat (char-to-string (oref r unread-char))
-                 (substring (oref r str) (oref r index))))
-        (t (substring (oref r str) (oref r index)))))
+  (cond
+   ((> (oref r index) (length (oref r str)))
+    "")
+   (t
+    (concat
+     (if (oref r unread-char)
+         (char-to-string (oref r unread-char))
+       "")
+     (if (oref r unread-char2)
+         (char-to-string (oref r unread-char2))
+       "")
+     (substring (oref r str) (oref r index))))))
+
+(defun replique-edn/state-print (state)
+  (-let (((&alist :reader reader
+                  :actions actions
+                  :result-state result-state
+                  :result result) (symbol-value state)))
+    `((:reader . ,reader)
+      (:actions . ,(symbol-value actions))
+      (:result-state . ,(symbol-value result-state))
+      (:result . ,(symbol-value result)))))
+
+(defun replique-edn/result (state)
+  (-let (((&alist :result result
+                  :result-state result-state)
+          (symbol-value state)))
+    (when (not (equal :done (symbol-value result-state)))
+      (error (format "result-state is %s"
+                     (symbol-value result-state))))
+    (car (symbol-value result))))
+
+
+
+
+
+
+
 
 (defun replique-edn/is-separator (ch)
   (or (equal ?\s ch)
@@ -129,10 +107,38 @@
 
 (defun replique-edn/digit (ch base)
   (if (equal ?0 ch) 0
-      (let ((res (string-to-number
-                  (char-to-string ch)
-                  base)))
-        (if (equal 0 res) -1 res))))
+    (let ((res (string-to-number
+                (char-to-string ch)
+                base)))
+      (if (equal 0 res) -1 res))))
+
+
+
+
+
+(defun replique-edn/dispatch-macros (ch)
+  (cond
+   ;; ((equal ch ?^) (replique-edn/read-meta)))) ;Not supported
+   ((equal ch ?\{) '(replique-edn/read-set))
+   ((equal ch ?<) (error "Unreadable form"))
+   ((equal ch ?\;) '(replique-edn/read-comment))
+   ((equal ch ?_) '(replique-edn/read-discard))
+   (t nil)))
+
+(defun replique-edn/macros (ch)
+  (cond ((equal ?\" ch) '(replique-edn/read-string*))
+        ((equal ?: ch) '(replique-edn/read-keyword))
+        ((equal ?\; ch) '(replique-edn/read-comment))
+        ;;((equal ?^ ch) 'replique-edn/read-meta) Metadata not supported yet
+        ((equal ?\( ch) '(replique-edn/read-list))
+        ((equal ?\) ch) `(replique-edn/read-unmatched-delimiter ,ch))
+        ((equal ?\[ ch) '(replique-edn/read-vector))
+        ((equal ?\] ch) `(replique-edn/read-unmatched-delimiter ,ch))
+        ((equal ?\{ ch) '(replique-edn/read-map))
+        ((equal ?\} ch) `(replique-edn/read-unmatched-delimiter ,ch))
+        ((equal ?\\ ch) '(replique-edn/read-char*))
+        ((equal ?# ch) '(replique-edn/read-dispatch))
+        (t nil)))
 
 (defun replique-edn/is-numeric (ch)
   (and (>= ch 48) (<= ch 57)))
@@ -197,21 +203,38 @@
         (when (string-match replique-edn/ratio-pattern s)
           (replique-edn/match-ratio s))))))
 
-(defun replique-edn/read-number (reader sb opts)
-  (let ((ch (replique-edn/reader-read reader)))
+(defun replique-edn/read-number (state sb)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
     (while (and (not (replique-edn/is-separator ch))
-                (not (replique-edn/macros ch)))
-      (when (equal 0 ch)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (reader)
-                  (replique-edn/read-number reader sb opts)))))
+                (not (replique-edn/macros ch))
+                (not (equal 0 ch)))
       (setq sb (concat sb (char-to-string ch)))
       (setq ch (replique-edn/reader-read reader)))
-    (replique-edn/reader-read reader ch)
-    (or (replique-edn/match-number sb)
-        (error "Invalid number format [ %s ]" sb))))
+    (if (equal 0 ch)
+        (progn (push `(replique-edn/read-number ,sb)
+                     (symbol-value actions))
+               (set result-state :waiting))
+      (progn (replique-edn/reader-read reader ch)
+             (let ((number (replique-edn/match-number sb)))
+               (if number
+                   (push number (symbol-value result))
+                 (error "Invalid number format [ %s ]" sb)))))))
+
+(defun replique-edn/is-macro-terminating (ch)
+  (and (not (equal ?# ch))
+       (not (equal ?` ch))
+       (not (equal ?: ch))
+       (replique-edn/macros ch)))
+
+(defun replique-edn/not-constituent (ch)
+  (or (equal ?@ ch)
+      (equal ?` ch)
+      (equal ?~ ch)))
 
 (defun replique-edn/read-unicode-char* (token offset length base i uc)
   (let ((l (+ offset length)))
@@ -225,96 +248,219 @@
           (replique-edn/read-unicode-char*
            token offset length base (1+ i) (+ d (* uc base))))))))
 
-(defun replique-edn/read-unicode-char (rdr initch base length exact uc i)
-  (if (equal uc -1)
-      (error "Invalid digit: %c" initch)
+(defun replique-edn/read-token* (state sb)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (while (and (not (replique-edn/is-separator ch))
+                (not (replique-edn/is-macro-terminating ch))
+                (not (equal 0 ch)))
+      (when (replique-edn/not-constituent ch)
+        (error "Invalid constituent character: %c" ch))
+      (setq sb (concat sb (char-to-string ch)))
+      (setq ch (replique-edn/reader-read reader)))
+    (if (equal 0 ch)
+        (progn
+          (push `(replique-edn/read-token* ,sb)
+                (symbol-value actions))
+          (set result-state :waiting))
+      (progn
+        (replique-edn/reader-read reader ch)
+        (push sb (symbol-value result))))))
+
+(defun replique-edn/read-token (state validate-leading)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (initch (replique-edn/reader-peek-char reader)))
+    (cond ((equal 0 initch)
+           (push `(replique-edn/read-token ,initch ,validate-leading)
+                 (symbol-value actions)))
+          ((and validate-leading
+                (replique-edn/not-constituent initch))
+           (error "Invalid leading character: %c" initch))
+          (t (replique-edn/read-token* state "")))))
+
+(defun replique-edn/token-to-char (state)
+  (-let* (((&alist :actions actions
+                   :result result)
+           state)
+          (token (pop (symbol-value result)))
+          (ch (cond
+               ((equal 1 (length token)) (string-to-char token))
+               ((string= token "newline") ?\n)
+               ((string= token "space") ?\s)
+               ((string= token "tab") ?\t)
+               ((string= token "backspace") ?\b)
+               ((string= token "formfeed") ?\f)
+               ((string= token "return") ?\r)
+               ((string-prefix-p "u" token)
+                (replique-edn/read-unicode-char*
+                 token 1 4 16 1 0))
+               ((string-prefix-p "o" token)
+                (let ((len (1- (length token))))
+                  (if (> len 3)
+                      (error "Invalid octal escape sequence length: %d"
+                             length)
+                    (let ((uc (replique-edn/read-unicode-char*
+                               token 1 len 8 1 0)))
+                      (if (> uc 255)
+                          (error
+                           "Octal escape sequence must be in range [0,377]")
+                        uc)))))
+               (t (error "Unsupported character: \\%s" token)))))
+    (push ch (symbol-value result))))
+
+(defun replique-edn/read-char* (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (if (equal 0 ch)
+        (progn (push '(replique-edn/read-char*)
+                     (symbol-value actions))
+               (set result-state :waiting))
+      (if (or (replique-edn/is-macro-terminating ch)
+              (replique-edn/not-constituent ch)
+              (replique-edn/is-separator ch))
+          (push (char-to-string ch) (symbol-value result))
+        (progn (replique-edn/reader-read reader ch)
+               (push '(replique-edn/token-to-char)
+                     (symbol-value actions))
+               (push `(replique-edn/read-token nil)
+                     (symbol-value actions)))))))
+
+(defun replique-edn/check-first-unicode-char (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (cond ((equal 0 ch)
+           (push
+            '(replique-edn/check-first-unicode-char)
+            (symbol-value actions))
+           (set result-state :waiting))
+          ((equal (replique-edn/digit ch 16) -1)
+           (error "Invalid digit: %c" ch))
+          (t (push
+              `(replique-edn/read-unicode-char
+                16 4 t ,(replique-edn/digit ch 16) 1)
+              (symbol-value actions))))))
+
+(defun replique-edn/read-unicode-char (state base length exact uc i)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
     (if (not (equal i length))
-        (let ((ch (replique-edn/reader-peek-char rdr)))
+        (let ((ch (replique-edn/reader-peek-char reader)))
           (cond
-           ((equal 0 ch) (throw 'continuation
-                                (replique-edn/continuation
-                                 nil :f
-                                 (lambda (rdr)
-                                   (replique-edn/read-unicode-char
-                                    rdr initch base length exact uc i)))))
+           ((equal 0 ch)
+            (push
+             `(replique-edn/read-unicode-char
+               ,base ,length ,exact ,uc ,i)
+             (symbol-value actions))
+            (set result-state :waiting))
            ((or (replique-edn/is-separator ch)
                 (replique-edn/macros ch))
             (if exact
                 (error "Invalid character length: %d, should be: %d"
                        i length)
-              uc))
+              (push uc (symbol-value result))))
            (t (let ((d (replique-edn/digit ch base)))
-                (replique-edn/reader-read rdr)
+                (replique-edn/reader-read reader)
                 (if (equal -1 d)
                     (error "Invalid digit: %c" ch)
                   (replique-edn/read-unicode-char
-                   rdr initch base length
-                   exact (+ d (* uc base)) (1+ i)))))))
-      uc)))
+                   state base length exact
+                   (+ d (* uc base)) (1+ i))
+                  (symbol-value actions))))))
+      (push uc (symbol-value result)))))
 
-(defun replique-edn/escape-char (rdr)
-  (let ((ch (replique-edn/reader-read rdr)))
+(defun replique-edn/check-unicode-char (state)
+  (-let* (((&alist :result result) state)
+          (ch (car (symbol-value result))))
+    (if (> ch 255)
+        (error "Octal escape sequence must be in range [0, 377]")
+      ch)))
+
+(defun replique-edn/escape-char (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader))
+          (ec (cond ((equal 0 ch) 0)
+                    ((equal ?t ch) ?\t)
+                    ((equal ?r ch) ?\r)
+                    ((equal ?n ch) ?\n)
+                    ((equal ?\\ ch) ?\\)
+                    ((equal ?\" ch) ?\")
+                    ((equal ?b ch) ?\b)
+                    ((equal ?f ch) ?\f)
+                    ((equal ?u ch) ?u)
+                    ((replique-edn/is-numeric ch) ch)
+                    (t (error "Unsupported escape character: \\%c" ch)))))
+    (cond ((equal 0 ec)
+           (push '(replique-edn/escape-char) (symbol-value actions))
+           (set result-state :waiting))
+          ((equal ?u ec)
+           (push '(replique-edn/check-first-unicode-char)
+                 (symbol-value actions)))
+          ((replique-edn/is-numeric ec)
+           (when (equal -1 (replique-edn/digit ec 8))
+               (error "Invalid digit: %c" initch))
+           (push '(replique-edn/check-unicode-char)
+                 (symbol-value actions))
+           (push `(replique-edn/read-unicode-char
+                   8 3 nil ,(replique-edn/digit ec 8) 1)
+                 (symbol-value actions)))
+          (t (push ec (symbol-value result))))))
+
+(defun replique-edn/append-char (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (pop (symbol-value result)))
+          (sb (pop (symbol-value result))))
+    (setq sb (concat sb (char-to-string ch)))
+    (push sb (symbol-value result))))
+
+(defun replique-edn/read-string* (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (sb (pop (symbol-value result)))
+          (ch (replique-edn/reader-read reader)))
+    (while (and (not (equal ?\" ch))
+                (not (equal 0 ch))
+                (not (equal ?\\ ch)))
+      (setq sb (concat sb (char-to-string ch)))
+      (setq ch (replique-edn/reader-read reader)))
+    (push sb (symbol-value result))
     (cond ((equal 0 ch)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/escape-char rdr)))))
-          ((equal ?t ch) ?\t)
-          ((equal ?r ch) ?\r)
-          ((equal ?n ch) ?\n)
-          ((equal ?\\ ch) ?\\)
-          ((equal ?\" ch) ?\")
-          ((equal ?b ch) ?\b)
-          ((equal ?f ch) ?\f)
-          ((equal ?u ch)
-           (let ((ch (replique-edn/reader-read rdr)))
-             (cond ((equal 0 ch)
-                    (throw 'continuation
-                           (replique-edn/continuation
-                            nil :f
-                            (lambda (rdr)
-                              (replique-edn/escape-char rdr)))))
-                   ((equal -1 (replique-edn/digit ch 16))
-                    (error "Invalid unicode escape: \\u%c" ch))
-                   (t (replique-edn/read-unicode-char
-                       rdr ch 16 4 t (replique-edn/digit ch 16) 1)))))
-          ((replique-edn/is-numeric ch)
-           (let ((ch (replique-edn/read-unicode-char
-                      rdr ch 8 3 nil (replique-edn/digit ch 8) 1)))
-             (if (> ch 255)
-                 (error "Octal escape sequence must be in range [0, 377]")
-               ch)))
-          (t (error "Unsupported escape character: \\%c" ch)))))
-
-(defun replique-edn/read-string* (reader sb opts &optional cont)
-  (let ((ch (replique-edn/reader-read reader)))
-    (while (not (equal ?\" ch))
-      (when (equal 0 ch)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (reader)
-                  (replique-edn/read-string* reader sb opts cont)))))
-      (if (equal ?\\ ch)
-          (let ((esc-c
-                 (catch 'continuation
-                   (if cont
-                       (replique-edn/contcall cont reader)
-                     (replique-edn/escape-char reader)))))
-            (when (replique-edn/continuation-p esc-c)
-              (throw 'continuation
-                     (replique-edn/continuation
-                      nil :f
-                      (lambda (rdr)
-                        (replique-edn/reader-read rdr ch)
-                        (replique-edn/read-string*
-                         rdr sb opts esc-c)))))
-            (setq sb (concat sb (char-to-string esc-c))))
-        (setq sb (concat sb (char-to-string ch))))
-      (setq cont nil)
-      (setq ch (replique-edn/reader-read reader))))
-  sb)
+           (push '(replique-edn/read-string*) (symbol-value actions))
+           (set result-state :waiting))
+          ((equal ?\\ ch)
+           (push `(replique-edn/read-string*) (symbol-value actions))
+           (push `(replique-edn/append-char) (symbol-value actions))
+           (push `(replique-edn/escape-char) (symbol-value actions)))
+          (t nil))))
 
 (defun replique-edn/write-string* (str)
   (let ((idx 0)
@@ -335,194 +481,365 @@
     (format "\"%s\""
             (apply 'string (reverse chars)))))
 
-(defun replique-edn/not-constituent (ch)
-  (or (equal ?@ ch)
-      (equal ?` ch)
-      (equal ?~ ch)))
+(defun replique-edn/parse-symbol (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (token (pop (symbol-value result)))
+          (token (when (and (not (string= "" token))
+                            (not (string-suffix-p ":" token))
+                            (not (string-prefix-p "::" token)))
+                   (let* ((ns-idx (position ?/ token))
+                          (ns (when ns-idx
+                                (substring-no-properties
+                                 token 0 ns-idx))))
+                     (if ns
+                         (let ((ns-idx (1+ ns-idx)))
+                           (when (not (equal ns-idx (length token)))
+                             (let ((sym (substring-no-properties
+                                         token ns-idx)))
+                               (when (and (not (replique-edn/is-numeric
+                                                (elt sym 0)))
+                                          (not (string= "" sym))
+                                          (not (string-suffix-p ":" ns))
+                                          (or (string= sym "/")
+                                              (not (position ?/ sym))))
+                                 (list ns sym)))))
+                       (when (or (string= token "/")
+                                 (not (position ?/ token)))
+                         (list nil token)))))))
+    (push token (symbol-value result))))
 
-(defun replique-edn/is-macro-terminating (ch)
-  (and (not (equal ?# ch))
-       (not (equal ?` ch))
-       (not (equal ?: ch))
-       (replique-edn/macros ch)))
+(defun replique-edn/parse-keyword (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (s (pop (symbol-value result)))
+          (token (pop (symbol-value result)))
+          (keyword (if (and s (not (string-match-p "::" token)))
+                       (let ((ns (car s))
+                             (name (cadr s)))
+                         (if (equal ?: (elt token 0))
+                             (error "Invalid token: :%s" token)
+                           (if ns
+                               (intern (concat ":" ns "/" name))
+                             (intern (concat ":" name)))))
+                     (error "Invalid token: :%s" token))))
+    (push keyword (symbol-value result))))
 
-(defun replique-edn/read-token* (rdr sb ch)
-  (while (and (not (replique-edn/is-separator ch))
-              (not (replique-edn/is-macro-terminating ch)))
-    (when (equal 0 ch)
-      (throw 'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/read-token*
-                 rdr sb (replique-edn/reader-peek-char rdr))))))
-    (when (replique-edn/not-constituent ch)
-      (error "Invalid constituent character: %c" ch))
-    (setq sb (concat sb (char-to-string (replique-edn/reader-read rdr))))
-    (setq ch (replique-edn/reader-peek-char rdr)))
-  sb)
+(defun replique-edn/duplicate (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (val (car (symbol-value result))))
+    (push val (symbol-value result))))
 
-(defun replique-edn/read-token (rdr initch validate-leading)
-  (cond ((equal 0 initch)
-         (throw 'continuation
-                (replique-edn/continuation
-                 nil :f
-                 (lambda (rdr)
-                   (replique-edn/read-token
-                    rdr (replique-edn/reader-read rdr) validate-leading)))))
-        ((and validate-leading
-              (replique-edn/not-constituent initch))
-         (error "Invalid leading character: %c" initch))
-        (t (replique-edn/reader-read rdr initch)
-           (replique-edn/read-token* rdr "" initch))))
-
-(defun replique-edn/parse-symbol (token)
-  (when (and (not (string= "" token))
-             (not (string-suffix-p ":" token))
-             (not (string-prefix-p "::" token)))
-    (let* ((ns-idx (position ?/ token))
-           (ns (when ns-idx
-                 (substring-no-properties
-                  token 0 ns-idx))))
-      (if ns
-          (let ((ns-idx (1+ ns-idx)))
-            (when (not (equal ns-idx (length token)))
-              (let ((sym (substring-no-properties
-                          token ns-idx)))
-                (when (and (not (replique-edn/is-numeric
-                                 (elt sym 0)))
-                           (not (string= "" sym))
-                           (not (string-suffix-p ":" ns))
-                           (or (string= sym "/")
-                               (not (position ?/ sym))))
-                  (list ns sym)))))
-        (when (or (string= token "/")
-                  (not (position ?/ token)))
-          (list nil token))))))
-
-(defun replique-edn/read-keyword (reader sb opts &optional token-cont)
-  (let ((ch (replique-edn/reader-read reader)))
-    (if (not (replique-edn/is-separator ch))
-        (let ((token (catch 'continuation
-                       (if token-cont
-                           (replique-edn/contcall token-cont reader)
-                         (replique-edn/read-token reader ch t)))))
-          (when (replique-edn/continuation-p token)
-            (throw
-             'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/reader-read rdr ch)
-                (replique-edn/read-keyword
-                 rdr sb opts token)))))
-          (let ((s (replique-edn/parse-symbol token)))
-            (if (and s (not (string-match-p "::" token)))
-                (let ((ns (car s))
-                      (name (cadr s)))
-                  (if (equal ?: (elt token 0))
-                      (error "Invalid token: :%s" token)
-                    (if ns
-                        (intern (concat ":" ns "/" name))
-                      (intern (concat ":" name)))))
-              (error "Invalid token: :%s" token))))
-      (error "Invalid token: :"))))
-
-(defun replique-edn/skip-line (rdr)
-  (let ((ch (replique-edn/reader-read rdr)))
+(defun replique-edn/read-keyword (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
     (cond ((equal 0 ch)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/skip-line rdr)))))
+           (push '(replique-edn/read-keyword)
+                 (symbol-value actions))
+           (set result-state :waiting))
+          ((replique-edn/is-separator ch)
+           (error "Invalid token: :"))
+          (t
+           (replique-edn/reader-read reader ch)
+           (push '(replique-edn/parse-keyword)
+                 (symbol-value actions))
+           (push '(replique-edn/parse-symbol)
+                 (symbol-value actions))
+           (push '(replique-edn/duplicate)
+                 (symbol-value actions))
+           (push `(replique-edn/read-token t)
+                 (symbol-value actions))))))
+
+(defun replique-edn/parse-ns-symbol (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (p (pop (symbol-value result)))
+          (s (let ((ns (car p))
+                   (n (cadr p)))
+               (if ns
+                   (intern (concat ns "/" n))
+                 (intern n)))))
+    (push s (symbol-value result))))
+
+(defun replique-edn/parse-symbol-extended (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (token (pop (symbol-value result))))
+    (cond ((string= token "nil")
+           (push nil (symbol-value result)))
+          ((string= token "true")
+           (push t (symbol-value result)))
+          ((string= token "false")
+           (push nil (symbol-value result)))
+          ((string= token "/")
+           (push '/ (symbol-value result)))
+          ((string= token "NaN")
+           (push 0.0e+NaN (symbol-value result)))
+          ((string= token "-Infinity")
+           (push -1.0e+INF (symbol-value result)))
+          ((string= token "+Infinity")
+           (push +1.0e+INF (symbol-value result)))
+          ((string= token "Infinity")
+           (push +1.0e+INF (symbol-value result)))
+          (t
+           (push token (symbol-value result))
+           (push '(replique-edn/parse-ns-symbol)
+                 (symbol-value actions))
+           (push '(replique-edn/parse-symbol)
+                 (symbol-value actions))))))
+
+(defun replique-edn/read-symbol (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push '(replique-edn/parse-symbol-extended)
+          (symbol-value actions))
+    (push `(replique-edn/read-token t)
+          (symbol-value actions))))
+
+(defun replique-edn/skip-line (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (cond ((equal 0 ch)
+           (push '(replique-edn/skip-line)
+                 (symbol-value actions))
+           (set result-state :waiting))
           ((not (equal ?\n ch))
-           (replique-edn/skip-line rdr))
-          (t rdr))))
+           (replique-edn/skip-line state))
+          (t (push '(replique-edn/read*)
+                   (symbol-value actions))))))
 
-(defun replique-edn/read-comment (rdr sb opts)
-  (replique-edn/skip-line rdr))
+(defun replique-edn/read-comment (state)
+  (replique-edn/skip-line state))
 
-(defun replique-edn/read-past (pred rdr)
-  (let ((ch (replique-edn/reader-read rdr)))
-    (if (funcall pred ch)
-        (replique-edn/read-past pred rdr)
+(defun replique-edn/discard (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (pop (symbol-value result))))
+
+(defun replique-edn/read-discard (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push '(replique-edn/read*)
+          (symbol-value actions))
+    (push '(replique-edn/discard)
+          (symbol-value actions))
+    (push '(replique-edn/read*)
+          (symbol-value actions))))
+
+(defun replique-edn/read-past (reader)
+  (let ((ch (replique-edn/reader-read reader)))
+    (if (replique-edn/is-separator ch)
+        (replique-edn/read-past reader)
       ch)))
 
-(defun replique-edn/read-delimited (delim rdr a opts &optional cont)
-  (let* ((ch (replique-edn/read-past
-              'replique-edn/is-separator rdr)))
-    (while (not (equal delim ch))
-      (when (equal 0 ch)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (rdr)
-                  (replique-edn/read-delimited
-                   delim rdr a opts)))))
-      (let ((macrofn (funcall 'replique-edn/macros ch)))
-        (if macrofn
-            (let ((mret (catch 'continuation
-                          (if cont
-                              (replique-edn/contcall cont rdr)
-                            (funcall macrofn rdr "" opts)))))
-              (cond ((replique-edn/continuation-p mret)
-                     (throw 'continuation
-                            (replique-edn/continuation
-                             nil :f
-                             (lambda (rdr)
-                               (replique-edn/reader-read rdr ch)
-                               (replique-edn/read-delimited
-                                delim rdr a opts mret)))))
-                    ((replique-edn/reader-p mret)
-                     nil)
-                    (t (setq a (cons mret a)))))
+(defun replique-edn/append-object (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (o (pop (symbol-value result)))
+          (l (pop (symbol-value result))))
+    (push o l)
+    (push l (symbol-value result))))
+
+(defun replique-edn/read-unmatched-delimiter (state ch)
+  (error "Unmatched delimiter %s" (char-to-string ch)))
+
+(defun replique-edn/read-delimited (state delim)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/read-past reader)))
+    (cond ((equal 0 ch)
+           (push `(replique-edn/read-delimited ,delim)
+                 (symbol-value actions))
+           (set result-state :waiting))
+          ((equal delim ch) nil)
+          (t (replique-edn/reader-read reader ch)
+             (push `(replique-edn/read-delimited ,delim)
+                   (symbol-value actions))
+             (push '(replique-edn/append-object)
+                   (symbol-value actions))
+             (push '(replique-edn/read*)
+                   (symbol-value actions))))))
+
+(defvar replique-edn/default-data-readers
+  (make-hash-table :test #'equal))
+
+(defclass replique-edn/printable ()
+  ()
+  :abstract t)
+
+(defmethod replique-edn/print-method ((o replique-edn/printable))
+  (let ((slots (mapcar (lambda (s)
+                         (intern (concat ":" (symbol-name s))))
+                       (object-slots o)))
+        (l nil))
+    (mapcar (lambda (s)
+              (push (slot-value o s) l)
+              (push s l))
+            slots)
+    (format "#%s %s"
+            (object-class o)
+            (replique-edn/pr-str
+             (replique-edn/list-to-map l)))))
+
+(defclass replique-edn/inst (replique-edn/printable)
+  ((high :initarg :high
+         :type number)
+   (low :initarg :low
+        :type number)))
+
+(defmethod replique-edn/print-method ((o replique-edn/inst))
+  (format
+   "#inst %s"
+   (format-time-string "\"%Y-%m-%dT%H:%M:%S.52Z\""
+                       (list (oref o :high) (oref o :low))
+                       :utc)))
+
+(defclass replique-edn/uuid (replique-edn/printable)
+  ((uuid :initarg :uuid
+         :type string)))
+
+(defmethod replique-edn/print-method ((o replique-edn/uuid))
+  (format
+   "#uuid %s"
+   (oref o :uuid)))
+
+(puthash 'inst
+         (lambda (inst)
+           (let ((time (date-to-time inst)))
+             (replique-edn/inst nil
+                                 :high (car time)
+                                 :low (cadr time))))
+         replique-edn/default-data-readers)
+
+(puthash 'uuid
+         (lambda (uuid)
+           (replique-edn/uuid nil :uuid uuid))
+         replique-edn/default-data-readers)
+
+(defun replique-edn/parse-tagged (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result
+                   :tagged-readers tagged-readers)
+           state)
+          (object (pop (symbol-value result)))
+          (tag (pop (symbol-value result))))
+    (when (not (symbolp tag))
+      (error "Reader tag must be a symbol"))
+    (let ((f (cdr (assoc tag tagged-readers))))
+      (if f
+          (push (funcall f object) (symbol-value result))
+        (let ((d (gethash tag replique-edn/default-data-readers)))
+          (if d (push (funcall d object) (symbol-value result))
+            (error "No reader function for tag %s" tag)))))))
+
+(defun replique-edn/read-tagged (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push '(replique-edn/parse-tagged) (symbol-value actions))
+    (push '(replique-edn/read*) (symbol-value actions))
+    (push '(replique-edn/read*) (symbol-value actions))))
+
+(defun replique-edn/read-dispatch (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (if (equal 0 ch)
+        (progn (push '(replique-edn/read-dispatch)
+                     (symbol-value actions))
+               (set result-state :waiting))
+      (let ((dm (replique-edn/dispatch-macros ch)))
+        (if dm
+            (push dm (symbol-value actions))
           (progn
-            (when (not cont)
-              (replique-edn/reader-read rdr ch))
-            (let* ((o (catch 'continuation
-                        (if cont
-                            (replique-edn/contcall cont rdr)
-                          (replique-edn/read rdr opts)))))
-              (if (replique-edn/continuation-p o)
-                  (throw 'continuation
-                         (replique-edn/continuation
-                          nil :f
-                          (lambda (rdr)
-                            (replique-edn/reader-read rdr ch)
-                            (replique-edn/read-delimited
-                             delim rdr a opts o))))
-                (setq a (cons o a)))))))
-      (setq cont nil)
-      (setq ch (replique-edn/read-past
-                'replique-edn/is-separator rdr)))
-    (reverse a)))
+            (replique-edn/reader-read reader ch)
+            (push '(replique-edn/read-tagged)
+                  (symbol-value actions))))))))
 
-(defun replique-edn/read-list (rdr sb opts &optional cont)
-  (let ((the-list (catch 'continuation
-                    (if cont
-                        (replique-edn/contcall cont rdr)
-                      (replique-edn/read-delimited ?\) rdr nil opts)))))
-    (cond ((replique-edn/continuation-p the-list)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/read-list rdr sb opts the-list)))))
-          (t the-list))))
+(defun replique-edn/parse-list (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (l (pop (symbol-value result))))
+    (push (reverse l) (symbol-value result))))
 
-(defun replique-edn/read-vector (rdr sb opts &optional cont)
-  (let ((l (catch 'continuation
-             (if cont
-                 (replique-edn/contcall cont rdr)
-               (replique-edn/read-delimited ?\] rdr nil opts)))))
-    (when (replique-edn/continuation-p l)
-      (throw 'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/read-vector rdr sb opts l)))))
-    (apply 'vector l)))
+(defun replique-edn/parse-vector (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (l (pop (symbol-value result))))
+    (push (apply 'vector (reverse l))
+          (symbol-value result))))
+
+(defun replique-edn/read-list (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push nil (symbol-value result))
+    (push '(replique-edn/parse-list) (symbol-value actions))
+    (push '(replique-edn/read-delimited ?\)) (symbol-value actions))))
+
+(defun replique-edn/read-vector (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push nil (symbol-value result))
+    (push '(replique-edn/parse-vector) (symbol-value actions))
+    (push '(replique-edn/read-delimited ?\]) (symbol-value actions))))
 
 (defun replique-edn/list-to-map* (idx l m)
   (if (> (length l) idx)
@@ -536,71 +853,27 @@
   (let ((m (make-hash-table :test 'equal)))
     (replique-edn/list-to-map* 0 l m)))
 
-(defun replique-edn/read-map (rdr sb opts &optional cont)
-  (let ((l (catch 'continuation
-             (if cont
-                 (replique-edn/contcall cont rdr)
-               (replique-edn/read-delimited ?\} rdr nil opts)))))
-    (cond ((replique-edn/continuation-p l)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/read-map rdr sb opts l)))))
-          ((equal 1 (logand 1 (length l)))
-           (error "Map literal must contain an even number of forms"))
-          (t (replique-edn/list-to-map l)))))
+(defun replique-edn/parse-hashmap (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (l (pop (symbol-value result))))
+    (if (equal 1 (logand 1 (length l)))
+        (error "Map literal must contain an even number of forms")
+      (push (replique-edn/list-to-map (reverse l))
+            (symbol-value result)))))
 
-(defun replique-edn/read-unmatched-delimiter (rdr sb opts)
-  (error "Unmatched delimiter %s" sb))
-
-(defun replique-edn/read-char* (rdr backslash opts &optional cont)
-  (let ((ch (replique-edn/reader-read rdr)))
-    (if (equal 0 ch)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (rdr)
-                  (replique-edn/read-char* rdr backslash opts cont))))
-      (let ((token
-              (if (or (replique-edn/is-macro-terminating ch)
-                      (replique-edn/not-constituent ch)
-                      (replique-edn/is-separator ch))
-                  (char-to-string ch)
-                (catch 'continuation
-                  (if cont
-                      (replique-edn/contcall cont rdr)
-                    (replique-edn/read-token rdr ch nil))))))
-        (when (replique-edn/continuation-p token)
-          (throw 'continuation
-                 (replique-edn/continuation
-                  nil :f
-                  (lambda (rdr)
-                    (replique-edn/reader-read rdr ch)
-                    (replique-edn/read-char*
-                     rdr backslash opts token)))))
-        (cond
-         ((equal 1 (length token)) (string-to-char token))
-         ((string= token "newline") ?\n)
-         ((string= token "space") ?\s)
-         ((string= token "tab") ?\t)
-         ((string= token "backspace") ?\b)
-         ((string= token "formfeed") ?\f)
-         ((string= token "return") ?\r)
-         ((string-prefix-p "u" token) (replique-edn/read-unicode-char*
-                                       token 1 4 16 1 0))
-         ((string-prefix-p "o" token)
-          (let ((len (1- (length token))))
-            (if (> len 3)
-                (error "Invalid octal escape sequence length: %d"
-                       length)
-              (let ((uc (replique-edn/read-unicode-char*
-                         token 1 len 8 1 0)))
-                (if (> uc 255)
-                    (error
-                     "Octal escape sequence must be in range [0,377]")
-                  uc)))))
-         (t (error "Unsupported character: \\%s" token)))))))
+(defun replique-edn/read-map (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push nil (symbol-value result))
+    (push '(replique-edn/parse-hashmap) (symbol-value actions))
+    (push '(replique-edn/read-delimited ?\}) (symbol-value actions))))
 
 (defclass replique-edn/set (replique-edn/printable)
   ((vals :initarg :vals
@@ -613,181 +886,89 @@
                 'replique-edn/pr-str
                 (oref o :vals)))))
 
-(defun replique-edn/read-set (rdr sb opts &optional cont)
-  (let ((l (catch 'continuation
-             (if cont
-                 (replique-edn/contcall cont rdr)
-               (replique-edn/read-delimited ?\} rdr nil opts)))))
-    (cond ((replique-edn/continuation-p l)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/read-set rdr sb opts l)))))
-          (t (replique-edn/set :nil :vals l)))))
+(defun replique-edn/parse-set (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (l (pop (symbol-value result))))
+    (push (replique-edn/set :nil :vals l)
+          (symbol-value result))))
 
-(defun replique-edn/read-discard (rdr sb opts &optional cont)
-  (let ((o (catch 'continuation
-             (if cont
-                 (replique-edn/contcall cont rdr)
-               (replique-edn/read rdr opts)))))
-    (when (replique-edn/continuation-p o)
-      (throw 'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/read-discard rdr sb opts o)
-                rdr)))))
-  rdr)
+(defun replique-edn/read-set (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push nil (symbol-value result))
+    (push '(replique-edn/parse-set) (symbol-value actions))
+    (push '(replique-edn/read-delimited ?\}) (symbol-value actions))))
 
-(defun replique-edn/dispatch-macros (ch)
-  (cond
-   ;; ((equal ch ?^) (replique-edn/read-meta)))) ;Not supported
-   ((equal ch ?\{) 'replique-edn/read-set)
-   ((equal ch ?<) (error "Unreadable form"))
-   ((equal ch ?\;) 'replique-edn/read-comment)
-   ((equal ch ?_) 'replique-edn/read-discard)
-   (t nil)))
-
-(defun replique-edn/read-tagged (rdr initch opts &optional cont-t cont-o)
-  (let ((tag (catch 'continuation
-               (if cont-t
-                   (replique-edn/contcall cont-t rdr)
-                 (replique-edn/read rdr opts)))))
-    (when (replique-edn/continuation-p tag)
-      (throw 'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/read-tagged
-                 rdr initch opts tag nil)))))
-    (let ((object (catch 'continuation
-                    (if cont-o
-                        (replique-edn/contcall cont-o rdr)
-                      (replique-edn/read rdr opts)))))
-      (when (replique-edn/continuation-p object)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (rdr)
-                  (replique-edn/read-tagged
-                   rdr initch opts
-                   (replique-edn/continuation
-                    nil :f (lambda (rdr) tag))
-                   object)))))
-      (when (not (symbolp tag))
-        (error "Reader tag must be a symbol"))
-      (let ((f (cdr (assoc tag (cdr (assoc ':readers opts))))))
-        (if f
-            (funcall f object)
-          (let ((d (gethash tag replique-edn/default-data-readers)))
-            (if d (funcall d object)
-              (error "No reader function for tag %s" tag))))))))
-
-(defun replique-edn/read-dispatch (rdr sb opts &optional cont)
-  (let ((ch (replique-edn/reader-read rdr)))
-    (if (equal 0 ch)
-        (throw 'continuation
-               (replique-edn/continuation
-                nil :f
-                (lambda (rdr)
-                  (replique-edn/read-dispatch rdr sb opts cont))))
-      (let ((dm (replique-edn/dispatch-macros ch)))
-        (if dm
-            (funcall dm rdr (char-to-string ch) opts)
-          (progn
-            (when (not cont)
-              (replique-edn/reader-read rdr ch))
-            (let ((obj (catch 'continuation
-                         (if cont
-                             (replique-edn/contcall cont rdr)
-                           (replique-edn/read-tagged rdr ch opts)))))
-              (when (replique-edn/continuation-p obj)
-                (throw 'continuation
-                       (replique-edn/continuation
-                        nil :f
-                        (lambda (rdr)
-                          (replique-edn/reader-read rdr ch)
-                          (replique-edn/read-dispatch
-                           rdr sb opts obj)))))
-              (when (not obj)
-                (error "No dispatch macro for %c" ch))
-              obj)))))))
-
-(defun replique-edn/macros (ch)
-  (cond ((equal ?\" ch) 'replique-edn/read-string*)
-        ((equal ?: ch) 'replique-edn/read-keyword)
-        ((equal ?\; ch) 'replique-edn/read-comment)
-        ;;((equal ?^ ch) 'replique-edn/read-meta) Metadata not supported yet
-        ((equal ?\( ch) 'replique-edn/read-list)
-        ((equal ?\) ch) 'replique-edn/read-unmatched-delimiter)
-        ((equal ?\[ ch) 'replique-edn/read-vector)
-        ((equal ?\] ch) 'replique-edn/read-unmatched-delimiter)
-        ((equal ?\{ ch) 'replique-edn/read-map)
-        ((equal ?\} ch) 'replique-edn/read-unmatched-delimiter)
-        ((equal ?\\ ch) 'replique-edn/read-char*)
-        ((equal ?# ch) 'replique-edn/read-dispatch)
-        (t nil)))
-
-(defun replique-edn/read-symbol (rdr initch &optional cont)
-  (let ((token (catch 'continuation
-                 (if cont
-                     (replique-edn/contcall cont rdr)
-                   (replique-edn/read-token rdr initch t)))))
-    (when (replique-edn/continuation-p token)
-      (throw 'continuation
-             (replique-edn/continuation
-              nil :f
-              (lambda (rdr)
-                (replique-edn/read-symbol
-                 rdr initch token)))))
-    (cond ((string= token "nil") nil)
-          ((string= token "true") t)
-          ((string= token "false") nil)
-          ((string= token "/") '/)
-          ((string= token "NaN") 0.0e+NaN)
-          ((string= token "-Infinity") -1.0e+INF)
-          ((string= token "+Infinity") +1.0e+INF)
-          ((string= token "Infinity") +1.0e+INF)
-          (t (let ((p (replique-edn/parse-symbol token)))
-               (let ((ns (car p))
-                     (n (cadr p)))
-                 (if ns
-                     (intern (concat ns "/" n))
-                   (intern n))))))))
-
-(defun replique-edn/read (reader &optional opts cont)
-  (let ((ch (replique-edn/reader-read reader)))
-    (cond ((replique-edn/is-separator ch)
-           (replique-edn/read reader opts))
-          ((equal 0 ch)
-           (throw 'continuation
-                  (replique-edn/continuation
-                   nil :f
-                   (lambda (rdr)
-                     (replique-edn/read rdr opts cont)))))
+(defun replique-edn/read* (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (ch (replique-edn/reader-read reader)))
+    (cond ((equal 0 ch)
+           (push '(replique-edn/read*) (symbol-value actions))
+           (set result-state :waiting))
+          ((replique-edn/is-separator ch)
+           (push '(replique-edn/read*) (symbol-value actions)))
           ((replique-edn/number-literal? reader ch)
-           (replique-edn/read-number reader (char-to-string ch) opts))
+           (push `(replique-edn/read-number ,(char-to-string ch))
+                 (symbol-value actions)))
           (t (let ((f (replique-edn/macros ch)))
-               (if f (let ((res
-                            (catch 'continuation
-                              (if cont
-                                  (replique-edn/contcall cont reader)
-                                (funcall f reader "" opts)))))
-                       (cond ((replique-edn/reader-p res)
-                              (replique-edn/read reader opts))
-                             ((replique-edn/continuation-p res)
-                              (throw
-                               'continuation
-                               (replique-edn/continuation
-                                nil :f
-                                (lambda (rdr)
-                                  (replique-edn/reader-read rdr ch)
-                                  (replique-edn/read
-                                   rdr opts res)))))
-                             (t res)))
-                 (replique-edn/read-symbol reader ch))))
-          (t nil))))
+               (cond ((equal 'replique-edn/read-string* (car f))
+                      (push "" (symbol-value result))
+                      (push f (symbol-value actions)))
+                     (f (push f (symbol-value actions)))
+                     (t
+                      (replique-edn/reader-read reader ch)
+                      (push '(replique-edn/read-symbol)
+                              (symbol-value actions)))))))))
+
+(defun replique-edn/init-state (reader)
+  (let ((state (make-symbol "state"))
+        (actions (make-symbol "actions"))
+        (result-state (make-symbol "result-state"))
+        (result (make-symbol "result"))
+        (tagged-readers (make-symbol "tagged-readers")))
+    (set actions '((replique-edn/read*)))
+    (set result-state :reading)
+    (set result '())
+    (set tagged-readers '())
+    (set state `((:reader . ,reader)
+                 (:actions . ,actions)
+                 (:result-state . ,result-state)
+                 (:result . ,result)
+                 (:tagged-readers . ,tagged-readers)))
+    state))
+
+(defun replique-edn/set-reader (state reader)
+  (setcdr (assoc :reader (symbol-value state)) reader)
+  state)
+
+(defun replique-edn/set-tagged-readers (state readers)
+  (setcdr (assoc :tagged-readers (symbol-value state)) readers)
+  state)
+
+(defun replique-edn/read (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result) (symbol-value state)))
+    (set result-state :reading)
+    (while (and (symbol-value actions)
+                (equal :reading (symbol-value result-state)))
+      (let* ((action (pop (symbol-value actions))))
+        (apply (car action) (symbol-value state) (cdr action))))
+    (when (equal :reading (symbol-value result-state))
+      (set result-state :done))
+    state))
 
 
 (defun replique-edn/pr-str (data)
@@ -820,181 +1001,205 @@
           (s-join " " (mapcar 'replique-edn/pr-str data))))
         (t (error "%s cannot be printed to EDN." data))))
 
-
 (comment
 
- (defmacro with-continuation (body catch-fn)
-   (let ((cont (make-symbol "cont")))
-     `(let ((,cont (catch (quote continuation) ,body)))
-        (if (replique-edn/continuation-p ,cont)
-            (funcall ,catch-fn ,cont)
-          ,cont))))
+ (let* ((state1 (-> (replique-edn/reader nil :str "1e3")
+                     replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "1 "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "1e3")))
-        (replique-edn/read reader))
-  (lambda (cont)
-    (replique-edn/contcall cont
-             (replique-edn/reader nil :str "1 "))))
+ (let ((state (-> (replique-edn/reader nil :str "\"\\377\" ")
+                   replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "\"\\377\" ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "\"\\37")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "7\" "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "\"\\37")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "7\" "))))
+ (let ((state (-> (replique-edn/reader nil :str "\"\\n\" ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "\"\\387\" ")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader nil :str "\"\\uE000\" ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str ":e/r ")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader nil :str "\"\\387\" ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str ":e")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "/r "))))
+ (let ((state (-> (replique-edn/reader nil :str ":e/r ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str ";aze\n:e ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str ":e")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "/r "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "(1 ;az")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "e\n:e) "))))
+ (let ((state (-> (replique-edn/reader nil :str ";aze\n:e ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "(1 22 ();d
- \"3\") ")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader nil :str "(1 2 (3)) ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "(2 (1)) ")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader
+                   nil :str "(1 22 ();d
+ \"3\") ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "(1 (\"e")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "\" 3) 2) "))))
+ (let* ((state1 (-> (replique-edn/reader nil :str "(1 ;az")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "e\n:ef ) "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "[1 22 [3];dfsdf
- \"3\"] ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "(1 (\"e")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "\" 3) 2) "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "[1 (\"e")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall
-     conti
-     (replique-edn/reader nil :str "\" 3) 2] "))))
+ (let ((state (-> (replique-edn/reader nil :str "[1 22 [3];dfsdf
+ \"3\"] ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "[1")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall
-     conti
-     (replique-edn/reader nil :str " 2] "))))
+ (let* ((state1 (-> (replique-edn/reader nil :str "[1 (\"e")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "\" 3) 2] "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "{:e [3] 3 4}")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "[1")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str " 2] "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "{:e [")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "3] 3 \"tt\"}"))))
+ (let ((state (-> (replique-edn/reader nil :str "{:e [3] 3 4}")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "\\e ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "{:e [")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "3] 3 \"tt\"}"))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "\\uE000 ")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader nil :str "\\e ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "\\")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "uE000 "))))
+ (let ((state (-> (replique-edn/reader nil :str "\\uE000 ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "#{} ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "\\")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "uE000 "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "#{1 (1 ")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "2) 3} "))))
+ (let ((state (-> (replique-edn/reader nil :str "#{} ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "rr/sss ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "#{1 (1 ")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "2) 3} "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "rr/")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "ss "))))
+ (let ((state (-> (replique-edn/reader nil :str "rr/sss ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "#inst \"1985-04-12T23:20:50.52Z\"")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "rr/")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "ss "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "#uuid \"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\"")))
-   (replique-edn/read reader))
+ (let ((state (-> (replique-edn/reader
+                   nil :str "#inst \"1985-04-12T23:20:50.52Z\"")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "#inst \"1985-04-12T23:20")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str ":50.52Z\""))))
+ (let ((state (-> (replique-edn/reader
+                   nil :str
+                   "#uuid \"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\"")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "#in")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "st \"1985-04-12T23:20:50.52Z\""))))
+ (let* ((state1 (-> (replique-edn/reader
+                     nil :str "#inst \"1985-04-12T23:20")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str ":50.52Z\""))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "#_ee r ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "#in")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader
+                  nil :str "st \"1985-04-12T23:20:50.52Z\""))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "#_e")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall conti
-             (replique-edn/reader nil :str "e tt "))))
+ (let ((state (-> (replique-edn/reader nil :str "#_ee r ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (let ((reader (replique-edn/reader nil :str "#rr/sss{:e 2} ")))
-   (replique-edn/read reader))
+ (let* ((state1 (-> (replique-edn/reader nil :str "#_e")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "e tt "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader state reader2)
+                    replique-edn/read)))
 
- (let ((reader (replique-edn/reader nil :str "#rr/sss{:e 2} ")))
-   (replique-edn/read
-    reader
-    `((:readers . ((rr/sss . ,(lambda (x) x)))))))
+ (let ((state (-> (replique-edn/reader nil :str "#rr/sss{:e 2} ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (with-continuation
-  (let ((reader (replique-edn/reader nil :str "#uuid (e #inst \"1985-04-")))
-    (replique-edn/read reader))
-  (lambda (conti)
-    (replique-edn/contcall
-     conti
-     (replique-edn/reader nil :str "12T23:20:50.52Z\") "))))
+ (let ((state (-> (replique-edn/reader nil :str "#rr/sss{:e 2} ")
+                  replique-edn/init-state
+                  (replique-edn/set-tagged-readers
+                   `((rr/sss . ,(lambda (x) x)))))))
+   (replique-edn/state-print (replique-edn/read state)))
 
- (replique-edn/read (replique-edn/reader
-                     nil :str "\"\\\"#ob\\\"\" "))
+ (let* ((state1 (-> (replique-edn/reader
+                     nil :str "#uuid (e #inst \"1985-04-")
+                    replique-edn/init-state))
+        (reader2 (replique-edn/reader nil :str "12T23:20:50.52Z\") "))
+        (state (replique-edn/read state1)))
+   (replique-edn/state-print (-> (replique-edn/set-reader reader2 state)
+                    replique-edn/read)))
+
+ (let ((state (-> (replique-edn/reader nil :str "\"\\\"#ob\\\"\" ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
+
+
 
  )
 
