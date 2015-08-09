@@ -66,11 +66,15 @@
     "")
    (t
     (concat
-     (char-to-string (or (oref r unread-char) ""))
-     (char-to-string (or (oref r unread-char2) ""))
+     (if (oref r unread-char)
+         (char-to-string (oref r unread-char))
+       "")
+     (if (oref r unread-char2)
+         (char-to-string (oref r unread-char2))
+       "")
      (substring (oref r str) (oref r index))))))
 
-(defun state-print (state)
+(defun replique-edn2/state-print (state)
   (-let (((&alist :reader reader
                   :actions actions
                   :result-state result-state
@@ -80,6 +84,14 @@
       (:result-state . ,(symbol-value result-state))
       (:result . ,(symbol-value result)))))
 
+(defun replique-edn2/result (state)
+  (-let (((&alist :result result
+                  :result-state result-state)
+          (symbol-value state)))
+    (when (not (equal :done (symbol-value result-state)))
+      (error (format "result-state is %s"
+                     (symbol-value result-state))))
+    (car (symbol-value result))))
 
 
 
@@ -990,169 +1002,160 @@
         (t (error "%s cannot be printed to EDN." data))))
 
 (comment
- (defun state-print (state)
-   (-let (((&alist :reader reader
-                   :actions actions
-                   :result-state result-state
-                   :result result) (symbol-value state)))
-     `((:reader . ,reader)
-       (:actions . ,(symbol-value actions))
-       (:result-state . ,(symbol-value result-state))
-       (:result . ,(symbol-value result)))))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "1e3")
                      replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "1 "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\"\\377\" ")
                    replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "\"\\37")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "7\" "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\"\\n\" ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\"\\uE000\" ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\"\\387\" ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str ":e/r ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str ":e")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "/r "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str ";aze\n:e ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str "(1 2 (3)) ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader
                    nil :str "(1 22 ();d
  \"3\") ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "(1 ;az")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "e\n:ef ) "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "(1 (\"e")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "\" 3) 2) "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "[1 22 [3];dfsdf
  \"3\"] ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "[1 (\"e")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "\" 3) 2] "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "[1")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str " 2] "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "{:e [3] 3 4}")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "{:e [")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "3] 3 \"tt\"}"))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\\e ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\\uE000 ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "\\")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "uE000 "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "#{} ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "#{1 (1 ")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "2) 3} "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "rr/sss ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "rr/")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "ss "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader
                    nil :str "#inst \"1985-04-12T23:20:50.52Z\"")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader
                    nil :str
                    "#uuid \"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\"")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader
                      nil :str "#inst \"1985-04-12T23:20")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str ":50.52Z\""))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "#in")
@@ -1160,41 +1163,41 @@
         (reader2 (replique-edn2/reader
                   nil :str "st \"1985-04-12T23:20:50.52Z\""))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "#_ee r ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader nil :str "#_e")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "e tt "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader state reader2)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader state reader2)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "#rr/sss{:e 2} ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let ((state (-> (replique-edn2/reader nil :str "#rr/sss{:e 2} ")
                   replique-edn2/init-state
                   (replique-edn2/set-tagged-readers
                    `((rr/sss . ,(lambda (x) x)))))))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
  (let* ((state1 (-> (replique-edn2/reader
                      nil :str "#uuid (e #inst \"1985-04-")
                     replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "12T23:20:50.52Z\") "))
         (state (replique-edn2/read state1)))
-   (state-print (-> (replique-edn2/set-reader reader2 state)
+   (replique-edn2/state-print (-> (replique-edn2/set-reader reader2 state)
                     replique-edn2/read)))
 
  (let ((state (-> (replique-edn2/reader nil :str "\"\\\"#ob\\\"\" ")
                   replique-edn2/init-state)))
-   (state-print (replique-edn2/read state)))
+   (replique-edn2/state-print (replique-edn2/read state)))
 
 
 
