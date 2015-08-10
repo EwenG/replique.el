@@ -377,8 +377,7 @@
           (msg (cond (replique/waiting-edn-state
                       (-> replique/waiting-edn-state
                           (replique-edn/set-reader reader)
-                          replique-edn/read
-                          symbol-value))
+                          replique-edn/read))
                      ((s-starts-with?
                        "#ewen.replique.core.ToolingMsg"
                        (s-trim-left string))
@@ -386,13 +385,13 @@
                           replique-edn/init-state
                           (replique-edn/set-tagged-readers
                            replique/edn-tag-readers)
-                          replique-edn/read
-                          symbol-value))
+                          replique-edn/read))
                      (t nil)))
           ((&alist :result result
                    :result-state result-state)
-           msg)
+           (symbol-value msg))
           (result (car (symbol-value result))))
+    (setq replique/waiting-edn-state nil)
     (cond ((equal :waiting (symbol-value result-state))
            (setq replique/waiting-edn-state msg))
           (msg (funcall
