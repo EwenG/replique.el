@@ -30,11 +30,13 @@
 (defmacro with-tooling-response [msg platform & body]
   `(try (ewen.replique.core/map->ToolingMsg
          {:type (:type ~msg)
+          :uid (:uid ~msg)
           :platform ~platform
           :result ~@body})
         (catch Throwable t#
           (ewen.replique.core/map->ToolingMsg
            {:type (:type ~msg)
+            :uid (:uid ~msg)
             :platform ~platform
             :result nil
             :error t#}))))

@@ -3,16 +3,18 @@
             [clojure.set])
   (:import [java.net URI]))
 
-(defrecord ToolingMsg [type platform result])
+(defrecord ToolingMsg [type uid platform result])
 
 (defmacro with-tooling-response [msg platform & body]
   `(try (map->ToolingMsg
          {:type (:type ~msg)
+          :uid (:uid ~msg)
           :platform ~platform
           :result ~@body})
         (catch Throwable t#
           (map->ToolingMsg
            {:type (:type ~msg)
+            :uid (:uid ~msg)
             :platform ~platform
             :result nil
             :error t#}))))
