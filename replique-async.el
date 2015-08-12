@@ -62,8 +62,9 @@
           (-let (((&alist :listener-callback listener-callback
                           :listener-process p)
                   listener))
-            (process-send-string p "\n")
-            (delete-process p)
+            (when p
+              (process-send-string p "\n")
+              (delete-process p))
             (funcall listener-callback item)
             item)
         (progn (->> `((:item . ,item)
@@ -82,8 +83,9 @@
           (-let (((&alist :listener-callback listener-callback
                           :listener-process p)
                   listener))
-            (process-send-string p "\n")
-            (delete-process p)
+            (when p
+              (process-send-string p "\n")
+              (delete-process p))
             (funcall listener-callback item)
             item)
         (progn (->> `((:item . ,item))
