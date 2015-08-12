@@ -21,7 +21,7 @@
 (defun replique-async/chan ()
   (replique-async/chan-impl nil :listeners nil :providers nil))
 
-(defmethod replique-async/close
+(defmethod replique-async/close!
   ((ch replique-async/chan-impl))
   (mapcar (-lambda ((&alist :listener-process p))
             (when p
