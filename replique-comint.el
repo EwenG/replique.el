@@ -71,11 +71,8 @@
     (cond ((equal :waiting (symbol-value result-state))
            (set edn-reader-state msg))
           (msg (let* ((result (car (symbol-value result)))
-                      (_ (print result))
                       (uid (cdr (assoc 'uid result)))
-                      (_ (print uid))
-                      (chan (gethash uid tooling-chans))
-                      (_ (print chan)))
+                      (chan (gethash uid tooling-chans)))
                  (set edn-reader-state nil)
                  (remhash uid tooling-chans)
                  (replique-async/>!
