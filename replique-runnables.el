@@ -45,6 +45,7 @@
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
 (defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-?\\([0-9]+\\)?-standalone.jar$")
+(defconst replique-runnables/lein-regex "^lein$")
 
 (defun replique-runnables/default-dep (platform)
   (cond ((string= platform "clj")
@@ -145,6 +146,16 @@
 (comment
  (replique-runnables/jars-in-path "cljs")
  )
+
+(defun replique-runnables/lein-in-path ()
+  (-let* ((path (eshell-command-result "echo $PATH"))
+          (path-dirs (split-string path ":"))
+          (lein-scripts (-> (-keep (lambda (dir)
+                             (directory-files
+                              dir t replique-runnables/lein-regex))
+                           path-dirs)
+                    -flatten)))
+    (car lein-scripts)))
 
 (defun replique-runnables/jars-in-path (platform)
   (-let* ((path (eshell-command-result "echo $PATH"))

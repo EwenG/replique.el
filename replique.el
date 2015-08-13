@@ -289,11 +289,11 @@
                    replique-edn/pr-str)
                init-opts))))
 
-(defun replique/repl-cmd-lein (platform init-opts)
+(defun replique/repl-cmd-lein (lein platform init-opts)
   (let ((platform-suffix
          (if (string= "cljs" platform)
              "-cljs" "")))
-    `("lein" "run" "-m" "clojure.main/main" "-e"
+    `(,lein "run" "-m" "clojure.main/main" "-e"
       ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init %s %s))"
                (replique/replique-root-dir)
                platform-suffix
@@ -310,7 +310,10 @@
                         replique-edn/pr-str
                         replique-edn/pr-str)))
     (if (locate-file "project.clj" (list root-dir))
-        (replique/repl-cmd-lein platform init-opts)
+        (let ((lein-script (replique-runnables/lein-in-path)))
+          (if lein-script
+              (replique/repl-cmd-lein lein-script platform init-opts)
+            'lein-script-not-found))
       (let ((runnable-jar (replique/platform-jar platform)))
         (if (null runnable-jar)
             'runnable-jar-not-found
@@ -319,55 +322,53 @@
 (defun replique/repl* (root-dir platform repl-cmd)
   (when (not repl-cmd)
     (error "Clojure process cannot be started"))
-  (if (equal repl-cmd 'runnable-jar-not-found)
-      nil
-    (let* ((default-directory root-dir)
-           (buffer-name (replique/gen-buffer-name))
-           (comint-buffer (apply #'make-comint
-                                 buffer-name
-                                 (car repl-cmd) nil (cdr repl-cmd)))
-           (edn-reader-state (make-symbol "edn-reader-state"))
-           (_ (set edn-reader-state nil))
-           (buff-props
-            `((name . ,buffer-name)
-              (buffer . ,comint-buffer)
-              (root-dir . ,root-dir)
-              (platform . ,platform)
-              (active . t)
-              (sourcepaths . nil)
-              (resourcepaths . nil)
-              (tooling-chans . ,(make-hash-table :test 'equal))
-              (edn-reader-state . ,edn-reader-state))))
-      (set-buffer comint-buffer)
-      (replique/mode)
-      (set-process-filter
-       (get-buffer-process comint-buffer)
-       (-partial 'replique-comint/output-filter-dispatch buff-props))
-      (push buff-props replique/buffers)
-      (replique/set-active-buffer buffer-name)
-      (pop-to-buffer comint-buffer)
-      (when (not replique/buffers-hook-added)
-        (add-hook
-         'kill-buffer-hook
-         (lambda ()
-           (-let* ((b (current-buffer))
-                   (buff-props (replique/buffer-props-by
-                                (-lambda ((&alist 'buffer buffer))
-                                  (equal buffer b))))
-                   ((&alist 'tooling-chans tooling-chans)
-                    buff-props))
-             (when tooling-chans
-               (maphash (lambda (k v)
-                          replique-async/close! v)
-                        tooling-chans))
-             (setq replique/buffers
-                   (delete buff-props
-                           replique/buffers))
-             (when (equal b (replique/get-active-buffer))
-               (replique/set-active-buffer
-                (->> (car replique/buffers)
-                     (assoc 'name))))))))
-      (setq replique/buffers-hook-added t))))
+  (let* ((default-directory root-dir)
+         (buffer-name (replique/gen-buffer-name))
+         (comint-buffer (apply #'make-comint
+                               buffer-name
+                               (car repl-cmd) nil (cdr repl-cmd)))
+         (edn-reader-state (make-symbol "edn-reader-state"))
+         (_ (set edn-reader-state nil))
+         (buff-props
+          `((name . ,buffer-name)
+            (buffer . ,comint-buffer)
+            (root-dir . ,root-dir)
+            (platform . ,platform)
+            (active . t)
+            (sourcepaths . nil)
+            (resourcepaths . nil)
+            (tooling-chans . ,(make-hash-table :test 'equal))
+            (edn-reader-state . ,edn-reader-state))))
+    (set-buffer comint-buffer)
+    (replique/mode)
+    (set-process-filter
+     (get-buffer-process comint-buffer)
+     (-partial 'replique-comint/output-filter-dispatch buff-props))
+    (push buff-props replique/buffers)
+    (replique/set-active-buffer buffer-name)
+    (pop-to-buffer comint-buffer)
+    (when (not replique/buffers-hook-added)
+      (add-hook
+       'kill-buffer-hook
+       (lambda ()
+         (-let* ((b (current-buffer))
+                 (buff-props (replique/buffer-props-by
+                              (-lambda ((&alist 'buffer buffer))
+                                (equal buffer b))))
+                 ((&alist 'tooling-chans tooling-chans)
+                  buff-props))
+           (when tooling-chans
+             (maphash (lambda (k v)
+                        replique-async/close! v)
+                      tooling-chans))
+           (setq replique/buffers
+                 (delete buff-props
+                         replique/buffers))
+           (when (equal b (replique/get-active-buffer))
+             (replique/set-active-buffer
+              (->> (car replique/buffers)
+                   (assoc 'name))))))))
+    (setq replique/buffers-hook-added t)))
 
 (defun replique/platform-to-name (platform)
   (cond ((equal platform "cljs")
@@ -377,7 +378,7 @@
         (t (error "Unknown platform: %s" platform))))
 
 (defun replique/handle-jar-not-found (root-dir platform init-opts)
-  (when (yes-or-no-p (format "Sorry, No %s jar could be find on the filesystem in order to start the REPL. Would you like to download it now?"
+  (when (yes-or-no-p (format "Sorry, No %s jar could be found on the filesystem in order to start the REPL. Would you like to download it now?"
                              (replique/platform-to-name platform)))
     (-> (ido-read-directory-name
          (format "Please enter the directory where the %s jar should be saved: "
@@ -385,12 +386,38 @@
         (replique-runnables/download-jar
          platform
          (lambda (jar-path)
-           (replique/repl
-            (replique/repl-cmd-raw jar-path platform
-                                   (-> (replique/alist-to-map init-opts)
-                                       replique-edn/pr-str
-                                       replique-edn/pr-str))
-            root-dir))))))
+           (if (equal platform "cljs")
+               (replique/repl-cljs
+                (replique/repl-cmd-raw jar-path platform
+                                       (-> (replique/alist-to-map init-opts)
+                                           replique-edn/pr-str
+                                           replique-edn/pr-str))
+                root-dir)
+             (replique/repl
+              (replique/repl-cmd-raw jar-path platform
+                                     (-> (replique/alist-to-map init-opts)
+                                         replique-edn/pr-str
+                                         replique-edn/pr-str))
+              root-dir))))))
+  'runnable-jar-not-found)
+
+(defun replique/handle-lein-not-found (root-dir platform init-opts)
+  (when (yes-or-no-p (format "Sorry, leiningen could not be found on the filesystem in order to start the REPL. Would you like to install it now?"))
+    (let* ((lein-copy-target (ido-read-directory-name
+                              (format "Please enter the directory where the lein script should be saved: ")))
+           (lein-copy-target (concat lein-copy-target "lein")))
+      (copy-file
+       (concat (replique/replique-root-dir) "runnables/lein")
+       lein-copy-target
+       1)
+      (replique/repl
+       (replique/repl-cmd-lein
+        lein-copy-target platform
+        (-> (replique/alist-to-map init-opts)
+            replique-edn/pr-str
+            replique-edn/pr-str))
+       root-dir)))
+  'lein-script-not-found)
 
 ;;;###autoload
 (defun replique/repl (&optional repl-cmd root-dir)
@@ -401,14 +428,17 @@
                        "REPL root directory: "
                        (replique/guess-project-root-dir)))
             (repl-cmd (replique/project-repl-cmd root-dir "clj" nil))
-            (repl-cmd (progn
-                        (when (equal 'runnable-jar-not-found repl-cmd)
-                          (replique/handle-jar-not-found root-dir
-                                                         "clj"
-                                                         nil))
-                        repl-cmd)))
+            (repl-cmd (cond ((equal 'runnable-jar-not-found repl-cmd)
+                             (replique/handle-jar-not-found
+                              root-dir "clj" nil))
+                            ((equal 'lein-script-not-found repl-cmd)
+                             (replique/handle-lein-not-found
+                              root-dir "clj" nil))
+                            (t repl-cmd))))
        (list repl-cmd root-dir))))
-  (replique/repl* root-dir "clj" repl-cmd))
+  (cond ((equal 'lein-script-not-found repl-cmd) nil)
+        ((equal 'runnable-jar-not-found repl-cmd) nil)
+        (t (replique/repl* root-dir "clj" repl-cmd))))
 
 ;;;###autoload
 (defun replique/repl-cljs (&optional repl-cmd root-dir)
@@ -448,14 +478,17 @@
                           . ,(replique/alist-to-map
                               replique/cljs-browser-repl-opts))))
             (repl-cmd (replique/project-repl-cmd root-dir "cljs" init-opts))
-            (repl-cmd (progn
-                        (when (equal 'runnable-jar-not-found repl-cmd)
-                          (replique/handle-jar-not-found root-dir
-                                                         "cljs"
-                                                         init-opts))
-                        repl-cmd)))
+            (repl-cmd (cond ((equal 'runnable-jar-not-found repl-cmd)
+                             (replique/handle-jar-not-found
+                              root-dir "cljs" init-opts))
+                            ((equal 'lein-script-not-found repl-cmd)
+                             (replique/handle-lein-not-found
+                              root-dir "cljs" init-opts))
+                            (t repl-cmd))))
        (list repl-cmd root-dir))))
-  (replique/repl* root-dir "cljs" repl-cmd))
+  (cond ((equal 'lein-script-not-found repl-cmd) nil)
+        ((equal 'runnable-jar-not-found repl-cmd) nil)
+        (t (replique/repl* root-dir "cljs" repl-cmd))))
 
 
 (defvar replique/buffers-hook-added nil)
