@@ -14,8 +14,11 @@
    (providers :initarg :providers
               :type (or null cons)
               :initform '())
+   (synchronous-slot :initarg :synchronous-slot
+                     :type t
+                     :initform nil)
    (closed :initarg :closed
-           :type (or t nil)
+           :type boolean
            :initform nil)))
 
 (defun replique-async/chan ()
@@ -62,10 +65,13 @@
           (-let (((&alist :listener-callback listener-callback
                           :listener-process p)
                   listener))
-            (when p
-              (process-send-string p "\n")
-              (delete-process p))
-            (funcall listener-callback item)
+            (if p
+                (progn
+                  (oset ch :synchronous-slot item)
+                  (process-send-string p "\n")
+                  (delete-process p))
+              (funcall listener-callback item))
+            (funcall provider-callback)
             item)
         (progn (->> `((:item . ,item)
                       (:provider-callback . ,provider-callback))
@@ -83,10 +89,12 @@
           (-let (((&alist :listener-callback listener-callback
                           :listener-process p)
                   listener))
-            (when p
-              (process-send-string p "\n")
-              (delete-process p))
-            (funcall listener-callback item)
+            (if p
+                (progn
+                  (oset ch :synchronous-slot item)
+                  (process-send-string p "\n")
+                  (delete-process p))
+              (funcall listener-callback item))
             item)
         (progn (->> `((:item . ,item))
                     list
@@ -95,28 +103,26 @@
                nil)))))
 
 (defmethod replique-async/<!!
-  ((ch replique-async/chan-impl) listener-callback)
+  ((ch replique-async/chan-impl))
   (if (oref ch closed)
-      (progn
-        (listener-callback)
-        nil)
+      nil
     (let ((provider (pop (oref ch providers))))
       (if provider
           (-let (((&alist :item item
                           :provider-callback provider-callback)
                   provider))
-            (funcall listener-callback item)
             (when provider-callback
               (funcall provider-callback))
             item)
         (let ((p (start-process "" nil nil)))
-          (->> `((:listener-callback . ,listener-callback)
-                 (:listener-process . ,p))
+          (->> `((:listener-process . ,p))
                list
                (append (oref ch :listeners))
                (oset ch :listeners))
           (accept-process-output p)
-          nil)))))
+          (prog1
+              (oref ch :synchronous-slot)
+            (oset ch :synchronous-slot nil)))))))
 
 
 (comment
@@ -155,10 +161,8 @@
                    (lambda ()
                      (print "provided"))))
                 ch)
-   (replique-async/<!!
-    ch
-    (lambda (val)
-      (print val)))
+   (let ((val (replique-async/<!! ch)))
+     (print val))
    ch)
  )
 
