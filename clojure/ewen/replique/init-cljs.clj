@@ -8,7 +8,8 @@
             [clojure.java.io :as io]
             [cljs.js-deps :as deps]
             [cljs.util :as util]
-            [clojure.string :as string])
+            [clojure.string :as string]
+            [clojure.tools.reader :as reader])
   (:import [java.io File]))
 
 (when (not (find-ns 'ewen.replique.core))
@@ -99,8 +100,7 @@
        repl-env "<cljs repl>" 1
        (format "ewen.replique.cljs_env.browser.reload_css(%s, %s);"
                (pr-str css-file) (pr-str (slurp file-path))))
-      :value
-      pr-str))
+      :value))
 
 (defmulti tooling-msg-handle
   (fn [repl-env env [_ {:keys [type]}] opts]
@@ -199,16 +199,19 @@
 
 (defmethod tooling-msg-handle "list-css"
   [repl-env env [_ msg] opts]
-  (with-tooling-response msg "cljs"
-    (:value
-     (cljs.repl/-evaluate
-      repl-env "<cljs repl>" 1
-      "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();"))))
+  (pr-str
+   (with-tooling-response msg "cljs"
+     (-> (cljs.repl/-evaluate
+          repl-env "<cljs repl>" 1
+          "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
+         :value
+         reader/read-string))))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]
-  (with-tooling-response msg "cljs"
-    (load-file-generic repl-env env opts msg)))
+  (pr-str
+   (with-tooling-response msg "cljs"
+     (load-file-generic repl-env env opts msg))))
 
 (defn eval-cljs [repl-env env form opts]
   (if (and (seq? form)
