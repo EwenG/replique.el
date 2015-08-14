@@ -729,9 +729,12 @@ describing the last `replique/load-file' command.")
 Defaults to the ns of the current buffer."
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
   (message "Setting namespace to: %s ..." ns)
-  (let ((chan (replique-async/chan)))
+  (-let* ((chan (replique-async/chan))
+          (buff-props (replique/current-or-active-buffer-props t))
+          ((&alist 'buffer buffer) buff-props)
+          (proc (get-buffer-process buffer)))
     (replique-comint/tooling-send-msg
-     (replique/current-or-active-buffer-props t)
+     buff-props
      `((:type . "set-ns")
        (:ns . ,ns))
      chan)
@@ -740,7 +743,9 @@ Defaults to the ns of the current buffer."
      (-lambda ((&alist 'error err))
        (if err
            (message "Setting namespace to: %s ... Failed." ns)
-         (message "Setting namespace to: %s ... Done." ns))))))
+         (progn
+           (comint-output-filter proc "\n")
+           (message "Setting namespace to: %s ... Done." ns)))))))
 
 (defun replique/add-sourcepath (path)
   (interactive
