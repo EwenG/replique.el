@@ -166,7 +166,8 @@
                 (let [compiled (repl-compile-cljs repl-env file-path opts)]
                   (repl-cljs-on-disk compiled repl-env opts)
                   (refresh-cljs-deps opts)
-                  (repl-eval-cljs compiled repl-env file-path opts)))))))
+                  (repl-eval-cljs compiled repl-env file-path opts))
+                file-path)))))
 
 (defmethod tooling-msg-handle "set-ns"
   [repl-env env [_ {:keys [ns] :as msg}] opts]
