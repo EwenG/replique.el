@@ -427,17 +427,14 @@
      (let* ((root-dir (ido-read-directory-name
                        "REPL root directory: "
                        (replique/guess-project-root-dir)))
-            (repl-cmd (replique/project-repl-cmd root-dir "clj" nil))
-            (repl-cmd (cond ((equal 'runnable-jar-not-found repl-cmd)
-                             (replique/handle-jar-not-found
-                              root-dir "clj" nil))
-                            ((equal 'lein-script-not-found repl-cmd)
-                             (replique/handle-lein-not-found
-                              root-dir "clj" nil))
-                            (t repl-cmd))))
+            (repl-cmd (replique/project-repl-cmd root-dir "clj" nil)))
        (list repl-cmd root-dir))))
-  (cond ((equal 'lein-script-not-found repl-cmd) nil)
-        ((equal 'runnable-jar-not-found repl-cmd) nil)
+  (cond ((equal 'runnable-jar-not-found repl-cmd)
+         (replique/handle-jar-not-found
+          root-dir "clj" nil))
+        ((equal 'lein-script-not-found repl-cmd)
+         (replique/handle-lein-not-found
+          root-dir "clj" nil))
         (t (replique/repl* root-dir "clj" repl-cmd))))
 
 ;;;###autoload
