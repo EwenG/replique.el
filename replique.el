@@ -359,7 +359,7 @@
                   buff-props))
            (when tooling-chans
              (maphash (lambda (k v)
-                        replique-async/close! v)
+                        (replique-async/close! v))
                       tooling-chans))
            (setq replique/buffers
                  (delete buff-props
