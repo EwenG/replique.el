@@ -623,18 +623,29 @@ describing the last `replique/load-file' command.")
                 (list major-mode) t))
   "Load a Clojure file into the Clojure process."
   (replique/init-load-file "Clojure" file-name)
-  (let ((chan (replique-async/chan)))
+  (-let* ((chan (replique-async/chan))
+          (buff-props (replique/current-or-active-buffer-props t))
+          ((&alist 'buffer buffer) buff-props)
+          (proc (get-buffer-process buffer)))
     (replique-comint/tooling-send-msg
-     (replique/current-or-active-buffer-props t)
+     buff-props
      `((:type . "load-file")
        (:file-path . ,file-name))
      chan)
     (replique-async/<!
      chan
-     (-lambda ((&alist 'error err))
+     (-lambda ((&alist 'error err
+                 'result result))
        (if err
-           (message "Loading Clojure file: %s ... Failed." file-name)
-         (message "Loading Clojure file: %s ... Done." file-name))))))
+           (-let (((&alist 'message message) err))
+             (comint-output-filter proc (concat message "\n"))
+             (message "Loading Clojure file: %s ... Failed." file-name))
+         (progn
+           (comint-output-filter
+            proc (-> result
+                     replique-edn/pr-str
+                     (concat "\n")))
+           (message "Loading Clojure file: %s ... Done." file-name)))))))
 
 (defun replique/list-css ()
   (if (string=
