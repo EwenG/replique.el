@@ -29,22 +29,22 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r3308/cljs.jar"
+(defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r1.7.48/cljs.jar"
   "The URL to use when dowloading the Clojurescriptjar."
   :type 'string
   :group 'replique)
 
-(defvar replique-runnables/cljs-file-name "clojurescript-0.0-3308-standalone.jar")
+(defvar replique-runnables/cljs-file-name "clojurescript-1.7.48-standalone.jar")
 
 (defcustom replique-runnables/cljs-dep
-  [org.clojure/clojurescript "0.0-3308"]
+  [org.clojure/clojurescript "1.7.48"]
   "The default Clojurescript dependency."
   :type 'string
   :group 'replique)
 
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
-(defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-?\\([0-9]+\\)?-standalone.jar$")
+(defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-standalone.jar$")
 (defconst replique-runnables/lein-regex "^lein$")
 
 (defun replique-runnables/default-dep (platform)
@@ -70,7 +70,7 @@
 
 (comment
  (replique-runnables/clj-jar->version  "clojure-1.6.0-beta45.jar")
- (replique-runnables/cljs-jar->version  "clojurescript-0.0-3308-standalone.jar")
+ (replique-runnables/cljs-jar->version  "clojurescript-1.7.48-standalone.jar")
  )
 
 (defun replique-runnables/clj-jar->version (jar-name)
@@ -118,7 +118,7 @@
         (t nil)))
 (comment
  ("clojure-1.6.0-beta45.jar" (1 6 0) "beta" 0)
- ("clojurescript-0.0-3297.jar" (0 0) 3287)
+ ("clojurescript-1.7.48.jar" (1 7 48) 0)
  )
 
 (defun replique-runnables/clj-jar-version<  (x y)
