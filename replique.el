@@ -36,6 +36,16 @@ Otherwise, the lambda simply returns nil."
                     ,tmp-args)
          nil))))
 
+(defmacro replique/when-let (var-val &rest body)
+  "Same as -when-let but performs the nil check BEFORE the destructuring binding, ie: the body is executed even if vars are bound to nil after the destructuring occured."
+  (let ((var (car var-val))
+        (val (cadr var-val))
+        (tmp-val (make-symbol "val")))
+    `(let ((,tmp-val ,val))
+       (when ,tmp-val
+         (-let ((,var ,tmp-val))
+           ,@body)))))
+
 (defun replique/assoc (alist key val)
   (assq-delete-all key alist)
   (cons `(,key . ,val) alist))
@@ -670,12 +680,13 @@ describing the last `replique/load-file' command.")
          (replique/current-or-active-buffer-props t)
          `((:type . "list-css"))
          chan)
-        (-when-let ((&alist 'error err
-                            'result result)
-                    (replique-async/<!! chan))
-          (if err
-              (error "List css failed")
-            result)))))
+        (replique/when-let
+         ((&alist 'error err
+                  'result result)
+          (replique-async/<!! chan))
+         (if err
+             (error "List css failed")
+           result)))))
 
 (defun replique/load-css (file-name)
   (let* ((css-list (replique/list-css))
@@ -861,12 +872,11 @@ Defaults to the ns of the current buffer."
      `((:type . "eval-form")
        (:form . ,form))
      chan)
-    (-when-let ((&alist 'error err
-                        'result result)
-                (replique-async/<!! chan))
-      (message "Evaluating form %s ... Done." form)
-      (or err result))))
-
+    (replique/when-let
+     ((&alist 'error err 'result result)
+      (replique-async/<!! chan))
+     (message "Evaluating form %s ... Done." form)
+     (or err result))))
 
 
 
