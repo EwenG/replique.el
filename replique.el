@@ -24,6 +24,18 @@
   "Comment out one or more s-expressions."
   nil)
 
+
+(defmacro replique/when-lambda (match-form &rest body)
+  "Like -lambda, but call the body only if no parameter is nil.
+Otherwise, the lambda simply returns nil."
+  (let ((tmp-args (make-symbol "args")))
+    `(lambda (&rest ,tmp-args)
+       (if (-none? 'null ,tmp-args)
+           (funcall (-lambda (,match-form)
+                      ,@body)
+                    ,tmp-args)
+         nil))))
+
 (defun replique/assoc (alist key val)
   (assq-delete-all key alist)
   (cons `(,key . ,val) alist))
@@ -648,9 +660,8 @@ describing the last `replique/load-file' command.")
            (message "Loading Clojure file: %s ... Done." file-name)))))))
 
 (defun replique/list-css ()
-  (if (string=
-       "cljs"
-       (replique/get-in-project 'platform t))
+  (if (not (string= "cljs" (replique/get-in-project 'platform t)))
+      (error "Not a Clojurescript process")
       (let ((chan (replique-async/chan)))
         (replique-comint/tooling-send-msg
          (replique/current-or-active-buffer-props t)
@@ -661,8 +672,7 @@ describing the last `replique/load-file' command.")
                 (replique-async/<!! chan)))
           (if err
               (error "List css failed")
-            result)))
-    (error "Not a Clojurescript process")))
+            result)))))
 
 (defun replique/load-css (file-name)
   (let* ((css-list (replique/list-css))
@@ -834,7 +844,22 @@ Defaults to the ns of the current buffer."
                (message "Reloading project %s ... Done." file-path)
              (message "Reloading project %s ... Failed." file-path))))))))
 
-
+(defun replique/eval-form (form)
+  (message "Evaluating form %s ..." form)
+  (-let* ((chan (replique-async/chan))
+          (buff-props (replique/current-or-active-buffer-props t))
+          ((&alist 'buffer buffer) buff-props)
+          (proc (get-buffer-process buffer)))
+    (replique-comint/tooling-send-msg
+     buff-props
+     `((:type . "eval-form")
+       (:form . ,form))
+     chan)
+    (-let (((&alist 'error err
+                    'result result)
+            (replique-async/<!! chan)))
+      (message "Evaluating form %s ... Done." form)
+      (or err result))))
 
 
 
