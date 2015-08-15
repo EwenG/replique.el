@@ -613,7 +613,10 @@ Otherwise, the lambda simply returns nil."
 (defun replique/eval-last-sexp ()
   "Send the previous sexp to the replique process."
   (interactive)
-  (replique/eval-region (save-excursion (backward-sexp) (point)) (point)))
+  (replique/eval-region
+   (save-excursion
+     (backward-sexp) (point))
+   (point)))
 
 (defvar replique/prev-l/c-dir/file nil
   "Record last directory and file used in loading or compiling.
@@ -646,18 +649,18 @@ describing the last `replique/load-file' command.")
      chan)
     (replique-async/<!
      chan
-     (-lambda ((&alist 'error err
-                 'result result))
-       (if err
-           (-let (((&alist 'message message) err))
-             (comint-output-filter proc (concat message "\n"))
-             (message "Loading Clojure file: %s ... Failed." file-name))
-         (progn
-           (comint-output-filter
-            proc (-> result
-                     replique-edn/pr-str
-                     (concat "\n")))
-           (message "Loading Clojure file: %s ... Done." file-name)))))))
+     (replique/when-lambda
+      ((&alist 'error err'result result))
+      (if err
+          (-let (((&alist 'message message) err))
+            (comint-output-filter proc (concat message "\n"))
+            (message "Loading Clojure file: %s ... Failed." file-name))
+        (progn
+          (comint-output-filter
+           proc (-> result
+                    replique-edn/pr-str
+                    (concat "\n")))
+          (message "Loading Clojure file: %s ... Done." file-name)))))))
 
 (defun replique/list-css ()
   (if (not (string= "cljs" (replique/get-in-project 'platform t)))
@@ -667,9 +670,9 @@ describing the last `replique/load-file' command.")
          (replique/current-or-active-buffer-props t)
          `((:type . "list-css"))
          chan)
-        (-let (((&alist 'error err
-                        'result result)
-                (replique-async/<!! chan)))
+        (-when-let ((&alist 'error err
+                            'result result)
+                    (replique-async/<!! chan))
           (if err
               (error "List css failed")
             result)))))
@@ -695,7 +698,8 @@ describing the last `replique/load-file' command.")
        chan)
       (replique-async/<!
        chan
-       (-lambda ((&alist 'error err))
+       (replique/when-lambda
+         ((&alist 'error err))
          (if err
              (message "Loading css file: %s ... Failed." file-name)
            (message "Loading css file: %s ... Done." file-name)))))))
@@ -711,10 +715,11 @@ describing the last `replique/load-file' command.")
      chan)
     (replique-async/<!
      chan
-     (-lambda ((&alist 'error err))
-       (if err
-           (message "Loading js file: %s ... Failed." file-name)
-         (message "Loading js file: %s ... Done." file-name))))))
+     (replique/when-lambda
+      ((&alist 'error err))
+      (if err
+          (message "Loading js file: %s ... Failed." file-name)
+        (message "Loading js file: %s ... Done." file-name))))))
 
 (defun replique/load-file-generic (file-name)
   (interactive (if (string-suffix-p ".css" (buffer-file-name) t)
@@ -750,12 +755,13 @@ Defaults to the ns of the current buffer."
      chan)
     (replique-async/<!
      chan
-     (-lambda ((&alist 'error err))
-       (if err
-           (message "Setting namespace to: %s ... Failed." ns)
-         (progn
-           (comint-output-filter proc "\n")
-           (message "Setting namespace to: %s ... Done." ns)))))))
+     (replique/when-lambda
+      ((&alist 'error err))
+      (if err
+          (message "Setting namespace to: %s ... Failed." ns)
+        (progn
+          (comint-output-filter proc "\n")
+          (message "Setting namespace to: %s ... Done." ns)))))))
 
 (defun replique/add-sourcepath (path)
   (interactive
@@ -778,8 +784,8 @@ Defaults to the ns of the current buffer."
          chan)
         (replique-async/<!
          chan
-         (-lambda ((&alist 'result result
-                     'error err))
+         (replique/when-lambda
+           ((&alist 'result result 'error err))
            (if (and (not (null result))
                     (not err))
                (let ((sourcepaths (assoc 'sourcepaths buff)))
@@ -809,8 +815,8 @@ Defaults to the ns of the current buffer."
          chan)
         (replique-async/<!
          chan
-         (-lambda ((&alist 'result result
-                     'error err))
+         (replique/when-lambda
+           ((&alist 'result result 'error err))
            (if (and (not (null result))
                     (not err))
                (let ((resourcepaths (assoc 'resourcepaths buff)))
@@ -837,8 +843,8 @@ Defaults to the ns of the current buffer."
          chan)
         (replique-async/<!
          chan
-         (-lambda ((&alist 'result result
-                     'error err))
+         (replique/when-lambda
+           ((&alist 'result result 'error err))
            (if (and (not (null result))
                     (not err))
                (message "Reloading project %s ... Done." file-path)
@@ -855,9 +861,9 @@ Defaults to the ns of the current buffer."
      `((:type . "eval-form")
        (:form . ,form))
      chan)
-    (-let (((&alist 'error err
-                    'result result)
-            (replique-async/<!! chan)))
+    (-when-let ((&alist 'error err
+                        'result result)
+                (replique-async/<!! chan))
       (message "Evaluating form %s ... Done." form)
       (or err result))))
 
@@ -956,10 +962,11 @@ The following commands are available:
      chan)
     (replique-async/<!
      chan
-     (-lambda ((&alist 'error err
-                 'result result))
-       (when (not err)
-         (funcall company-callback result))))))
+     (replique/when-lambda
+      ((&alist 'error err
+               'result result))
+      (when (not err)
+        (funcall company-callback result))))))
 
 (defun replique/company-backend (command &optional arg &rest ignored)
   (interactive (list 'interactive))
