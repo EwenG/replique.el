@@ -63,9 +63,10 @@
     ;; other language, please preprocess any file names involved with
     ;; the function `org-babel-process-file-name'. (See the way that
     ;; function is used in the language files)
-    (print full-body)
-    (-> (replique/eval-form full-body)
-        replique-edn/pr-str)))
+    (condition-case nil
+        (-> (replique/eval-form full-body)
+            replique-edn/pr-str)
+      (error "Error occured during evaluation"))))
 
 (provide 'ob-replique)
 
