@@ -99,6 +99,11 @@ Otherwise, the lambda simply returns nil."
           ((>= (abs diff1) (abs diff2)) t)
           (t nil))))
 
+(defun replique/error-message (error-map)
+  (->> (gethash :via error-map)
+       (funcall (-rpartial 'elt 0))
+       (gethash :message)))
+
 
 
 
@@ -662,9 +667,12 @@ describing the last `replique/load-file' command.")
      (replique/when-lambda
       ((&alist 'error err'result result))
       (if err
-          (-let (((&alist 'message message) err))
-            (comint-output-filter proc (concat message "\n"))
-            (message "Loading Clojure file: %s ... Failed." file-name))
+          (comint-output-filter
+           proc
+           (-> err
+               replique/error-message
+               (concat "\n")))
+        (message "Loading Clojure file: %s ... Failed." file-name)
         (progn
           (comint-output-filter
            proc (-> result
@@ -876,7 +884,9 @@ Defaults to the ns of the current buffer."
      ((&alist 'error err 'result result)
       (replique-async/<!! chan))
      (message "Evaluating form %s ... Done." form)
-     (or err result))))
+     (if err
+         (replique/error-message err)
+         result))))
 
 
 

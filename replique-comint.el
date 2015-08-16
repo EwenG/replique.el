@@ -38,10 +38,7 @@
             (result . ,(gethash :result msg))
             (platform . ,(gethash :platform msg))
             (error . ,(gethash :error msg)))))
-    (error . ,(-lambda (msg)
-                `((message . ,(->> (gethash :via msg)
-                                   (funcall (-rpartial 'elt 0))
-                                   (gethash :message))))))
+    (error . identity)
     (object . identity)))
 
 (defun replique-comint/output-filter (buff-props proc string)
