@@ -233,7 +233,7 @@
 (defun replique-edn/is-numeric (ch)
   (and (>= ch 48) (<= ch 57)))
 
-(defun replique-edn/symbol-consistuent (ch)
+(defun replique-edn/symbol-constituent (ch)
   (or (replique-edn/is-letter ch)
       (replique-edn/is-numeric ch)
    (equal ?. ch)
@@ -255,12 +255,12 @@
       (equal ?# ch)
       (equal ?/ ch)))
 
-(defun replique-edn/symbol-consistuent-first (ch)
+(defun replique-edn/symbol-constituent-first (ch)
   (and (not (replique-edn/is-numeric ch))
        (not (or (equal ?: ch)
                 (equal ?# ch)
                 (equal ?/ ch)))
-       (replique-edn/symbol-consistuent ch)))
+       (replique-edn/symbol-constituent ch)))
 
 (defun replique-edn/read-unicode-char* (token offset length base i uc)
   (let ((l (+ offset length)))
@@ -284,7 +284,7 @@
     (while (and (not (replique-edn/is-separator ch))
                 (not (replique-edn/is-macro-terminating ch))
                 (not (equal 0 ch)))
-      (when (not (replique-edn/symbol-consistuent ch))
+      (when (not (replique-edn/symbol-constituent ch))
         (error "Invalid character: %c" ch))
       (setq sb (concat sb (char-to-string ch)))
       (setq ch (replique-edn/reader-read reader)))
@@ -308,7 +308,7 @@
            (push `(replique-edn/read-symbol ,initch ,validate-first)
                  (symbol-value actions)))
           ((and validate-first
-                (not (replique-edn/symbol-consistuent-first initch)))
+                (not (replique-edn/symbol-constituent-first initch)))
            (error "Invalid first character: %c" initch))
           (t (replique-edn/read-symbol* state "")))))
 
@@ -521,7 +521,7 @@
                  (symbol-value actions))
            (push '(replique-edn/duplicate)
                  (symbol-value actions))
-           (push `(replique-edn/read-symbol t)
+           (push `(replique-edn/read-symbol nil)
                  (symbol-value actions))))))
 
 (defun replique-edn/parse-ns-symbol (state)
@@ -920,7 +920,6 @@
       (set result-state :done))
     state))
 
-
 (defun replique-edn/pr-str (data)
   (cond ((null data) "nil")
         ((equal t data) "true")
@@ -937,14 +936,14 @@
          (let ((l nil))
            (maphash
             (lambda (x y)
-              (push y l)
-              (push x l))
+              (push x l)
+              (push y l))
             data)
            (format
             "{%s}"
             (s-join
              " "
-             (mapcar 'replique-edn/pr-str l)))))
+             (mapcar 'replique-edn/pr-str (reverse l))))))
         ((listp data)
          (format
           "(%s)"
@@ -1138,9 +1137,7 @@
                   replique-edn/init-state)))
    (replique-edn/state-print (replique-edn/read state)))
 
-
-
- )
+  )
 
 (provide 'replique-edn)
 
