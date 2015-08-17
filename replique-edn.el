@@ -262,17 +262,8 @@
                 (equal ?/ ch)))
        (replique-edn/symbol-constituent ch)))
 
-(defun replique-edn/read-unicode-char* (token offset length base i uc)
-  (let ((l (+ offset length)))
-    (when (not (equal (length token) l))
-      (error "Invalid unicode character: \\%s" token))
-    (if (equal i l)
-        uc
-      (let ((d (replique-edn/digit (elt token i) base)))
-        (if (equal -1 d)
-            (error "Invalid digit: %c" (elt token i))
-          (replique-edn/read-unicode-char*
-           token offset length base (1+ i) (+ d (* uc base))))))))
+(defun replique-edn/read-unicode (s)
+  (read (format "?%s" (concat "\\u" s))))
 
 (defun replique-edn/read-symbol* (state sb)
   (-let* (((&alist :reader reader
@@ -317,8 +308,7 @@
                    :result result)
            state)
           (token (pop (symbol-value result)))
-          (ch (replique-edn/read-unicode-char*
-               token 0 4 16 0 0)))
+          (ch (replique-edn/read-unicode token)))
     (push ch (symbol-value result))))
 
 (defun replique-edn/token-to-char (state)
@@ -335,8 +325,7 @@
                ((string= token "backspace") ?\b)
                ((string= token "formfeed") ?\f)
                ((string-prefix-p "u" token)
-                (replique-edn/read-unicode-char*
-                 token 1 4 16 1 0))
+                (replique-edn/read-unicode (substring token 1)))
                (t (error "Invalid character: \\%s" token)))))
     (push ch (symbol-value result))))
 
