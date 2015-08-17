@@ -683,18 +683,18 @@ describing the last `replique/load-file' command.")
 (defun replique/list-css ()
   (if (not (string= "cljs" (replique/get-in-project 'platform t)))
       (error "Not a Clojurescript process")
-      (let ((chan (replique-async/chan)))
-        (replique-comint/tooling-send-msg
-         (replique/current-or-active-buffer-props t)
-         `((:type . "list-css"))
-         chan)
-        (replique/when-let
-         ((&alist 'error err
-                  'result result)
-          (replique-async/<!! chan))
-         (if err
-             (error "List css failed")
-           result)))))
+    (let ((chan (replique-async/chan)))
+      (replique-comint/tooling-send-msg
+       (replique/current-or-active-buffer-props t)
+       `((:type . "list-css"))
+       chan)
+      (replique/when-let
+       ((&alist 'error err
+                'result result)
+        (replique-async/<!! chan))
+       (if err
+           (error "List css failed")
+         result)))))
 
 (defun replique/load-css (file-name)
   (let* ((css-list (replique/list-css))
@@ -718,10 +718,10 @@ describing the last `replique/load-file' command.")
       (replique-async/<!
        chan
        (replique/when-lambda
-         ((&alist 'error err))
-         (if err
-             (message "Loading css file: %s ... Failed." file-name)
-           (message "Loading css file: %s ... Done." file-name)))))))
+        ((&alist 'error err))
+        (if err
+            (message "Loading css file: %s ... Failed." file-name)
+          (message "Loading css file: %s ... Done." file-name)))))))
 
 (defun replique/load-js (file-name)
   (replique/init-load-file "Javascript" file-name)
@@ -804,14 +804,14 @@ Defaults to the ns of the current buffer."
         (replique-async/<!
          chan
          (replique/when-lambda
-           ((&alist 'result result 'error err))
-           (if (and (not (null result))
-                    (not err))
-               (let ((sourcepaths (assoc 'sourcepaths buff)))
-                 (setcdr sourcepaths
-                         (-union (cdr sourcepaths) (list path)))
-                 (message "Adding sourcepath: %s ... Done." path))
-             (message "Adding sourcepath: %s ... Failed." path))))))))
+          ((&alist 'result result 'error err))
+          (if (and (not (null result))
+                   (not err))
+              (let ((sourcepaths (assoc 'sourcepaths buff)))
+                (setcdr sourcepaths
+                        (-union (cdr sourcepaths) (list path)))
+                (message "Adding sourcepath: %s ... Done." path))
+            (message "Adding sourcepath: %s ... Failed." path))))))))
 
 (defun replique/add-resourcepath (path)
   (interactive
@@ -835,17 +835,17 @@ Defaults to the ns of the current buffer."
         (replique-async/<!
          chan
          (replique/when-lambda
-           ((&alist 'result result 'error err))
-           (if (and (not (null result))
-                    (not err))
-               (let ((resourcepaths (assoc 'resourcepaths buff)))
-                 (setcdr
-                  resourcepaths
-                  (-union (cdr resourcepaths)
-                          (list path)))
-                 (message
-                  "Adding resourcepath: %s ... Done." path))
-             (message "Adding resourcepath: %s ... Failed." path))))))))
+          ((&alist 'result result 'error err))
+          (if (and (not (null result))
+                   (not err))
+              (let ((resourcepaths (assoc 'resourcepaths buff)))
+                (setcdr
+                 resourcepaths
+                 (-union (cdr resourcepaths)
+                         (list path)))
+                (message
+                 "Adding resourcepath: %s ... Done." path))
+            (message "Adding resourcepath: %s ... Failed." path))))))))
 
 (defun replique/reload-project ()
   (interactive)
@@ -863,11 +863,11 @@ Defaults to the ns of the current buffer."
         (replique-async/<!
          chan
          (replique/when-lambda
-           ((&alist 'result result 'error err))
-           (if (and (not (null result))
-                    (not err))
-               (message "Reloading project %s ... Done." file-path)
-             (message "Reloading project %s ... Failed." file-path))))))))
+          ((&alist 'result result 'error err))
+          (if (and (not (null result))
+                   (not err))
+              (message "Reloading project %s ... Done." file-path)
+            (message "Reloading project %s ... Failed." file-path))))))))
 
 (defun replique/eval-form (form)
   (message "Evaluating form %s ..." form)
@@ -886,7 +886,7 @@ Defaults to the ns of the current buffer."
      (message "Evaluating form %s ... Done." form)
      (if err
          (replique/error-message err)
-         result))))
+       result))))
 
 
 
