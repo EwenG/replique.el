@@ -8,8 +8,7 @@
             [clojure.java.io :as io]
             [cljs.js-deps :as deps]
             [cljs.util :as util]
-            [clojure.string :as string]
-            [clojure.tools.reader :as reader])
+            [clojure.string :as string])
   (:import [java.io File]))
 
 (when (not (find-ns 'ewen.replique.core))
@@ -207,7 +206,7 @@
          repl-env "<cljs repl>" 1
          "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
         :value
-        reader/read-string)))
+        read-string)))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]
@@ -217,8 +216,9 @@
 (defmethod tooling-msg-handle "eval-form"
   [repl-env env [_ {:keys [form] :as msg}] opts]
   (with-tooling-response msg "cljs"
-    (-> (#'cljs.repl/eval-cljs repl-env env (read-string form) opts)
-        reader/read-string)))
+    (binding [*default-data-reader-fn* (fn [t v] v)]
+      (-> (#'cljs.repl/eval-cljs repl-env env (read-string form) opts)
+          read-string))))
 
 (defn eval-cljs [repl-env env form opts]
   (if (and (seq? form)
