@@ -1,6 +1,7 @@
 (ns ewen.replique.core
   (:require [clojure.java.io :as io]
-            [clojure.set])
+            [clojure.set]
+            [clojure.walk :refer [postwalk]])
   (:import [java.net URI]))
 
 (defmethod print-method clojure.lang.Var [v ^java.io.Writer w]
@@ -36,12 +37,12 @@
 (defmethod tooling-msg-handle "load-file"
   [{:keys [file-path] :as msg}]
   (with-tooling-response msg "clj"
-    (pr-str (load-file file-path))))
+    (load-file file-path)))
 
 (defmethod tooling-msg-handle "set-ns"
   [{:keys [ns] :as msg}]
   (with-tooling-response msg "clj"
-    (pr-str (-> ns symbol in-ns pr-str))))
+    (-> ns symbol in-ns)))
 
 (defmethod tooling-msg-handle "completions"
   [{:keys [prefix ns] :as msg}]
@@ -85,3 +86,9 @@
     (reload-project (ewen.replique.classpath/classloader-hierarchy
                      (.. clojure.lang.RT baseLoader))
                     file-path)))
+
+(defmethod tooling-msg-handle "eval-form"
+  [{:keys [form] :as msg}]
+  (with-tooling-response msg "clj"
+    ;;Eagerly eval in order to be able to catch potential exceptions
+    (postwalk identity (eval (read-string form)))))
