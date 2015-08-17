@@ -28,19 +28,25 @@
 (def repl-env (atom nil))
 (defonce env {:context :expr :locals {}})
 
+;; The cljs REPL uses "print" to print values evaluated in the
+;; browser and returned by the browser after a call to "pr-str".
+;; This is why clojurescript ToolingMsg are wrapped in a "pr-str"
+;; call.
+
 (defmacro with-tooling-response [msg platform & body]
-  `(try (ewen.replique.core/map->ToolingMsg
-         {:type (:type ~msg)
-          :uid (:uid ~msg)
-          :platform ~platform
-          :result ~@body})
-        (catch Throwable t#
-          (ewen.replique.core/map->ToolingMsg
-           {:type (:type ~msg)
-            :uid (:uid ~msg)
-            :platform ~platform
-            :result nil
-            :error t#}))))
+  `(pr-str
+    (try (ewen.replique.core/map->ToolingMsg
+          {:type (:type ~msg)
+           :uid (:uid ~msg)
+           :platform ~platform
+           :result ~@body})
+         (catch Throwable t#
+           (ewen.replique.core/map->ToolingMsg
+            {:type (:type ~msg)
+             :uid (:uid ~msg)
+             :platform ~platform
+             :result nil
+             :error t#})))))
 
 (defn foreign->output-file [foreign opts]
   (let [output-path (closure/rel-output-path
@@ -154,33 +160,29 @@
 
 (defmethod tooling-msg-handle "load-file"
   [repl-env env [_ {:keys [file-path] :as msg}] opts]
-  ;; The cljs REPL uses "print" to print values evaluated in the
-  ;; browser and returned by the browser after a call to "pr-str".
-  ;; This is why clojurescript ToolingMsg are wrapped in a "pr-str"
-  ;; call.
-  (pr-str (with-tooling-response msg "cljs"
-            (if (.endsWith file-path ".clj")
-              ;;Handle macro reloading
-              (load-file file-path)
-              (cljs-env/with-compiler-env @compiler-env
-                (let [compiled (repl-compile-cljs repl-env file-path opts)]
-                  (repl-cljs-on-disk compiled repl-env opts)
-                  (refresh-cljs-deps opts)
-                  (repl-eval-cljs compiled repl-env file-path opts))
-                file-path)))))
+  (with-tooling-response msg "cljs"
+    (if (.endsWith file-path ".clj")
+      ;;Handle macro reloading
+      (load-file file-path)
+      (cljs-env/with-compiler-env @compiler-env
+        (let [compiled (repl-compile-cljs repl-env file-path opts)]
+          (repl-cljs-on-disk compiled repl-env opts)
+          (refresh-cljs-deps opts)
+          (repl-eval-cljs compiled repl-env file-path opts))
+        file-path))))
 
 (defmethod tooling-msg-handle "set-ns"
   [repl-env env [_ {:keys [ns] :as msg}] opts]
-  (pr-str (with-tooling-response msg "cljs"
-            (cljs-in-ns repl-env env (symbol ns)))))
+  (with-tooling-response msg "cljs"
+    (cljs-in-ns repl-env env (symbol ns))))
 
 (defmethod tooling-msg-handle "completions"
   [repl-env env [_ {:keys [prefix ns] :as msg}] opts]
-  (pr-str (with-tooling-response msg "cljs"
-            (ewen.replique.completion/completions
-             prefix (assoc (select-keys msg [:ns])
-                           :cljs-comp-env
-                           @cljs-env/*compiler*)))))
+  (with-tooling-response msg "cljs"
+    (ewen.replique.completion/completions
+     prefix (assoc (select-keys msg [:ns])
+                   :cljs-comp-env
+                   @cljs-env/*compiler*))))
 
 (defmethod tooling-msg-handle "add-classpath"
   [repl-env env [_ msg] opts]
@@ -191,28 +193,32 @@
 
 (defmethod tooling-msg-handle "reload-project"
   [repl-env env [_ {:keys [file-path] :as msg}] opts]
-  (pr-str (with-tooling-response msg "cljs"
-            (ewen.replique.core/reload-project
-             (ewen.replique.classpath/classloader-hierarchy
-              (.. Thread currentThread
-                  getContextClassLoader))
-             file-path))))
+  (with-tooling-response msg "cljs"
+    (ewen.replique.core/reload-project
+     (ewen.replique.classpath/classloader-hierarchy
+      (.. Thread currentThread
+          getContextClassLoader))
+     file-path)))
 
 (defmethod tooling-msg-handle "list-css"
   [repl-env env [_ msg] opts]
-  (pr-str
-   (with-tooling-response msg "cljs"
-     (-> (cljs.repl/-evaluate
-          repl-env "<cljs repl>" 1
-          "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
-         :value
-         reader/read-string))))
+  (with-tooling-response msg "cljs"
+    (-> (cljs.repl/-evaluate
+         repl-env "<cljs repl>" 1
+         "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
+        :value
+        reader/read-string)))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]
-  (pr-str
-   (with-tooling-response msg "cljs"
-     (load-file-generic repl-env env opts msg))))
+  (with-tooling-response msg "cljs"
+    (load-file-generic repl-env env opts msg)))
+
+(defmethod tooling-msg-handle "eval-form"
+  [repl-env env [_ {:keys [form] :as msg}] opts]
+  (with-tooling-response msg "cljs"
+    (-> (#'cljs.repl/eval-cljs repl-env env (read-string form) opts)
+        reader/read-string)))
 
 (defn eval-cljs [repl-env env form opts]
   (if (and (seq? form)
