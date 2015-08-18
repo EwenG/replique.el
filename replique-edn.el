@@ -122,6 +122,8 @@
    ((equal ch ?<) (error "Unreadable form"))
    ((equal ch ?\;) '(replique-edn/read-comment))
    ((equal ch ?_) '(replique-edn/read-discard))
+   ((equal ch ?\') '(replique-edn/read-var))
+   ((equal ch ?\") '(replique-edn/read-regexp))
    (t nil)))
 
 (defun replique-edn/macros (ch)
@@ -303,6 +305,29 @@
            (error "Invalid first character: %c" initch))
           (t (replique-edn/read-symbol* state "")))))
 
+(defun replique-edn/parse-var (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (symbol (pop (symbol-value result))))
+    (push (replique-edn/var :nil :full-name symbol)
+     (symbol-value result))))
+
+(defun replique-edn/read-var (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push `(replique-edn/parse-var)
+          (symbol-value actions))
+    (push `(replique-edn/parse-symbol-extended)
+          (symbol-value actions))
+    (push `(replique-edn/read-symbol t)
+          (symbol-value actions))))
+
 (defun replique-edn/token-to-unicode (state)
   (-let* (((&alist :actions actions
                    :result result)
@@ -430,6 +455,27 @@
     (format "\"%s\""
             (apply 'string (reverse chars)))))
 
+(defun replique-edn/parse-regexp (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state)
+          (s (pop (symbol-value result))))
+    (push (replique-edn/regexp :nil :pattern s)
+          (symbol-value result))))
+
+(defun replique-edn/read-regexp (state)
+  (-let* (((&alist :reader reader
+                   :actions actions
+                   :result-state result-state
+                   :result result)
+           state))
+    (push `(replique-edn/parse-regexp)
+          (symbol-value actions))
+    (push `(replique-edn/read-string*)
+          (symbol-value actions))))
+
 (defun replique-edn/parse-symbol (state)
   (-let* (((&alist :reader reader
                    :actions actions
@@ -533,25 +579,25 @@
                    :result-state result-state
                    :result result)
            state)
-          (token (pop (symbol-value result))))
-    (cond ((string= token "nil")
+          (symbol (pop (symbol-value result))))
+    (cond ((string= symbol "nil")
            (push nil (symbol-value result)))
-          ((string= token "true")
+          ((string= symbol "true")
            (push t (symbol-value result)))
-          ((string= token "false")
+          ((string= symbol "false")
            (push nil (symbol-value result)))
-          ((string= token "/")
+          ((string= symbol "/")
            (push '/ (symbol-value result)))
-          ((string= token "NaN")
+          ((string= symbol "NaN")
            (push 0.0e+NaN (symbol-value result)))
-          ((string= token "-Infinity")
+          ((string= symbol "-Infinity")
            (push -1.0e+INF (symbol-value result)))
-          ((string= token "+Infinity")
+          ((string= symbol "+Infinity")
            (push +1.0e+INF (symbol-value result)))
-          ((string= token "Infinity")
+          ((string= symbol "Infinity")
            (push +1.0e+INF (symbol-value result)))
           (t
-           (push token (symbol-value result))
+           (push symbol (symbol-value result))
            (push '(replique-edn/parse-ns-symbol)
                  (symbol-value actions))
            (push '(replique-edn/parse-symbol)
@@ -844,6 +890,20 @@
     (push '(replique-edn/parse-set) (symbol-value actions))
     (push '(replique-edn/read-delimited ?\}) (symbol-value actions))))
 
+(defclass replique-edn/var (replique-edn/printable)
+  ((full-name :initarg :full-name
+              :type symbol)))
+
+(defmethod replique-edn/print-method ((o replique-edn/var))
+  (format "#'%s" (oref o :full-name)))
+
+(defclass replique-edn/regexp (replique-edn/printable)
+  ((pattern :initarg :pattern
+            :type string)))
+
+(defmethod replique-edn/print-method ((o replique-edn/regexp))
+  (format "#%s" (replique-edn/write-string* (oref o :pattern))))
+
 (defun replique-edn/read* (state)
   (-let* (((&alist :reader reader
                    :actions actions
@@ -1125,6 +1185,16 @@
  (let ((state (-> (replique-edn/reader nil :str "\"\\\"#ob\\\"\" ")
                   replique-edn/init-state)))
    (replique-edn/state-print (replique-edn/read state)))
+
+ (let ((state (-> (replique-edn/reader nil :str "#'ff ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
+
+ (let ((state (-> (replique-edn/reader nil :str "#\"ff\" ")
+                  replique-edn/init-state)))
+   (replique-edn/state-print (replique-edn/read state)))
+
+
 
   )
 
