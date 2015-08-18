@@ -474,7 +474,8 @@
     (push `(replique-edn/parse-regexp)
           (symbol-value actions))
     (push `(replique-edn/read-string*)
-          (symbol-value actions))))
+          (symbol-value actions))
+    (push "" (symbol-value result))))
 
 (defun replique-edn/parse-symbol (state)
   (-let* (((&alist :reader reader
@@ -1190,9 +1191,12 @@
                   replique-edn/init-state)))
    (replique-edn/state-print (replique-edn/read state)))
 
- (let ((state (-> (replique-edn/reader nil :str "#\"ff\" ")
+ (let ((state (-> (replique-edn/reader nil :str "{:result #\"fff\"}
+")
                   replique-edn/init-state)))
    (replique-edn/state-print (replique-edn/read state)))
+
+
 
 
 
