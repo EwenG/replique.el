@@ -19,18 +19,16 @@
   (let ((vars (mapcar 'cdr (org-babel-get-header
                             processed-params
                             :var))))
-    (if (> (length vars) 0)
-        (concat
-         "(let ["
-         (mapconcat
-          (lambda (pair)
-            (format
-             "%s %s"
-             (car pair)
-             (cdr pair)))
-          vars "\n")
-         "]\n" body ")\n")
-      body)))
+    (concat
+     "(let ["
+     (mapconcat
+      (lambda (pair)
+        (format
+         "%s %s"
+         (car pair)
+         (cdr pair)))
+      vars "\n")
+     "]\n" body ")\n")))
 
 (defun org-babel-execute:replique (body params)
   "Execute a block of clojure/clojurescript code with org-babel.
