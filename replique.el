@@ -871,7 +871,8 @@ Defaults to the ns of the current buffer."
 
 (defun replique/eval-form (form)
   (message "Evaluating form %s ..." form)
-  (-let* ((chan (replique-async/chan))
+  (-let* ((form (replace-regexp-in-string "\n" " " form))
+          (chan (replique-async/chan))
           (buff-props (replique/current-or-active-buffer-props t))
           ((&alist 'buffer buffer) buff-props)
           (proc (get-buffer-process buffer)))
