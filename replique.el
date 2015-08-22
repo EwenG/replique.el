@@ -667,12 +667,13 @@ describing the last `replique/load-file' command.")
      (replique/when-lambda
       ((&alist 'error err'result result))
       (if err
-          (comint-output-filter
-           proc
-           (-> err
-               replique/error-message
-               (concat "\n")))
-        (message "Loading Clojure file: %s ... Failed." file-name)
+          (progn (comint-output-filter
+                  proc
+                  (-> err
+                      replique/error-message
+                      (concat "\n")))
+                 (message
+                  "Loading Clojure file: %s ... Failed." file-name))
         (progn
           (comint-output-filter
            proc (-> result
