@@ -73,11 +73,10 @@ Otherwise, the lambda simply returns nil."
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
-(defun replique/uri-compare (path1 path2)
-  (when (or (not (string-prefix-p "/" path1 t))
-            (not (string-prefix-p "/" path2 t)))
-    (error "Paths must be absolute"))
-  (let* ((uri1 (-> (split-string path1 "/")
+(defun replique/uri-compare (url1 url2)
+  (let* ((path1 (url-filename (url-generic-parse-url url1)))
+         (path2 (url-filename (url-generic-parse-url url2)))
+         (uri1 (-> (split-string path1 "/")
                    cdr))
          (uri2 (-> (split-string path2 "/")
                    cdr))
@@ -91,6 +90,7 @@ Otherwise, the lambda simply returns nil."
     (if (equal t res)
         0 res)))
 
+;;url-generic-parse-url
 (defun replique/uri-sort-fn (reference uri1 uri2)
   (let ((diff1 (replique/uri-compare reference uri1))
         (diff2 (replique/uri-compare reference uri2)))
@@ -698,7 +698,11 @@ describing the last `replique/load-file' command.")
          result)))))
 
 (defun replique/load-css (file-name)
-  (let* ((css-list (replique/list-css))
+  (let* ((file-name (concat "file:" file-name))
+         (css-list (replique/list-css))
+         (css-list (if (-contains? css-list file-name)
+                       css-list
+                     (cons "*new-css*" css-list)))
          (candidates (-sort (-partial
                              'replique/uri-sort-fn
                              file-name)
@@ -706,7 +710,10 @@ describing the last `replique/load-file' command.")
          (css-file (ido-completing-read
                     "Reload css file: "
                     candidates
-                    nil t)))
+                    nil t))
+         (css-file (if (equal "*new-css*" css-file)
+                       file-name
+                     css-file)))
     (message "Loading css file: %s ..." file-name)
     (let ((chan (replique-async/chan)))
       (replique-comint/tooling-send-msg
