@@ -90,7 +90,6 @@ Otherwise, the lambda simply returns nil."
     (if (equal t res)
         0 res)))
 
-;;url-generic-parse-url
 (defun replique/uri-sort-fn (reference uri1 uri2)
   (let ((diff1 (replique/uri-compare reference uri1))
         (diff2 (replique/uri-compare reference uri2)))
@@ -405,10 +404,11 @@ Otherwise, the lambda simply returns nil."
         (t (error "Unknown platform: %s" platform))))
 
 (defun replique/handle-jar-not-found (root-dir platform init-opts)
-  (when (yes-or-no-p (format "Sorry, No %s jar could be found on the filesystem in order to start the REPL. Would you like to download it now?"
+  (when (yes-or-no-p (format "Sorry, No %s jar could be found on the filesystem in order to start the REPL. Would you like to download a %s jar now?"
+                             (replique/platform-to-name platform)
                              (replique/platform-to-name platform)))
     (-> (ido-read-directory-name
-         (format "Please enter the directory where the %s jar should be saved: "
+         (format "Please enter the directory where the %s jar will be saved: "
                  (replique/platform-to-name platform)))
         (replique-runnables/download-jar
          platform
@@ -431,7 +431,7 @@ Otherwise, the lambda simply returns nil."
 (defun replique/handle-lein-not-found (root-dir platform init-opts)
   (when (yes-or-no-p (format "Sorry, leiningen could not be found on the filesystem in order to start the REPL. Would you like to install it now?"))
     (let* ((lein-copy-target (ido-read-directory-name
-                              (format "Please enter the directory where the lein script should be saved: ")))
+                              (format "Please enter the directory where the lein script will be saved: ")))
            (lein-copy-target (concat lein-copy-target "lein")))
       (copy-file
        (concat (replique/replique-root-dir) "runnables/lein")
