@@ -18,4 +18,9 @@ The only requiremnt to get started is to have emacs installed and the replique
 
 ** Starting a Clojure REPL
 
-To start a Clojure REPL, simply run the command =M-x= =replique/repl=.
+- To start a Clojure REPL, simply run the command =M-x= =replique/repl=.
+- If you are starting a Clojure REPL for the first time, Replique may ask
+you to download a Clojure jar. In such a case, you can save the jar file
+in your =$PATH= in order for Replique to find it on subsequent REPL startups.
+Note that you may have to set your =$PATH= variable before starting emacs.
+For example, here is my .profile: =export PATH="${PATH}:~/bin"=.
