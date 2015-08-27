@@ -5,9 +5,9 @@ Replique is an emacs mode for Clojure and Clojurescript development.
 
 * Features 
 
-- Minimum setup required.
+- Minimum setup required
 Optional leiningen configuration. No clojurescript configuration needed. 
-- Full Clojurescript support. 
+- Full Clojurescript support
 Choose your javascript execution environment. Keep your Clojure workflow intact.
 - Web development friendly
 Live reload your CSS or javascript files directly from your REPL.
