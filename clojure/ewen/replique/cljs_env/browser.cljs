@@ -1,9 +1,10 @@
 (ns ewen.replique.cljs-env.browser
   (:require [clojure.browser.repl :as repl]
-            [goog.cssom]))
+            [goog.cssom]
+            [goog.date :as date]
+            [goog.Uri :as uri]))
 
 (defn css->uri [css]
-  (.log js/console (.-file css))
   (cond (.-href css)
         (-> (.-href css)
             (goog.Uri.parse)
@@ -68,3 +69,17 @@
 
 (defonce conn
   (repl/connect "http://localhost:9000/repl"))
+
+;; writeScriptTag is customized in clojure.browser.repl
+;; Here we override writeScriptTag to include a timestamp query string
+;; parameter in order to avoid hitting the browser cache when reloading
+;; cljs files.
+(set! (.-writeScriptTag_ js/goog)
+      (fn [src opt_sourceText]
+        (if repl/load-queue
+          (.push repl/load-queue (array src opt_sourceText))
+          (let [timestamp (.getTime (date/DateTime.))
+                src-uri (-> (uri/parse src)
+                            (.setParameterValue "timestamp" timestamp))]
+            (set! repl/load-queue (array))
+            (js/goog.writeScriptTag__ (str src-uri) opt_sourceText)))))

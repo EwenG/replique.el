@@ -144,7 +144,7 @@
     (doseq [source sources]
       (closure/source-on-disk opts source))))
 
-(defn repl-eval-cljs [compiled repl-env f opts]
+(defn repl-eval-compiled [compiled repl-env f opts]
   (let [src (f->src f)]
     (cljs.repl/-evaluate
      repl-env "<cljs repl>" 1
@@ -167,7 +167,7 @@
         (let [compiled (repl-compile-cljs repl-env file-path opts)]
           (repl-cljs-on-disk compiled repl-env opts)
           (refresh-cljs-deps opts)
-          (repl-eval-cljs compiled repl-env file-path opts))
+          (repl-eval-compiled compiled repl-env file-path opts))
         file-path))))
 
 (defmethod tooling-msg-handle "set-ns"
