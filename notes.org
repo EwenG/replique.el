@@ -1,0 +1,6 @@
+# Theses are only personal notes. Don't pay attention. Things are getting pushed to the github issues as they mature.
+
+* Clojurescript browser REPL client.js generation without google closure optimizations (span multiple files)
+* Caching of Clojure namespaces scanning using the classpath
+* Printing of object should be overrided with care (print-method must print EDN valid data, or a regexp or a var)
+* Refactor replique-edn and replique/completion for mit license.
