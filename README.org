@@ -3,14 +3,18 @@
 
 Replique is an emacs mode for Clojure and Clojurescript development.
 
-# * Main goals
-# ** Minimum configuration needed to start a coding session.
-# This is mainly made possible by the fact that supporting non-development setups (ie: packaging code and resources for production) is a non-goal.
-# ** Full Clojurescript support.
+* Features 
+
+- Minimum setup required
+Optional leiningen configuration. No clojurescript configuration needed. 
+- Full Clojurescript support
+Choose your javascript execution environment. Keep your Clojure workflow intact.
+- Web development friendly
+Live reload your CSS or javascript files directly from your REPL.
 
 * Installation
 At the moment, the only way to install Replique is by loading replique.el by
- hand or during emacs startup.
+hand or during emacs startup.
 
 * Getting started
 The only requiremnt to get started is to have emacs installed and the replique
