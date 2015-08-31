@@ -4,3 +4,4 @@
 * Caching of Clojure namespaces scanning using the classpath
 * Printing of object should be overrided with care (print-method must print EDN valid data, or a regexp or a var)
 * Refactor replique-edn and replique/completion for mit license.
+* Evaluation is slow when the browser tab where the browser REPL is started is not selected.
