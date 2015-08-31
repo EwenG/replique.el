@@ -619,6 +619,7 @@ Otherwise, the lambda simply returns nil."
 
 
 (defun replique/eval-region (start end)
+  "Eval the currently highlighted region."
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
     (with-current-buffer
@@ -626,12 +627,21 @@ Otherwise, the lambda simply returns nil."
       (replique/comint-send-input-from-source input))))
 
 (defun replique/eval-last-sexp ()
-  "Send the previous sexp to the replique process."
+  "Eval the previous sexp."
   (interactive)
   (replique/eval-region
    (save-excursion
      (backward-sexp) (point))
    (point)))
+
+(defun replique/eval-defn ()
+  "Eval the current defn expression."
+  (interactive)
+  (let ((input (->> (thing-at-point 'defun)
+                    (replace-regexp-in-string "\n" ""))))
+    (with-current-buffer
+        (replique/get-active-buffer)
+      (replique/comint-send-input-from-source input))))
 
 (defvar replique/prev-l/c-dir/file nil
   "Record last directory and file used in loading or compiling.
@@ -905,6 +915,7 @@ Defaults to the ns of the current buffer."
   (let ((map (make-sparse-keymap)))
     (define-key map "\C-c\C-r" #'replique/eval-region)
     (define-key map "\C-x\C-e" #'replique/eval-last-sexp)
+    (define-key map "\C-\M-x" #'replique/eval-defn)
     (define-key map "\C-c\C-l" #'replique/load-file)
     (define-key map "\C-c\M-n" #'replique/set-ns)
     (easy-menu-define replique/minor-mode-menu map
@@ -912,6 +923,7 @@ Defaults to the ns of the current buffer."
       '("Replique"
         ["Eval region" replique/eval-region t]
         ["Eval last sexp" replique/eval-last-sexp t]
+        ["Eval defn" replique/eval-defn t]
         "--"
         ["Load file" replique/load-file t]
         "--"
