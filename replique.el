@@ -307,7 +307,9 @@ Otherwise, the lambda simply returns nil."
 
 (defun replique/repl-cmd-raw (jar platform init-opts)
   (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
-    `("java" "-cp" ,jar "clojure.main" "-e"
+    `("java" "-cp"
+      ,(format "%s:%slib/json-java.jar" jar (replique/replique-root-dir))
+      "clojure.main" "-e"
       ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init %s %s))"
                (replique/replique-root-dir)
                platform-suffix
