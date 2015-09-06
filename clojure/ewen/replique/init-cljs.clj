@@ -9,7 +9,21 @@
             [cljs.js-deps :as deps]
             [cljs.util :as util]
             [clojure.string :as string])
-  (:import [java.io File]))
+  (:import [java.io File]
+           [java.util Base64]
+           [java.nio.charset StandardCharsets]))
+
+(defn decodeBase64 [s]
+  (let [b (.getBytes s StandardCharsets/UTF_8)]
+    (-> (Base64/getDecoder)
+        (.decode b)
+        (String.))))
+
+(defn encodeBase64 [s]
+  (let [b (.getBytes s StandardCharsets/UTF_8)]
+    (-> (Base64/getEncoder)
+        (.encode b)
+        (String.))))
 
 (when (not (find-ns 'ewen.replique.core))
   (create-ns 'ewen.replique.core)
@@ -104,7 +118,10 @@
   (-> (cljs.repl/-evaluate
        repl-env "<cljs repl>" 1
        (format "ewen.replique.cljs_env.browser.reload_css(%s, %s);"
-               (pr-str css-file) (pr-str (slurp file-path))))
+               (pr-str css-file)
+               (-> (slurp file-path)
+                   encodeBase64
+                   pr-str)))
       :value))
 
 (defmulti tooling-msg-handle

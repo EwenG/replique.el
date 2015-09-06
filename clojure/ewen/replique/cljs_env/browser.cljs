@@ -2,57 +2,48 @@
   (:require [clojure.browser.repl :as repl]
             [goog.cssom]
             [goog.date :as date]
-            [goog.Uri :as uri]))
+            [goog.Uri]))
+
+(defn add-timestamp [uri]
+  (let [timestamp (.getTime (date/DateTime.))]
+    (-> (goog.Uri/parse uri)
+        (.setParameterValue "timestamp" timestamp)
+        str)))
 
 (defn css->uri [css]
   (cond (.-href css)
-        (-> (.-href css)
-            (goog.Uri.parse)
-            str)
-        (and (.-ownerNode css)
-             (.-file (.-ownerNode css)))
-        (-> (.-file (.-ownerNode css))
-            (goog.Uri.parse)
-            str)
+        (let [uri (goog.Uri.parse (.-href css))
+              scheme (.getScheme uri)
+              uri (.setQuery uri "")]
+          (cond (= "http" scheme)
+                (str uri)
+                (= "data" scheme)
+                (.-file (.-ownerNode css))
+                :else nil))
         :else nil))
 
 (defn list-css-stylesheet-paths []
   (let [css-list (->> (goog.cssom.getAllCssStyleSheets)
+                      (filter #(not (.-ownerRule %)))
                       (map css->uri)
                       (remove nil?))]
     css-list))
 
-(comment
-  "/zz/zz1.css"
-  "@import url ('../zz2.css')"
-  (reload-css "/zz/zz1.css" "@import url ('../zz2.css')")
-
-  (js/AnimationEvent. 2)
-  )
-
 (defn css-uri->css-stylesheets [css-uri]
   (->> (goog.cssom.getAllCssStyleSheets)
-       (filter #(= css-uri (css->uri %)))))
+       (filter #(not (.-ownerRule %)))
+       (filter #(= css-uri (css->uri %)))
+       (map #(.-ownerNode %))
+       (remove nil?)))
 
 (defn reload-css-http [css]
-  (let [css-node (.-ownerNode css)
-        css-rule (.-ownerRule css)]
-    (cond css-node
-          (let [head (.querySelector js/document "head")]
-            (goog.dom.removeNode css-node)
-            (goog.dom.appendChild head css-node))
-          (and css-rule (.-insertRule css))
-          (let [css (goog.cssom.getParentStyleSheet css-rule)]
-            (goog.cssom.removeCssRule
-             css (goog.cssom.getCssRuleIndexInParentStyleSheet
-                  css-rule))
-            (.insertRule
-             css (goog.cssom.getCssTextFromCssRule css-rule) 0))
-          :else nil)))
+  (let [href (.-href css)
+        new-href (add-timestamp href)]
+    (goog.dom.setProperties css (js-obj "href" new-href))))
 
-(defn reload-css-file [css css-uri css-text]
-  (let [head (.querySelector js/document "head")]
-    (goog.dom.removeNode (.-ownerNode css))))
+(defn reload-css-file [css css-text]
+  (let [data-url (str "data:text/css;base64," css-text)]
+    (goog.dom.setProperties css (js-obj "href" data-url))))
 
 (defn reload-css [css-uri css-text]
   (let [css-uri (goog.Uri.parse css-uri)
@@ -61,10 +52,22 @@
           (doseq [css css-list]
             (reload-css-http css))
           (= "file" (.getScheme css-uri))
-          (do (doseq [css css-list]
-                (reload-css-file css css-uri css-text))
-              (let [css (goog.cssom.addCssText css-text)]
-                (goog.dom.setProperties css (js-obj "file" (str css-uri)))))
+          (if (= (count css-list) 0)
+            (let [data-url (str "data:text/css;base64," css-text)
+                  css-node (goog.dom.createDom
+                            "link"
+                            (js-obj "rel" "stylesheet"
+                                    "type" "text/css"
+                                    "href" data-url))]
+              (goog.dom.setProperties
+               css-node (js-obj "file" (str css-uri)))
+              (goog.dom.append
+               (.querySelector js/document "head")
+               css-node))
+            (doseq [css css-list]
+              (reload-css-file css css-text)
+              (goog.dom.setProperties
+               css (js-obj "file" (str css-uri)))))
           :else nil)))
 
 (defonce conn
@@ -78,8 +81,6 @@
       (fn [src opt_sourceText]
         (if repl/load-queue
           (.push repl/load-queue (array src opt_sourceText))
-          (let [timestamp (.getTime (date/DateTime.))
-                src-uri (-> (uri/parse src)
-                            (.setParameterValue "timestamp" timestamp))]
+          (let [new-src (add-timestamp src)]
             (set! repl/load-queue (array))
-            (js/goog.writeScriptTag__ (str src-uri) opt_sourceText)))))
+            (js/goog.writeScriptTag__ new-src opt_sourceText)))))
