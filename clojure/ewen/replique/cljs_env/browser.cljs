@@ -22,10 +22,25 @@
                 :else nil))
         :else nil))
 
-(defn list-css-stylesheet-paths []
+(defn css-infos [css]
+  (cond (.-href css)
+        (let [uri (goog.Uri.parse (.-href css))
+              scheme (.getScheme uri)
+              uri (.setQuery uri "")]
+          (cond (= "http" scheme)
+                {:scheme scheme
+                 :uri (str uri)}
+                (= "data" scheme)
+                {:scheme scheme
+                 :uri (.-file (.-ownerNode css))
+                 :file (str uri)}
+                :else nil))
+        :else nil))
+
+(defn list-css-infos []
   (let [css-list (->> (goog.cssom.getAllCssStyleSheets)
                       (filter #(not (.-ownerRule %)))
-                      (map css->uri)
+                      (map css-infos)
                       (remove nil?))]
     css-list))
 

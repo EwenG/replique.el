@@ -10,6 +10,7 @@
             [cljs.util :as util]
             [clojure.string :as string])
   (:import [java.io File]
+           [java.net URL]
            [java.util Base64]
            [java.nio.charset StandardCharsets]))
 
@@ -37,8 +38,8 @@
   (create-ns 'ewen.replique.classpath)
   (intern 'ewen.replique.classpath 'classloader-hierarchy nil))
 
-(def compiler-env (atom nil))
-(def repl-env (atom nil))
+(defonce compiler-env (atom nil))
+(defonce repl-env (atom nil))
 (defonce env {:context :expr :locals {}})
 
 ;; The cljs REPL uses "print" to print values evaluated in the
@@ -221,9 +222,30 @@
   (with-tooling-response msg "cljs"
     (-> (cljs.repl/-evaluate
          repl-env "<cljs repl>" 1
-         "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
+         "ewen.replique.cljs_env.browser.list_css_infos();")
         :value
         read-string)))
+
+(defn url->out-dir-file [url out-dir]
+  (File. out-dir (.getParh url)))
+
+(defmethod tooling-msg-handle "list-sass"
+  [repl-env env [_ msg] {:keys [output-dir]}]
+  (with-tooling-response msg "cljs"
+    (let [css-paths
+          (->
+           (cljs.repl/-evaluate
+            repl-env "<cljs repl>" 1
+            "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
+           :value
+           read-string)
+          css-urls (map #(URL. %) css-paths)
+          {css-http "http" css-file "file"}
+          (group-by #(.getProtocol %) css-urls)
+          css-resources (map #(File. output-dir (.getPath %)) css-http)]
+      (prn (map #(.getPath %) css-http))
+      (prn output-dir)
+      css-paths)))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]

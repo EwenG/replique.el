@@ -709,16 +709,33 @@ describing the last `replique/load-file' command.")
            (error "List css failed")
          result)))))
 
+(defun replique/list-sass ()
+  (if (not (string= "cljs" (replique/get-in-project 'platform t)))
+      (error "Not a Clojurescript process")
+    (let ((chan (replique-async/chan)))
+      (replique-comint/tooling-send-msg
+       (replique/current-or-active-buffer-props t)
+       `((:type . "list-sass"))
+       chan)
+      (replique/when-let
+       ((&alist 'error err
+                'result result)
+        (replique-async/<!! chan))
+       (if err
+           (error "List sass failed")
+         result)))))
+
 (defun replique/load-css (file-name)
   (let* ((file-name (concat "file:" file-name))
          (css-list (replique/list-css))
-         (css-list (if (-contains? css-list file-name)
-                       css-list
-                     (cons "*new-css*" css-list)))
+         (uri-list (-map (lambda (x) (gethash :uri x)) css-list))
+         (uri-list (if (-contains? uri-list file-name)
+                       uri-list
+                     (cons "*new-css*" uri-list)))
          (candidates (-sort (-partial
                              'replique/uri-sort-fn
                              file-name)
-                            css-list))
+                            uri-list))
          (css-file (ido-completing-read
                     "Reload css file: "
                     candidates
@@ -742,6 +759,50 @@ describing the last `replique/load-file' command.")
         (if err
             (message "Loading css file: %s ... Failed." file-name)
           (message "Loading css file: %s ... Done." file-name)))))))
+
+(defun replique/load-sass (file-name)
+  (let* ((file-name (concat "file:" file-name))
+         (css-list (replique/list-sass)))
+    (message "Loading sass file: %s ..." file-name)
+    (print css-file)
+
+    ;; (let ((chan (replique-async/chan)))
+    ;;   (replique-comint/tooling-send-msg
+    ;;    (replique/current-or-active-buffer-props t)
+    ;;    `((:type . "load-file-generic")
+    ;;      (:file-type . "css")
+    ;;      (:file-path . ,file-name)
+    ;;      (:css-file . ,css-file))
+    ;;    chan)
+    ;;   (replique-async/<!
+    ;;    chan
+    ;;    (replique/when-lambda
+    ;;     ((&alist 'error err))
+    ;;     (if err
+    ;;         (message "Loading css file: %s ... Failed." file-name)
+    ;;       (message "Loading css file: %s ... Done." file-name)))))
+    ))
+
+(comment
+
+ (eshell-command-result
+  (format "runnables/replique_sass \"%s\" \"%s\" \"%s\" %s"
+          "@import '_reset';
+
+a {
+    color: blue;
+  }
+
+p {
+  a {
+    color: blue;
+  }
+}"
+          "test.scss"
+          "test.css"
+          (concat (replique/replique-root-dir) "runnables")))
+
+ )
 
 (defun replique/load-js (file-name)
   (replique/init-load-file "Javascript" file-name)
@@ -775,6 +836,10 @@ describing the last `replique/load-file' command.")
          (if (not (string= "cljs" (replique/get-in-project 'platform)))
              (error "Not a Clojurescript process")
            (replique/load-css file-name)))
+        ((string-suffix-p ".scss" file-name t)
+         (if (not (string= "cljs" (replique/get-in-project 'platform)))
+             (error "Not a Clojurescript process")
+           (replique/load-sass file-name)))
         (t (message "Cannot recognize the type of the file: %s"
                     file-name))))
 
