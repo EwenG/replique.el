@@ -12,19 +12,8 @@
   (:import [java.io File]
            [java.net URL]
            [java.util Base64]
-           [java.nio.charset StandardCharsets]))
-
-(defn decodeBase64 [s]
-  (let [b (.getBytes s StandardCharsets/UTF_8)]
-    (-> (Base64/getDecoder)
-        (.decode b)
-        (String.))))
-
-(defn encodeBase64 [s]
-  (let [b (.getBytes s StandardCharsets/UTF_8)]
-    (-> (Base64/getEncoder)
-        (.encode b)
-        (String.))))
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Paths Path]))
 
 (when (not (find-ns 'ewen.replique.core))
   (create-ns 'ewen.replique.core)
@@ -36,7 +25,16 @@
   (intern 'ewen.replique.completion 'completions nil))
 (when (not (find-ns 'ewen.replique.classpath))
   (create-ns 'ewen.replique.classpath)
-  (intern 'ewen.replique.classpath 'classloader-hierarchy nil))
+  (intern 'ewen.replique.classpath 'classloader-hierarchy nil)
+  (intern 'ewen.replique.classpath 'choose-classloader nil)
+  (intern 'ewen.replique.classpath 'add-classpath nil))
+(when (not (find-ns 'ewen.replique.sourcemap))
+  (create-ns 'ewen.replique.sourcemap)
+  (intern 'ewen.replique.sourcemap 'css-file->sourcemap nil)
+  (intern 'ewen.replique.sourcemap 'data->sourcemap nil)
+  (intern 'ewen.replique.sourcemap 'encode-base-64 nil)
+  (intern 'ewen.replique.sourcemap 'find-child-source nil)
+  (intern 'ewen.replique.sourcemap 'main-source nil))
 
 (defonce compiler-env (atom nil))
 (defonce repl-env (atom nil))
@@ -121,7 +119,7 @@
        (format "ewen.replique.cljs_env.browser.reload_css(%s, %s);"
                (pr-str css-file)
                (-> (slurp file-path)
-                   encodeBase64
+                   ewen.replique.sourcemap/encode-base-64
                    pr-str)))
       :value))
 
@@ -226,26 +224,51 @@
         :value
         read-string)))
 
-(defn url->out-dir-file [url out-dir]
-  (File. out-dir (.getParh url)))
+(defn assoc-css-file [output-dir {:keys [uri] :as css-infos}]
+  (assoc css-infos :css-file
+         (->> uri (URL.) (.getPath)
+              (File. output-dir)
+              (.getAbsolutePath))))
+
+(defn assoc-sourcemap [{:keys [scheme css-file file] :as css-infos}]
+  (cond (= "http" scheme)
+        (assoc css-infos :sourcemap
+               (ewen.replique.sourcemap/css-file->sourcemap css-file))
+        (= "data" scheme)
+        (-> (assoc css-infos :sourcemap
+                   (ewen.replique.sourcemap/data->sourcemap file))
+            (dissoc :file))
+        :else nil))
 
 (defmethod tooling-msg-handle "list-sass"
-  [repl-env env [_ msg] {:keys [output-dir]}]
+  [repl-env env [_ {:keys [file-path] :as msg}]
+   {:keys [output-dir]}]
   (with-tooling-response msg "cljs"
-    (let [css-paths
+    (let [css-infos
           (->
            (cljs.repl/-evaluate
             repl-env "<cljs repl>" 1
-            "ewen.replique.cljs_env.browser.list_css_stylesheet_paths();")
+            "ewen.replique.cljs_env.browser.list_css_infos();")
            :value
            read-string)
-          css-urls (map #(URL. %) css-paths)
-          {css-http "http" css-file "file"}
-          (group-by #(.getProtocol %) css-urls)
-          css-resources (map #(File. output-dir (.getPath %)) css-http)]
-      (prn (map #(.getPath %) css-http))
-      (prn output-dir)
-      css-paths)))
+          {css-http "http" css-data "data"}
+          (group-by :scheme css-infos)
+          css-http (map (partial assoc-css-file output-dir)
+                        css-http)
+          css-http (map assoc-sourcemap css-http)
+          css-http (keep
+                    #(ewen.replique.sourcemap/assoc-child-source
+                      file-path %)
+                    css-http)
+          css-http (map #(ewen.replique.sourcemap/assoc-main-source
+                          file-path %)
+                        css-http)
+          css-data (map assoc-sourcemap css-data)
+          css-data (keep
+                    #(ewen.replique.sourcemap/assoc-child-source
+                      file-path %)
+                    css-data)]
+      (into css-http css-data))))
 
 (defmethod tooling-msg-handle "load-file-generic"
   [repl-env env [_ msg] opts]
@@ -308,7 +331,7 @@
 
 
 (def ^:const init-files
-  ["clojure/ewen/replique/classpath.clj"
+  ["clojure/ewen/replique/sourcemap.clj"
    "clojure/ewen/replique/reflection.clj"
    "clojure/ewen/replique/completion.clj"
    "clojure/ewen/replique/lein.clj"
@@ -316,11 +339,6 @@
    "clojure/ewen/replique/core.clj"])
 
 (def ^:const env-browser-path "clojure/ewen/replique/cljs_env/browser.cljs")
-
-(when (not (find-ns 'ewen.replique.classpath))
-  (create-ns 'ewen.replique.classpath)
-  (intern 'ewen.replique.classpath 'classloader-hierarchy nil)
-  (intern 'ewen.replique.classpath 'choose-classloader nil))
 
 (defn init-opts* [opts]
   (-> opts
@@ -391,6 +409,13 @@
                         (:require ~@repl-requires))
                      {:line 1 :column 1})
                    identity opts))]
+    (load-file
+     (str replique-root-dir "clojure/ewen/replique/classpath.clj"))
+    (-> (ewen.replique.classpath/classloader-hierarchy
+         (.. clojure.lang.RT baseLoader))
+        ewen.replique.classpath/choose-classloader
+        (ewen.replique.classpath/add-classpath
+         (str replique-root-dir "lib/json-java.jar")))
     (doseq [init-file init-files]
       (load-file (str replique-root-dir init-file)))
     (apply

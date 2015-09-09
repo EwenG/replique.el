@@ -1,18 +1,22 @@
 (ns ewen.replique.sourcemap
   (:import [java.util Base64]
            [java.nio.charset StandardCharsets]
-           [org.json JSONObject JSONArray]))
+           [org.json JSONObject JSONArray]
+           [java.nio.file Paths Paths Path]))
 
 ;;/*# sourceMappingURL=data:application/json;base64,ewoJInZlcnNpb24iOiAzLAoJImZpbGUiOiAidGVzdC5jc3MiLAoJInNvdXJjZXMiOiBbCgkJInRlc3Quc2NzcyIsCgkJInJlc2V0LnNjc3MiCgldLAoJInNvdXJjZXNDb250ZW50IjogW10sCgkibWFwcGluZ3MiOiAiQUFHRSxHQUFHLENBQUMsQ0FBQyxDQUFIO0VBQ0EsS0FBSyxFQUFFLElBQUssR0FEWDs7QUFLSCxDQUFDLENBQUMsQ0FBQyxDQUFEO0VBQ0EsS0FBSyxFQUFFLElBQUssR0FEWCIsCgkibmFtZXMiOiBbXQp9 */
 
-(defn decodeBase64 [s-b64]
+(defn str->path [s]
+  (Paths/get s (make-array String 0)))
+
+(defn decode-base-64 [s-b64]
   (if (nil? s-b64)
     nil
     (-> (Base64/getDecoder)
         (.decode s-b64)
         (String.))))
 
-(defn encodeBase64 [s]
+(defn encode-base-64 [s]
   (if (nil? s)
     nil
     (let [b (.getBytes s StandardCharsets/UTF_8)]
@@ -59,10 +63,41 @@
        (-> (re-find matcher)
            (nth 2)
            parse-data-uri
-           decodeBase64
+           decode-base-64
            parse-json
            org-json->clj)))
    ""))
+
+(defn css-file->sourcemap [css-path]
+  (-> (slurp css-path)
+      parse-sourcemap
+      (dissoc :sourcesContent :mappings)))
+
+(defn data->sourcemap [data]
+  (-> (parse-data-uri data)
+      decode-base-64
+      parse-sourcemap
+      (dissoc :sourcesContent :mappings)))
+
+(defn assoc-child-source [path {:keys [sourcemap] :as css-infos}]
+  (let [paths (->> (:sources sourcemap)
+                   (map #(str (:sourceRoot sourcemap) %))
+                   (map #(str->path %)))
+        path (str->path path)
+        child-source (some #(if (.endsWith path %) (str %) nil) paths)]
+    (if child-source
+      (assoc css-infos :child-source child-source)
+      nil)))
+
+(defn assoc-main-source [path {:keys [child-source sourcemap]
+                               :as css-infos}]
+  (let [path (str->path path)
+        main-path (-> (:sources sourcemap) first str->path)
+        child-path (str->path child-source)
+        relative-path (.relativize child-path main-path)]
+    (->> (.resolve path relative-path)
+         str
+         (assoc css-infos :main-source))))
 
 (comment
 
@@ -103,7 +138,7 @@ p {
 (comment
 
   ;;sourceRoot: 'http://example.com/www/js/'
-  (let [s (decodeBase64 "ewoJInZlcnNpb24iOiAzLAoJImZpbGUiOiAidGVzdC5jc3MiLAoJInNvdXJjZXMiOiBbCgkJInRlc3Quc2NzcyIsCgkJIi4uLy4uLy4uL3J1bm5hYmxlcy9fcmVzZXQuc2NzcyIKCV0sCgkic291cmNlc0NvbnRlbnQiOiBbCgkJIkBpbXBvcnQgJ19yZXNldCc7XG5cbmEge1xuICAgIGNvbG9yOiBibHVlO1xuICB9XG5cbnAge1xuICBhIHtcbiAgICBjb2xvcjogYmx1ZTtcbiAgfVxufSIsCgkJImEge1xuICAgIGNvbG9yOiByZWQ7XG59XG4iCgldLAoJIm1hcHBpbmdzIjogIkFDQUEsQ0FBQyxDQUFDO0VBQ0UsS0FBSyxFQUFFLEdBQUksR0FEWjs7QURFSCxDQUFDLENBQUM7RUFDRSxLQUFLLEVBQUUsSUFBSyxHQURiOztBQUtELENBQUMsQ0FBQyxDQUFDLENBQUQ7RUFDQSxLQUFLLEVBQUUsSUFBSyxHQURYIiwKCSJuYW1lcyI6IFtdCn0=")
+  (let [s (decode-base-64 "ewoJInZlcnNpb24iOiAzLAoJImZpbGUiOiAidGVzdC5jc3MiLAoJInNvdXJjZXMiOiBbCgkJInRlc3Quc2NzcyIsCgkJIi4uLy4uLy4uL3J1bm5hYmxlcy9fcmVzZXQuc2NzcyIKCV0sCgkic291cmNlc0NvbnRlbnQiOiBbCgkJIkBpbXBvcnQgJ19yZXNldCc7XG5cbmEge1xuICAgIGNvbG9yOiBibHVlO1xuICB9XG5cbnAge1xuICBhIHtcbiAgICBjb2xvcjogYmx1ZTtcbiAgfVxufSIsCgkJImEge1xuICAgIGNvbG9yOiByZWQ7XG59XG4iCgldLAoJIm1hcHBpbmdzIjogIkFDQUEsQ0FBQyxDQUFDO0VBQ0UsS0FBSyxFQUFFLEdBQUksR0FEWjs7QURFSCxDQUFDLENBQUM7RUFDRSxLQUFLLEVBQUUsSUFBSyxHQURiOztBQUtELENBQUMsQ0FBQyxDQUFDLENBQUQ7RUFDQSxLQUFLLEVBQUUsSUFBSyxHQURYIiwKCSJuYW1lcyI6IFtdCn0=")
         json-map (org-json->clj (JSONObject. ^String s))
         sources (:sources json-map)
         sourceRoot (:sourceRoot json-map)]
