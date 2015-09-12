@@ -1,88 +1,91 @@
 (ns ewen.replique.cljs-env.browser
-  (:require [clojure.browser.repl :as repl]
+  (:require [cljs.reader :as reader]
+            [clojure.browser.repl :as repl]
             [goog.cssom]
             [goog.date :as date]
             [goog.Uri]))
 
-(defn add-timestamp [uri]
-  (let [timestamp (.getTime (date/DateTime.))]
-    (-> (goog.Uri/parse uri)
-        (.setParameterValue "timestamp" timestamp)
-        str)))
 
-(defn css->uri [css]
-  (cond (.-href css)
-        (let [uri (goog.Uri.parse (.-href css))
-              scheme (.getScheme uri)
-              uri (.setQuery uri "")]
-          (cond (= "http" scheme)
-                (str uri)
-                (= "data" scheme)
-                (.-file (.-ownerNode css))
-                :else nil))
-        :else nil))
+  (defn add-timestamp [uri]
+    (let [timestamp (.getTime (date/DateTime.))]
+      (-> (goog.Uri/parse uri)
+          (.setParameterValue "timestamp" timestamp)
+          str)))
+
+(defn remove-query-string [uri]
+  (-> (goog.Uri.parse uri)
+      (.setQuery "")
+      str))
 
 (defn css-infos [css]
-  (cond (.-href css)
-        (let [uri (goog.Uri.parse (.-href css))
-              scheme (.getScheme uri)
-              uri (.setQuery uri "")]
-          (cond (= "http" scheme)
-                {:scheme scheme
-                 :uri (str uri)}
-                (= "data" scheme)
-                {:scheme scheme
-                 :uri (.-file (.-ownerNode css))
-                 :file (str uri)}
-                :else nil))
+  (cond (and (.-href css)
+             (= "data" (.-scheme (.-ownerNode css))))
+        {:scheme "data"
+         :uri  (.-href css)
+         :file-path (.-filepath (.-ownerNode css))}
+        (.-href css)
+        {:scheme "http"
+         :uri (remove-query-string (.-href css))}
         :else nil))
 
 (defn list-css-infos []
   (let [css-list (->> (goog.cssom.getAllCssStyleSheets)
-                      (filter #(not (.-ownerRule %)))
+                      ;; Filter out css files imported with the
+                      ;; @import directive
+                      (filter #(.-ownerNode %))
                       (map css-infos)
                       (remove nil?))]
     css-list))
 
-(defn css-uri->css-stylesheets [css-uri]
+(defn match-css-infos? [css {:keys [scheme uri file-path]}]
+  (cond (= scheme "http")
+        (= uri (remove-query-string (.-href css)))
+        (= scheme "data")
+        (= file-path (.-filepath (.-ownerNode css)))
+        :else false))
+
+(defn css-infos->css-stylesheets [css-infos]
   (->> (goog.cssom.getAllCssStyleSheets)
-       (filter #(not (.-ownerRule %)))
-       (filter #(= css-uri (css->uri %)))
-       (map #(.-ownerNode %))
-       (remove nil?)))
+       ;; Filter out css files imported with the
+       ;; @import directive
+       (filter #(.-ownerNode %))
+       (filter #(match-css-infos? % css-infos))
+       (map #(.-ownerNode %))))
 
-(defn reload-css-http [css]
-  (let [href (.-href css)
+(defn reload-css-http [css-node]
+  (let [href (.-href css-node)
         new-href (add-timestamp href)]
-    (goog.dom.setProperties css (js-obj "href" new-href))))
+    (goog.dom.setProperties css-node (js-obj "href" new-href))))
 
-(defn reload-css-file [css css-text]
-  (let [data-url (str "data:text/css;base64," css-text)]
-    (goog.dom.setProperties css (js-obj "href" data-url))))
+(defn reload-css-file [css-node data-uri]
+  (goog.dom.setProperties css-node (js-obj "href" data-uri)))
 
-(defn reload-css [css-uri css-text]
-  (let [css-uri (goog.Uri.parse css-uri)
-        css-list (css-uri->css-stylesheets (str css-uri))]
-    (cond (= "http" (.getScheme css-uri))
+(defn reload-css [css-infos]
+  (let [{:keys [scheme uri file-path]
+         :as css-infos}
+        (reader/read-string css-infos)
+        css-list (css-infos->css-stylesheets css-infos)]
+    (cond (= "http" scheme)
           (doseq [css css-list]
             (reload-css-http css))
-          (= "file" (.getScheme css-uri))
+          (= "data" scheme)
           (if (= (count css-list) 0)
-            (let [data-url (str "data:text/css;base64," css-text)
-                  css-node (goog.dom.createDom
+            (let [css-node (goog.dom.createDom
                             "link"
                             (js-obj "rel" "stylesheet"
                                     "type" "text/css"
-                                    "href" data-url))]
+                                    "href" uri))]
               (goog.dom.setProperties
-               css-node (js-obj "file" (str css-uri)))
+               css-node (js-obj "scheme" "data"
+                                "filepath" file-path))
               (goog.dom.append
                (.querySelector js/document "head")
                css-node))
             (doseq [css css-list]
-              (reload-css-file css css-text)
+              (reload-css-file css uri)
               (goog.dom.setProperties
-               css (js-obj "file" (str css-uri)))))
+               css (js-obj "scheme" "data"
+                           "filepath" file-path))))
           :else nil)))
 
 (defonce conn

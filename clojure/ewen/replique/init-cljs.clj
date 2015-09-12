@@ -10,10 +10,7 @@
             [cljs.util :as util]
             [clojure.string :as string])
   (:import [java.io File]
-           [java.net URL]
-           [java.util Base64]
-           [java.nio.charset StandardCharsets]
-           [java.nio.file Paths Path]))
+           [java.net URL]))
 
 (when (not (find-ns 'ewen.replique.core))
   (create-ns 'ewen.replique.core)
@@ -33,8 +30,7 @@
   (intern 'ewen.replique.sourcemap 'css-file->sourcemap nil)
   (intern 'ewen.replique.sourcemap 'data->sourcemap nil)
   (intern 'ewen.replique.sourcemap 'encode-base-64 nil)
-  (intern 'ewen.replique.sourcemap 'find-child-source nil)
-  (intern 'ewen.replique.sourcemap 'main-source nil))
+  (intern 'ewen.replique.sourcemap 'str->path nil))
 
 (defonce compiler-env (atom nil))
 (defonce repl-env (atom nil))
@@ -112,16 +108,100 @@
   [repl-env env opts {:keys [file-path] :as msg}]
   (cljs.repl/-evaluate repl-env "<cljs repl>" 1 (slurp file-path)))
 
+(defn css-infos-process-uri [{:keys [file-path uri scheme]
+                              :as css-infos}]
+  (if (= "data" scheme)
+    (assoc css-infos
+           :uri
+           (->> (slurp file-path)
+                ewen.replique.sourcemap/encode-base-64
+                (str "data:text/css;base64,")))
+    css-infos))
+
 (defmethod load-file-generic "css"
-  [repl-env env opts {:keys [file-path css-file] :as msg}]
-  (-> (cljs.repl/-evaluate
-       repl-env "<cljs repl>" 1
-       (format "ewen.replique.cljs_env.browser.reload_css(%s, %s);"
-               (pr-str css-file)
-               (-> (slurp file-path)
-                   ewen.replique.sourcemap/encode-base-64
-                   pr-str)))
-      :value))
+  [repl-env env opts msg]
+  (->> (css-infos-process-uri msg)
+       pr-str pr-str
+       (format "ewen.replique.cljs_env.browser.reload_css(%s);")
+       (cljs.repl/-evaluate
+        repl-env "<cljs repl>" 1)
+       :value))
+
+(defn remove-path-extension [path]
+  (let [last-separator-index (.lastIndexOf path File/separator)
+        file-name (if (= -1 last-separator-index)
+                    path
+                    (.substring path (+ 1 last-separator-index)))
+        extension-index (.lastIndexOf file-name ".")
+        extension-index (cond
+                          (= -1 extension-index)
+                          -1
+                          (= -1 last-separator-index)
+                          (.lastIndexOf file-name ".")
+                          :else (-> (.lastIndexOf file-name ".")
+                                    (+ (count path))
+                                    (- (count file-name))))]
+    (if (= -1 extension-index)
+      path
+      (.substring path 0 extension-index))))
+
+(defn compile-sass [replique-root-dir input-path output-path]
+  (let [pb (ProcessBuilder.
+            (list (str replique-root-dir
+                       "runnables/replique_sass")
+                  input-path
+                  output-path))
+        p (.start pb)
+        out (.getInputStream p)]
+    (if (= 0 (.waitFor p))
+      (slurp out)
+      nil)))
+
+(comment
+  (compile-sass "/home/egr/replique.el/"
+                "/home/egr/clojure/wreak-todomvc/test.scss"
+                "test.css")
+  )
+
+(defn load-sass-data
+  [repl-env {:keys [scheme file-path main-source
+                    replique-root-dir]
+             :as msg}]
+  (let [css-text (compile-sass
+                  replique-root-dir
+                  main-source
+                  (str (remove-path-extension file-path) ".css"))
+        css-text (ewen.replique.sourcemap/encode-base-64 css-text)]
+    (when (= nil css-text)
+      (throw (Exception. "Error while comipling sass file")))
+    (->> (str "data:text/css;base64," css-text)
+         (assoc msg :uri)
+         pr-str pr-str
+         (format "ewen.replique.cljs_env.browser.reload_css(%s);")
+         (cljs.repl/-evaluate
+          repl-env "<cljs repl>" 1)
+         :value)))
+
+(defn load-sass-http
+  [repl-env {:keys [scheme file-path main-source
+                    replique-root-dir uri]
+             :as msg}]
+  (let [css-text (compile-sass replique-root-dir main-source file-path)]
+    (when (= nil css-text)
+      (throw (Exception. "Error while comipling sass file")))
+    (spit file-path css-text)
+    (->> msg
+         pr-str pr-str
+         (format "ewen.replique.cljs_env.browser.reload_css(%s);")
+         (cljs.repl/-evaluate
+          repl-env "<cljs repl>" 1)
+         :value)))
+
+(defmethod load-file-generic "sass"
+  [repl-env env opts {:keys [scheme] :as msg}]
+  (if (= scheme "data")
+    (load-sass-data repl-env msg)
+    (load-sass-http repl-env msg)))
 
 (defmulti tooling-msg-handle
   (fn [repl-env env [_ {:keys [type]}] opts]
@@ -230,15 +310,48 @@
               (File. output-dir)
               (.getAbsolutePath))))
 
-(defn assoc-sourcemap [{:keys [scheme css-file file] :as css-infos}]
+(defn assoc-sourcemap [{:keys [scheme css-file uri] :as css-infos}]
   (cond (= "http" scheme)
         (assoc css-infos :sourcemap
                (ewen.replique.sourcemap/css-file->sourcemap css-file))
         (= "data" scheme)
         (-> (assoc css-infos :sourcemap
-                   (ewen.replique.sourcemap/data->sourcemap file))
-            (dissoc :file))
+                   (ewen.replique.sourcemap/data->sourcemap uri))
+            (dissoc :uri))
         :else nil))
+
+(defn assoc-child-source [path {:keys [sourcemap css-file file-path]
+                                :as css-infos}]
+  (if (nil? sourcemap)
+    (assoc css-infos :child-source path)
+    (let [css-file (-> (or css-file file-path)
+                       ewen.replique.sourcemap/str->path)
+          paths (->> (:sources sourcemap)
+                     (map #(str (:sourceRoot sourcemap) %))
+                     (map #(ewen.replique.sourcemap/str->path %)))
+          path (ewen.replique.sourcemap/str->path path)
+          compare-fn #(let [ref (.normalize path)
+                            other (.normalize
+                                   (.resolveSibling css-file %))]
+                        (when (.equals ref other) (str %)))
+          _ (prn css-file)
+          child-source (some compare-fn paths)]
+      (if child-source
+        (assoc css-infos :child-source child-source)
+        nil))))
+
+(defn assoc-main-source [path {:keys [child-source sourcemap]
+                               :as css-infos}]
+  (if (nil? sourcemap)
+    (assoc css-infos :main-source path)
+    (let [path (ewen.replique.sourcemap/str->path path)
+          main-path (-> (:sources sourcemap) first
+                        ewen.replique.sourcemap/str->path)
+          child-path (ewen.replique.sourcemap/str->path child-source)
+          relative-path (.relativize child-path main-path)]
+      (->> (.resolve path relative-path)
+           str
+           (assoc css-infos :main-source)))))
 
 (defmethod tooling-msg-handle "list-sass"
   [repl-env env [_ {:keys [file-path] :as msg}]
@@ -253,21 +366,12 @@
            read-string)
           {css-http "http" css-data "data"}
           (group-by :scheme css-infos)
-          css-http (map (partial assoc-css-file output-dir)
-                        css-http)
+          css-http (map (partial assoc-css-file output-dir) css-http)
           css-http (map assoc-sourcemap css-http)
-          css-http (keep
-                    #(ewen.replique.sourcemap/assoc-child-source
-                      file-path %)
-                    css-http)
-          css-http (map #(ewen.replique.sourcemap/assoc-main-source
-                          file-path %)
-                        css-http)
+          css-http (keep #(assoc-child-source file-path %) css-http)
+          css-http (map #(assoc-main-source file-path %) css-http)
           css-data (map assoc-sourcemap css-data)
-          css-data (keep
-                    #(ewen.replique.sourcemap/assoc-child-source
-                      file-path %)
-                    css-data)]
+          css-data (keep #(assoc-child-source file-path %) css-data)]
       (into css-http css-data))))
 
 (defmethod tooling-msg-handle "load-file-generic"

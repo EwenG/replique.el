@@ -308,7 +308,7 @@ Otherwise, the lambda simply returns nil."
 (defun replique/repl-cmd-raw (jar platform init-opts)
   (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
     `("java" "-cp"
-      ,(format "%s:%slib/json-java.jar" jar (replique/replique-root-dir))
+      ,(format "%s" jar)
       "clojure.main" "-e"
       ,(format "(do (load-file \"%sclojure/ewen/replique/init%s.clj\") (ewen.replique.init/init %s %s))"
                (replique/replique-root-dir)
@@ -709,13 +709,14 @@ describing the last `replique/load-file' command.")
            (error "List css failed")
          result)))))
 
-(defun replique/list-sass ()
+(defun replique/list-sass (file-name)
   (if (not (string= "cljs" (replique/get-in-project 'platform t)))
       (error "Not a Clojurescript process")
     (let ((chan (replique-async/chan)))
       (replique-comint/tooling-send-msg
        (replique/current-or-active-buffer-props t)
-       `((:type . "list-sass"))
+       `((:type . "list-sass")
+         (:file-path . ,file-name))
        chan)
       (replique/when-let
        ((&alist 'error err
@@ -725,24 +726,42 @@ describing the last `replique/load-file' command.")
            (error "List sass failed")
          result)))))
 
+(defun replique/css-candidates (css-infos)
+  (-let* (((&hash :scheme scheme
+                  :uri uri
+                  :file-path file-path) css-infos))
+    (cond ((string= "data" scheme)
+           (concat "data-uri:" file-path))
+          ((string= "http" scheme)
+           uri)
+          (t nil))))
+
 (defun replique/load-css (file-name)
-  (let* ((file-name (concat "file:" file-name))
-         (css-list (replique/list-css))
-         (uri-list (-map (lambda (x) (gethash :uri x)) css-list))
-         (uri-list (if (-contains? uri-list file-name)
-                       uri-list
-                     (cons "*new-css*" uri-list)))
+  (let* ((css-list (replique/list-css))
+         (candidates (-map 'replique/css-candidates css-list))
+         (candidates (if (-contains?
+                        candidates
+                        (concat "data-uri:" file-name))
+                       candidates
+                     (cons "*new-data-uri*" candidates)))
          (candidates (-sort (-partial
                              'replique/uri-sort-fn
                              file-name)
-                            uri-list))
-         (css-file (ido-completing-read
+                            candidates))
+         (uri (ido-completing-read
                     "Reload css file: "
                     candidates
                     nil t))
-         (css-file (if (equal "*new-css*" css-file)
-                       file-name
-                     css-file)))
+         (scheme (cond ((string= "*new-data-uri*" uri)
+                        "data")
+                       ((s-starts-with? "data-uri:" uri)
+                        "data")
+                       (t "http")))
+         (uri (cond ((string= "*new-data-uri*" uri)
+                         file-name)
+                        ((s-starts-with? "data-uri:" uri)
+                         (s-chop-prefix "data-uri:" uri))
+                        (t uri))))
     (message "Loading css file: %s ..." file-name)
     (let ((chan (replique-async/chan)))
       (replique-comint/tooling-send-msg
@@ -750,7 +769,8 @@ describing the last `replique/load-file' command.")
        `((:type . "load-file-generic")
          (:file-type . "css")
          (:file-path . ,file-name)
-         (:css-file . ,css-file))
+         (:uri . ,uri)
+         (:scheme . ,scheme))
        chan)
       (replique-async/<!
        chan
@@ -760,49 +780,87 @@ describing the last `replique/load-file' command.")
             (message "Loading css file: %s ... Failed." file-name)
           (message "Loading css file: %s ... Done." file-name)))))))
 
+(defun replique/sass-candidate (sass-infos)
+  (-let* (((&hash :scheme scheme
+                  :file-path file-path
+                  :css-file css-file) sass-infos))
+    (cond ((string= "data" scheme)
+           (concat "data-uri:" file-path))
+          ((string= "http" scheme)
+           css-file)
+          (t nil))))
+
+
+(defun replique/selected-saas-infos
+    (selected-scheme target-file sass-infos-list)
+  (if (string= "*new-data-uri*" target-file)
+      nil
+    (-find
+     (-lambda ((&hash :scheme scheme
+                :css-file css-file
+                :main-source main-source
+                :file-path file-path))
+       (cond ((and (string= "http" selected-scheme)
+                   (string= "http" scheme)
+                   (string= target-file css-file))
+              t)
+             ((and (string= "data" selected-scheme)
+                   (string= "data" scheme)
+                   (string= target-file (concat "data-uri:" file-path)))
+              t)
+             (t nil)))
+     sass-infos-list)))
+
 (defun replique/load-sass (file-name)
-  (let* ((file-name (concat "file:" file-name))
-         (css-list (replique/list-sass)))
-    (message "Loading sass file: %s ..." file-name)
-    (print css-file)
-
-    ;; (let ((chan (replique-async/chan)))
-    ;;   (replique-comint/tooling-send-msg
-    ;;    (replique/current-or-active-buffer-props t)
-    ;;    `((:type . "load-file-generic")
-    ;;      (:file-type . "css")
-    ;;      (:file-path . ,file-name)
-    ;;      (:css-file . ,css-file))
-    ;;    chan)
-    ;;   (replique-async/<!
-    ;;    chan
-    ;;    (replique/when-lambda
-    ;;     ((&alist 'error err))
-    ;;     (if err
-    ;;         (message "Loading css file: %s ... Failed." file-name)
-    ;;       (message "Loading css file: %s ... Done." file-name)))))
-    ))
-
-(comment
-
- (eshell-command-result
-  (format "runnables/replique_sass \"%s\" \"%s\" \"%s\" %s"
-          "@import '_reset';
-
-a {
-    color: blue;
-  }
-
-p {
-  a {
-    color: blue;
-  }
-}"
-          "test.scss"
-          "test.css"
-          (concat (replique/replique-root-dir) "runnables")))
-
- )
+  (let* ((sass-list (replique/list-sass file-name))
+         (candidates (-map 'replique/sass-candidate sass-list))
+         (candidates (if (-contains?
+                          candidates (concat "data-uri:" file-name))
+                         candidates
+                       (append candidates '("*new-data-uri*"))))
+         (target-file (ido-completing-read
+                       "Compile sass to: "
+                       candidates
+                       nil t))
+         (scheme (cond ((string= "*new-data-uri*" target-file)
+                        "data")
+                       ((s-starts-with? "data-uri:" target-file)
+                        "data")
+                       (t "http")))
+         (sass-infos (replique/selected-saas-infos
+                      scheme target-file sass-list))
+         (uri (if (string= "*new-data-uri*" target-file)
+                  nil
+                  (gethash :uri sass-infos)))
+         (main-source (cond ((string= "*new-data-uri*" target-file)
+                             file-name)
+                            ((string= "data" scheme)
+                             (gethash :file-path sass-infos))
+                            (t (gethash :main-source sass-infos))))
+         (target-file (cond ((string= "*new-data-uri*" target-file)
+                             file-name)
+                            ((string= "data" scheme)
+                             (s-chop-prefix "data-uri:" target-file))
+                            (t target-file))))
+    (message "Loading sass file: %s ..." main-source)
+    (let ((chan (replique-async/chan)))
+      (replique-comint/tooling-send-msg
+       (replique/current-or-active-buffer-props t)
+       `((:type . "load-file-generic")
+         (:file-type . "sass")
+         (:replique-root-dir . ,(replique/replique-root-dir))
+         (:scheme . ,scheme)
+         (:uri . ,uri)
+         (:file-path . ,target-file)
+         (:main-source . ,main-source))
+       chan)
+      (replique-async/<!
+       chan
+       (replique/when-lambda
+        ((&alist 'error err))
+        (if err
+            (message "Loading sass file: %s ... Failed." file-name)
+          (message "Loading sass file: %s ... Done." file-name)))))))
 
 (defun replique/load-js (file-name)
   (replique/init-load-file "Javascript" file-name)
@@ -822,12 +880,14 @@ p {
         (message "Loading js file: %s ... Done." file-name))))))
 
 (defun replique/load-file-generic (file-name)
-  (interactive (if (string-suffix-p ".css" (buffer-file-name) t)
-                   (list (buffer-file-name))
-                 (comint-get-source
-                  "Load file: "
-                  replique/prev-l/c-dir/file
-                  (list major-mode) t)))
+  (interactive (cond ((string-suffix-p ".css" (buffer-file-name) t)
+                      (list (buffer-file-name)))
+                     ((string-suffix-p ".scss" (buffer-file-name) t)
+                      (list (buffer-file-name)))
+                     (t (comint-get-source
+                         "Load file: "
+                         replique/prev-l/c-dir/file
+                         (list major-mode) t))))
   (cond ((string-suffix-p ".js" file-name t)
          (if (not (string= "cljs" (replique/get-in-project 'platform)))
              (error "Not a Clojurescript process")

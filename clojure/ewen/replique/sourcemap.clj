@@ -1,13 +1,16 @@
 (ns ewen.replique.sourcemap
+  (:require [clojure.java.io :refer [as-file]])
   (:import [java.util Base64]
            [java.nio.charset StandardCharsets]
            [org.json JSONObject JSONArray]
-           [java.nio.file Paths Paths Path]))
+           [java.nio.file Paths]))
 
 ;;/*# sourceMappingURL=data:application/json;base64,ewoJInZlcnNpb24iOiAzLAoJImZpbGUiOiAidGVzdC5jc3MiLAoJInNvdXJjZXMiOiBbCgkJInRlc3Quc2NzcyIsCgkJInJlc2V0LnNjc3MiCgldLAoJInNvdXJjZXNDb250ZW50IjogW10sCgkibWFwcGluZ3MiOiAiQUFHRSxHQUFHLENBQUMsQ0FBQyxDQUFIO0VBQ0EsS0FBSyxFQUFFLElBQUssR0FEWDs7QUFLSCxDQUFDLENBQUMsQ0FBQyxDQUFEO0VBQ0EsS0FBSyxFQUFFLElBQUssR0FEWCIsCgkibmFtZXMiOiBbXQp9 */
 
 (defn str->path [s]
-  (Paths/get s (make-array String 0)))
+  (if s
+    (Paths/get s (make-array String 0))
+    nil))
 
 (defn decode-base-64 [s-b64]
   (if (nil? s-b64)
@@ -69,35 +72,17 @@
    ""))
 
 (defn css-file->sourcemap [css-path]
-  (-> (slurp css-path)
-      parse-sourcemap
-      (dissoc :sourcesContent :mappings)))
+  (if (.exists (as-file css-path))
+    (-> (slurp css-path)
+        parse-sourcemap
+        (dissoc :sourcesContent :mappings))
+    nil))
 
 (defn data->sourcemap [data]
   (-> (parse-data-uri data)
       decode-base-64
       parse-sourcemap
       (dissoc :sourcesContent :mappings)))
-
-(defn assoc-child-source [path {:keys [sourcemap] :as css-infos}]
-  (let [paths (->> (:sources sourcemap)
-                   (map #(str (:sourceRoot sourcemap) %))
-                   (map #(str->path %)))
-        path (str->path path)
-        child-source (some #(if (.endsWith path %) (str %) nil) paths)]
-    (if child-source
-      (assoc css-infos :child-source child-source)
-      nil)))
-
-(defn assoc-main-source [path {:keys [child-source sourcemap]
-                               :as css-infos}]
-  (let [path (str->path path)
-        main-path (-> (:sources sourcemap) first str->path)
-        child-path (str->path child-source)
-        relative-path (.relativize child-path main-path)]
-    (->> (.resolve path relative-path)
-         str
-         (assoc css-infos :main-source))))
 
 (comment
 
