@@ -303,7 +303,12 @@ Otherwise, the lambda simply returns nil."
 
 
 (defun replique/platform-jar (platform)
-  (caar (replique-runnables/jars-in-path platform)))
+  (let ((jar-path (replique-runnables/platform-jar-path
+                   (replique/replique-root-dir)
+                   platform)))
+    (if (file-exists-p jar-path)
+        jar-path
+      nil)))
 
 (defun replique/repl-cmd-raw (jar platform init-opts)
   (let ((platform-suffix (if (string= "cljs" platform) "-cljs" "")))
@@ -338,7 +343,8 @@ Otherwise, the lambda simply returns nil."
                         replique-edn/pr-str
                         replique-edn/pr-str)))
     (if (locate-file "project.clj" (list root-dir))
-        (let ((lein-script (replique-runnables/lein-in-path)))
+        (let ((lein-script (replique-runnables/lein-path
+                            (replique/replique-root-dir))))
           (if lein-script
               (replique/repl-cmd-lein lein-script platform init-opts)
             'lein-script-not-found))
@@ -406,47 +412,32 @@ Otherwise, the lambda simply returns nil."
         (t (error "Unknown platform: %s" platform))))
 
 (defun replique/handle-jar-not-found (root-dir platform init-opts)
-  (when (yes-or-no-p (format "Sorry, No %s jar could be found on the filesystem in order to start the REPL. Would you like to download a %s jar now?"
+  (when (yes-or-no-p (format "Sorry, the REPL could not be started because no %s jar could be found. Would you like to download a %s jar now?"
                              (replique/platform-to-name platform)
                              (replique/platform-to-name platform)))
-    (-> (ido-read-directory-name
-         (format "Please enter the directory where the %s jar will be saved: "
-                 (replique/platform-to-name platform)))
-        (replique-runnables/download-jar
+    (-> (replique-runnables/download-jar
+         (replique/replique-root-dir)
          platform
          (lambda (jar-path)
            (if (equal platform "cljs")
                (replique/repl-cljs
-                (replique/repl-cmd-raw jar-path platform
-                                       (-> (replique/alist-to-map init-opts)
-                                           replique-edn/pr-str
-                                           replique-edn/pr-str))
+                (replique/repl-cmd-raw
+                 jar-path platform
+                 (-> (replique/alist-to-map init-opts)
+                     replique-edn/pr-str
+                     replique-edn/pr-str))
                 root-dir)
              (replique/repl
-              (replique/repl-cmd-raw jar-path platform
-                                     (-> (replique/alist-to-map init-opts)
-                                         replique-edn/pr-str
-                                         replique-edn/pr-str))
+              (replique/repl-cmd-raw
+               jar-path platform
+               (-> (replique/alist-to-map init-opts)
+                   replique-edn/pr-str
+                   replique-edn/pr-str))
               root-dir))))))
   'runnable-jar-not-found)
 
 (defun replique/handle-lein-not-found (root-dir platform init-opts)
-  (when (yes-or-no-p (format "Sorry, leiningen could not be found on the filesystem in order to start the REPL. Would you like to install it now?"))
-    (let* ((lein-copy-target (ido-read-directory-name
-                              (format "Please enter the directory where the lein script will be saved: ")))
-           (lein-copy-target (concat lein-copy-target "lein")))
-      (copy-file
-       (concat (replique/replique-root-dir) "runnables/lein")
-       lein-copy-target
-       1)
-      (replique/repl
-       (replique/repl-cmd-lein
-        lein-copy-target platform
-        (-> (replique/alist-to-map init-opts)
-            replique-edn/pr-str
-            replique-edn/pr-str))
-       root-dir)))
-  'lein-script-not-found)
+  (error "Could ne find leiningen"))
 
 ;;;###autoload
 (defun replique/repl (&optional repl-cmd root-dir)
