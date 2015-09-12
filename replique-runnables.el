@@ -42,6 +42,12 @@
   :type 'string
   :group 'replique)
 
+(defcustom replique-runnables/sass-url "https://github.com/EwenG/replique.el/raw/master/runnables/replique_sass_0.0.1"
+  "The URL to use when dowloading the replique-sass binary."
+  :type 'string
+  :group 'replique)
+
+(defconst replique-runnables/sass-file-name "replique_sass_0.0.1")
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
 (defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-standalone.jar$")
@@ -61,6 +67,15 @@
         ((file-exists-p (concat replique-dir "runnables/lein"))
          (concat replique-dir "runnables/lein"))
         (t nil)))
+
+(defun replique-runnables/replique-sass-path (replique-dir)
+  (let ((sass-path (concat
+                    replique-dir
+                    "runnables/"
+                    replique-runnables/sass-file-name)))
+    (if (file-exists-p sass-path)
+        sass-path
+      nil)))
 
 
 
@@ -134,6 +149,19 @@
                           replique-dir platform))))
     jar-path))
 
+(defun replique-runnables/download-sass (replique-dir callback)
+  (let* ((sass-path (concat replique-dir "runnables/"
+                            replique-runnables/sass-file-name)))
+    (replique-runnables/url-retrieve
+     replique-runnables/sass-url
+     (lambda (status)
+       (replique-runnables/remove-http-header)
+       (ignore-errors
+         (write-file sass-path t))
+       (kill-buffer)
+       (eshell-command (concat "chmod +x " sass-path))
+       (funcall callback sass-path)))
+    sass-path))
 
 (provide 'replique-runnables)
 

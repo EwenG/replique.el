@@ -436,8 +436,14 @@ Otherwise, the lambda simply returns nil."
               root-dir))))))
   'runnable-jar-not-found)
 
-(defun replique/handle-lein-not-found (root-dir platform init-opts)
+(defun replique/handle-lein-not-found ()
   (error "Could ne find leiningen"))
+
+(defun replique/handle-sass-not-found (file-name)
+  (replique-runnables/download-sass
+   (replique/replique-root-dir)
+   (lambda (sass-path)
+     (replique/load-sass sass-path file-name))))
 
 ;;;###autoload
 (defun replique/repl (&optional repl-cmd root-dir)
@@ -453,8 +459,7 @@ Otherwise, the lambda simply returns nil."
          (replique/handle-jar-not-found
           root-dir "clj" nil))
         ((equal 'lein-script-not-found repl-cmd)
-         (replique/handle-lein-not-found
-          root-dir "clj" nil))
+         (replique/handle-lein-not-found))
         (t (replique/repl* root-dir "clj" repl-cmd))))
 
 ;;;###autoload
@@ -499,8 +504,7 @@ Otherwise, the lambda simply returns nil."
                              (replique/handle-jar-not-found
                               root-dir "cljs" init-opts))
                             ((equal 'lein-script-not-found repl-cmd)
-                             (replique/handle-lein-not-found
-                              root-dir "cljs" init-opts))
+                             (replique/handle-lein-not-found))
                             (t repl-cmd))))
        (list repl-cmd root-dir))))
   (cond ((equal 'lein-script-not-found repl-cmd) nil)
@@ -802,7 +806,7 @@ describing the last `replique/load-file' command.")
              (t nil)))
      sass-infos-list)))
 
-(defun replique/load-sass (file-name)
+(defun replique/load-sass (sass-path file-name)
   (let* ((sass-list (replique/list-sass file-name))
          (candidates (-map 'replique/sass-candidate sass-list))
          (candidates (if (-contains?
@@ -839,7 +843,7 @@ describing the last `replique/load-file' command.")
        (replique/current-or-active-buffer-props t)
        `((:type . "load-file-generic")
          (:file-type . "sass")
-         (:replique-root-dir . ,(replique/replique-root-dir))
+         (:sass-path . ,sass-path)
          (:scheme . ,scheme)
          (:uri . ,uri)
          (:file-path . ,target-file)
@@ -890,7 +894,12 @@ describing the last `replique/load-file' command.")
         ((string-suffix-p ".scss" file-name t)
          (if (not (string= "cljs" (replique/get-in-project 'platform)))
              (error "Not a Clojurescript process")
-           (replique/load-sass file-name)))
+           (let ((sass-path
+                  (replique-runnables/replique-sass-path
+                   (replique/replique-root-dir))))
+             (if sass-path
+                 (replique/load-sass sass-path file-name)
+               (replique/handle-sass-not-found file-name)))))
         (t (message "Cannot recognize the type of the file: %s"
                     file-name))))
 

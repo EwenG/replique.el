@@ -145,10 +145,9 @@
       path
       (.substring path 0 extension-index))))
 
-(defn compile-sass [replique-root-dir input-path output-path]
+(defn compile-sass [sass-path input-path output-path]
   (let [pb (ProcessBuilder.
-            (list (str replique-root-dir
-                       "runnables/replique_sass")
+            (list sass-path
                   input-path
                   output-path))
         p (.start pb)
@@ -158,17 +157,16 @@
       nil)))
 
 (comment
-  (compile-sass "/home/egr/replique.el/"
+  (compile-sass "/home/egr/replique.el/runnables/replique_sass_0.0.1"
                 "/home/egr/clojure/wreak-todomvc/test.scss"
                 "test.css")
   )
 
 (defn load-sass-data
-  [repl-env {:keys [scheme file-path main-source
-                    replique-root-dir]
+  [repl-env {:keys [scheme file-path main-source sass-path]
              :as msg}]
   (let [css-text (compile-sass
-                  replique-root-dir
+                  sass-path
                   main-source
                   (str (remove-path-extension file-path) ".css"))
         css-text (ewen.replique.sourcemap/encode-base-64 css-text)]
@@ -334,7 +332,6 @@
                             other (.normalize
                                    (.resolveSibling css-file %))]
                         (when (.equals ref other) (str %)))
-          _ (prn css-file)
           child-source (some compare-fn paths)]
       (if child-source
         (assoc css-infos :child-source child-source)
