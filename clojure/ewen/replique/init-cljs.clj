@@ -147,9 +147,7 @@
 
 (defn compile-sass [sass-path input-path output-path]
   (let [pb (ProcessBuilder.
-            (list sass-path
-                  input-path
-                  output-path))
+            (list sass-path input-path output-path))
         p (.start pb)
         out (.getInputStream p)]
     (if (= 0 (.waitFor p))
@@ -165,9 +163,7 @@
 (defn load-sass-data
   [repl-env {:keys [scheme file-path main-source sass-path]
              :as msg}]
-  (let [css-text (compile-sass
-                  sass-path
-                  main-source
+  (let [css-text (compile-sass sass-path main-source
                   (str (remove-path-extension file-path) ".css"))
         css-text (ewen.replique.sourcemap/encode-base-64 css-text)]
     (when (= nil css-text)

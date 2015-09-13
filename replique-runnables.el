@@ -42,12 +42,10 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique-runnables/sass-url "https://github.com/EwenG/replique.el/raw/master/runnables/replique_sass_0.0.1"
+(defcustom replique-runnables/sass-url "https://github.com/EwenG/replique.el/releases/download/0.0.1/replique_sass_3.2.5_0.0.1"
   "The URL to use when dowloading the replique-sass binary."
   :type 'string
   :group 'replique)
-
-(defconst replique-runnables/sass-file-name "replique_sass_0.0.1")
 
 (defconst replique-runnables/clj-jar-regex "clojure-\\([[:digit:].]+\\)-?\\(beta\\|alpha\\|RC\\|SNAPSHOT\\)?\\([0-9]+\\)?.jar$")
 (defconst replique-runnables/cljs-jar-regex "clojurescript-\\([[:digit:].]+\\)-standalone.jar$")
@@ -68,11 +66,16 @@
          (concat replique-dir "runnables/lein"))
         (t nil)))
 
+(defun replique-runnables/platform-jar-path (replique-dir platform)
+  (cond ((string= "clj" platform)
+         (concat replique-dir "runnables/clojure.jar"))
+        ((string= "cljs" platform)
+         (concat replique-dir "runnables/clojurescript.jar"))
+        (t (error (format "Unsupported platform: %s"
+                          platform)))))
+
 (defun replique-runnables/replique-sass-path (replique-dir)
-  (let ((sass-path (concat
-                    replique-dir
-                    "runnables/"
-                    replique-runnables/sass-file-name)))
+  (let ((sass-path (concat replique-dir "runnables/replique_sass")))
     (if (file-exists-p sass-path)
         sass-path
       nil)))
@@ -112,14 +115,6 @@
     (forward-char)
     (delete-region beg (point))))
 
-(defun replique-runnables/platform-jar-path (replique-dir platform)
-  (cond ((string= "clj" platform)
-         (concat replique-dir "runnables/clojure.jar"))
-        ((string= "cljs" platform)
-         (concat replique-dir "runnables/clojurescript.jar"))
-        (t (error (format "Unsupported platform: %s"
-                          platform)))))
-
 (defun replique-runnables/download-jar (replique-dir platform callback)
   (let* ((url (cond ((equal platform "clj") replique-runnables/clj-url)
                     ((equal platform "cljs") replique-runnables/cljs-url)
@@ -150,8 +145,12 @@
     jar-path))
 
 (defun replique-runnables/download-sass (replique-dir callback)
-  (let* ((sass-path (concat replique-dir "runnables/"
-                            replique-runnables/sass-file-name)))
+  (let* ((sass-path (concat
+                     replique-dir
+                     "runnables/"
+                     (url-file-nondirectory
+                      replique-runnables/sass-url)))
+         (sym-link-path (concat replique-dir "runnables/replique_sass")))
     (replique-runnables/url-retrieve
      replique-runnables/sass-url
      (lambda (status)
@@ -160,6 +159,8 @@
          (write-file sass-path t))
        (kill-buffer)
        (eshell-command (concat "chmod +x " sass-path))
+       (eshell-command
+        (format "ln -s %s %s" sass-path sym-link-path))
        (funcall callback sass-path)))
     sass-path))
 
