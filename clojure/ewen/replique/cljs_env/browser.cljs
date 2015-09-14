@@ -17,6 +17,14 @@
       (.setQuery "")
       str))
 
+(defn css-current-domain? [css]
+  (let [current-domain js/window.location.hostname
+        href (.-href css)]
+    (if-not href
+      false
+      (= (.getDomain (goog.Uri/parse href))
+         current-domain))))
+
 (defn css-infos [css]
   (cond (and (.-href css)
              (= "data" (.-scheme (.-ownerNode css))))
@@ -33,6 +41,7 @@
                       ;; Filter out css files imported with the
                       ;; @import directive
                       (filter #(.-ownerNode %))
+                      (filter css-current-domain?)
                       (map css-infos)
                       (remove nil?))]
     css-list))
