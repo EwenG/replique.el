@@ -806,6 +806,18 @@ describing the last `replique/load-file' command.")
              (t nil)))
      sass-infos-list)))
 
+(defun replique/print-sass-error (e)
+  (-let (((&hash :file file
+                 :line line
+                 :column column
+                 :message message)
+          (->> (replique-edn/reader nil :str e)
+               replique-edn/init-state
+               replique-edn/read
+               replique-edn/result)))
+    (message "Error while compiling file %s at line %s, column %s. %s"
+             file line column message)))
+
 (defun replique/load-sass (sass-path file-name)
   (let* ((sass-list (replique/list-sass file-name))
          (candidates (-map 'replique/sass-candidate sass-list))
@@ -852,10 +864,14 @@ describing the last `replique/load-file' command.")
       (replique-async/<!
        chan
        (replique/when-lambda
-        ((&alist 'error err))
-        (if err
-            (message "Loading sass file: %s ... Failed." file-name)
-          (message "Loading sass file: %s ... Done." file-name)))))))
+        ((&alist 'error err
+                 'result result))
+        (let ((status (elt result 0))
+              (message (elt result 1)))
+          (cond
+           (err (message "Loading sass file: %s ... Failed." file-name))
+           ((not status) (replique/print-sass-error message))
+           (t (message "Loading sass file: %s ... Done." file-name)))))))))
 
 (defun replique/load-js (file-name)
   (replique/init-load-file "Javascript" file-name)

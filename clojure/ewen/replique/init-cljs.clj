@@ -30,7 +30,9 @@
   (intern 'ewen.replique.sourcemap 'css-file->sourcemap nil)
   (intern 'ewen.replique.sourcemap 'data->sourcemap nil)
   (intern 'ewen.replique.sourcemap 'encode-base-64 nil)
-  (intern 'ewen.replique.sourcemap 'str->path nil))
+  (intern 'ewen.replique.sourcemap 'str->path nil)
+  (intern 'ewen.replique.sourcemap 'parse-json nil)
+  (intern 'ewen.replique.sourcemap 'org-json->clj nil))
 
 (defonce compiler-env (atom nil))
 (defonce repl-env (atom nil))
@@ -151,8 +153,11 @@
         p (.start pb)
         out (.getInputStream p)]
     (if (= 0 (.waitFor p))
-      (slurp out)
-      nil)))
+      [true (slurp out)]
+      [false (-> (slurp out)
+                 ewen.replique.sourcemap/parse-json
+                 ewen.replique.sourcemap/org-json->clj
+                 pr-str)])))
 
 (comment
   (compile-sass "/home/egr/replique.el/runnables/replique_sass_0.0.1"
@@ -163,18 +168,21 @@
 (defn load-sass-data
   [repl-env {:keys [scheme file-path main-source sass-path]
              :as msg}]
-  (let [css-text (compile-sass sass-path main-source
-                  (str (remove-path-extension file-path) ".css"))
-        css-text (ewen.replique.sourcemap/encode-base-64 css-text)]
-    (when (= nil css-text)
-      (throw (Exception. "Error while comipling sass file")))
-    (->> (str "data:text/css;base64," css-text)
-         (assoc msg :uri)
-         pr-str pr-str
-         (format "ewen.replique.cljs_env.browser.reload_css(%s);")
-         (cljs.repl/-evaluate
-          repl-env "<cljs repl>" 1)
-         :value)))
+  (let [[success css-text] (compile-sass
+                            sass-path main-source
+                            (str (remove-path-extension file-path)
+                                 ".css"))]
+    (if-not success
+      [false css-text]
+      (->> (ewen.replique.sourcemap/encode-base-64 css-text)
+           (str "data:text/css;base64,")
+           (assoc msg :uri)
+           pr-str pr-str
+           (format "ewen.replique.cljs_env.browser.reload_css(%s);")
+           (cljs.repl/-evaluate
+            repl-env "<cljs repl>" 1)
+           :value
+           (vector true)))))
 
 (defn load-sass-http
   [repl-env {:keys [scheme file-path main-source

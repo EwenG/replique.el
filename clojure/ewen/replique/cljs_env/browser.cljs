@@ -6,11 +6,11 @@
             [goog.Uri]))
 
 
-  (defn add-timestamp [uri]
-    (let [timestamp (.getTime (date/DateTime.))]
-      (-> (goog.Uri/parse uri)
-          (.setParameterValue "timestamp" timestamp)
-          str)))
+(defn add-timestamp [uri]
+  (let [timestamp (.getTime (date/DateTime.))]
+    (-> (goog.Uri/parse uri)
+        (.setParameterValue "timestamp" timestamp)
+        str)))
 
 (defn remove-query-string [uri]
   (-> (goog.Uri.parse uri)
