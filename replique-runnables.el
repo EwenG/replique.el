@@ -151,7 +151,7 @@
                   length content-length))
       (message "Downloading %s ... %s" url "0%"))))
 
-(defun replique-runnables/handle-redirects (buffer callback)
+(defun replique-runnables/handle-redirects (buffer)
   (cadr (replique-runnables/parse-http-headers buffer)))
 
 (defun replique-runnables/url-retrieve (url done-fn)
@@ -187,8 +187,7 @@
                    (if (not (buffer-live-p buffer))
                        (cancel-timer timer)
                      (let ((location
-                            (replique-runnables/handle-redirects
-                             buffer done-fn)))
+                            (replique-runnables/handle-redirects buffer)))
                        (if location
                            (progn
                              (cancel-timer timer)
