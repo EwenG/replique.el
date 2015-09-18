@@ -49,6 +49,11 @@
   Object
   (org-json->clj [o] o))
 
+;;A wrapper to avoid warnings due to the (hacky) way replique requires
+;;its dependencies
+(defn org-json->clj* [o]
+  (org-json->clj o))
+
 (def sourcemapping-regexp #"(?:\/\/[@#][ \t]+sourceMappingURL=([^\s'\"]+?)[ \t]*$)|(?:\/\*[@#][ \t]+sourceMappingURL=([^\*]+?)[ \t]*(?:\*\/)[ \t]*$)")
 (def data-uri-regexp #"^data:[^;]*(?:;base64)?,(.*)$")
 

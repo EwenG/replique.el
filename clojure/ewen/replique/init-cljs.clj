@@ -32,7 +32,7 @@
   (intern 'ewen.replique.sourcemap 'encode-base-64 nil)
   (intern 'ewen.replique.sourcemap 'str->path nil)
   (intern 'ewen.replique.sourcemap 'parse-json nil)
-  (intern 'ewen.replique.sourcemap 'org-json->clj nil))
+  (intern 'ewen.replique.sourcemap 'org-json->clj* nil))
 
 (defonce compiler-env (atom nil))
 (defonce repl-env (atom nil))
@@ -156,7 +156,7 @@
       [true (slurp out)]
       [false (-> (slurp out)
                  ewen.replique.sourcemap/parse-json
-                 ewen.replique.sourcemap/org-json->clj
+                 ewen.replique.sourcemap/org-json->clj*
                  pr-str)])))
 
 (comment
