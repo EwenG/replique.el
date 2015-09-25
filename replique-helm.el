@@ -5,22 +5,23 @@
 
 (require 'dash)
 (require 's)
-(require 'replique-edn)
 
 (defun replique-helm/ns-from-file (file-path)
   (with-temp-buffer
     (insert-file-contents file-path)
-    (search-forward "(ns " nil t)
-    (when (not (bobp))
-      (backward-char)
-      (let* ((state (->> (thing-at-point 'defun)
-                         (replique-edn/reader nil :str)
-                         replique-edn/init-state))
-             (ns-form (-> (replique-edn/read state)
-                          replique-edn/result)))
-        (if (equal '^ (cadr ns-form))
-            (cadddr ns-form)
-          (cadr ns-form))))))
+    (save-match-data
+      (if (re-search-forward "(ns[
+ ]+\\(\\^{[^}]*}[
+ ]+\\)?\\([^
+ ]*\\)" nil t)
+          (match-string-no-properties 2)
+        nil))))
+
+(comment
+
+ (replique-helm/ns-from-file "/home/egr/clojure/iso-webapp/resources/public/reagent/impl/component.cljs")
+
+ )
 
 (defun replique-helm/files-to-ns (cljs-files)
   (mapcar 'replique-helm/ns-from-file cljs-files))
