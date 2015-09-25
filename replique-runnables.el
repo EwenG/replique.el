@@ -115,7 +115,7 @@
                                     (match-string-no-properties
                                      1 header))))
                  (list (if length
-                           (parse-integer (string-trim length))
+                           (string-to-number (string-trim length))
                          nil)
                        (if location
                            (string-trim location)
