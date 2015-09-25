@@ -25,12 +25,12 @@
 (defmethod tooling-msg-handle "load-file"
   [{:keys [file-path] :as msg}]
   (with-tooling-response msg "clj"
-    (load-file file-path)))
+    (pr-str (load-file file-path))))
 
 (defmethod tooling-msg-handle "set-ns"
   [{:keys [ns] :as msg}]
   (with-tooling-response msg "clj"
-    (-> ns symbol in-ns)))
+    (-> ns symbol in-ns pr-str)))
 
 (defmethod tooling-msg-handle "completions"
   [{:keys [prefix ns] :as msg}]
@@ -79,4 +79,4 @@
   [{:keys [form] :as msg}]
   (with-tooling-response msg "clj"
     ;;Eagerly eval in order to be able to catch potential exceptions
-    (postwalk identity (eval (read-string form)))))
+    (-> (read-string form) eval pr-str)))

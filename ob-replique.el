@@ -62,8 +62,7 @@
     ;; the function `org-babel-process-file-name'. (See the way that
     ;; function is used in the language files)
     (condition-case nil
-        (-> (replique/eval-form full-body)
-            replique-edn/pr-str)
+        (replique/eval-form full-body)
       (error "Error occured during evaluation"))))
 
 (provide 'ob-replique)

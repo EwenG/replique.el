@@ -130,6 +130,8 @@
   (cond ((equal ?\" ch) '(replique-edn/read-string*))
         ((equal ?: ch) '(replique-edn/read-keyword))
         ((equal ?\; ch) '(replique-edn/read-comment))
+        ;; Discard metas
+        ((equal ?^ ch) '(replique-edn/read-discard))
         ((equal ?\( ch) '(replique-edn/read-list))
         ((equal ?\) ch) `(replique-edn/read-unmatched-delimiter ,ch))
         ((equal ?\[ ch) '(replique-edn/read-vector))
@@ -238,7 +240,7 @@
 (defun replique-edn/symbol-constituent (ch)
   (or (replique-edn/is-letter ch)
       (replique-edn/is-numeric ch)
-   (equal ?. ch)
+      (equal ?. ch)
       (equal ?* ch)
       (equal ?+ ch)
       (equal ?! ch)

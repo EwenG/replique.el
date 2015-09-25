@@ -39,7 +39,9 @@
             (platform . ,(gethash :platform msg))
             (error . ,(gethash :error msg)))))
     (error . identity)
-    (object . identity)))
+    (object . identity)
+    ;;Reader conditionals
+    (\? 'identity)))
 
 (defun replique-comint/output-filter (buff-props proc string)
   (-let* (((&alist 'buffer buffer

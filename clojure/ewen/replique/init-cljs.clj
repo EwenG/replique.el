@@ -266,12 +266,12 @@
           (repl-cljs-on-disk compiled repl-env opts)
           (refresh-cljs-deps opts)
           (repl-eval-compiled compiled repl-env file-path opts))
-        file-path))))
+        (pr-str file-path)))))
 
 (defmethod tooling-msg-handle "set-ns"
   [repl-env env [_ {:keys [ns] :as msg}] opts]
   (with-tooling-response msg "cljs"
-    (cljs-in-ns repl-env env (symbol ns))))
+    (pr-str (cljs-in-ns repl-env env (symbol ns)))))
 
 (defmethod tooling-msg-handle "completions"
   [repl-env env [_ {:keys [prefix ns] :as msg}] opts]

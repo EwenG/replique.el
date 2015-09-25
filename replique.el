@@ -672,7 +672,7 @@ describing the last `replique/load-file' command.")
     (replique-async/<!
      chan
      (replique/when-lambda
-      ((&alist 'error err'result result))
+      ((&alist 'error err 'result result))
       (if err
           (progn (comint-output-filter
                   proc
@@ -682,10 +682,7 @@ describing the last `replique/load-file' command.")
                  (message
                   "Loading Clojure file: %s ... Failed." file-name))
         (progn
-          (comint-output-filter
-           proc (-> result
-                    replique-edn/pr-str
-                    (concat "\n")))
+          (comint-output-filter proc (concat result "\n"))
           (message "Loading Clojure file: %s ... Done." file-name)))))))
 
 (defun replique/list-css ()
