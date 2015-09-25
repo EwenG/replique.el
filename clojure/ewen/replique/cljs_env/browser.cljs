@@ -97,8 +97,10 @@
                            "filepath" file-path))))
           :else nil)))
 
-(defonce conn
-  (repl/connect "http://localhost:9000/repl"))
+(aset js/window "onload"
+      (fn []
+        (defonce conn
+          (repl/connect "http://localhost:9000/repl"))))
 
 ;; writeScriptTag is customized in clojure.browser.repl
 ;; Here we override writeScriptTag to include a timestamp query string
