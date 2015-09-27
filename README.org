@@ -23,18 +23,14 @@ replique mode loaded.
 
 ** Starting a Clojure REPL
 
-[[file:images/clojure-repl.gif]]
-
 - To start a Clojure REPL, simply run the command =M-x= =replique/repl=.
 - You are then asked to select the root directory of a Clojure project.
-- If you are starting a Clojure REPL for the first time, Replique may ask you to download a Clojure jar. In such a case, you can save the jar file in your =$PATH= in order for Replique to find it on subsequent REPL startups. Note that you may have to set your =$PATH= variable before starting emacs. For example, here is my .profile: export PATH="${PATH}:~/bin" .
+- If you are starting a Clojure REPL for the first time, Replique may ask you to download a Clojure jar.
 
 ** Starting a Clojurescript REPL
-
-[[file:images/clojurescript-repl.gif]]
 
 - To start a Clojurescript REPL, simply run the command =M-x= =replique/repl-cljs=.
 - You are then asked to select the root directory of a Clojurescript project.
 - The next step is to choose a Clojurescript environment where the compiled Clojurescript code will be evaluated. Replique currently supports two environments, namely =browser-env= and =web-app-env=.
-- If you are starting a Clojurescript REPL for the first time, Replique may ask you to download a Clojurescript jar. In such a case, you can save the jar file in your =$PATH= in order for Replique to find it on subsequent REPL startups. Note that you may have to set your =$PATH= variable before starting emacs. For example, here is my .profile: export PATH="${PATH}:~/bin" .
+- If you are starting a Clojurescript REPL for the first time, Replique may ask you to download a Clojurescript jar.
 - Connect the previously selected Clojurescript environment to the REPL. For example, if you have previoulsy choosen the =browser-env=, start a browser on http://localhost:9000.
