@@ -260,7 +260,7 @@
   (with-tooling-response msg "cljs"
     (if (.endsWith file-path ".clj")
       ;;Handle macro reloading
-      (load-file file-path)
+      (pr-str (load-file file-path))
       (cljs-env/with-compiler-env @compiler-env
         (let [compiled (repl-compile-cljs repl-env file-path opts)]
           (repl-cljs-on-disk compiled repl-env opts)
