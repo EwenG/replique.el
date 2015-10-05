@@ -8,3 +8,4 @@
 * Rename java.json packages to avoid polutting the namespaces
 * Sass
 - Webapp env -> replique starts the browser REPL so: Possibility to connect to the browser REPL even when not a clojurescript app. Need a browser extension to reconnect on every page reload.
+* browser.cljs uses window.onload to load the cljs repl. Use the DomContentLoaded event instead
