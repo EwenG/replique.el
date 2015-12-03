@@ -40,8 +40,7 @@
           :else nil)))
 
 (defn choose-classloader [classloaders]
-  (-> (filter modifiable-classloader? classloaders)
-      last))
+  (-> (filter modifiable-classloader? classloaders) last))
 
 
 
@@ -88,7 +87,6 @@ scanning."
              :let [[_ ^String nsname] (re-matches #"[^\w]?(.+)\.clj" file)]
              :when nsname]
          (.. nsname (replace File/separator ".") (replace "_" "-")))))
-
 
 (comment
   (time (-> (classloader-hierarchy (.. clojure.lang.RT baseLoader))

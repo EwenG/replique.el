@@ -135,7 +135,6 @@ Otherwise, the lambda simply returns nil."
   '((:output-dir . "out")
     (:output-to . "out/main.js")
     (:recompile-dependents . nil)
-    (:main . (ewen.replique.cljs-env.browser))
     (:asset-path . "."))
   "Clojurescript compiler options."
   :type '(alist :output-dir string
@@ -156,6 +155,13 @@ Otherwise, the lambda simply returns nil."
                              string))
   :group 'replique)
 
+(defcustom replique/cljs-node-repl-opts
+  '((:src . nil))
+  "Clojurescript node REPL options."
+  :type '(alist :src (choice (const :tag "None" nil)
+                             string))
+  :group 'replique)
+
 (defun replique/get-cljs-comp-opts (cljs-env overrides)
   (cond ((string= "browser-env" cljs-env)
          replique/cljs-comp-opts)
@@ -172,6 +178,8 @@ Otherwise, the lambda simply returns nil."
              (:recompile-dependents . ,recompile-dependents)
              (:main . ,mains)
              (:asset-path . ,asset-path))))
+        ((string= "node-env" cljs-env)
+         replique/cljs-comp-opts)
         (t (error "Unsupported environement: %s" cljs-env))))
 
 (defun replique/to-js-file-name (file-name)
@@ -472,7 +480,7 @@ Otherwise, the lambda simply returns nil."
                        (replique/guess-project-root-dir)))
             (cljs-env (ido-completing-read
                        "Clojurescript execution environment: "
-                       '("browser-env" "webapp-env")
+                       '("browser-env" "webapp-env" "node-env")
                        nil t))
             (output-dir (when (string= "webapp-env" cljs-env)
                           (ido-read-directory-name
@@ -493,12 +501,16 @@ Otherwise, the lambda simply returns nil."
                            (:output-to . ,output-to)
                            (:main . ,mains))))
             (comp-opts (replique/get-cljs-comp-opts cljs-env overrides))
+            (repl-opts (if (or (string= "webapp-env" cljs-env)
+                               (string= "browser-env" cljs-env))
+                           (replique/alist-to-map
+                            replique/cljs-browser-repl-opts)
+                         (replique/alist-to-map
+                          replique/cljs-node-repl-opts)))
             (init-opts `((:cljs-env-name . ,cljs-env)
                          (:comp-opts . ,(replique/alist-to-map
                                          comp-opts))
-                         (:repl-opts
-                          . ,(replique/alist-to-map
-                              replique/cljs-browser-repl-opts))))
+                         (:repl-opts . ,repl-opts)))
             (repl-cmd (replique/project-repl-cmd root-dir "cljs" init-opts))
             (repl-cmd (cond ((equal 'runnable-jar-not-found repl-cmd)
                              (replique/handle-jar-not-found

@@ -1,6 +1,7 @@
 (ns ewen.replique.init
   (:require [cljs.repl]
             [cljs.repl.browser]
+            [cljs.repl.node]
             [cljs.env :as cljs-env]
             [cljs.compiler :as comp]
             [cljs.analyzer :as ana]
@@ -283,10 +284,13 @@
 
 (defmethod tooling-msg-handle "add-classpath"
   [repl-env env [_ msg] opts]
-  (pr-str (with-tooling-response msg "cljs"
-            (ewen.replique.classpath/classloader-hierarchy
-             (.. Thread currentThread
-                 getContextClassLoader)))))
+  (with-tooling-response msg "cljs"
+    (-> (ewen.replique.classpath/classloader-hierarchy
+         (.. Thread currentThread
+             getContextClassLoader))
+        ewen.replique.classpath/choose-classloader
+        (ewen.replique.classpath/add-classpath
+         (:path msg)))))
 
 (defmethod tooling-msg-handle "reload-project"
   [repl-env env [_ {:keys [file-path] :as msg}] opts]
@@ -445,7 +449,7 @@
 
 (def ^:const env-browser-path "clojure/ewen/replique/cljs_env/browser.cljs")
 
-(defn init-opts* [opts]
+(defn init-opts-browser [opts]
   (-> opts
       (assoc-in [:comp-opts :optimizations] :none)
       (update-in [:comp-opts :main]
@@ -455,9 +459,6 @@
 (defn init-cljs-env*
   [replique-root-dir
    {:keys [cljs-env-name comp-opts repl-opts]}]
-  (let [cl (.getContextClassLoader (Thread/currentThread))]
-    (.setContextClassLoader (Thread/currentThread)
-                            (clojure.lang.DynamicClassLoader. cl)))
   (let [opts (assoc comp-opts
                     :optimizations :none
                     :main (-> (into #{} (:main comp-opts))
@@ -496,6 +497,11 @@
     {:cljs-env-name cljs-env-name
      :comp-opts opts
      :repl-opts repl-opts}))
+
+(defn init-class-loader []
+  (let [cl (.getContextClassLoader (Thread/currentThread))]
+    (.setContextClassLoader (Thread/currentThread)
+                            (clojure.lang.DynamicClassLoader. cl))))
 
 (defn start-repl [replique-root-dir opts]
   (let [repl-requires '[[cljs.repl
@@ -540,7 +546,8 @@
 (defmethod init-cljs-env "browser-env"
   [replique-root-dir init-opts]
   (let [{{output-dir :output-dir} :comp-opts} init-opts
-        init-opts (init-opts* init-opts)]
+        init-opts (init-opts-browser init-opts)]
+    (init-class-loader)
     (init-cljs-env*
      replique-root-dir
      (update-in init-opts [:repl-opts]
@@ -559,10 +566,24 @@
 (defmethod init-cljs-env "webapp-env"
   [replique-root-dir init-opts]
   (let [{{output-dir :output-dir} :comp-opts} init-opts
-        init-opts (init-opts* init-opts)]
+        init-opts (init-opts-browser init-opts)]
+    (init-class-loader)
     (init-cljs-env*
      replique-root-dir
      (assoc-in init-opts [:repl-opts :serve-static] false))
+    (start-repl replique-root-dir (:comp-opts init-opts))))
+
+(defmethod init-cljs-env "node-env"
+  [replique-root-dir init-opts]
+  (let [{{output-dir :output-dir} :comp-opts} init-opts
+        init-opts (assoc-in init-opts [:comp-opts :optimizations] :none)
+        init-opts (assoc-in init-opts [:repl-opts :target] :nodejs)]
+    (init-class-loader)
+    (reset! compiler-env (->> (:comp-opts init-opts)
+                              closure/add-implicit-options
+                              cljs-env/default-compiler-env))
+    (reset! repl-env (apply cljs.repl.node/repl-env
+                            (apply concat (:repl-opts init-opts))))
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
 ;;
