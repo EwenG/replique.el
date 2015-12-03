@@ -29,15 +29,15 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r1.7.48/cljs.jar"
+(defcustom replique-runnables/cljs-url "https://github.com/clojure/clojurescript/releases/download/r1.7.170/cljs.jar"
   "The URL to use when dowloading the Clojurescriptjar."
   :type 'string
   :group 'replique)
 
-(defvar replique-runnables/cljs-file-name "clojurescript-1.7.48-standalone.jar")
+(defvar replique-runnables/cljs-file-name "clojurescript-1.7.170-standalone.jar")
 
 (defcustom replique-runnables/cljs-dep
-  [org.clojure/clojurescript "1.7.48"]
+  [org.clojure/clojurescript "1.7.170"]
   "The default Clojurescript dependency."
   :type 'string
   :group 'replique)
