@@ -7,7 +7,7 @@
                                analyze-source err-out -tear-down]]
             [cljs.repl.server]
             [cljs.repl.browser]
-            [cljs.closure :as cljsc]
+            [cljs.closure :as closure]
             [clojure.tools.reader.reader-types :as readers]
             [clojure.tools.reader :as reader]
             [clojure.java.io :as io]
@@ -15,7 +15,8 @@
             [cljs.compiler :as comp]
             [cljs.tagged-literals :as tags]
             [cljs.util :as util]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [clojure.data.json :as json])
   (:import [java.io File PushbackReader FileWriter PrintWriter]))
 
 ;;Force :simple compilation optimization mode in order to compile to a
@@ -30,7 +31,7 @@
       ;; cljs.env/*compiler* is already
       ;; established, need to construct a new one to avoid
       ;; mutating the one the REPL uses
-      (cljsc/build
+      (closure/build
        '[(ns clojure.browser.repl.client
            (:require [goog.events :as event]
                      [clojure.browser.repl :as repl]))
@@ -52,3 +53,56 @@
                      {:method :get
                       :path path
                       :headers headers}))))
+
+;;Patch cljs.closure/output-main-file in order to:
+;; - Avoid the need to provide an :asset-path option. :asset-path is
+;; computed from the :main namespaces. When using a node.js env,
+;; :output-dir is used instead of :asset-path
+;; - Allow multiple :main namespaces. This permits leaving HTML markup
+;; identical between dev and production when using google closure modules.
+(alter-var-root
+ #'closure/output-main-file
+ (constantly
+  (fn output-main-file [opts]
+    (let [closure-defines (json/write-str (:closure-defines opts))
+          main-requires (->> (for [m (:main opts)]
+                               (str "goog.require(\""
+                                    (comp/munge m)
+                                    "\"); "))
+                             (apply str))
+          output-dir-uri (-> (:output-dir opts) (File.) (.toURI))
+          output-to-uri (-> (:output-to opts) (File.) (.toURI))
+          main-rel-path (.relativize output-dir-uri output-to-uri)]
+      (case (:target opts)
+        :nodejs
+        (closure/output-one-file
+         opts
+         (closure/add-header
+          opts
+          (str
+           "var path = require(\"path\");\n"
+           "try {\n"
+           "    require(\"source-map-support\").install();\n"
+           "} catch(err) {\n"
+           "}\n"
+           "require(path.join(path.resolve(\".\"),\"" (:output-dir opts) "\",\"goog\",\"bootstrap\",\"nodejs.js\"));\n"
+           "require(path.join(path.resolve(\".\"),\"" (:output-dir opts) "\",\"cljs_deps.js\"));\n"
+           "goog.global.CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
+           "goog.require(\"cljs.nodejscli\");\n"
+           main-requires)))
+        (closure/output-one-file
+         opts
+         (str
+          "(function(){"
+          "var mainFile = \"" main-rel-path "\";\n"
+          "var mainFileParts = mainFile.split(\"/\");\n"
+          "var scripts = document.getElementsByTagName(\"script\");\n"
+          "var src = scripts[0].src;\n"
+          "var srcParts = src.split(\"/\");\n"
+          "var assetPath = srcParts.slice(3, srcParts.length-mainFileParts.length).join(\"/\");\n"
+          "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
+          "if(typeof goog == \"undefined\") document.write('<script src=\"' + assetPath + '/goog/base.js\"></script>');\n"
+          "document.write('<script src=\"' + assetPath + '/cljs_deps.js\"></script>');\n"
+          "document.write('<script>if (typeof goog != \"undefined\") { " main-requires
+          " } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
+          "})();")))))))

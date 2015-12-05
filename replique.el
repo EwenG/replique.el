@@ -179,7 +179,18 @@ Otherwise, the lambda simply returns nil."
              (:main . ,mains)
              (:asset-path . ,asset-path))))
         ((string= "node-env" cljs-env)
-         replique/cljs-comp-opts)
+         (-let (((&alist ':main mains) overrides)
+                ((&alist ':output-dir output-dir
+                         ':output-to output-to
+                         ':recompile-dependents
+                         recompile-dependents
+                         ':asset-path asset-path)
+                 replique/cljs-comp-opts))
+           `((:output-dir . ,output-dir)
+             (:output-to . ,output-to)
+             (:recompile-dependents . ,recompile-dependents)
+             (:main . ,mains)
+             (:asset-path . ,asset-path))))
         (t (error "Unsupported environement: %s" cljs-env))))
 
 (defun replique/to-js-file-name (file-name)
@@ -494,12 +505,16 @@ Otherwise, the lambda simply returns nil."
                               nil
                               "main.js")
                              replique/to-js-file-name)))
-            (mains (when (string= "webapp-env" cljs-env)
-                     (replique-helm/cljs-select-ns root-dir)))
-            (overrides (when (string= "webapp-env" cljs-env)
-                         `((:output-dir . ,output-dir)
-                           (:output-to . ,output-to)
-                           (:main . ,mains))))
+            (mains (cond ((string= "webapp-env" cljs-env)
+                          (replique-helm/cljs-select-ns root-dir))
+                         ((string= "node-env" cljs-env)
+                          (replique-helm/cljs-select-ns root-dir))))
+            (overrides (cond ((string= "webapp-env" cljs-env)
+                              `((:output-dir . ,output-dir)
+                                (:output-to . ,output-to)
+                                (:main . ,mains)))
+                             ((string= "node-env" cljs-env)
+                              `((:main . ,mains)))))
             (comp-opts (replique/get-cljs-comp-opts cljs-env overrides))
             (repl-opts (if (or (string= "webapp-env" cljs-env)
                                (string= "browser-env" cljs-env))
