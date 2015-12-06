@@ -134,14 +134,12 @@ Otherwise, the lambda simply returns nil."
 (defcustom replique/cljs-comp-opts
   '((:output-dir . "out")
     (:output-to . "out/main.js")
-    (:recompile-dependents . nil)
-    (:asset-path . "."))
+    (:recompile-dependents . nil))
   "Clojurescript compiler options."
   :type '(alist :output-dir string
                 :output-to string
                 :recompile-dependents boolean
-                :main (repeat symbol)
-                :asset-path string)
+                :main (repeat symbol))
   :group 'replique)
 
 (defcustom replique/cljs-browser-repl-opts
