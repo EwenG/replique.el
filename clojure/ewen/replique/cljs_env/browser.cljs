@@ -101,15 +101,3 @@
       (fn []
         (defonce conn
           (repl/connect "http://localhost:9000/repl"))))
-
-;; writeScriptTag is customized in clojure.browser.repl
-;; Here we override writeScriptTag to include a timestamp query string
-;; parameter in order to avoid hitting the browser cache when reloading
-;; cljs files.
-(set! (.-writeScriptTag_ js/goog)
-      (fn [src opt_sourceText]
-        (if repl/load-queue
-          (.push repl/load-queue (array src opt_sourceText))
-          (let [new-src (add-timestamp src)]
-            (set! repl/load-queue (array))
-            (js/goog.writeScriptTag__ new-src opt_sourceText)))))
