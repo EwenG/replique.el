@@ -413,24 +413,39 @@
 
 (def ^:const env-browser-path "clojure/ewen/replique/cljs_env/browser.cljs")
 
-(defn init-cljs-env*
+(defn init-browser-opts [{:keys [comp-opts repl-opts] :as opts}]
+  (-> (assoc-in opts [:comp-opts :optimizations] :none)
+      (assoc-in [:repl-opts :optimizations] :none)
+      (assoc-in [:comp-opts :main]
+                (-> (into #{} (:main comp-opts))
+                    (conj 'ewen.replique.cljs-env.browser)))))
+
+(defn init-browser-env-opts [{{output-dir :output-dir} :comp-opts :as opts}]
+  (update-in opts [:repl-opts]
+             #(assoc %
+                     :serve-static true
+                     :static-dir output-dir)))
+
+(defn init-node-env-opts [opts]
+  (-> (assoc-in opts [:comp-opts :optimizations] :none)
+      (assoc-in [:repl-opts :target] :nodejs)))
+
+(defn init-webapp-env-opts [opts]
+  (assoc-in opts [:repl-opts :serve-static] false))
+
+(defn init-browser-env
   [replique-root-dir
-   {:keys [cljs-env-name comp-opts repl-opts]}]
-  (let [opts (assoc comp-opts
-                    :optimizations :none
-                    :main (-> (into #{} (:main comp-opts))
-                              (conj 'ewen.replique.cljs-env.browser)))
-        repl-opts (assoc repl-opts :optimizations :none)
-        in-env-browser (io/file replique-root-dir env-browser-path)
+   {:keys [comp-opts repl-opts] :as opts}]
+  (let [in-env-browser (io/file replique-root-dir env-browser-path)
         env-browser-ns-infos (ana/parse-ns in-env-browser)
         out-env-browser-js (util/to-target-file
-                            (:output-dir opts)
+                            (:output-dir comp-opts)
                             env-browser-ns-infos)
         out-env-browser-cljs (util/to-target-file
-                              (:output-dir opts)
+                              (:output-dir comp-opts)
                               env-browser-ns-infos
                               "cljs")]
-    (reset! compiler-env (-> opts
+    (reset! compiler-env (-> comp-opts
                              closure/add-implicit-options
                              cljs-env/default-compiler-env))
     (reset! repl-env (apply cljs.repl.browser/repl-env
@@ -438,22 +453,19 @@
     (util/mkdirs out-env-browser-cljs)
     (.createNewFile out-env-browser-cljs)
     (io/copy in-env-browser out-env-browser-cljs)
-
     (cljs-env/with-compiler-env @compiler-env
       (as-> (slurp in-env-browser) $
         (str "[" $ "]")
         (read-string $)
-        (closure/-compile $ opts)
+        (closure/-compile $ comp-opts)
         (closure/output-one-file
          {:output-to (.getAbsolutePath out-env-browser-js)} $))
 
       (->> (assoc env-browser-ns-infos
                   :file (.getAbsolutePath out-env-browser-js))
-           (closure/add-dependencies opts)
-           (apply closure/output-unoptimized opts)))
-    {:cljs-env-name cljs-env-name
-     :comp-opts opts
-     :repl-opts repl-opts}))
+           (closure/add-dependencies comp-opts)
+           (apply closure/output-unoptimized comp-opts)))
+    opts))
 
 (defn init-class-loader []
   (let [cl (.getContextClassLoader (Thread/currentThread))]
@@ -468,6 +480,12 @@
       ewen.replique.classpath/choose-classloader
       (ewen.replique.classpath/add-classpath
        (str replique-root-dir "lib/json-java.jar"))))
+
+(defn init-common [replique-root-dir]
+  (init-class-loader)
+  (init-classpath replique-root-dir)
+  (doseq [init-file init-files]
+    (load-file (str replique-root-dir init-file))))
 
 (defn start-repl [replique-root-dir opts]
   (let [repl-requires '[[cljs.repl
@@ -502,17 +520,11 @@
 
 (defmethod init-cljs-env "browser-env"
   [replique-root-dir init-opts]
-  (let [{{output-dir :output-dir} :comp-opts} init-opts]
-    (init-class-loader)
-    (init-classpath replique-root-dir)
-    (doseq [init-file init-files]
-      (load-file (str replique-root-dir init-file)))
-    (init-cljs-env*
-     replique-root-dir
-     (update-in init-opts [:repl-opts]
-                #(assoc %
-                        :serve-static true
-                        :static-dir output-dir)))
+  (let [{{output-dir :output-dir} :comp-opts} init-opts
+        init-opts (init-browser-opts init-opts)
+        init-opts (init-browser-env-opts init-opts)]
+    (init-common replique-root-dir)
+    (init-browser-env replique-root-dir init-opts)
     (closure/output-one-file {:output-to (str output-dir
                                               "/index.html")}
                              (str "<html>
@@ -524,25 +536,18 @@
 
 (defmethod init-cljs-env "webapp-env"
   [replique-root-dir init-opts]
-  (let [{{output-dir :output-dir} :comp-opts} init-opts]
-    (init-class-loader)
-    (init-classpath replique-root-dir)
-    (doseq [init-file init-files]
-      (load-file (str replique-root-dir init-file)))
-    (init-cljs-env*
-     replique-root-dir
-     (assoc-in init-opts [:repl-opts :serve-static] false))
+  (let [{{output-dir :output-dir} :comp-opts} init-opts
+        init-opts (init-browser-opts init-opts)
+        init-opts (init-webapp-env-opts init-opts)]
+    (init-common replique-root-dir)
+    (init-browser-env replique-root-dir init-opts)
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
 (defmethod init-cljs-env "node-env"
   [replique-root-dir init-opts]
   (let [{{output-dir :output-dir} :comp-opts} init-opts
-        init-opts (assoc-in init-opts [:comp-opts :optimizations] :none)
-        init-opts (assoc-in init-opts [:repl-opts :target] :nodejs)]
-    (init-class-loader)
-    (init-classpath replique-root-dir)
-    (doseq [init-file init-files]
-      (load-file (str replique-root-dir init-file)))
+        init-opts (init-node-env-opts init-opts)]
+    (init-common replique-root-dir)
     (reset! compiler-env (->> (:comp-opts init-opts)
                               closure/add-implicit-options
                               cljs-env/default-compiler-env))
