@@ -139,7 +139,7 @@ Otherwise, the lambda simply returns nil."
   :type '(alist :output-dir string
                 :output-to string
                 :recompile-dependents boolean
-                :main (repeat symbol))
+                :main symbol)
   :group 'replique)
 
 (defcustom replique/cljs-browser-repl-opts
@@ -166,7 +166,7 @@ Otherwise, the lambda simply returns nil."
         ((string= "webapp-env" cljs-env)
          (-let (((&alist ':output-dir output-dir
                          ':output-to output-to
-                         ':main mains) overrides)
+                         ':main main) overrides)
                 ((&alist ':recompile-dependents
                          recompile-dependents
                          ':asset-path asset-path)
@@ -174,10 +174,10 @@ Otherwise, the lambda simply returns nil."
            `((:output-dir . ,output-dir)
              (:output-to . ,output-to)
              (:recompile-dependents . ,recompile-dependents)
-             (:main . ,mains)
+             (:main . ,main)
              (:asset-path . ,asset-path))))
         ((string= "node-env" cljs-env)
-         (-let (((&alist ':main mains) overrides)
+         (-let (((&alist ':main main) overrides)
                 ((&alist ':output-dir output-dir
                          ':output-to output-to
                          ':recompile-dependents
@@ -187,7 +187,7 @@ Otherwise, the lambda simply returns nil."
            `((:output-dir . ,output-dir)
              (:output-to . ,output-to)
              (:recompile-dependents . ,recompile-dependents)
-             (:main . ,mains)
+             (:main . ,main)
              (:asset-path . ,asset-path))))
         (t (error "Unsupported environement: %s" cljs-env))))
 
@@ -503,16 +503,16 @@ Otherwise, the lambda simply returns nil."
                               nil
                               "main.js")
                              replique/to-js-file-name)))
-            (mains (cond ((string= "webapp-env" cljs-env)
-                          (replique-helm/cljs-select-ns root-dir))
-                         ((string= "node-env" cljs-env)
-                          (replique-helm/cljs-select-ns root-dir))))
+            (main (cond ((string= "webapp-env" cljs-env)
+                         (car (replique-helm/cljs-select-ns root-dir)))
+                        ((string= "node-env" cljs-env)
+                         (car (replique-helm/cljs-select-ns root-dir)))))
             (overrides (cond ((string= "webapp-env" cljs-env)
                               `((:output-dir . ,output-dir)
                                 (:output-to . ,output-to)
-                                (:main . ,mains)))
+                                (:main . ,main)))
                              ((string= "node-env" cljs-env)
-                              `((:main . ,mains)))))
+                              `((:main . ,main)))))
             (comp-opts (replique/get-cljs-comp-opts cljs-env overrides))
             (repl-opts (if (or (string= "webapp-env" cljs-env)
                                (string= "browser-env" cljs-env))
@@ -1256,8 +1256,7 @@ The following commands are available:
         (platform (replique/get-project-platform t)))
     (if (string= project-type "raw")
         (let ((project-def (replique/format-project-file
-                            (-> (replique-runnables/default-dep platform)
-                                list)
+                            (-> (replique-runnables/default-dep platform) list)
                             (replique/get-in-project 'sourcepaths t)
                             (replique/get-in-project 'resourcepaths t))))
           (find-file-other-window

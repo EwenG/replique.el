@@ -415,10 +415,7 @@
 
 (defn init-browser-opts [{:keys [comp-opts repl-opts] :as opts}]
   (-> (assoc-in opts [:comp-opts :optimizations] :none)
-      (assoc-in [:repl-opts :optimizations] :none)
-      (assoc-in [:comp-opts :main]
-                (-> (into #{} (:main comp-opts))
-                    (conj 'ewen.replique.cljs-env.browser)))))
+      (assoc-in [:repl-opts :optimizations] :none)))
 
 (defn init-browser-env-opts [{{output-dir :output-dir} :comp-opts :as opts}]
   (update-in opts [:repl-opts]
@@ -436,36 +433,33 @@
 (defn init-browser-env
   [replique-root-dir
    {:keys [comp-opts repl-opts] :as opts}]
-  (let [in-env-browser (io/file replique-root-dir env-browser-path)
-        env-browser-ns-infos (ana/parse-ns in-env-browser)
-        out-env-browser-js (util/to-target-file
-                            (:output-dir comp-opts)
-                            env-browser-ns-infos)
-        out-env-browser-cljs (util/to-target-file
-                              (:output-dir comp-opts)
-                              env-browser-ns-infos
-                              "cljs")]
-    (reset! compiler-env (-> comp-opts
-                             closure/add-implicit-options
-                             cljs-env/default-compiler-env))
-    (reset! repl-env (apply cljs.repl.browser/repl-env
-                            (apply concat repl-opts)))
-    (util/mkdirs out-env-browser-cljs)
-    (.createNewFile out-env-browser-cljs)
-    (io/copy in-env-browser out-env-browser-cljs)
-    (cljs-env/with-compiler-env @compiler-env
-      (as-> (slurp in-env-browser) $
-        (str "[" $ "]")
-        (read-string $)
-        (closure/-compile $ comp-opts)
-        (closure/output-one-file
-         {:output-to (.getAbsolutePath out-env-browser-js)} $))
-
-      (->> (assoc env-browser-ns-infos
-                  :file (.getAbsolutePath out-env-browser-js))
-           (closure/add-dependencies comp-opts)
-           (apply closure/output-unoptimized comp-opts)))
-    opts))
+  (reset! compiler-env (-> comp-opts
+                           closure/add-implicit-options
+                           cljs-env/default-compiler-env))
+  (reset! repl-env (apply cljs.repl.browser/repl-env
+                          (apply concat repl-opts)))
+  ;; Compile ewen.replique.cljs-env.browser, clojure.browser.repl, output
+  ;; a main file and call clojure.browser.repl.connect.
+  (let [{:keys [host port]} @repl-env
+        url (str "http://" host ":" port "/repl")
+        env-browser-path (str
+                          replique-root-dir
+                          "clojure/ewen/replique/cljs_env/browser.cljs")]
+    (when (:output-to comp-opts)
+      (closure/build (io/resource "clojure/browser/repl.cljs")
+                     comp-opts @compiler-env)
+      (closure/build (io/file env-browser-path)
+                     comp-opts @compiler-env)
+      ;;Refresh deps because otherwise cljs_deps contains the deps of the
+      ;;last compiled file.
+      (cljs-env/with-compiler-env @compiler-env
+        (refresh-cljs-deps comp-opts))
+      (spit (io/file (:output-to comp-opts))
+            (str "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"clojure.browser.repl\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
+                 "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.browser\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
+                 "document.write('<script>clojure.browser.repl.connect(\"" url "\");</script>');\n")
+            :append true)))
+  opts)
 
 (defn init-class-loader []
   (let [cl (.getContextClassLoader (Thread/currentThread))]
@@ -604,3 +598,6 @@
   (env/with-compiler-env (env/default-compiler-env)
     (refresh-cljs-deps optss))
   )
+
+
+;; Cache client.js in resources

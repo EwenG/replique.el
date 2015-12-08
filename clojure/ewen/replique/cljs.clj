@@ -4,8 +4,8 @@
                                repl-prompt -repl-options read-source-map
                                *cljs-verbose* *repl-opts*
                                default-special-fns -setup evaluate-form
-                               analyze-source err-out -tear-down]]
-            [cljs.repl.server]
+                               analyze-source err-out -tear-down] :as repl]
+            [cljs.repl.server :as server]
             [cljs.repl.browser]
             [cljs.closure :as cljsc]
             [clojure.tools.reader.reader-types :as readers]
@@ -81,17 +81,13 @@
 ;; computed from the :main namespaces. When using a node.js env,
 ;; :output-dir is used instead of :asset-path
 ;; - Allow multiple :main namespaces. This permits leaving HTML markup
-;; identical between dev and production when using google closure modules.
+;; identical between dev and production even when multiple namespaces
+;; are called at startup
 (alter-var-root
  #'cljsc/output-main-file
  (constantly
   (fn output-main-file [opts]
-    (let [closure-defines (json/write-str (:closure-defines opts))
-          main-requires (->> (for [m (:main opts)]
-                               (str "goog.require(\""
-                                    (comp/munge m)
-                                    "\"); "))
-                             (apply str))]
+    (let [closure-defines (json/write-str (:closure-defines opts))]
       (case (:target opts)
         :nodejs
         (let [asset-path (or (:asset-path opts)
@@ -109,8 +105,9 @@
              "require(path.join(path.resolve(\".\"),\"" asset-path "\",\"goog\",\"bootstrap\",\"nodejs.js\"));\n"
              "require(path.join(path.resolve(\".\"),\"" asset-path "\",\"cljs_deps.js\"));\n"
              "goog.global.CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
-             "goog.require(\"cljs.nodejscli\");\n"
-             main-requires))))
+             (when (:main opts)
+               (str "goog.require(\"" (comp/munge (:main opts)) "\");\n"))
+             "goog.require(\"cljs.nodejscli\");\n"))))
         (let [output-dir-uri (-> (:output-dir opts) (File.) (.toURI))
               output-to-uri (-> (:output-to opts) (File.) (.toURI))
               output-dir-path (-> (.normalize output-dir-uri)
@@ -133,5 +130,28 @@
                 "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
                 "if(typeof goog == \"undefined\") document.write('<script src=\"'+ assetPath +'/goog/base.js\"></script>');\n"
                 "document.write('<script src=\"'+ assetPath +'/cljs_deps.js\"></script>');\n"
-                "document.write('<script>if (typeof goog != \"undefined\") {" main-requires "} else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
-                "})();\n"))))))))
+                (when (:main opts)
+                  (str "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"" (comp/munge (:main opts)) "\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');"))
+                  "})();\n"))))))))
+
+;; Patch output-unoptimzed to always output cljs-deps into cljs_deps.js
+;; If output-to is defined and main is not defined, a main file is written
+;; which does not goog.require any namespace
+(alter-var-root
+ #'cljsc/output-unoptimized
+ (constantly
+  (fn output-unoptimized
+    [opts & sources]
+    (let [disk-sources (remove #(= (:group %) :goog)
+                               (map #(cljsc/source-on-disk opts %) sources))
+          goog-deps    (io/file (util/output-directory opts)
+                                "goog" "deps.js")
+          main         (:main opts)]
+      (util/mkdirs goog-deps)
+      (spit goog-deps (slurp (io/resource "goog/deps.js")))
+      (cljsc/output-deps-file
+       (assoc opts :output-to
+              (str (util/output-directory opts)
+                   File/separator "cljs_deps.js"))
+       disk-sources)
+      (cljsc/output-main-file opts)))))

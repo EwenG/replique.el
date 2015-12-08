@@ -1,6 +1,5 @@
 (ns ewen.replique.cljs-env.browser
   (:require [cljs.reader :as reader]
-            [clojure.browser.repl :as repl]
             [goog.cssom]
             [goog.date :as date]
             [goog.Uri]))
@@ -96,8 +95,3 @@
                css (js-obj "scheme" "data"
                            "filepath" file-path))))
           :else nil)))
-
-(aset js/window "onload"
-      (fn []
-        (defonce conn
-          (repl/connect "http://localhost:9000/repl"))))
