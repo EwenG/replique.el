@@ -84,13 +84,8 @@
         js-files (map closure/map->javascript-file js-files)
         js-files (->> ups-foreign-libs
                       (map #(foreign->output-file % opts))
-                      (into js-files))
-        js-files (deps/dependency-order js-files)]
-    (closure/output-deps-file
-     (assoc opts :output-to
-            (str (util/output-directory opts)
-                 File/separator "cljs_deps.js"))
-     js-files)))
+                      (into js-files))]
+    (deps/dependency-order js-files)))
 
 (defn cljs-in-ns [repl-env env ns-name]
   (let [ns-name (symbol ns-name)]
@@ -265,7 +260,11 @@
       (cljs-env/with-compiler-env @compiler-env
         (let [compiled (repl-compile-cljs repl-env file-path opts)]
           (repl-cljs-on-disk compiled repl-env opts)
-          (refresh-cljs-deps opts)
+          (->> (refresh-cljs-deps opts)
+               (closure/output-deps-file
+                (assoc opts :output-to
+                       (str (util/output-directory opts)
+                            File/separator "cljs_deps.js"))))
           (repl-eval-compiled compiled repl-env file-path opts))
         (pr-str file-path)))))
 
@@ -440,20 +439,30 @@
                           (apply concat repl-opts)))
   ;; Compile ewen.replique.cljs-env.browser, clojure.browser.repl, output
   ;; a main file and call clojure.browser.repl.connect.
-  (let [{:keys [host port]} @repl-env
-        url (str "http://" host ":" port "/repl")
-        env-browser-path (str
-                          replique-root-dir
-                          "clojure/ewen/replique/cljs_env/browser.cljs")]
-    (when (:output-to comp-opts)
-      (closure/build (io/resource "clojure/browser/repl.cljs")
-                     comp-opts @compiler-env)
-      (closure/build (io/file env-browser-path)
-                     comp-opts @compiler-env)
-      ;;Refresh deps because otherwise cljs_deps contains the deps of the
-      ;;last compiled file.
+  (when (:output-to comp-opts)
+    (let [{:keys [host port]} @repl-env
+          url (str "http://" host ":" port "/repl")
+          repl-src "clojure/browser/repl.cljs"
+          benv-src
+          (str
+           replique-root-dir
+           "clojure/ewen/replique/cljs_env/browser.cljs")]
       (cljs-env/with-compiler-env @compiler-env
-        (refresh-cljs-deps comp-opts))
+        (let [repl-compiled (repl-compile-cljs
+                             @repl-env repl-src comp-opts)
+              benv-compiled (repl-compile-cljs
+                             @repl-env benv-src comp-opts)]
+          (repl-cljs-on-disk repl-compiled @repl-env comp-opts)
+          (repl-cljs-on-disk benv-compiled @repl-env comp-opts)))
+      (->> (refresh-cljs-deps comp-opts)
+           (closure/output-deps-file
+            (assoc comp-opts :output-to
+                   (str (util/output-directory comp-opts)
+                        File/separator "cljs_deps.js"))))
+      (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
+        util/mkdirs
+        (spit (slurp (io/resource "goog/deps.js"))))
+      (closure/output-main-file comp-opts)
       (spit (io/file (:output-to comp-opts))
             (str "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"clojure.browser.repl\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
                  "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.browser\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
