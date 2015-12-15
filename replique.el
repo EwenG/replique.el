@@ -144,7 +144,7 @@ Otherwise, the lambda simply returns nil."
 
 (defcustom replique/cljs-browser-repl-opts
   '((:port . 9000)
-    (:static-dir . ("out"))
+    (:static-dir . ("." "out"))
     (:src . nil))
   "Clojurescript browser REPL options."
   :type '(alist :port integer

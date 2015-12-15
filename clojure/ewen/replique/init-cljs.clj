@@ -418,9 +418,7 @@
 
 (defn init-browser-env-opts [{{output-dir :output-dir} :comp-opts :as opts}]
   (update-in opts [:repl-opts]
-             #(assoc %
-                     :serve-static true
-                     :static-dir output-dir)))
+             #(assoc % :serve-static true)))
 
 (defn init-node-env-opts [opts]
   (-> (assoc-in opts [:comp-opts :optimizations] :none)
@@ -558,7 +556,6 @@
                             (apply concat (:repl-opts init-opts))))
     (start-repl replique-root-dir (:comp-opts init-opts))))
 
-;;
 (comment
   "/home/egr/replique.el/"
   (str {:comp-opts {:output-dir "out"
