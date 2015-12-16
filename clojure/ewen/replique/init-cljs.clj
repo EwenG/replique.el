@@ -181,19 +181,19 @@
            (vector true)))))
 
 (defn load-sass-http
-  [repl-env {:keys [scheme file-path main-source
-                    replique-root-dir uri]
+  [repl-env {:keys [scheme file-path main-source sass-path uri]
              :as msg}]
-  (let [css-text (compile-sass replique-root-dir main-source file-path)]
-    (when (= nil css-text)
-      (throw (Exception. "Error while comipling sass file")))
-    (spit file-path css-text)
-    (->> msg
-         pr-str pr-str
-         (format "ewen.replique.cljs_env.browser.reload_css(%s);")
-         (cljs.repl/-evaluate
-          repl-env "<cljs repl>" 1)
-         :value)))
+  (let [[success css-text] (compile-sass sass-path main-source file-path)]
+    (if-not success
+      [false css-text]
+      (do (spit file-path css-text)
+          (->> msg
+               pr-str pr-str
+               (format "ewen.replique.cljs_env.browser.reload_css(%s);")
+               (cljs.repl/-evaluate
+                repl-env "<cljs repl>" 1)
+               :value
+               (vector true))))))
 
 (defmethod load-file-generic "sass"
   [repl-env env opts {:keys [scheme] :as msg}]

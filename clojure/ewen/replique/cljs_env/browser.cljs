@@ -5,12 +5,6 @@
             [goog.Uri]))
 
 
-(defn add-timestamp [uri]
-  (let [timestamp (.getTime (date/DateTime.))]
-    (-> (goog.Uri/parse uri)
-        (.setParameterValue "timestamp" timestamp)
-        str)))
-
 (defn remove-query-string [uri]
   (-> (goog.Uri.parse uri)
       (.setQuery "")
@@ -61,9 +55,8 @@
        (map #(.-ownerNode %))))
 
 (defn reload-css-http [css-node]
-  (let [href (.-href css-node)
-        new-href (add-timestamp href)]
-    (goog.dom.setProperties css-node (js-obj "href" new-href))))
+  (let [href (.-href css-node)]
+    (goog.dom.setProperties css-node (js-obj "href" href))))
 
 (defn reload-css-file [css-node data-uri]
   (goog.dom.setProperties css-node (js-obj "href" data-uri)))
