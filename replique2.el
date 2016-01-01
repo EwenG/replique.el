@@ -168,6 +168,44 @@ The following commands are available:
 (defun replique2/repl-existing (props)
   )
 
+(defun replique2/clean-processes ()
+  (let ((b (current-buffer)))
+    (mapcar (lambda (props)
+              (-let (((&alist :clj-buffs clj-buffs
+                              :cljs-buffs cljs-buffs) props))
+                (when (-contains? clj-buffs b)
+                  (setcdr (assoc :clj-buffs props)
+                          (delete b clj-buffs)))
+                ;;TODO Send cljs/quit to the comint buffer in order to
+                ;; cleanup the cljs socket repl, because it is not cleaned
+                ;; up on stream end
+                (when (-contains? cljs-buffs b)
+                  (setcdr (assoc :cljs-buffs props)
+                          (delete b cljs-buffs)))))
+            replique2/processes)
+    (let ((all-props (-filter
+                      (-lambda ((&alist :clj-buffs clj-buffs
+                                  :cljs-buffs cljs-buffs))
+                        (and (equal '() clj-buffs)
+                             (equal '() cljs-buffs)))
+                      replique2/processes))
+          (active-removed? nil))
+      (mapcar (-lambda (props)
+                (-let (((&alist :active active
+                                :tooling-proc tooling-proc
+                                :chan chan)
+                        props))
+                  (when active (setq active-removed? t))
+                  (delete-process tooling-proc)
+                  (replique-async2/close! chan)
+                  (setq replique2/processes
+                        (delete props replique2/processes))))
+              all-props)
+      (when active-removed?
+        (let ((props (car replique2/processes)))
+          (when props
+            (setcdr (assoc :active props) t)))))))
+
 ;;;###autoload
 (defun replique2/repl (&optional host port-nb)
   "Run a Clojure REPL, input and output via buffer '*replique2*'"
@@ -175,14 +213,15 @@ The following commands are available:
    (let ((host (read-string "Host: " "127.0.0.1"))
          (port (read-number "Port number: " (replique2/guess-port-nb))))
      (list host port)))
+  (add-hook 'kill-buffer-hook 'replique2/clean-processes)
   (if (not (replique2/is-valid-port-nb? port-nb))
       (message "Invalid port number: %d" port-nb)
-    (let ((existing-buffer (replique2/buffer-props-by
+    (let ((existing-buffer (replique2/process-props-by
                             (-lambda ((&alist :port port
                                         :host buff-host))
                               (and (equal port-nb port)
                                    (equal host buff-host))))))
-      (if existing-buffer
+      (if nil ;existing-buffer
           (replique2/repl-existing existing-buffer)
         (let* ((tooling-proc (open-network-stream
                       "replique" nil host port-nb))
@@ -204,7 +243,7 @@ The following commands are available:
                  (port-cljs (->> (gethash :replique-cljs-repl resp)
                                  (gethash :port)))
                  (clj-buff-name
-                  (replique2/cljs-buff-name directory host-clj port-clj))
+                  (replique2/clj-buff-name directory host-clj port-clj))
                  (cljs-buff-name
                   (replique2/cljs-buff-name directory host-cljs port-cljs))
                  (clj-buff
@@ -222,7 +261,7 @@ The following commands are available:
                     (:cljs-buffs . (,cljs-buff))
                     (:active-clj-buff . ,clj-buff)
                     (:active-cljs-buff . ,cljs-buff))))
-            ;;(push buff-props replique2/processes)
+            (push buff-props replique2/processes)
             (set-buffer cljs-buff)
             (replique2/mode)
             (set-buffer clj-buff)
