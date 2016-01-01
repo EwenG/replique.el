@@ -1,4 +1,4 @@
-;;; replique-async.el ---   -*- lexical-binding: t; -*-
+;;; replique-async2.el ---   -*- lexical-binding: t; -*-
 ;;; Commentary:
 
 ;;; Code:
@@ -7,7 +7,7 @@
   "Comment out one or more s-expressions."
   nil)
 
-(defclass replique-async/chan-impl ()
+(defclass replique-async2/chan-impl ()
   ((listeners :initarg :listeners
               :type (or null cons)
               :initform '())
@@ -21,11 +21,11 @@
            :type boolean
            :initform nil)))
 
-(defun replique-async/chan ()
-  (replique-async/chan-impl nil :listeners nil :providers nil))
+(defun replique-async2/chan ()
+  (replique-async2/chan-impl nil :listeners nil :providers nil))
 
-(defmethod replique-async/close!
-  ((ch replique-async/chan-impl))
+(defmethod replique-async2/close!
+  ((ch replique-async2/chan-impl))
   (mapcar (-lambda ((&alist :listener-process p))
             (when p
               (process-send-string p "\n")
@@ -33,8 +33,8 @@
    (oref ch listeners))
   (oset ch closed t))
 
-(defmethod replique-async/<!
-  ((ch replique-async/chan-impl) listener-callback)
+(defmethod replique-async2/<!
+  ((ch replique-async2/chan-impl) listener-callback)
   (if (oref ch closed)
       (progn
         (listener-callback)
@@ -54,8 +54,8 @@
                       (oset ch :listeners))
                  nil)))))
 
-(defmethod replique-async/>!
-  ((ch replique-async/chan-impl) item provider-callback)
+(defmethod replique-async2/>!
+  ((ch replique-async2/chan-impl) item provider-callback)
   (if (oref ch closed)
       (progn
         (provider-callback)
@@ -80,8 +80,8 @@
                     (oset ch :providers))
                nil)))))
 
-(defmethod replique-async/put!
-  ((ch replique-async/chan-impl) item)
+(defmethod replique-async2/put!
+  ((ch replique-async2/chan-impl) item)
   (if (oref ch closed)
       nil
     (let ((listener (pop (oref ch listeners))))
@@ -102,8 +102,8 @@
                     (oset ch :providers))
                nil)))))
 
-(defmethod replique-async/<!!
-  ((ch replique-async/chan-impl))
+(defmethod replique-async2/<!!
+  ((ch replique-async2/chan-impl))
   (if (oref ch closed)
       nil
     (let ((provider (pop (oref ch providers))))
@@ -126,46 +126,46 @@
 
 
 (comment
- (let ((ch (replique-async/chan-impl
+ (let ((ch (replique-async2/chan-impl
             nil
             :listeners nil
             :providers nil)))
-   (replique-async/<!
+   (replique-async2/<!
     ch (lambda (val)
          (print val)))
-   (replique-async/put! ch 3)
+   (replique-async2/put! ch 3)
    ch)
 
- (let ((ch (replique-async/chan-impl
+ (let ((ch (replique-async2/chan-impl
             nil
             :listeners nil
             :providers nil)))
-   (replique-async/>!
+   (replique-async2/>!
     ch "r"
     (lambda ()
       (print "provided")))
-   (replique-async/<!
+   (replique-async2/<!
     ch
     (lambda (val)
       (print val)))
    ch)
 
- (let ((ch (replique-async/chan-impl
+ (let ((ch (replique-async2/chan-impl
             nil
             :listeners nil
             :providers nil)))
    (run-at-time "2 sec" nil
                 (lambda (ch)
-                  (replique-async/>!
+                  (replique-async2/>!
                    ch "r"
                    (lambda ()
                      (print "provided"))))
                 ch)
-   (let ((val (replique-async/<!! ch)))
+   (let ((val (replique-async2/<!! ch)))
      (print val))
    ch)
  )
 
-(provide 'replique-async)
+(provide 'replique-async2)
 
-;;; replique-async.el ends here
+;;; replique-async2.el ends here
