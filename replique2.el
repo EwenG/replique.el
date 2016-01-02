@@ -21,9 +21,8 @@
   (cons `(,key . ,val) alist))
 
 (defun replique2/message-nolog (format-string &rest args)
-  (setq-default message-log-max nil)
-  (message format-string args)
-  (setq-default message-log-max 1000))
+  (let ((message-log-max nil))
+    (message format-string args)))
 
 (defun replique2/visible-buffers ()
   (let ((buffers '()))
@@ -41,6 +40,16 @@
   :type 'regexp
   :group 'replique2)
 
+(defcustom replique2/prompt "^[^=> \n]+=> *"
+  "Regexp to recognize prompts in the replique2 mode."
+  :type 'regexp
+  :group 'replique2)
+
+(defcustom replique2/prompt-filter "^[^=> \n]+=> "
+  "Regexp to recognize prompts in the replique2 mode."
+  :type 'regexp
+  :group 'replique2)
+
 (defvar replique2/processes nil)
 
 (defun replique2/alist-to-map (alist)
@@ -50,32 +59,27 @@
             alist)
     m))
 
-(defun replique2/comint-is-closed-sexpr (start limit)
-  (let ((depth (car (parse-partial-sexp start limit))))
-    (if (<= depth 0) t nil)))
-
-(defun replique2/comint-send-input (&optional no-newline artificial)
-  (interactive)
-  (let ((proc (get-buffer-process (current-buffer))))
-    (if (not proc) (user-error "Current buffer has no process")
-      (widen)
-      (let* ((pmark (process-mark proc)))
-        (cond (;; Point is at the end of the line and the sexpr is
-               ;; terminated
-               (and (equal (point) (point-max))
-                    (replique2/comint-is-closed-sexpr pmark (point)))
-               (comint-send-input no-newline artificial))
-              ;; Point is after the prompt but (before the end of line or
-              ;; the sexpr is not terminated)
-              ((comint-after-pmark-p) (comint-accumulate))
-              ;; Point is before the prompt. Do nothing.
-              (t nil))))))
-
 (defun replique2/process-props-by (pred &optional error-on-nil)
   (let ((props (-first pred replique2/processes)))
     (if (and (null props) error-on-nil)
-        (error "No started REPL")
+        (user-error "No started REPL")
       props)))
+
+(defun replique2/active-process-props (&optional error-on-nil)
+  (replique2/process-props-by
+   (-lambda ((&alist :active active))
+     active)
+   error-on-nil))
+
+(defun replique2/get-active-clj-buffer (&optional error-on-nil)
+  (->> (replique2/active-process-props error-on-nil)
+       (assoc :active-clj-buff)
+       cdr))
+
+(defun replique2/get-active-cljs-buffer (&optional error-on-nil)
+  (->> (replique2/active-process-props error-on-nil)
+       (assoc :active-cljs-buff)
+       cdr))
 
 (defun replique2/set-active-process (host port &optional display-msg)
   (interactive
@@ -106,14 +110,98 @@
   (when display-msg
     (message "Active process switched to: %s" buffer-name)))
 
+(defun replique2/comint-is-closed-sexpr (start limit)
+  (let ((depth (car (parse-partial-sexp start limit))))
+    (if (<= depth 0) t nil)))
+
+(defun replique2/comint-send-input (&optional no-newline artificial)
+  (interactive)
+  (let ((proc (get-buffer-process (current-buffer))))
+    (if (not proc) (user-error "Current buffer has no process")
+      (widen)
+      (let* ((pmark (process-mark proc)))
+        (cond (;; Point is at the end of the line and the sexpr is
+               ;; terminated
+               (and (equal (point) (point-max))
+                    (replique2/comint-is-closed-sexpr pmark (point)))
+               (comint-send-input no-newline artificial))
+              ;; Point is after the prompt but (before the end of line or
+              ;; the sexpr is not terminated)
+              ((comint-after-pmark-p) (comint-accumulate))
+              ;; Point is before the prompt. Do nothing.
+              (t nil))))))
+
+(defun replique2/comint-send-input-from-source
+    (input &optional no-newline artificial)
+  (let ((proc (get-buffer-process (current-buffer))))
+    (if (not proc) (user-error "Current buffer has no process")
+      (widen)
+      (comint-add-to-input-history input)
+      (run-hook-with-args 'comint-input-filter-functions
+                          (if no-newline input
+                            (concat input "\n")))
+
+      (comint-snapshot-last-prompt)
+
+      (setq comint-save-input-ring-index comint-input-ring-index)
+      (setq comint-input-ring-index nil)
+
+      (let ((comint-input-sender-no-newline no-newline))
+        (funcall comint-input-sender proc input))
+
+      ;; This used to call comint-output-filter-functions,
+      ;; but that scrolled the buffer in undesirable ways.
+      (run-hook-with-args 'comint-output-filter-functions ""))))
+
+(defun replique2/eval-region (start end)
+  "Eval the currently highlighted region."
+  (interactive "r")
+  (let ((extension (file-name-extension (buffer-name)))
+        (clj-buff (replique2/get-active-clj-buffer))
+        (cljs-buff (replique2/get-active-cljs-buffer))
+        (input (filter-buffer-substring start end)))
+    (cond ((string= "clj" extension)
+           (if clj-buff
+               (with-current-buffer
+                   clj-buff
+                 (replique2/comint-send-input-from-source input))
+             (user-error "No active Clojure buffer")))
+          ((string= "cljs" extension)
+           (if cljs-buff
+               (with-current-buffer
+                   cljs-buff
+                 (replique2/comint-send-input-from-source input))
+             (user-error "No active Clojurescript buffer")))
+          ((string= "cljc" extension)
+           (if (or clj-buff cljs-buff)
+               (progn
+                 (when clj-buff
+                   (with-current-buffer
+                       clj-buff
+                     (replique2/comint-send-input-from-source input)))
+                 (when cljs-buff
+                   (with-current-buffer
+                       cljs-buff
+                     (replique2/comint-send-input-from-source input))))
+             (user-error "No active Clojure or Clojurescript buffer")))
+          (t (user-error
+              (format "Cannot eval from buffer %s" (current-buffer)))))))
+
+(defun replique2/eval-last-sexp ()
+  "Eval the previous sexp."
+  (interactive)
+  (replique2/eval-region
+   (save-excursion
+     (backward-sexp) (point))
+   (point)))
+
 (defvar replique2/mode-hook '()
   "Hook for customizing replique2 mode.")
 
 (defvar replique2/mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
-    (define-key map "\C-m" #'replique2/comint-send-input)
-    (define-key map "\C-x\C-e" #'replique2/eval-last-sexp)
+    (define-key map "\C-m" 'replique2/comint-send-input)
     map))
 
 
@@ -129,6 +217,13 @@
 
 (defvar replique2/minor-mode-map
   (let ((map (make-sparse-keymap)))
+    (define-key map "\C-c\C-r" 'replique2/eval-region)
+    (define-key map "\C-x\C-e" 'replique2/eval-last-sexp)
+    (easy-menu-define replique/minor-mode-menu map
+      "Replique Minor Mode Menu"
+      '("Replique"
+        ["Eval region" replique2/eval-region t]
+        ["Eval last sexp" replique2/eval-last-sexp t]))
     map))
 
 (defvar replique2/generic-minor-mode-map
@@ -143,7 +238,7 @@ The following commands are available:
 
 \\{replique2/minor-mode-map}"
   :lighter "Replique2" :keymap replique2/minor-mode-map
-  (make-local-variable 'company-backends))
+  (comment (make-local-variable 'company-backends)))
 
 ;;;###autoload
 (define-minor-mode replique2/generic-minor-mode
@@ -167,8 +262,23 @@ The following commands are available:
              replique-edn2/read-string
              (gethash :tooling-repl))))))
 
-(defun replique2/process-filter (chan proc string)
-  (replique-async2/>! chan string (lambda ())))
+(defun replique2/tooling-process-filter (chan proc string)
+  (replique-async2/>! chan string (lambda () nil)))
+
+(defun replique2/repl-process-filter (buff proc string)
+  (when (not (-contains? (replique2/visible-buffers) buff))
+    (let* (;; Remove prompt
+           (cleaned-string (replace-regexp-in-string
+                            replique2/prompt-filter "" string))
+           ;; Remove the last end of line
+           (cleaned-string (replace-regexp-in-string
+                            "\n\\'" "" cleaned-string))
+           (cleaned-string (replace-regexp-in-string
+                            "\`\n" "" cleaned-string)))
+      ;; Don't display if there is nothing to be displayed
+      (when (not (string= cleaned-string ""))
+        (replique2/message-nolog cleaned-string))))
+  (comint-output-filter proc string))
 
 (defun replique2/send-tooling-msg (props msg)
   (-let (((&alist :tooling-proc proc) props)
@@ -193,6 +303,8 @@ The following commands are available:
   (-let (((&alist :active active
                   :host host :port port
                   :clj-buffs clj-buffs :cljs-buffs cljs-buffs
+                  :active-clj-buff active-clj-buff
+                  :active-cljs-buff active-cljs-buff
                   :tooling-proc tooling-proc :chan chan)
           props))
     (when (not active)
@@ -219,7 +331,9 @@ The following commands are available:
                  clj-buff-name host-clj port-clj)))
           (set-buffer clj-buff)
           (replique2/mode)
-          (push clj-buff clj-buffs)))
+          (setcdr (assoc :clj-buffs props) (list clj-buff))
+          (when (not active-clj-buff)
+            (setcdr (assoc :active-clj-buff props) clj-buff))))
       (when (equal '() cljs-buffs)
         (let* ((cljs-buff-name
                 (replique2/cljs-buff-name directory host-cljs port-cljs))
@@ -228,22 +342,30 @@ The following commands are available:
                  cljs-buff-name host-cljs port-cljs)))
           (set-buffer cljs-buff)
           (replique2/mode)
-          (push cljs-buff cljs-buffs)))
+          (setcdr (assoc :cljs-buffs props) (list cljs-buff))
+          (when (not active-cljs-buff)
+            (setcdr (assoc :active-cljs-buff props) cljs-buff))))
       (pop-to-buffer (car clj-buffs)))))
 
 (defun replique2/cleanup-repl (b)
   (mapcar (lambda (props)
             (-let (((&alist :clj-buffs clj-buffs
-                            :cljs-buffs cljs-buffs) props))
+                            :cljs-buffs cljs-buffs
+                            :active-clj-buff active-clj-buff
+                            :active-cljs-buff active-cljs-buff)
+                    props))
               (when (-contains? clj-buffs b)
                 (setcdr (assoc :clj-buffs props)
                         (delete b clj-buffs)))
-              ;;TODO Send cljs/quit to the comint buffer in order to
-              ;; cleanup the cljs socket repl, because it is not cleaned
-              ;; up on stream end
+              (when (equal active-clj-buff b)
+                (setcdr (assoc :active-clj-buff props)
+                        (cadr (assoc :clj-buffs props))))
               (when (-contains? cljs-buffs b)
                 (setcdr (assoc :cljs-buffs props)
-                        (delete b cljs-buffs)))))
+                        (delete b cljs-buffs)))
+              (when (equal active-cljs-buff b)
+                (setcdr (assoc :active-cljs-buff props)
+                        (cadr (assoc :cljs-buffs props))))))
           replique2/processes)
   (let ((all-props (-filter
                     (-lambda ((&alist :clj-buffs clj-buffs
@@ -292,7 +414,7 @@ The following commands are available:
          (with-current-buffer buffer
            (save-excursion
              (goto-char (point-max))
-             (insert event)))
+             (insert (concat "\n" event "\n"))))
          (replique2/cleanup-repl buffer))
         (t nil)))
 
@@ -301,6 +423,9 @@ The following commands are available:
     (set-process-sentinel
      (get-buffer-process buff)
      (-partial 'replique2/on-repl-close buff))
+    (set-process-filter
+     (get-buffer-process buff)
+     (-partial 'replique2/repl-process-filter buff))
     buff))
 
 (defun replique2/on-tooling-repl-close (host port process event)
@@ -308,7 +433,7 @@ The following commands are available:
          (replique2/cleanup-process host port))
         (t nil)))
 
-(defun replique2/make-tooling-repl-buffer (host port)
+(defun replique2/make-tooling-proc (host port)
   (let ((proc (open-network-stream "replique" nil host port)))
     (set-process-sentinel
      proc (-partial 'replique2/on-tooling-repl-close host port))
@@ -330,11 +455,11 @@ The following commands are available:
                                    (equal host buff-host))))))
       (if existing-buffer
           (replique2/repl-existing existing-buffer)
-        (let* ((tooling-proc (replique2/make-tooling-repl-buffer
+        (let* ((tooling-proc (replique2/make-tooling-proc
                               host port-nb))
                (chan (replique-async2/chan)))
           (set-process-filter
-           tooling-proc (-partial 'replique2/process-filter chan))
+           tooling-proc (-partial 'replique2/tooling-process-filter chan))
           (replique2/send-tooling-msg
            `((:tooling-proc . ,tooling-proc))
            `((:type . :repl-infos)))
