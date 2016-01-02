@@ -50,6 +50,27 @@
             alist)
     m))
 
+(defun replique2/comint-is-closed-sexpr (start limit)
+  (let ((depth (car (parse-partial-sexp start limit))))
+    (if (<= depth 0) t nil)))
+
+(defun replique2/comint-send-input (&optional no-newline artificial)
+  (interactive)
+  (let ((proc (get-buffer-process (current-buffer))))
+    (if (not proc) (user-error "Current buffer has no process")
+      (widen)
+      (let* ((pmark (process-mark proc)))
+        (cond (;; Point is at the end of the line and the sexpr is
+               ;; terminated
+               (and (equal (point) (point-max))
+                    (replique2/comint-is-closed-sexpr pmark (point)))
+               (comint-send-input no-newline artificial))
+              ;; Point is after the prompt but (before the end of line or
+              ;; the sexpr is not terminated)
+              ((comint-after-pmark-p) (comint-accumulate))
+              ;; Point is before the prompt. Do nothing.
+              (t nil))))))
+
 (defun replique2/process-props-by (pred &optional error-on-nil)
   (let ((props (-first pred replique2/processes)))
     (if (and (null props) error-on-nil)
@@ -91,6 +112,7 @@
 (defvar replique2/mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
+    (define-key map "\C-m" #'replique2/comint-send-input)
     (define-key map "\C-x\C-e" #'replique2/eval-last-sexp)
     map))
 
