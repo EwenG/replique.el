@@ -156,55 +156,141 @@ The following commands are available:
                   (replique-edn/pr-str msg)))))
 
 (defun replique2/clj-buff-name (directory host port)
-  (generate-new-buffer-name (format "%s|%s:%s|clj" directory host port)))
+  (generate-new-buffer-name
+   (format "%s|%s:%s|clj" (file-name-nondirectory directory) host port)))
 
 (defun replique2/cljs-buff-name (directory host port)
-  (generate-new-buffer-name (format "%s|%s:%s|cljs" directory host port)))
+  (generate-new-buffer-name
+   (format "%s|%s:%s|cljs" (file-name-nondirectory directory) host port)))
 
 (comment
  (replique2/cljs-buff-name "/home/egr" "127.0.0.1" 9000)
  )
 
 (defun replique2/repl-existing (props)
-  )
+  (-let (((&alist :active active
+                  :host host :port port
+                  :clj-buffs clj-buffs :cljs-buffs cljs-buffs
+                  :tooling-proc tooling-proc :chan chan)
+          props))
+    (when (not active)
+      (replique2/set-active-process host port t))
+    (replique2/send-tooling-msg
+     `((:tooling-proc . ,tooling-proc))
+     `((:type . :repl-infos)))
+    (let* ((resp (replique-async2/<!! chan))
+           (resp (replique-edn2/read-string resp))
+           (directory (gethash :directory resp))
+           (host-clj (->> (gethash :replique-clj-repl resp)
+                          (gethash :host)))
+           (port-clj (->> (gethash :replique-clj-repl resp)
+                          (gethash :port)))
+           (host-cljs (->> (gethash :replique-cljs-repl resp)
+                           (gethash :host)))
+           (port-cljs (->> (gethash :replique-cljs-repl resp)
+                           (gethash :port))))
+      (when (equal '() clj-buffs)
+        (let* ((clj-buff-name
+                (replique2/clj-buff-name directory host-clj port-clj))
+               (clj-buff
+                (replique2/make-repl-buffer
+                 clj-buff-name host-clj port-clj)))
+          (set-buffer clj-buff)
+          (replique2/mode)
+          (push clj-buff clj-buffs)))
+      (when (equal '() cljs-buffs)
+        (let* ((cljs-buff-name
+                (replique2/cljs-buff-name directory host-cljs port-cljs))
+               (cljs-buff
+                (replique2/make-repl-buffer
+                 cljs-buff-name host-cljs port-cljs)))
+          (set-buffer cljs-buff)
+          (replique2/mode)
+          (push cljs-buff cljs-buffs)))
+      (pop-to-buffer (car clj-buffs)))))
 
-(defun replique2/clean-processes ()
-  (let ((b (current-buffer)))
-    (mapcar (lambda (props)
-              (-let (((&alist :clj-buffs clj-buffs
-                              :cljs-buffs cljs-buffs) props))
-                (when (-contains? clj-buffs b)
-                  (setcdr (assoc :clj-buffs props)
-                          (delete b clj-buffs)))
-                ;;TODO Send cljs/quit to the comint buffer in order to
-                ;; cleanup the cljs socket repl, because it is not cleaned
-                ;; up on stream end
-                (when (-contains? cljs-buffs b)
-                  (setcdr (assoc :cljs-buffs props)
-                          (delete b cljs-buffs)))))
-            replique2/processes)
-    (let ((all-props (-filter
-                      (-lambda ((&alist :clj-buffs clj-buffs
-                                  :cljs-buffs cljs-buffs))
-                        (and (equal '() clj-buffs)
-                             (equal '() cljs-buffs)))
-                      replique2/processes))
-          (active-removed? nil))
-      (mapcar (-lambda (props)
-                (-let (((&alist :active active
-                                :tooling-proc tooling-proc
-                                :chan chan)
-                        props))
-                  (when active (setq active-removed? t))
-                  (delete-process tooling-proc)
-                  (replique-async2/close! chan)
-                  (setq replique2/processes
-                        (delete props replique2/processes))))
-              all-props)
-      (when active-removed?
-        (let ((props (car replique2/processes)))
-          (when props
-            (setcdr (assoc :active props) t)))))))
+(defun replique2/cleanup-repl (b)
+  (mapcar (lambda (props)
+            (-let (((&alist :clj-buffs clj-buffs
+                            :cljs-buffs cljs-buffs) props))
+              (when (-contains? clj-buffs b)
+                (setcdr (assoc :clj-buffs props)
+                        (delete b clj-buffs)))
+              ;;TODO Send cljs/quit to the comint buffer in order to
+              ;; cleanup the cljs socket repl, because it is not cleaned
+              ;; up on stream end
+              (when (-contains? cljs-buffs b)
+                (setcdr (assoc :cljs-buffs props)
+                        (delete b cljs-buffs)))))
+          replique2/processes)
+  (let ((all-props (-filter
+                    (-lambda ((&alist :clj-buffs clj-buffs
+                                :cljs-buffs cljs-buffs))
+                      (and (equal '() clj-buffs)
+                           (equal '() cljs-buffs)))
+                    replique2/processes))
+        (active-removed? nil))
+    (mapcar (-lambda (props)
+              (-let (((&alist :active active
+                              :tooling-proc tooling-proc
+                              :chan chan)
+                      props))
+                (when active (setq active-removed? t))
+                (delete-process tooling-proc)
+                (replique-async2/close! chan)
+                (setq replique2/processes
+                      (delete props replique2/processes))))
+            all-props)
+    (when active-removed?
+      (let ((props (car replique2/processes)))
+        (when props
+          (setcdr (assoc :active props) t))))))
+
+(defun replique2/cleanup-process (host port)
+  (mapcar (lambda (props)
+            (-let (((&alist :clj-buffs clj-buffs
+                            :cljs-buffs cljs-buffs
+                            :host h :port p)
+                    props))
+              (when (and (string= host h) (equal port p))
+                (mapcar (lambda (buff)
+                          (when (get-buffer-process buff)
+                            (delete-process (get-buffer-process buff))))
+                        clj-buffs)
+                (mapcar (lambda (buff)
+                          (when (get-buffer-process buff)
+                            (delete-process (get-buffer-process buff))))
+                        cljs-buffs))))
+          replique2/processes))
+
+(defun replique2/on-repl-close (buffer process event)
+  (cond ((string= "deleted\n" event)
+         (replique2/cleanup-repl buffer))
+        ((string= "connection broken by remote peer\n" event)
+         (with-current-buffer buffer
+           (save-excursion
+             (goto-char (point-max))
+             (insert event)))
+         (replique2/cleanup-repl buffer))
+        (t nil)))
+
+(defun replique2/make-repl-buffer (buffer-name host port)
+  (let ((buff (make-comint buffer-name `(,host . ,port))))
+    (set-process-sentinel
+     (get-buffer-process buff)
+     (-partial 'replique2/on-repl-close buff))
+    buff))
+
+(defun replique2/on-tooling-repl-close (host port process event)
+  (cond ((string= "connection broken by remote peer\n" event)
+         (replique2/cleanup-process host port))
+        (t nil)))
+
+(defun replique2/make-tooling-repl-buffer (host port)
+  (let ((proc (open-network-stream "replique" nil host port)))
+    (set-process-sentinel
+     proc (-partial 'replique2/on-tooling-repl-close host port))
+    proc))
 
 ;;;###autoload
 (defun replique2/repl (&optional host port-nb)
@@ -213,7 +299,6 @@ The following commands are available:
    (let ((host (read-string "Host: " "127.0.0.1"))
          (port (read-number "Port number: " (replique2/guess-port-nb))))
      (list host port)))
-  (add-hook 'kill-buffer-hook 'replique2/clean-processes)
   (if (not (replique2/is-valid-port-nb? port-nb))
       (message "Invalid port number: %d" port-nb)
     (let ((existing-buffer (replique2/process-props-by
@@ -221,10 +306,10 @@ The following commands are available:
                                         :host buff-host))
                               (and (equal port-nb port)
                                    (equal host buff-host))))))
-      (if nil ;existing-buffer
+      (if existing-buffer
           (replique2/repl-existing existing-buffer)
-        (let* ((tooling-proc (open-network-stream
-                      "replique" nil host port-nb))
+        (let* ((tooling-proc (replique2/make-tooling-repl-buffer
+                              host port-nb))
                (chan (replique-async2/chan)))
           (set-process-filter
            tooling-proc (-partial 'replique2/process-filter chan))
@@ -247,9 +332,11 @@ The following commands are available:
                  (cljs-buff-name
                   (replique2/cljs-buff-name directory host-cljs port-cljs))
                  (clj-buff
-                  (make-comint clj-buff-name `(,host-clj . ,port-clj)))
+                  (replique2/make-repl-buffer
+                   clj-buff-name host-clj port-clj))
                  (cljs-buff
-                  (make-comint cljs-buff-name `(,host-cljs . ,port-cljs)))
+                  (replique2/make-repl-buffer
+                   cljs-buff-name host-cljs port-cljs))
                  (buff-props
                   `((:directory . ,directory)
                     (:active . t)
