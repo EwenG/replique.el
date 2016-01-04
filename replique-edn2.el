@@ -934,8 +934,8 @@
                       (push `(replique-edn2/read-symbol t)
                             (symbol-value actions)))))))))
 
-(defun replique-edn2/init-state (reader)
-  (let ((state (make-symbol "state"))
+(defun replique-edn2/init-state (reader &optional state)
+  (let ((state (or state (make-symbol "state")))
         (actions (make-symbol "actions"))
         (result-state (make-symbol "result-state"))
         (result (make-symbol "result"))
