@@ -26,81 +26,84 @@
 
 (defmethod replique-async2/close!
   ((ch replique-async2/chan-impl))
-  (mapcar (-lambda ((&alist :listener-process p))
+  (mapcar (-lambda ((&alist :listener-process p
+                      :listener-callback l-cb))
             (when p
               (process-send-string p "\n")
-              (delete-process p)))
-   (oref ch listeners))
+              (delete-process p))
+            (when l-cb
+              (funcall l-cb nil)))
+          (oref ch listeners))
   (oset ch closed t))
 
 (defmethod replique-async2/<!
   ((ch replique-async2/chan-impl) listener-callback)
   (if (oref ch closed)
-      (progn
-        (listener-callback)
-        nil)
-      (let ((provider (pop (oref ch providers))))
-        (if provider
-            (-let (((&alist :item item
-                            :provider-callback provider-callback)
-                    provider))
-              (funcall listener-callback item)
-              (when provider-callback
-                (funcall provider-callback))
-              item)
-          (progn (->> `((:listener-callback . ,listener-callback))
-                      list
-                      (append (oref ch :listeners))
-                      (oset ch :listeners))
-                 nil)))))
+      (progn (funcall listener-callback nil)
+             nil)
+    (let ((provider (pop (oref ch providers))))
+      (if provider
+          (-let (((&alist :item item
+                          :provider-callback provider-callback)
+                  provider))
+            (funcall listener-callback item)
+            (when provider-callback
+              (funcall provider-callback))
+            item)
+        (progn (->> `((:listener-callback . ,listener-callback))
+                    list
+                    (append (oref ch :listeners))
+                    (oset ch :listeners))
+               nil)))))
 
 (defmethod replique-async2/>!
   ((ch replique-async2/chan-impl) item provider-callback)
-  (if (oref ch closed)
-      (progn
-        (provider-callback)
-        nil)
-    (let ((listener (pop (oref ch listeners))))
-      (if listener
-          (-let (((&alist :listener-callback listener-callback
-                          :listener-process p)
-                  listener))
-            (if p
-                (progn
-                  (oset ch :synchronous-slot item)
-                  (process-send-string p "\n")
-                  (delete-process p))
-              (funcall listener-callback item))
-            (funcall provider-callback)
-            item)
-        (progn (->> `((:item . ,item)
-                      (:provider-callback . ,provider-callback))
-                    list
-                    (append (oref ch :providers))
-                    (oset ch :providers))
-               nil)))))
+  (cond ((null item)
+         (error "Cannot put nil in channel"))
+        ((oref ch closed) nil)
+        (let ((listener (pop (oref ch listeners))))
+          (if listener
+              (-let (((&alist :listener-callback listener-callback
+                              :listener-process p)
+                      listener))
+                (if p
+                    (progn
+                      (oset ch :synchronous-slot item)
+                      (process-send-string p "\n")
+                      (delete-process p))
+                  (funcall listener-callback item))
+                (funcall provider-callback)
+                item)
+            (progn (->> `((:item . ,item)
+                          (:provider-callback . ,provider-callback))
+                        list
+                        (append (oref ch :providers))
+                        (oset ch :providers))
+                   nil)))))
 
 (defmethod replique-async2/put!
   ((ch replique-async2/chan-impl) item)
-  (if (oref ch closed)
-      nil
-    (let ((listener (pop (oref ch listeners))))
-      (if listener
-          (-let (((&alist :listener-callback listener-callback
-                          :listener-process p)
-                  listener))
-            (if p
-                (progn
-                  (oset ch :synchronous-slot item)
-                  (process-send-string p "\n")
-                  (delete-process p))
-              (funcall listener-callback item))
-            item)
-        (progn (->> `((:item . ,item))
-                    list
-                    (append (oref ch :providers))
-                    (oset ch :providers))
-               nil)))))
+  (cond ((null item)
+         (error "Cannot put nil in channel"))
+        ((oref ch closed)
+         nil)
+        (t (let ((listener (pop (oref ch listeners))))
+             (if listener
+                 (-let (((&alist :listener-callback listener-callback
+                                 :listener-process p)
+                         listener))
+                   (if p
+                       (progn
+                         (oset ch :synchronous-slot item)
+                         (process-send-string p "\n")
+                         (delete-process p))
+                     (funcall listener-callback item))
+                   item)
+               (progn (->> `((:item . ,item))
+                           list
+                           (append (oref ch :providers))
+                           (oset ch :providers))
+                      nil))))))
 
 (defmethod replique-async2/<!!
   ((ch replique-async2/chan-impl))
