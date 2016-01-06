@@ -482,10 +482,6 @@ The following commands are available:
 
 (defun replique2/on-repl-close (buffer process event)
   (cond ((string= "deleted\n" event)
-         (with-current-buffer buffer
-           (save-excursion
-             (goto-char (point-max))
-             (insert (concat "\n" event "\n"))))
          (replique2/cleanup-repl buffer))
         ((string= "connection broken by remote peer\n" event)
          (with-current-buffer buffer
@@ -504,13 +500,7 @@ The following commands are available:
           ((&alist :clj-repls clj-repls :cljs-repls cljs-repls
                    :active-clj-repl active-clj-repl
                    :active-cljs-repl active-cljs-repl) props)
-          (repl-cmd (cond ((equal :clj repl-type)
-                           "(ewen.replique.server/repl-clj)\n")
-                          ((equal :cljs repl-type)
-                           "(ewen.replique.server-cljs/repl-cljs)\n")
-                          (t (process-send-eof proc)
-                             (replique2/cleanup-processes)
-                             (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))
+          (repl-cmd (format "(ewen.replique.server/repl %s)\n" repl-type)))
     (set-process-sentinel proc (-partial 'replique2/on-repl-close buff))
     ;; Discard the prompt
     (replique-async2/<!
