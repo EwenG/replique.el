@@ -318,7 +318,7 @@ The following commands are available:
    in-chan
    (lambda (msg)
      (cond ((null msg)
-            (replique-async2/close! tooling-chan))
+            (replique-async2/close! out-chan))
            ((equal :eval (gethash :type msg))
             (replique2/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async2/put! out-chan msg)
@@ -401,32 +401,7 @@ The following commands are available:
  (replique2/cljs-buff-name "/home/egr" "127.0.0.1" 9000)
  )
 
-(defun replique2/cleanup-repl (b)
-  (mapcar (lambda (props)
-            (-let (((&alist :clj-repls clj-repls
-                            :cljs-repls cljs-repls
-                            :active-clj-repl active-clj-repl
-                            :active-cljs-repl active-cljs-repl)
-                    props))
-              (let ((repl (-first (lambda (repl)
-                                    (equal b (cdr (assoc :buffer repl))))
-                                  clj-repls)))
-                (when repl
-                  (setcdr (assoc :clj-repls props)
-                          (delete repl clj-repls)))
-                (when (equal active-clj-repl repl)
-                  (setcdr (assoc :active-clj-repl props)
-                          (cadr (assoc :clj-repls props)))))
-              (let ((repl (-first (lambda (repl)
-                                    (equal b (cdr (assoc :buffer repl))))
-                                  cljs-repls)))
-                (when repl
-                  (setcdr (assoc :cljs-repls props)
-                          (delete repl cljs-repls)))
-                (when (equal active-cljs-repl repl)
-                  (setcdr (assoc :active-cljs-repl props)
-                          (cadr (assoc :cljs-repls props)))))))
-          replique2/processes)
+(defun replique2/cleanup-processes ()
   (let ((all-props (-filter
                     (-lambda ((&alist :clj-repls clj-repls
                                 :cljs-repls cljs-repls))
@@ -439,7 +414,10 @@ The following commands are available:
                               :tooling-proc tooling-proc)
                       props))
                 (when active (setq active-removed? t))
-                (delete-process tooling-proc)
+                (when (process-live-p tooling-proc)
+                  (set-process-filter
+                   tooling-proc (lambda (proc string) nil))
+                  (process-send-eof tooling-proc))
                 (setq replique2/processes
                       (delete props replique2/processes))))
             all-props)
@@ -448,7 +426,43 @@ The following commands are available:
         (when props
           (setcdr (assoc :active props) t))))))
 
-(defun replique2/cleanup-process (host port)
+(defun replique2/cleanup-repl (b)
+  (mapcar (lambda (props)
+            (-let (((&alist :clj-repls clj-repls
+                            :cljs-repls cljs-repls
+                            :active-clj-repl active-clj-repl
+                            :active-cljs-repl active-cljs-repl)
+                    props))
+              (let ((repl (-first (lambda (repl)
+                                    (equal b (cdr (assoc :buffer repl))))
+                                  clj-repls)))
+                (when repl
+                  (let* ((buff (cdr (assoc :buffer repl)))
+                         (proc (get-buffer-process buff)))
+                    (when (and proc (process-live-p proc))
+                      (process-send-eof proc)))
+                  (setcdr (assoc :clj-repls props)
+                          (delete repl clj-repls)))
+                (when (equal active-clj-repl repl)
+                  (setcdr (assoc :active-clj-repl props)
+                          (cadr (assoc :clj-repls props)))))
+              (let ((repl (-first (lambda (repl)
+                                    (equal b (cdr (assoc :buffer repl))))
+                                  cljs-repls)))
+                (when repl
+                  (let* ((buff (cdr (assoc :buffer repl)))
+                         (proc (get-buffer-process buff)))
+                    (when (and proc (process-live-p proc))
+                      (process-send-eof proc)))
+                  (setcdr (assoc :cljs-repls props)
+                          (delete repl cljs-repls)))
+                (when (equal active-cljs-repl repl)
+                  (setcdr (assoc :active-cljs-repl props)
+                          (cadr (assoc :cljs-repls props)))))))
+          replique2/processes)
+  (replique2/cleanup-processes))
+
+(defun replique2/cleanup-repls (host port)
   (mapcar (lambda (props)
             (-let (((&alist :clj-repls clj-repls
                             :cljs-repls cljs-repls
@@ -456,19 +470,22 @@ The following commands are available:
                     props))
               (when (and (string= host h) (equal port p))
                 (mapcar (lambda (repl)
-                          (let ((proc (get-buffer-process
-                                       (cdr (assoc :buffer repl)))))
-                            (when proc (delete-process proc))))
+                          (replique2/cleanup-repl
+                           (cdr (assoc :buffer repl))))
                         clj-repls)
                 (mapcar (lambda (repl)
-                          (let ((proc (get-buffer-process
-                                       (cdr (assoc :buffer repl)))))
-                            (when proc (delete-process proc))))
+                          (replique2/cleanup-repl
+                           (cdr (assoc :buffer repl))))
                         cljs-repls))))
-          replique2/processes))
+          replique2/processes)
+  (replique2/cleanup-processes))
 
 (defun replique2/on-repl-close (buffer process event)
   (cond ((string= "deleted\n" event)
+         (with-current-buffer buffer
+           (save-excursion
+             (goto-char (point-max))
+             (insert (concat "\n" event "\n"))))
          (replique2/cleanup-repl buffer))
         ((string= "connection broken by remote peer\n" event)
          (with-current-buffer buffer
@@ -491,8 +508,9 @@ The following commands are available:
                            "(ewen.replique.server/repl-clj)\n")
                           ((equal :cljs repl-type)
                            "(ewen.replique.server-cljs/repl-cljs)\n")
-                          (t (replique2/cleanup-process host port)
-                             (error "Invalid REPL type: %s" repl-type)))))
+                          (t (process-send-eof proc)
+                             (replique2/cleanup-processes)
+                             (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))
     (set-process-sentinel proc (-partial 'replique2/on-repl-close buff))
     ;; Discard the prompt
     (replique-async2/<!
@@ -553,9 +571,12 @@ The following commands are available:
 
 (defun replique2/on-tooling-repl-close
     (tooling-chan-src host port process event)
-  (cond ((string= "connection broken by remote peer\n" event)
+  (cond ((string= "deleted\n" event)
          (replique-async2/close! tooling-chan-src)
-         (replique2/cleanup-process host port))
+         (replique2/cleanup-repls host port))
+        ((string= "connection broken by remote peer\n" event)
+         (replique-async2/close! tooling-chan-src)
+         (replique2/cleanup-repls host port))
         (t nil)))
 
 (defun replique2/make-tooling-proc (host port callback)
@@ -627,7 +648,7 @@ The following commands are available:
                           clj-buff-name host port :clj)
                          (replique2/make-repl
                           cljs-buff-name host port :cljs t))
-                        (t (replique2/cleanup-process host port)
+                        (t (replique2/cleanup-repls host port)
                          (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))))))))))
 
 
