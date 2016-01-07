@@ -22,7 +22,7 @@
 
 (defun replique2/message-nolog (format-string &rest args)
   (let ((message-log-max nil))
-    (message format-string args)))
+    (apply 'message format-string args)))
 
 (defun replique2/visible-buffers ()
   (let ((buffers '()))
@@ -75,19 +75,37 @@
      (and (string= h host) (equal p port)))
    error-on-nil))
 
-(defun replique2/get-active-clj-buffer (&optional error-on-nil)
+(defun replique2/get-active-clj-repl (&optional error-on-nil)
   (->> (replique2/active-process-props error-on-nil)
-       (assoc :active-clj-repl)
-       cdr
-       (assoc :buffer)
-       cdr))
+       (assoc :active-clj-repl) cdr))
 
-(defun replique2/get-active-cljs-buffer (&optional error-on-nil)
+(defun replique2/get-active-cljs-repl (&optional error-on-nil)
   (->> (replique2/active-process-props error-on-nil)
-       (assoc :active-cljs-buff)
-       cdr
-       (assoc :buffer)
-       cdr))
+       (assoc :active-cljs-repl) cdr))
+
+(defun replique2/get-repl-by-session
+    (repl-type session &optional error-on-nil)
+  (let* ((props (replique2/active-process-props error-on-nil))
+         (repls (cond ((equal :clj repl-type)
+                       (cdr (assoc :clj-repls props)))
+                      ((equal :cljs repl-type)
+                       (cdr (assoc :cljs-repls props)))
+                      (t '()))))
+    (-first (lambda (repl)
+              (equal (cdr (assoc :session repl)) session))
+            repls)))
+
+(defun replique2/get-repl-by-buffer
+    (buffer &optional error-on-nil)
+  (let* ((props (replique2/active-process-props error-on-nil))
+         (clj-repls (cdr (assoc :clj-repls props)))
+         (cljs-repls (cdr (assoc :cljs-repls props))))
+    (or (-first (lambda (repl)
+                  (equal (cdr (assoc :buffer repl)) buffer))
+                clj-repls)
+        (-first (lambda (repl)
+                  (equal (cdr (assoc :buffer repl)) buffer))
+                cljs-repls))))
 
 (defun replique2/set-active-process (host port &optional display-msg)
   (interactive
@@ -124,7 +142,10 @@
 
 (defun replique2/comint-send-input (&optional no-newline artificial)
   (interactive)
-  (let ((proc (get-buffer-process (current-buffer))))
+  (let* ((buff (current-buffer))
+         (repl (replique2/get-repl-by-buffer buff))
+         (eval-chan (cdr (assoc :eval-chan repl)))
+         (proc (get-buffer-process buff)))
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
       (let* ((pmark (process-mark proc)))
@@ -132,7 +153,12 @@
                ;; terminated
                (and (equal (point) (point-max))
                     (replique2/comint-is-closed-sexpr pmark (point)))
-               (comint-send-input no-newline artificial))
+               (comint-send-input no-newline artificial)
+               (replique-async2/<!
+                eval-chan
+                (lambda (msg)
+                  (when msg
+                    (replique2/display-eval-result msg buff)))))
               ;; Point is after the prompt but (before the end of line or
               ;; the sexpr is not terminated)
               ((comint-after-pmark-p) (comint-accumulate))
@@ -161,22 +187,53 @@
       ;; but that scrolled the buffer in undesirable ways.
       (run-hook-with-args 'comint-output-filter-functions ""))))
 
+(defun replique2/display-eval-result (msg buff)
+  (when (not (-contains? (replique2/visible-buffers) buff))
+    (if (gethash :error msg)
+        (let ((value (gethash :value msg))
+              (repl-type (gethash :repl-type msg))
+              (ns (gethash :ns msg)))
+          (replique2/message-nolog "%s=> Error: %s" ns value))
+      (let ((result (gethash :result msg))
+            (repl-type (gethash :repl-type msg))
+            (ns (gethash :ns msg)))
+        (replique2/message-nolog "%s=> %s" ns result)))))
+
+(defun replique2/display-eval-results (msg1 msg2 clj-buff cljs-buff)
+  (replique2/message-nolog
+   "%s %s" (gethash :result msg1) (gethash :result msg2)))
+
 (defun replique2/send-input-from-source-dispatch
     (input &optional no-newline artificial)
-  (let ((extension (file-name-extension (buffer-name)))
-        (clj-buff (replique2/get-active-clj-buffer))
-        (cljs-buff (replique2/get-active-cljs-buffer)))
+  (-let ((extension (file-name-extension (buffer-name)))
+         ((&alist :buffer clj-buff
+                  :eval-chan clj-eval-chan)
+          (replique2/get-active-clj-repl))
+         ((&alist :buffer cljs-buff
+                  :eval-chan cljs-eval-chan)
+          (replique2/get-active-cljs-repl)))
     (cond ((string= "clj" extension)
            (if clj-buff
-               (with-current-buffer
-                   clj-buff
-                 (replique2/comint-send-input-from-source input))
+               (progn (with-current-buffer
+                          clj-buff
+                        (replique2/comint-send-input-from-source input))
+                      (replique-async2/<!
+                       clj-eval-chan
+                       (lambda (msg)
+                         (when msg
+                           (replique2/display-eval-result msg clj-buff)))))
              (user-error "No active Clojure buffer")))
           ((string= "cljs" extension)
            (if cljs-buff
-               (with-current-buffer
-                   cljs-buff
-                 (replique2/comint-send-input-from-source input))
+               (progn
+                 (with-current-buffer
+                     cljs-buff
+                   (replique2/comint-send-input-from-source input))
+                 (replique-async2/<!
+                  cljs-eval-chan
+                  (lambda (msg)
+                    (when msg
+                      (replique2/display-eval-result msg cljs-buff)))))
              (user-error "No active Clojurescript buffer")))
           ((string= "cljc" extension)
            (if (or clj-buff cljs-buff)
@@ -188,7 +245,39 @@
                  (when cljs-buff
                    (with-current-buffer
                        cljs-buff
-                     (replique2/comint-send-input-from-source input))))
+                     (replique2/comint-send-input-from-source input)))
+                 (cond ((and clj-buff cljs-buff)
+                        (let ((chan (replique-async2/chan)))
+                          (replique-async2/<!
+                           clj-eval-chan
+                           (lambda (msg)
+                             (replique-async2/put! chan msg)))
+                          (replique-async2/<!
+                           cljs-eval-chan
+                           (lambda (msg)
+                             (replique-async2/put! chan msg)))
+                          (replique-async2/<!
+                           chan
+                           (lambda (msg1)
+                             (replique-async2/<!
+                              chan
+                              (lambda (msg2)
+                                (replique2/display-eval-results
+                                 msg1 msg2 clj-buff cljs-buff)))))))
+                       (clj-buff
+                        (replique-async2/<!
+                         clj-eval-chan
+                         (lambda (msg)
+                           (when msg
+                             (replique2/display-eval-result
+                              msg clj-buff)))))
+                       (cljs-buff
+                        (replique-async2/<!
+                         cljs-eval-chan
+                         (lambda (msg)
+                           (when msg
+                             (replique2/display-eval-result
+                              msg cljs-buff)))))))
              (user-error "No active Clojure or Clojurescript buffer")))
           (t (user-error
               (format "Cannot eval from buffer %s" (current-buffer)))))))
@@ -320,6 +409,11 @@ The following commands are available:
      (cond ((null msg)
             (replique-async2/close! out-chan))
            ((equal :eval (gethash :type msg))
+            (let ((repl (replique2/get-repl-by-session
+                         (gethash :repl-type msg)
+                         (gethash :client (gethash :session msg)))))
+              (when repl
+                (replique-async2/put! (cdr (assoc :eval-chan repl)) msg)))
             (replique2/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async2/put! out-chan msg)
               (replique2/dispatch-eval-msg* in-chan out-chan))))))
@@ -343,7 +437,9 @@ The following commands are available:
                   (result-state (if result-state (cdr result-state) nil)))
              (if (equal :waiting (symbol-value result-state))
                  (replique-edn2/set-reader edn-state reader)
-               (replique-edn2/init-state reader edn-state))
+               (-> (replique-edn2/init-state reader edn-state)
+                   (replique-edn2/set-tagged-readers
+                    replique2/edn-tag-readers)))
              (replique-edn2/read edn-state)
              (-let (((&alist :result result
                              :result-state result-state)
@@ -438,11 +534,14 @@ The following commands are available:
                                   clj-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff)))
+                         (proc (get-buffer-process buff))
+                         (eval-chan (cdr (assoc :eval-chan repl))))
+                    (setcdr (assoc :clj-repls props)
+                            (delete repl clj-repls))
                     (when (and proc (process-live-p proc))
-                      (process-send-eof proc)))
-                  (setcdr (assoc :clj-repls props)
-                          (delete repl clj-repls)))
+                      (process-send-eof proc))
+                    (when eval-chan
+                      (replique-async2/close! eval-chan))))
                 (when (equal active-clj-repl repl)
                   (setcdr (assoc :active-clj-repl props)
                           (cadr (assoc :clj-repls props)))))
@@ -451,11 +550,14 @@ The following commands are available:
                                   cljs-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff)))
+                         (proc (get-buffer-process buff))
+                         (eval-chan (cdr (assoc :eval-chan repl))))
+                    (setcdr (assoc :cljs-repls props)
+                            (delete repl cljs-repls))
                     (when (and proc (process-live-p proc))
-                      (process-send-eof proc)))
-                  (setcdr (assoc :cljs-repls props)
-                          (delete repl cljs-repls)))
+                      (process-send-eof proc))
+                    (when eval-chan
+                      (replique-async2/close! eval-chan))))
                 (when (equal active-cljs-repl repl)
                   (setcdr (assoc :active-cljs-repl props)
                           (cadr (assoc :cljs-repls props)))))))
@@ -493,7 +595,7 @@ The following commands are available:
 
 (defun replique2/make-repl
     (buffer-name host port repl-type &optional pop-buff)
-  (-let* ((buff (make-comint buffer-name `(,host . ,port)))
+  (-let* ((buff (make-comint (concat " " buffer-name) `(,host . ,port)))
           (proc (get-buffer-process buff))
           (chan-src (replique2/process-filter-chan proc))
           (props (replique2/process-props-by-host-port host port))
@@ -519,9 +621,10 @@ The following commands are available:
               (replique-async2/close! chan-src)
               (set-buffer buff)
               (replique2/mode)
-              (process-send-string
-               proc repl-cmd)
-              (let ((repl `((:session . ,session) (:buffer . ,buff))))
+              (process-send-string proc repl-cmd)
+              (let ((repl `((:session . ,session)
+                            (:buffer . ,buff)
+                            (:eval-chan . ,(replique-async2/chan)))))
                 (when (equal :clj repl-type)
                   (setcdr (assoc :clj-repls props)
                           (push repl clj-repls))
@@ -579,7 +682,7 @@ The following commands are available:
             (replique-async2/close! chan)
             (process-send-string
              proc
-             "(ewen.replique.server/tooling-repl)\n")
+             "(ewen.replique.server/shared-tooling-repl)\n")
             (funcall callback proc)))))
 
 ;;;###autoload
