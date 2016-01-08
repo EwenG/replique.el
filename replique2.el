@@ -187,21 +187,56 @@
       ;; but that scrolled the buffer in undesirable ways.
       (run-hook-with-args 'comint-output-filter-functions ""))))
 
-(defun replique2/display-eval-result (msg buff)
-  (when (not (-contains? (replique2/visible-buffers) buff))
-    (if (gethash :error msg)
-        (let ((value (gethash :value msg))
-              (repl-type (gethash :repl-type msg))
-              (ns (gethash :ns msg)))
-          (replique2/message-nolog "%s=> Error: %s" ns value))
-      (let ((result (gethash :result msg))
+(defun replique2/keyword-to-string (k)
+  (substring (symbol-name k) 1))
+
+(defun replique2/format-eval-message (msg)
+  (if (gethash :error msg)
+      (let ((value (gethash :value msg))
             (repl-type (gethash :repl-type msg))
             (ns (gethash :ns msg)))
-        (replique2/message-nolog "%s=> %s" ns result)))))
+        (if (s-starts-with-p "Error:" value)
+            (format "(%s) %s=> %s"
+                    (replique2/keyword-to-string repl-type) ns value)
+          (format "(%s) %s=> Error: %s"
+                  (replique2/keyword-to-string repl-type) ns value)))
+    (let ((result (gethash :result msg))
+          (repl-type (gethash :repl-type msg))
+          (ns (gethash :ns msg)))
+      (format "(%s) %s=> %s"
+              (replique2/keyword-to-string repl-type) ns result))))
+
+(defun replique2/display-eval-result (msg buff)
+  (when (not (-contains? (replique2/visible-buffers) buff))
+    (replique2/message-nolog
+     (replique2/format-eval-message msg))))
+
+(defun replique2/format-eval-messages (clj-msg cljs-msg)
+  (cond ((and clj-msg cljs-msg)
+         (replique2/message-nolog
+          "%s\n%s"
+          (replique2/format-eval-message clj-msg)
+          (replique2/format-eval-message cljs-msg)))
+        (clj-msg (replique2/message-nolog
+                  (replique2/format-eval-message clj-msg)))
+        (cljs-msg (replique2/message-nolog
+                   (replique2/format-eval-message cljs-msg)))))
 
 (defun replique2/display-eval-results (msg1 msg2 clj-buff cljs-buff)
-  (replique2/message-nolog
-   "%s %s" (gethash :result msg1) (gethash :result msg2)))
+  (let ((visible-buffers (replique2/visible-buffers))
+        (clj-msg (-first (lambda (msg)
+                           (equal :clj (gethash :repl-type msg)))
+                         (list msg1 msg2)))
+        (cljs-msg (-first (lambda (msg)
+                            (equal :cljs (gethash :repl-type msg)))
+                          (list msg1 msg2))))
+    (cond ((and (not (-contains? visible-buffers clj-buff))
+                (not (-contains? visible-buffers cljs-buff)))
+           (replique2/format-eval-messages clj-msg cljs-msg))
+          ((not (-contains? visible-buffers clj-buff))
+           (replique2/format-eval-messages clj-msg nil))
+          ((not (-contains? visible-buffers cljs-buff))
+           (replique2/format-eval-messages nil cljs-msg)))))
 
 (defun replique2/send-input-from-source-dispatch
     (input &optional no-newline artificial)
@@ -263,7 +298,8 @@
                               chan
                               (lambda (msg2)
                                 (replique2/display-eval-results
-                                 msg1 msg2 clj-buff cljs-buff)))))))
+                                 msg1 msg2 clj-buff cljs-buff)
+                                (replique-async2/close! chan)))))))
                        (clj-buff
                         (replique-async2/<!
                          clj-eval-chan
@@ -293,7 +329,7 @@
   (interactive)
   (replique2/eval-region
    (save-excursion
-     (backward-sexp) (point))
+     (clojure-backward-logical-sexp 1) (point))
    (point)))
 
 (defun replique2/eval-defn ()
