@@ -59,7 +59,7 @@
 (defmethod replique-async2/>!
   ((ch replique-async2/chan-impl) item provider-callback)
   (cond ((null item)
-         (error "Cannot put nil in channel"))
+         (replique-async2/close! ch))
         ((oref ch closed) nil)
         (let ((listener (pop (oref ch listeners))))
           (if listener
@@ -84,7 +84,7 @@
 (defmethod replique-async2/put!
   ((ch replique-async2/chan-impl) item)
   (cond ((null item)
-         (error "Cannot put nil in channel"))
+         (replique-async2/close! ch))
         ((oref ch closed)
          nil)
         (t (let ((listener (pop (oref ch listeners))))
