@@ -523,88 +523,75 @@ The following commands are available:
  (replique2/cljs-buff-name "/home/egr" "127.0.0.1" 9000)
  )
 
-(defun replique2/cleanup-processes ()
-  (let ((all-props (-filter
-                    (-lambda ((&alist :clj-repls clj-repls
-                                :cljs-repls cljs-repls))
-                      (and (equal '() clj-repls)
-                           (equal '() cljs-repls)))
-                    replique2/processes))
-        (active-removed? nil))
-    (mapcar (-lambda (props)
-              (-let (((&alist :active active
-                              :tooling-proc tooling-proc)
-                      props))
-                (when active (setq active-removed? t))
-                (when (process-live-p tooling-proc)
-                  (set-process-filter
-                   tooling-proc (lambda (proc string) nil))
-                  (process-send-eof tooling-proc))
-                (setq replique2/processes
-                      (delete props replique2/processes))))
-            all-props)
-    (when active-removed?
-      (let ((props (car replique2/processes)))
-        (when props
-          (setcdr (assoc :active props) t))))))
+(defun replique2/cleanup-process (props)
+  (let ((active-removed? nil))
+    (-let (((&alist :active active
+                    :tooling-proc tooling-proc)
+            props))
+      (when (process-live-p tooling-proc)
+        (set-process-filter
+         tooling-proc (lambda (proc string) nil))
+        (process-send-eof tooling-proc))
+      (setq replique2/processes
+            (delete props replique2/processes))
+      (when active
+        (let ((props (car replique2/processes)))
+          (when props
+            (setcdr (assoc :active props) t)))))))
 
-(defun replique2/cleanup-repl (b)
-  (mapcar (lambda (props)
-            (-let (((&alist :clj-repls clj-repls
-                            :cljs-repls cljs-repls
-                            :active-clj-repl active-clj-repl
-                            :active-cljs-repl active-cljs-repl)
-                    props))
-              (let ((repl (-first (lambda (repl)
-                                    (eq b (cdr (assoc :buffer repl))))
-                                  clj-repls)))
-                (when repl
-                  (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff)))
-                    (setcdr (assoc :clj-repls props)
-                            (delete repl clj-repls))
-                    (when (and proc (process-live-p proc))
-                      (process-send-eof proc))))
-                (when (eq active-clj-repl repl)
-                  (setcdr (assoc :active-clj-repl props)
-                          (cadr (assoc :clj-repls props)))))
-              (let ((repl (-first (lambda (repl)
-                                    (eq b (cdr (assoc :buffer repl))))
-                                  cljs-repls)))
-                (when repl
-                  (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff)))
-                    (setcdr (assoc :cljs-repls props)
-                            (delete repl cljs-repls))
-                    (when (and proc (process-live-p proc))
-                      (process-send-eof proc))))
-                (when (eq active-cljs-repl repl)
-                  (setcdr (assoc :active-cljs-repl props)
-                          (cadr (assoc :cljs-repls props)))))))
-          replique2/processes)
-  (replique2/cleanup-processes))
+(defun replique2/cleanup-repl (host port b)
+  (-let* ((props (replique2/process-props-by-host-port host port))
+          ((&alist :clj-repls clj-repls
+                   :cljs-repls cljs-repls
+                   :active-clj-repl active-clj-repl
+                   :active-cljs-repl active-cljs-repl)
+           props)
+          (repl-clj (-first (lambda (repl)
+                          (eq b (cdr (assoc :buffer repl))))
+                            clj-repls))
+          (repl-cljs (-first (lambda (repl)
+                          (eq b (cdr (assoc :buffer repl))))
+                        cljs-repls)))
+    (when repl-clj
+      (let* ((buff (cdr (assoc :buffer repl-clj)))
+             (proc (get-buffer-process buff)))
+        (setcdr (assoc :clj-repls props)
+                (delete repl-clj clj-repls))
+        (when (and proc (process-live-p proc))
+          (process-send-eof proc)))
+      (when (eq active-clj-repl repl-clj)
+        (setcdr (assoc :active-clj-repl props)
+                (cadr (assoc :clj-repls props)))))
+    (when repl-cljs
+      (let* ((buff (cdr (assoc :buffer repl-cljs)))
+             (proc (get-buffer-process buff)))
+        (setcdr (assoc :cljs-repls props)
+                (delete repl-cljs cljs-repls))
+        (when (and proc (process-live-p proc))
+          (process-send-eof proc)))
+      (when (eq active-cljs-repl repl-cljs)
+        (setcdr (assoc :active-cljs-repl props)
+                (cadr (assoc :cljs-repls props)))))
+    (replique2/cleanup-process props)))
 
 (defun replique2/cleanup-repls (host port)
-  (mapcar (lambda (props)
-            (-let (((&alist :clj-repls clj-repls
-                            :cljs-repls cljs-repls
-                            :host h :port p)
-                    props))
-              (when (and (string= host h) (equal port p))
-                (mapcar (lambda (repl)
-                          (replique2/cleanup-repl
-                           (cdr (assoc :buffer repl))))
-                        clj-repls)
-                (mapcar (lambda (repl)
-                          (replique2/cleanup-repl
-                           (cdr (assoc :buffer repl))))
-                        cljs-repls))))
-          replique2/processes)
-  (replique2/cleanup-processes))
+  (let ((props (replique2/process-props-by-host-port host port)))
+    (-let (((&alist :clj-repls clj-repls
+                    :cljs-repls cljs-repls)
+            props))
+      (mapcar (lambda (repl)
+                (replique2/cleanup-repl
+                 (cdr (assoc :buffer repl))))
+              clj-repls)
+      (mapcar (lambda (repl)
+                (replique2/cleanup-repl
+                 (cdr (assoc :buffer repl))))
+              cljs-repls))
+    (replique2/cleanup-process props)))
 
-(defun replique2/on-repl-close (buffer process event)
+(defun replique2/on-repl-close (host port buffer process event)
   (cond ((string= "deleted\n" event)
-         (replique2/cleanup-repl buffer))
+         (replique2/cleanup-repl host port buffer))
         ((string= "connection broken by remote peer\n" event)
          (with-current-buffer buffer
            (save-excursion
@@ -623,7 +610,8 @@ The following commands are available:
                    :active-clj-repl active-clj-repl
                    :active-cljs-repl active-cljs-repl) props)
           (repl-cmd (format "(ewen.replique.server/repl %s)\n" repl-type)))
-    (set-process-sentinel proc (-partial 'replique2/on-repl-close buff))
+    (set-process-sentinel
+     proc (-partial 'replique2/on-repl-close host port buff))
     ;; Discard the prompt
     (replique-async2/<!
      chan-src
