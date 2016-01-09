@@ -1010,7 +1010,7 @@
 
 (comment
 
- (let* ((state1 (-> (replique-edn2/reader nil :str "1e3")
+ (let* ((state1 (-> (replique-edn2/reader nil :str "1e3") ;
                      replique-edn2/init-state))
         (reader2 (replique-edn2/reader nil :str "1 "))
         (state (replique-edn2/read state1)))

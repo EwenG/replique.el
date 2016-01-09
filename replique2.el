@@ -300,8 +300,7 @@
                               chan
                               (lambda (msg2)
                                 (replique2/display-eval-results
-                                 msg1 msg2 clj-buff cljs-buff)
-                                (replique-async2/close! chan)))))))
+                                 msg1 msg2 clj-buff cljs-buff)))))))
                        (clj-buff
                         (replique-async2/<!
                          clj-eval-chan
@@ -440,9 +439,7 @@ The following commands are available:
   (replique-async2/<!
    in-chan
    (lambda (msg)
-     (cond ((null msg)
-            (replique-async2/close! out-chan))
-           ((equal :eval (gethash :type msg))
+     (cond ((equal :eval (gethash :type msg))
             (let ((repl (replique2/get-repl-by-session
                          (gethash :repl-type msg)
                          (gethash :client (gethash :session msg)))))
@@ -461,32 +458,30 @@ The following commands are available:
   (replique-async2/<!
    chan-in
    (lambda (s)
-     (if (not s)
-         (replique-async2/close! chan-out)
-       (let ((continue t))
-         (while continue
-           (let* ((reader (replique-edn2/reader nil :str s))
-                  (result-state (assoc :result-state
-                                       (symbol-value edn-state)))
-                  (result-state (if result-state (cdr result-state) nil)))
-             (if (equal :waiting (symbol-value result-state))
-                 (replique-edn2/set-reader edn-state reader)
-               (-> (replique-edn2/init-state reader edn-state)
-                   (replique-edn2/set-tagged-readers
-                    replique2/edn-tag-readers)))
-             (replique-edn2/read edn-state)
-             (-let (((&alist :result result
-                             :result-state result-state)
-                     (symbol-value edn-state))
-                    (rest-string
-                     (replique-edn2/reader-rest-string reader)))
-               (when (car (symbol-value result))
-                 (replique-async2/put!
-                  chan-out (car (symbol-value result))))
-               (if (not (string= "" rest-string))
-                   (setq s rest-string)
-                 (setq continue nil)))))
-         (replique2/edn-read-stream* chan-in chan-out edn-state))))))
+     (let ((continue t))
+       (while continue
+         (let* ((reader (replique-edn2/reader nil :str s))
+                (result-state (assoc :result-state
+                                     (symbol-value edn-state)))
+                (result-state (if result-state (cdr result-state) nil)))
+           (if (equal :waiting (symbol-value result-state))
+               (replique-edn2/set-reader edn-state reader)
+             (-> (replique-edn2/init-state reader edn-state)
+                 (replique-edn2/set-tagged-readers
+                  replique2/edn-tag-readers)))
+           (replique-edn2/read edn-state)
+           (-let (((&alist :result result
+                           :result-state result-state)
+                   (symbol-value edn-state))
+                  (rest-string
+                   (replique-edn2/reader-rest-string reader)))
+             (when (car (symbol-value result))
+               (replique-async2/put!
+                chan-out (car (symbol-value result))))
+             (if (not (string= "" rest-string))
+                 (setq s rest-string)
+               (setq continue nil)))))
+       (replique2/edn-read-stream* chan-in chan-out edn-state)))))
 
 (defun replique2/edn-read-stream (chan-in)
   (let ((edn-state (-> (replique-edn2/reader nil :str "")
@@ -506,9 +501,6 @@ The following commands are available:
   (lambda (x)
     (print x)))
 
- (oref in-chan closed)
- (oref out-chan closed)
- (replique-async2/close! in-chan)
  (replique-async2/put! in-chan "3 ")
  )
 
@@ -568,14 +560,11 @@ The following commands are available:
                                   clj-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff))
-                         (eval-chan (cdr (assoc :eval-chan repl))))
+                         (proc (get-buffer-process buff)))
                     (setcdr (assoc :clj-repls props)
                             (delete repl clj-repls))
                     (when (and proc (process-live-p proc))
-                      (process-send-eof proc))
-                    (when eval-chan
-                      (replique-async2/close! eval-chan))))
+                      (process-send-eof proc))))
                 (when (eq active-clj-repl repl)
                   (setcdr (assoc :active-clj-repl props)
                           (cadr (assoc :clj-repls props)))))
@@ -584,14 +573,11 @@ The following commands are available:
                                   cljs-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
-                         (proc (get-buffer-process buff))
-                         (eval-chan (cdr (assoc :eval-chan repl))))
+                         (proc (get-buffer-process buff)))
                     (setcdr (assoc :cljs-repls props)
                             (delete repl cljs-repls))
                     (when (and proc (process-live-p proc))
-                      (process-send-eof proc))
-                    (when eval-chan
-                      (replique-async2/close! eval-chan))))
+                      (process-send-eof proc))))
                 (when (eq active-cljs-repl repl)
                   (setcdr (assoc :active-cljs-repl props)
                           (cadr (assoc :cljs-repls props)))))))
@@ -652,7 +638,6 @@ The following commands are available:
             (let ((session (gethash :client resp)))
               ;; Reset process filter to the default one
               (set-process-filter proc 'comint-output-filter)
-              (replique-async2/close! chan-src)
               (set-buffer buff)
               (replique2/mode)
               (process-send-string proc repl-cmd)
@@ -699,10 +684,8 @@ The following commands are available:
 (defun replique2/on-tooling-repl-close
     (tooling-chan-src host port process event)
   (cond ((string= "deleted\n" event)
-         (replique-async2/close! tooling-chan-src)
          (replique2/cleanup-repls host port))
         ((string= "connection broken by remote peer\n" event)
-         (replique-async2/close! tooling-chan-src)
          (replique2/cleanup-repls host port))
         (t nil)))
 
@@ -713,7 +696,6 @@ The following commands are available:
     (replique-async2/<!
      chan (lambda (x)
             (set-process-filter proc nil)
-            (replique-async2/close! chan)
             (process-send-string
              proc
              "(ewen.replique.server/shared-tooling-repl)\n")
