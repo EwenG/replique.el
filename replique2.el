@@ -101,13 +101,14 @@
          (clj-repls (cdr (assoc :clj-repls props)))
          (cljs-repls (cdr (assoc :cljs-repls props))))
     (or (-first (lambda (repl)
-                  (equal (cdr (assoc :buffer repl)) buffer))
+                  (eq (cdr (assoc :buffer repl)) buffer))
                 clj-repls)
         (-first (lambda (repl)
-                  (equal (cdr (assoc :buffer repl)) buffer))
+                  (eq (cdr (assoc :buffer repl)) buffer))
                 cljs-repls))))
 
-(defun replique2/set-active-process (host port &optional display-msg)
+(defun replique2/set-active-process
+    (host port &optional display-msg)
   (interactive
    (let* ((buffer-descs (mapcar
                          (-lambda ((&alist :directory dir
@@ -120,10 +121,11 @@
           (choosen (ido-completing-read
                     "Set active buffer to: "
                     buffer-names nil t)))
-     (list (cdr (-first
-                 (lambda (x) (string= (car x) choosen))
-                 buffer-descs))
-           t)))
+     (append '(choosen)
+             (cdr (-first
+                   (lambda (x) (string= (car x) choosen))
+                   buffer-descs))
+             '(t))))
   (setq replique2/processes
         (mapcar
          (-lambda (props)
@@ -134,7 +136,7 @@
                (replique2/assoc props :active nil))))
          replique2/processes))
   (when display-msg
-    (message "Active process switched to: %s" buffer-name)))
+    (message "Active process switched")))
 
 (defun replique2/comint-is-closed-sexpr (start limit)
   (let ((depth (car (parse-partial-sexp start limit))))
@@ -430,13 +432,9 @@ The following commands are available:
              replique-edn2/read-string
              (gethash :repl))))))
 
-(defvar replique2/tooling-reader-state nil)
-
 (defvar replique2/edn-tag-readers
-  `((error . identity)
-    (object . identity)
-    ;;Reader conditionals
-    (\? 'identity)))
+  `((error . ,'identity)
+    (object . ,'identity)))
 
 (defun replique2/dispatch-eval-msg* (in-chan out-chan)
   (replique-async2/<!
@@ -566,7 +564,7 @@ The following commands are available:
                             :active-cljs-repl active-cljs-repl)
                     props))
               (let ((repl (-first (lambda (repl)
-                                    (equal b (cdr (assoc :buffer repl))))
+                                    (eq b (cdr (assoc :buffer repl))))
                                   clj-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
@@ -578,11 +576,11 @@ The following commands are available:
                       (process-send-eof proc))
                     (when eval-chan
                       (replique-async2/close! eval-chan))))
-                (when (equal active-clj-repl repl)
+                (when (eq active-clj-repl repl)
                   (setcdr (assoc :active-clj-repl props)
                           (cadr (assoc :clj-repls props)))))
               (let ((repl (-first (lambda (repl)
-                                    (equal b (cdr (assoc :buffer repl))))
+                                    (eq b (cdr (assoc :buffer repl))))
                                   cljs-repls)))
                 (when repl
                   (let* ((buff (cdr (assoc :buffer repl)))
@@ -594,7 +592,7 @@ The following commands are available:
                       (process-send-eof proc))
                     (when eval-chan
                       (replique-async2/close! eval-chan))))
-                (when (equal active-cljs-repl repl)
+                (when (eq active-cljs-repl repl)
                   (setcdr (assoc :active-cljs-repl props)
                           (cadr (assoc :cljs-repls props)))))))
           replique2/processes)
@@ -757,18 +755,18 @@ The following commands are available:
                         (replique2/clj-buff-name directory host port))
                        (cljs-buff-name
                         (replique2/cljs-buff-name directory host port))
-                       (buff-props
-                        `((:directory . ,directory)
-                          (:active . t)
-                          (:tooling-proc . ,tooling-proc)
-                          (:host . ,host)
-                          (:port . ,port)
-                          (:tooling-chan . ,tooling-chan)
-                          (:clj-repls . ())
-                          (:cljs-repls . ())
-                          (:active-clj-repl . nil)
-                          (:active-cljs-repl . nil))))
+                       (buff-props `((:directory . ,directory)
+                                     (:active . t)
+                                     (:tooling-proc . ,tooling-proc)
+                                     (:host . ,host)
+                                     (:port . ,port)
+                                     (:tooling-chan . ,tooling-chan)
+                                     (:clj-repls . ,'())
+                                     (:cljs-repls . ,'())
+                                     (:active-clj-repl . ,nil)
+                                     (:active-cljs-repl . ,nil))))
                   (push buff-props replique2/processes)
+                  (replique2/set-active-process host port nil)
                   (cond ((equal :clj repl-type)
                          (replique2/make-repl
                           clj-buff-name host port :clj t))
@@ -778,7 +776,7 @@ The following commands are available:
                          (replique2/make-repl
                           cljs-buff-name host port :cljs t))
                         (t (replique2/cleanup-repls host port)
-                         (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))))))))))
+                           (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))))))))))
 
 
 (provide 'replique2)
