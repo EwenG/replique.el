@@ -16,10 +16,6 @@
   "Comment out one or more s-expressions."
   nil)
 
-(defun replique2/assoc (alist key val)
-  (assq-delete-all key alist)
-  (cons `(,key . ,val) alist))
-
 (defun replique2/message-nolog (format-string &rest args)
   (let ((message-log-max nil))
     (apply 'message format-string args)))
@@ -121,22 +117,26 @@
           (choosen (ido-completing-read
                     "Set active buffer to: "
                     buffer-names nil t)))
-     (append '(choosen)
-             (cdr (-first
+     (append (cdr (-first
                    (lambda (x) (string= (car x) choosen))
                    buffer-descs))
              '(t))))
-  (setq replique2/processes
-        (mapcar
-         (-lambda (props)
-           (-let (((&alist :host proc-host :port proc-port) props))
-             (if (and (string= proc-host host)
-                      (equal proc-port port))
-                 (replique2/assoc props :active t)
-               (replique2/assoc props :active nil))))
-         replique2/processes))
-  (when display-msg
-    (message "Active process switched")))
+  (let ((active-proc nil))
+    (mapcar
+     (lambda (props)
+       (-let (((&alist :host proc-host :port proc-port) props))
+         (print (assoc :active props))
+         (if (and (string= proc-host host)
+                  (equal proc-port port))
+             (progn (setcdr (assoc :active props) t)
+                    (setq active-proc props))
+           (setcdr (assoc :active props) nil))))
+     replique2/processes)
+    (if (and display-msg active-proc)
+        (-let (((&alist :directory dir :host host :port port) active-proc))
+          (message "Active process switched to %s"
+                   (format "%s|%s:%s" dir host port)))
+      (message "Active process switched"))))
 
 (defun replique2/comint-is-closed-sexpr (start limit)
   (let ((depth (car (parse-partial-sexp start limit))))
@@ -756,7 +756,7 @@ The following commands are available:
                        (cljs-buff-name
                         (replique2/cljs-buff-name directory host port))
                        (buff-props `((:directory . ,directory)
-                                     (:active . t)
+                                     (:active . ,t)
                                      (:tooling-proc . ,tooling-proc)
                                      (:host . ,host)
                                      (:port . ,port)
