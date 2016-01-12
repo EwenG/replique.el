@@ -473,7 +473,7 @@
 (defun replique2/load-file-cljc (file-path props clj-repl cljs-repl)
   (replique2/send-input-from-source-cljc
    (format "(clojure.core/load-file \"%s\")" file-path)
-   (format "(cljs.core/load-file \"%s\")" file-path)
+   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
    props clj-repl cljs-repl))
 
 (defun replique2/load-file ()
@@ -485,6 +485,28 @@
      (clojure-mode* . (-partial 'replique2/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique2/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique2/load-file-cljc file-path)))))
+
+(defun replique2/in-ns-clj (ns-name props clj-repl)
+  (replique2/send-input-from-source-clj-cljs
+   (format "(clojure.core/in-ns '%s)" ns-name) props clj-repl))
+
+(defun replique2/in-ns-cljs (ns-name props cljs-repl)
+  (replique2/send-input-from-source-clj-cljs
+   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+   props cljs-repl))
+
+(defun replique2/in-ns-cljc (ns-name props clj-repl cljs-repl)
+  (replique2/send-input-from-source-cljc
+   (format "(clojure.core/in-ns '%s)" ns-name)
+   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+   props clj-repl cljs-repl))
+
+(defun replique2/in-ns (ns-name)
+  (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
+  (replique2/with-modes-dispatch
+   (clojure-mode . (-partial 'replique2/in-ns-clj ns-name))
+   (clojurescript-mode . (-partial 'replique2/in-ns-cljs ns-name))
+   (clojurec-mode . (-partial 'replique2/in-ns-cljc ns-name))))
 
 (defvar replique2/mode-hook '()
   "Hook for customizing replique2 mode.")
