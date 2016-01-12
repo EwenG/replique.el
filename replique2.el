@@ -168,25 +168,16 @@
 
 (defun replique2/comint-send-input-from-source
     (input &optional no-newline artificial)
-  (let ((proc (get-buffer-process (current-buffer))))
-    (if (not proc) (user-error "Current buffer has no process")
-      (widen)
-      (comint-add-to-input-history input)
-      (run-hook-with-args 'comint-input-filter-functions
-                          (if no-newline input
-                            (concat input "\n")))
-
-      (comint-snapshot-last-prompt)
-
-      (setq comint-save-input-ring-index comint-input-ring-index)
-      (setq comint-input-ring-index nil)
-
-      (let ((comint-input-sender-no-newline no-newline))
-        (funcall comint-input-sender proc input))
-
-      ;; This used to call comint-output-filter-functions,
-      ;; but that scrolled the buffer in undesirable ways.
-      (run-hook-with-args 'comint-output-filter-functions ""))))
+  (let ((old-input (funcall comint-get-old-input))
+        (process (get-buffer-process (current-buffer))))
+    (if (not process)
+        (user-error "Current buffer has no process")
+      (comint-kill-input)
+      (goto-char (process-mark process))
+      (insert input)
+      (replique2/comint-send-input no-newline artificial)
+      (goto-char (process-mark process))
+      (insert old-input))))
 
 (defun replique2/keyword-to-string (k)
   (substring (symbol-name k) 1))
@@ -380,16 +371,6 @@
                     (replace-regexp-in-string "\n" ""))))
     (replique2/send-input-from-source-dispatch input)))
 
-(defun replique2/comint-refresh-prompt ()
-  (let ((old-input (funcall comint-get-old-input))
-        (process (get-buffer-process (current-buffer))))
-    (if (not process)
-        (user-error "Current buffer has no process")
-      (comint-kill-input)
-      (comint-send-input)
-      (goto-char (process-mark process))
-      (insert old-input))))
-
 (defun replique2/load-file-success (repl file-path res)
   (let ((buff (cdr (assoc :buffer repl))))
     (with-current-buffer buff
@@ -471,7 +452,7 @@
               (when cljs-repl
                 (replique2/load-file-success cljs-repl file-path res))
               (message "Loading file: %s ... Done" file-path))))))))
- )
+)
 
 (defun replique2/load-file-clj (file-path props clj-repl cljs-repl)
   (if clj-repl
@@ -479,12 +460,14 @@
        (format "(clojure.core/load-file \"%s\")" file-path)
        props clj-repl)
     (replique2/send-input-from-source-clj-cljs
-     (format "(clojure.core/load-file \"%s\")" file-path)
+     (format "(ewen.replique.cljs-env.macros/load-file :clj \"%s\")"
+             file-path)
      props cljs-repl)))
 
 (defun replique2/load-file-cljs (file-path props cljs-repl)
   (replique2/send-input-from-source-clj-cljs
-   (format "(cljs.core/load-file \"%s\")" file-path)
+   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")"
+           file-path)
    props cljs-repl))
 
 (defun replique2/load-file-cljc (file-path props clj-repl cljs-repl)
