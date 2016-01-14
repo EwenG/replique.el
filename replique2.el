@@ -174,17 +174,32 @@
               ;; Point is before the prompt. Do nothing.
               (t nil))))))
 
+(defun comint-kill-input ()
+  "Kill all text from last stuff output by interpreter to point."
+  (interactive)
+  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
+    (if (> (point) (marker-position pmark))
+	(kill-region pmark (point)))))
+
+(defun replique2/comint-kill-input ()
+  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
+    (if (> (point) (marker-position pmark))
+        (let ((killed (buffer-substring-no-properties pmark (point))))
+          (kill-region pmark (point))
+          killed)
+      "")))
+
 (defun replique2/comint-send-input-from-source (input)
-  (let ((old-input (funcall comint-get-old-input))
-        (process (get-buffer-process (current-buffer))))
+  (let ((process (get-buffer-process (current-buffer))))
     (when (not process)
       (user-error "Current buffer has no process"))
-    (comint-kill-input)
-    (goto-char (process-mark process))
-    (insert input)
-    (replique2/comint-send-input t)
-    (goto-char (process-mark process))
-    (insert old-input)))
+    (goto-char (point-max))
+    (let ((old-input (replique2/comint-kill-input)))
+         (goto-char (process-mark process))
+         (insert input)
+         (replique2/comint-send-input t)
+         (goto-char (process-mark process))
+         (insert old-input))))
 
 (defun replique2/keyword-to-string (k)
   (substring (symbol-name k) 1))
@@ -313,6 +328,12 @@
                            "No active Clojure or Clojurescript REPL"))))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
+                        (if ,cljs-buff-sym
+                            (funcall ,f ,props-sym ,cljs-repl-sym)
+                          (user-error
+                           "No active Clojurescript REPL"))))
+                     ((equal 'scss-mode m)
+                      `((equal 'scss-mode major-mode)
                         (if ,cljs-buff-sym
                             (funcall ,f ,props-sym ,cljs-repl-sym)
                           (user-error
@@ -531,14 +552,44 @@
    props clj-repl cljs-repl))
 
 (defun replique2/css-candidates (css-infos)
-  (-let* (((&hash :scheme scheme
-                  :uri uri
-                  :file-path file-path) css-infos))
+  (-let (((&hash :scheme scheme
+                 :uri uri
+                 :file-path file-path) css-infos))
     (cond ((string= "data" scheme)
            (concat "data-uri:" file-path))
           ((string= "http" scheme)
            uri)
           (t nil))))
+
+(defun replique2/sass-candidate (sass-infos)
+  (-let (((&hash :scheme scheme
+                 :file-path file-path
+                 :css-file css-file) sass-infos))
+    (cond ((string= "data" scheme)
+           (concat "data-uri:" file-path))
+          ((string= "http" scheme)
+           css-file)
+          (t nil))))
+
+(defun replique2/selected-saas-infos
+    (selected-scheme target-file sass-infos-list)
+  (if (string= "*new-data-uri*" target-file)
+      nil
+    (-find
+     (-lambda ((&hash :scheme scheme
+                :css-file css-file
+                :main-source main-source
+                :file-path file-path))
+       (cond ((and (string= "http" selected-scheme)
+                   (string= "http" scheme)
+                   (string= target-file css-file))
+              t)
+             ((and (string= "data" selected-scheme)
+                   (string= "data" scheme)
+                   (string= target-file (concat "data-uri:" file-path)))
+              t)
+             (t nil)))
+     sass-infos-list)))
 
 (defun replique2/uri-compare (url1 url2)
   (let* ((path1 (url-filename (url-generic-parse-url url1)))
@@ -575,14 +626,17 @@
      (lambda (resp)
        (let ((err (gethash :error resp)))
          (if err
-             (error "List css failed")
+             (progn
+               (message (replique-edn2/pr-str err))
+               (error "List css failed"))
            (funcall callback (gethash :css-infos resp))))))))
 
 (defun replique2/load-css (file-path props cljs-repl)
   (replique2/list-css
    props cljs-repl
    (lambda (css-infos)
-     (let* ((candidates (-map 'replique/css-candidates css-infos))
+     (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
+            (candidates (-map 'replique/css-candidates css-infos))
             (candidates (if (-contains?
                              candidates
                              (concat "data-uri:" file-path))
@@ -606,7 +660,75 @@
                        ((s-starts-with? "data-uri:" uri)
                         (s-chop-prefix "data-uri:" uri))
                        (t uri))))
-       (print uri)))))
+       (replique2/send-tooling-msg
+        props
+        `((:type . :load-css)
+          (:file-path . ,file-path)
+          (:uri . ,uri)
+          (:scheme . ,scheme)))
+       (replique-async2/<!
+        tooling-chan
+        (lambda (resp)
+          (let ((err (gethash :error resp)))
+            (if err
+                (progn
+                  (message (replique-edn2/pr-str err))
+                  (message "load-css %s: failed" file-path))
+              (message "load-css %s: done" file-path)))))))))
+
+(defun replique2/list-sass (props cljs-repl callback)
+  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
+    (when (not cljs-repl)
+      (user-error "No active Clojurescript REPL"))
+    (replique2/send-tooling-msg props `((:type . :list-sass)))
+    (replique-async2/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn2/pr-str err))
+               (error "List sass failed"))
+           (funcall callback (gethash :sass-infos resp))))))))
+
+(defun replique2/load-scss (file-path props cljs-repl)
+  (replique2/list-sass
+   props cljs-repl
+   (lambda (sass-infos)
+     (let* ((candidates (-map 'replique2/sass-candidate sass-infos))
+            (candidates (if (-contains?
+                             candidates (concat "data-uri:" file-path))
+                            candidates
+                          (append candidates '("*new-data-uri*"))))
+            (target-file (ido-completing-read
+                          "Compile scss to: "
+                          candidates
+                          nil t))
+            (scheme (cond ((string= "*new-data-uri*" target-file)
+                           "data")
+                          ((s-starts-with? "data-uri:" target-file)
+                           "data")
+                          (t "http")))
+            (sass-infos (replique2/selected-saas-infos
+                         scheme target-file sass-infos))
+            (uri (if (string= "*new-data-uri*" target-file)
+                     nil
+                   (gethash :uri sass-infos)))
+            (main-source (cond ((string= "*new-data-uri*" target-file)
+                                file-path)
+                               ((string= "data" scheme)
+                                (gethash :file-path sass-infos))
+                               (t (gethash :main-source sass-infos))))
+            (target-file (cond ((string= "*new-data-uri*" target-file)
+                                file-path)
+                               ((string= "data" scheme)
+                                (s-chop-prefix "data-uri:" target-file))
+                               (t target-file))))
+       (print `((:type . :load-scss)
+                (:scheme . ,scheme)
+                (:uri . ,uri)
+                (:file-path . ,target-file)
+                (:main-source . ,main-source)))))))
 
 (defun replique2/load-file ()
   "Load a file in a replique REPL"
@@ -617,11 +739,14 @@
      (clojure-mode* . (-partial 'replique2/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique2/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique2/load-file-cljc file-path))
-     (css-mode . (-partial 'replique2/load-css file-path)))))
+     (css-mode . (-partial 'replique2/load-css file-path))
+     (scss-mode . (-partial 'replique2/load-scss file-path)))))
 
 (defun replique2/in-ns-clj (ns-name props clj-repl)
   (replique2/send-input-from-source-clj-cljs
-   (format "(clojure.core/in-ns '%s)" ns-name) props clj-repl))
+   (format "(clojure.core/in-ns '%s)" ns-name)
+   'replique2/display-eval-result
+   props clj-repl))
 
 (defun replique2/in-ns-cljs (ns-name props cljs-repl)
   (replique2/send-input-from-source-clj-cljs
