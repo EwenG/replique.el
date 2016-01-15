@@ -460,70 +460,6 @@
             (replique-edn2/pr-str message)
             (replique-edn2/pr-str at))))
 
-(comment
- (defun replique2/format-exception-trace (trace)
-   (format "
-  %s" (replique-edn2/pr-str trace)))
-
- (defun replique2/format-exception (e)
-   (let* ((cause (gethash :cause e))
-          (via (gethash :via e))
-          (via-str (->> (mapcar 'replique2/format-exception-via via)
-                        (apply 'concat)))
-          (via-str (format "[%s]" (substring via-str 3)))
-          (trace (gethash :trace e))
-          (trace-str (->> (mapcar 'replique2/format-exception-trace trace)
-                          (apply 'concat)))
-          (trace-str (format "[%s]" (substring trace-str 3))))
-     (format "
-#error {
- :cause %s
- :via
- %s
- :trace
- %s}
-"
-             (replique-edn2/pr-str cause)
-             via-str
-             trace-str)))
-
- (defun replique2/load-file-failure (repl file-path err)
-   (let ((buff (cdr (assoc :buffer repl))))
-     (with-current-buffer buff
-       (comint-output-filter
-        (get-buffer-process (current-buffer))
-        (replique2/format-exception err))
-       (replique2/comint-refresh-prompt))))
-
- (defun replique2/load-file-clj (props repl args)
-   (let ((file-path (cdr (assoc :file-path args)))
-         (tooling-proc (cdr (assoc :tooling-proc props)))
-         (tooling-chan (cdr (assoc :tooling-chan props)))
-         (clj-buffer (cdr (assoc :buffer repl)))
-         (cljs-repl (cdr (assoc :active-cljs-repl props))))
-     (message "Loading file: %s ..." file-path)
-     (replique2/send-tooling-msg
-      props
-      `((:type . :load-file)
-        (:file-path . ,file-path)))
-     (replique-async2/<!
-      tooling-chan
-      (lambda (msg)
-        (let ((res (gethash :result msg))
-              (err (gethash :error msg)))
-          (if err
-              (progn
-                (replique2/load-file-failure repl file-path err)
-                (when cljs-repl
-                  (replique2/load-file-failure cljs-repl file-path err))
-                (message "Loading file: %s ... Failed" file-path))
-            (progn
-              (replique2/load-file-success repl file-path res)
-              (when cljs-repl
-                (replique2/load-file-success cljs-repl file-path res))
-              (message "Loading file: %s ... Done" file-path))))))))
-)
-
 (defun replique2/load-file-clj (file-path props clj-repl cljs-repl)
   (if clj-repl
       (replique2/send-input-from-source-clj-cljs
@@ -676,11 +612,12 @@
                   (message "load-css %s: failed" file-path))
               (message "load-css %s: done" file-path)))))))))
 
-(defun replique2/list-sass (props cljs-repl callback)
+(defun replique2/list-sass (file-path props cljs-repl callback)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
     (when (not cljs-repl)
       (user-error "No active Clojurescript REPL"))
-    (replique2/send-tooling-msg props `((:type . :list-sass)))
+    (replique2/send-tooling-msg props `((:type . :list-sass)
+                                        (:file-path . ,file-path)))
     (replique-async2/<!
      tooling-chan
      (lambda (resp)
@@ -693,42 +630,57 @@
 
 (defun replique2/load-scss (file-path props cljs-repl)
   (replique2/list-sass
-   props cljs-repl
+   file-path props cljs-repl
    (lambda (sass-infos)
-     (let* ((candidates (-map 'replique2/sass-candidate sass-infos))
+     (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
+            (candidates (-map 'replique2/sass-candidate sass-infos))
             (candidates (if (-contains?
                              candidates (concat "data-uri:" file-path))
                             candidates
                           (append candidates '("*new-data-uri*"))))
-            (target-file (ido-completing-read
-                          "Compile scss to: "
-                          candidates
-                          nil t))
-            (scheme (cond ((string= "*new-data-uri*" target-file)
-                           "data")
-                          ((s-starts-with? "data-uri:" target-file)
-                           "data")
-                          (t "http")))
-            (sass-infos (replique2/selected-saas-infos
-                         scheme target-file sass-infos))
-            (uri (if (string= "*new-data-uri*" target-file)
-                     nil
-                   (gethash :uri sass-infos)))
-            (main-source (cond ((string= "*new-data-uri*" target-file)
-                                file-path)
-                               ((string= "data" scheme)
-                                (gethash :file-path sass-infos))
-                               (t (gethash :main-source sass-infos))))
-            (target-file (cond ((string= "*new-data-uri*" target-file)
-                                file-path)
-                               ((string= "data" scheme)
-                                (s-chop-prefix "data-uri:" target-file))
-                               (t target-file))))
-       (print `((:type . :load-scss)
-                (:scheme . ,scheme)
-                (:uri . ,uri)
-                (:file-path . ,target-file)
-                (:main-source . ,main-source)))))))
+            (target-file (with-local-quit
+                           (ido-completing-read
+                            "Compile scss to: "
+                            candidates
+                            nil t))))
+       (if (null target-file)
+           nil
+         (let* ((scheme (cond ((string= "*new-data-uri*" target-file)
+                               "data")
+                              ((s-starts-with? "data-uri:" target-file)
+                               "data")
+                              (t "http")))
+                (sass-infos (replique2/selected-saas-infos
+                             scheme target-file sass-infos))
+                (uri (if (string= "*new-data-uri*" target-file)
+                         nil
+                       (gethash :uri sass-infos)))
+                (main-source (cond ((string= "*new-data-uri*" target-file)
+                                    file-path)
+                                   ((string= "data" scheme)
+                                    (gethash :file-path sass-infos))
+                                   (t (gethash :main-source sass-infos))))
+                (target-file (cond ((string= "*new-data-uri*" target-file)
+                                    file-path)
+                                   ((string= "data" scheme)
+                                    (s-chop-prefix "data-uri:" target-file))
+                                   (t target-file))))
+           (replique2/send-tooling-msg
+            props
+            `((:type . :load-scss)
+              (:scheme . ,scheme)
+              (:uri . ,uri)
+              (:file-path . ,target-file)
+              (:main-source . ,main-source)))
+           (replique-async2/<!
+            tooling-chan
+            (lambda (resp)
+              (let ((err (gethash :error resp)))
+                (if err
+                    (progn
+                      (message (replique-edn2/pr-str err))
+                      (message "load-scss %s: failed" file-path))
+                  (message "load-scss %s: done" file-path)))))))))))
 
 (defun replique2/load-file ()
   "Load a file in a replique REPL"
