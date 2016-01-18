@@ -837,7 +837,9 @@ The following commands are available:
                    (symbol-value edn-state))
                   (rest-string
                    (replique-edn2/reader-rest-string reader)))
-             (when (car (symbol-value result))
+             (when (and
+                    (not (equal :waiting (symbol-value result-state)))
+                    (car (symbol-value result)))
                (replique-async2/put!
                 chan-out (car (symbol-value result))))
              (if (not (string= "" rest-string))
@@ -1073,7 +1075,7 @@ The following commands are available:
            (let* ((tooling-chan-src (replique2/process-filter-chan
                                      tooling-proc))
                   (tooling-chan (-> tooling-chan-src
-                                    replique2/edn-read-stream
+                                    replique2/edn-read-stream2
                                     replique2/dispatch-eval-msg)))
              (set-process-sentinel
               tooling-proc
