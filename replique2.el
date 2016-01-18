@@ -437,9 +437,7 @@
 (defun replique2/eval-defn ()
   "Eval the current defn expression."
   (interactive)
-  (let ((input (->> (thing-at-point 'defun)
-                    (replace-regexp-in-string "\n" ""))))
-    (replique2/send-input-from-source-dispatch input)))
+  (replique2/send-input-from-source-dispatch (thing-at-point 'defun)))
 
 (defun replique2/load-file-success (repl file-path res)
   (let ((buff (cdr (assoc :buffer repl))))
@@ -742,18 +740,21 @@
 
 (defvar replique2/minor-mode-map
   (let ((map (make-sparse-keymap)))
-    (comment (define-key map "\C-c\C-r" 'replique2/eval-region)
-             (define-key map "\C-x\C-e" 'replique2/eval-last-sexp)
-             (define-key map "\C-\M-x" 'replique2/eval-defn)
-             (define-key map "\C-c\C-l" 'replique2/load-file)
-             (easy-menu-define replique2/minor-mode-menu map
-               "Replique Minor Mode Menu"
-               '("Replique"
-                 ["Eval region" replique2/eval-region t]
-                 ["Eval last sexp" replique2/eval-last-sexp t]
-                 ["Eval defn" replique2/eval-defn t]
-                 "--"
-                 ["Load file" replique2/load-file t])))
+    (define-key map "\C-c\C-r" 'replique2/eval-region)
+    (define-key map "\C-x\C-e" 'replique2/eval-last-sexp)
+    (define-key map "\C-\M-x" 'replique2/eval-defn)
+    (define-key map "\C-c\C-l" 'replique2/load-file)
+    (define-key map "\C-c\M-n" #'replique2/in-ns)
+    (easy-menu-define replique2/minor-mode-menu map
+      "Replique Minor Mode Menu"
+      '("Replique"
+        ["Eval region" replique2/eval-region t]
+        ["Eval last sexp" replique2/eval-last-sexp t]
+        ["Eval defn" replique2/eval-defn t]
+        "--"
+        ["Load file" replique2/load-file t]
+        "--"
+        ["Set REPL ns" replique2/in-ns t]))
     map))
 
 (defvar replique2/generic-minor-mode-map
@@ -870,7 +871,7 @@ The following commands are available:
          (msg (replique2/alist-to-map msg)))
     (process-send-string
      proc (format "(ewen.replique.server/tooling-msg-handle %s)\n"
-                  (replique-edn/pr-str msg)))))
+                  (replique-edn2/pr-str msg)))))
 
 (defun replique2/clj-buff-name (directory host port)
   (generate-new-buffer-name
