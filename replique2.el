@@ -1075,7 +1075,7 @@ The following commands are available:
            (let* ((tooling-chan-src (replique2/process-filter-chan
                                      tooling-proc))
                   (tooling-chan (-> tooling-chan-src
-                                    replique2/edn-read-stream2
+                                    replique2/edn-read-stream
                                     replique2/dispatch-eval-msg)))
              (set-process-sentinel
               tooling-proc
