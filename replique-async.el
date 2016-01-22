@@ -7,7 +7,7 @@
   "Comment out one or more s-expressions."
   nil)
 
-(defclass replique-async2/chan-impl ()
+(defclass replique-async/chan-impl ()
   ((listeners :initarg :listeners
               :type (or null cons)
               :initform '())
@@ -15,11 +15,11 @@
               :type (or null cons)
               :initform '())))
 
-(defun replique-async2/chan ()
-  (replique-async2/chan-impl nil :listeners nil :providers nil))
+(defun replique-async/chan ()
+  (replique-async/chan-impl nil :listeners nil :providers nil))
 
-(defmethod replique-async2/<!
-  ((ch replique-async2/chan-impl) listener-callback)
+(defmethod replique-async/<!
+  ((ch replique-async/chan-impl) listener-callback)
   (let ((provider (pop (oref ch providers))))
     (if provider
         (-let (((&alist :item item
@@ -35,8 +35,8 @@
                   (oset ch :listeners))
              nil))))
 
-(defmethod replique-async2/>!
-  ((ch replique-async2/chan-impl) item provider-callback)
+(defmethod replique-async/>!
+  ((ch replique-async/chan-impl) item provider-callback)
   (let ((listener (pop (oref ch listeners))))
     (if listener
         (-let (((&alist :listener-callback listener-callback) listener))
@@ -50,8 +50,8 @@
                   (oset ch :providers))
              nil))))
 
-(defmethod replique-async2/put!
-  ((ch replique-async2/chan-impl) item)
+(defmethod replique-async/put!
+  ((ch replique-async/chan-impl) item)
   (let ((listener (pop (oref ch listeners))))
     (if listener
         (-let (((&alist :listener-callback listener-callback) listener))
@@ -65,31 +65,31 @@
 
 
 (comment
- (let ((ch (replique-async2/chan-impl
+ (let ((ch (replique-async/chan-impl
             nil
             :listeners nil
             :providers nil)))
-   (replique-async2/<!
+   (replique-async/<!
     ch (lambda (val)
          (print val)))
-   (replique-async2/put! ch 3)
+   (replique-async/put! ch 3)
    ch)
 
- (let ((ch (replique-async2/chan-impl
+ (let ((ch (replique-async/chan-impl
             nil
             :listeners nil
             :providers nil)))
-   (replique-async2/>!
+   (replique-async/>!
     ch "r"
     (lambda ()
       (print "provided")))
-   (replique-async2/<!
+   (replique-async/<!
     ch
     (lambda (val)
       (print val)))
    ch)
  )
 
-(provide 'replique-async2)
+(provide 'replique-async)
 
-;;; replique-async2.el ends here
+;;; replique-async.el ends here
