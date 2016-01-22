@@ -761,6 +761,27 @@ This allows you to temporarily modify read-only buffers too."
       (when c (move-to-column c))
       (point))))
 
+(defun replique2/goto-file (symbol meta)
+  (let* ((file (when meta (gethash :file meta)))
+         (line (when meta (gethash :line meta)))
+         (column (when meta (gethash :column meta))))
+    (if (fboundp 'xref-push-marker-stack)
+        (xref-push-marker-stack)
+      (with-no-warnings
+        (ring-insert find-tag-marker-ring (point-marker))))
+    (cond
+     ((and file line column)
+      (find-file file)
+      (goto-char (replique2/pos-at-line-col line column)))
+     ((and file line)
+      (find-file file)
+      (goto-char (replique2/pos-at-line-col line column)))
+     (file
+      (find-file file))
+     (t
+      (pop-tag-mark)
+      (message "Don't know how to find '%s'" symbol)))))
+
 (defun replique2/jump-to-definition-clj (symbol props clj-repl)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
     (replique2/send-tooling-msg
@@ -778,29 +799,26 @@ This allows you to temporarily modify read-only buffers too."
              (progn
                (message (replique-edn2/pr-str err))
                (message "jump-to-definition %s: failed" symbol))
-           (let* ((meta (gethash :meta resp))
-                  (file (when meta (gethash :file meta)))
-                  (line (when meta (gethash :line meta)))
-                  (column (when meta (gethash :column meta))))
-             (if (fboundp 'xref-push-marker-stack)
-                 (xref-push-marker-stack)
-               (with-no-warnings
-                 (ring-insert find-tag-marker-ring (point-marker))))
-             (cond
-              ((and file line column)
-               (find-file file)
-               (goto-char (replique2/pos-at-line-col line column)))
-              ((and file line)
-               (find-file file)
-               (goto-char (replique2/pos-at-line-col line column)))
-              (file
-               (find-file file))
-              (t
-               (pop-tag-mark)
-               (message "Don't know how to find '%s'" symbol))))))))))
+           (replique2/goto-file symbol (gethash :meta resp))))))))
 
 (defun replique2/jump-to-definition-cljs (symbol props cljs-repl)
-  (print symbol))
+  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
+    (replique2/send-tooling-msg
+     props
+     `((:type . :cljs-var-meta)
+       (:context . ,(replique2/form-with-prefix))
+       (:ns . (quote ,(make-symbol (clojure-find-ns))))
+       (:symbol . (quote ,symbol))
+       (:keys . (quote (:file :line :column)))))
+    (replique-async2/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn2/pr-str err))
+               (message "jump-to-definition %s: failed" symbol))
+           (replique2/goto-file symbol (gethash :meta resp))))))))
 
 (defun replique2/jump-to-definition (symbol)
   (interactive (let* ((sym-at-point (symbol-at-point))
@@ -840,6 +858,7 @@ This allows you to temporarily modify read-only buffers too."
     (define-key map "\C-c\C-l" 'replique2/load-file)
     (define-key map "\C-c\M-n" 'replique2/in-ns)
     (define-key map "\M-." 'replique2/jump-to-definition)
+    (define-key map "\M-," 'pop-tag-mark)
     (easy-menu-define replique2/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
