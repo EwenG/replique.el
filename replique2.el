@@ -34,6 +34,14 @@
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
+(defun replique2/read-symbol (prompt default)
+  (list (let* ((prompt (if default
+                           (format "%s (default %s): " prompt default)
+                         (concat prompt ": ")))
+               (input (read-string prompt))
+               (input (if (zerop (length input)) default input)))
+          (if (zerop (length input)) nil (make-symbol input)))))
+
 (defgroup replique2 nil
   ""
   :group 'clojure)
@@ -717,7 +725,93 @@
   (replique2/with-modes-dispatch
    (clojure-mode . (-partial 'replique2/in-ns-clj ns-name))
    (clojurescript-mode . (-partial 'replique2/in-ns-cljs ns-name))
-   (clojurec-mode . (-partial 'replique2/in-ns-cljc ns-name))))
+   (clojurec-mode . (-partial 'replique2/in-ns-cljc ns-name)))) ;
+
+
+(defmacro replique2/temporary-invisible-change (&rest forms)
+  "Executes FORMS with a temporary buffer-undo-list, undoing on return.
+The changes you make within FORMS are undone before returning.
+But more importantly, the buffer's buffer-undo-list is not affected.
+This allows you to temporarily modify read-only buffers too."
+  `(let* ((buffer-undo-list)
+          (modified (buffer-modified-p))
+          (inhibit-read-only t)
+          (temporary-res nil))
+     (save-excursion
+       (unwind-protect
+           (setq temporary-res (progn ,@forms))
+         (primitive-undo (length buffer-undo-list) buffer-undo-list)
+         (set-buffer-modified-p modified)))
+     temporary-res))
+
+(defun replique2/form-with-prefix ()
+  (replique2/temporary-invisible-change
+   (let ((bounds (bounds-of-thing-at-point 'symbol)))
+     (if bounds
+         (progn (delete-region (car bounds) (cdr bounds))
+                (insert "__prefix__")
+                (thing-at-point 'defun))
+       nil))))
+
+(defun replique2/pos-at-line-col (l c)
+  (when l
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line (- l 1))
+      (when c (move-to-column c))
+      (point))))
+
+(defun replique2/jump-to-definition-clj (symbol props clj-repl)
+  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
+    (replique2/send-tooling-msg
+     props
+     `((:type . :clj-var-meta)
+       (:context . ,(replique2/form-with-prefix))
+       (:ns . (quote ,(make-symbol (clojure-find-ns))))
+       (:symbol . (quote ,symbol))
+       (:keys . (quote (:file :line :column)))))
+    (replique-async2/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn2/pr-str err))
+               (message "jump-to-definition %s: failed" symbol))
+           (let* ((meta (gethash :meta resp))
+                  (file (when meta (gethash :file meta)))
+                  (line (when meta (gethash :line meta)))
+                  (column (when meta (gethash :column meta))))
+             (if (fboundp 'xref-push-marker-stack)
+                 (xref-push-marker-stack)
+               (with-no-warnings
+                 (ring-insert find-tag-marker-ring (point-marker))))
+             (cond
+              ((and file line column)
+               (find-file file)
+               (goto-char (replique2/pos-at-line-col line column)))
+              ((and file line)
+               (find-file file)
+               (goto-char (replique2/pos-at-line-col line column)))
+              (file
+               (find-file file))
+              (t
+               (pop-tag-mark)
+               (message "Don't know how to find '%s'" symbol))))))))))
+
+(defun replique2/jump-to-definition-cljs (symbol props cljs-repl)
+  (print symbol))
+
+(defun replique2/jump-to-definition (symbol)
+  (interactive (let* ((sym-at-point (symbol-at-point))
+                      (at-point (and sym-at-point)))
+                 (if at-point
+                     (list at-point)
+                   (replique2/read-symbol "Symbol" nil))))
+  (replique2/with-modes-dispatch
+   (clojure-mode . (-partial 'replique2/jump-to-definition-clj symbol))
+   (clojurescript-mode . (-partial 'replique2/jump-to-definition-cljs
+                                   symbol))))
 
 (defvar replique2/mode-hook '()
   "Hook for customizing replique2 mode.")
@@ -744,7 +838,8 @@
     (define-key map "\C-x\C-e" 'replique2/eval-last-sexp)
     (define-key map "\C-\M-x" 'replique2/eval-defn)
     (define-key map "\C-c\C-l" 'replique2/load-file)
-    (define-key map "\C-c\M-n" #'replique2/in-ns)
+    (define-key map "\C-c\M-n" 'replique2/in-ns)
+    (define-key map "\M-." 'replique2/jump-to-definition)
     (easy-menu-define replique2/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -754,7 +849,10 @@
         "--"
         ["Load file" replique2/load-file t]
         "--"
-        ["Set REPL ns" replique2/in-ns t]))
+        ["Set REPL ns" replique2/in-ns t]
+        "--"
+        ["Jump to definition" replique2/jump-to-definition t]
+        ))
     map))
 
 (defvar replique2/generic-minor-mode-map
