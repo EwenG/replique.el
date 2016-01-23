@@ -11,6 +11,7 @@
 (require 'clojure-mode)
 (require 'replique-edn)
 (require 'replique-async)
+(require 'company)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -345,7 +346,12 @@
                         (if ,cljs-buff-sym
                             (funcall ,f ,props-sym ,cljs-repl-sym)
                           (user-error
-                           "No active Clojurescript REPL")))))))
+                           "No active Clojurescript REPL"))))
+                     ((equal 'replique/mode m)
+                      `((equal 'replique/mode major-mode)
+                        (funcall ,f ,props-sym
+                                 (replique/get-repl-by-buffer
+                                  (current-buffer))))))))
            modes-alist))
          (dispatch-code (append dispatch-code
                                 '((t (user-error
@@ -727,6 +733,47 @@
    (clojurescript-mode . (-partial 'replique/in-ns-cljs ns-name))
    (clojurec-mode . (-partial 'replique/in-ns-cljc ns-name)))) ;
 
+(defun replique/skip-regexp-forward (regexp)
+  (let ((data (match-data)))
+    (when (looking-at regexp)
+      (let ((match-length (-> (match-string 0)
+                              length)))
+        (forward-char match-length)
+        (set-match-data data)
+        (replique/skip-regexp-forward regexp)))
+    (set-match-data data)))
+
+(defun replique/skip-symbol-backward ()
+  (skip-chars-backward (concat "^" clojure--sym-forbidden-1st-chars))
+  (replique/skip-regexp-forward "#_\\|#\\|'"))
+
+(defun replique/skip-symbol-forward ()
+  (skip-chars-forward
+   (concat "^" clojure--sym-forbidden-rest-chars)))
+
+(defun replique/symbol-backward ()
+  (save-excursion
+    (let ((end (point)))
+      (replique/skip-symbol-backward)
+      (when (not (equal end (point)))
+        (buffer-substring-no-properties (point) end)))))
+
+(defun replique/symbol-at-point ()
+  (save-excursion
+    (replique/skip-symbol-backward)
+    (let ((begin (point)))
+      (replique/skip-symbol-forward)
+      (when (not (equal begin (point)))
+        (make-symbol
+         (buffer-substring-no-properties begin (point)))))))
+
+(defun replique/bounds-of-symbol-at-point ()
+  (save-excursion
+    (replique/skip-symbol-backward)
+    (let ((begin (point)))
+      (replique/skip-symbol-forward)
+      (when (not (equal begin (point)))
+        `(,begin . ,(point))))))
 
 (defmacro replique/temporary-invisible-change (&rest forms)
   "Executes FORMS with a temporary buffer-undo-list, undoing on return.
@@ -736,17 +783,18 @@ This allows you to temporarily modify read-only buffers too."
   `(let* ((buffer-undo-list)
           (modified (buffer-modified-p))
           (inhibit-read-only t)
-          (temporary-res nil))
-     (save-excursion
-       (unwind-protect
-           (setq temporary-res (progn ,@forms))
-         (primitive-undo (length buffer-undo-list) buffer-undo-list)
-         (set-buffer-modified-p modified)))
+          (temporary-res nil)
+          (temporary-point (point)))
+     (unwind-protect
+         (setq temporary-res (progn ,@forms))
+       (primitive-undo (length buffer-undo-list) buffer-undo-list)
+       (set-buffer-modified-p modified)
+       (goto-char temporary-point))
      temporary-res))
 
 (defun replique/form-with-prefix ()
-  (replique/temporary-invisible-change
-   (let ((bounds (bounds-of-thing-at-point 'symbol)))
+  (let ((bounds (replique/bounds-of-symbol-at-point)))
+    (replique/temporary-invisible-change
      (if bounds
          (progn (delete-region (car bounds) (cdr bounds))
                 (insert "__prefix__")
@@ -821,7 +869,7 @@ This allows you to temporarily modify read-only buffers too."
            (replique/goto-file symbol (gethash :meta resp))))))))
 
 (defun replique/jump-to-definition (symbol)
-  (interactive (let* ((sym-at-point (symbol-at-point))
+  (interactive (let* ((sym-at-point (replique/symbol-at-point))
                       (at-point (and sym-at-point)))
                  (if at-point
                      (list at-point)
@@ -830,6 +878,71 @@ This allows you to temporarily modify read-only buffers too."
    (clojure-mode . (-partial 'replique/jump-to-definition-clj symbol))
    (clojurescript-mode . (-partial 'replique/jump-to-definition-cljs
                                    symbol))))
+
+;; Auto completion
+
+(defun replique/auto-complete-session (prefix company-callback props repl)
+  (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
+         (repl-type (cdr (assoc :type repl)))
+         (msg-type (cond ((equal :clj repl-type)
+                          :clj-completion)
+                         ((equal :cljs repl-type)
+                          :cljs-completion)
+                         (t (error "Invalid REPL type: %s" repl-type)))))
+    (replique/send-tooling-msg
+     props
+     `((:type . ,msg-type)
+       (:context . ,(replique/form-with-prefix))
+       (:ns . ,(cdr (assoc :ns repl)))
+       (:prefix . ,prefix)))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn/pr-str err))
+               (message "completion failed with prefix %s" prefix))
+           (funcall company-callback (gethash :candidates resp))))))))
+
+(defun replique/auto-complete-clj (prefix company-callback props clj-repl)
+  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
+    (replique/send-tooling-msg
+     props
+     `((:type . :clj-completion)
+       (:context . ,(replique/form-with-prefix))
+       (:ns . (quote ,(make-symbol (clojure-find-ns))))
+       (:prefix . ,prefix)))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn/pr-str err))
+               (message "completion failed with prefix %s" prefix))
+           (funcall company-callback (gethash :candidates resp))))))))
+
+(defun replique/auto-complete-cljs (prefix company-callback props cljs-repl)
+  (funcall company-callback '()))
+
+(defun replique/auto-complete (prefix company-callback)
+  (replique/with-modes-dispatch
+   (replique/mode . (-partial 'replique/auto-complete-session
+                              prefix company-callback))
+   (clojure-mode . (-partial 'replique/auto-complete-clj
+                             prefix company-callback))
+   (clojurescript-mode . (-partial 'replique/auto-complete-cljs
+                                   prefix company-callback))))
+
+(defun replique/company-backend (command &optional arg &rest ignored)
+  (interactive (list 'interactive))
+  (case command
+    (interactive (company-begin-backend 'replique/company-backend))
+    (prefix (when (or (derived-mode-p 'clojure-mode)
+                      (derived-mode-p 'replique/mode))
+              (replique/symbol-backward)))
+    (candidates `(:async . ,(-partial 'replique/auto-complete arg)))))
 
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
@@ -847,7 +960,7 @@ This allows you to temporarily modify read-only buffers too."
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
-  ;;(add-to-list 'company-backends 'replique/company-backend)
+  (add-to-list 'company-backends 'replique/company-backend)
   )
 
 (defvar replique/minor-mode-map
@@ -886,7 +999,7 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
-  (comment (make-local-variable 'company-backends)))
+  (add-to-list 'company-backends 'replique/company-backend))
 
 ;;;###autoload
 (define-minor-mode replique/generic-minor-mode
@@ -923,6 +1036,7 @@ The following commands are available:
                          (gethash :repl-type msg)
                          (gethash :client (gethash :session msg)))))
               (when repl
+                (setcdr (assoc :ns repl) (gethash :ns msg))
                 (replique-async/put! (cdr (assoc :eval-chan repl)) msg)))
             (replique/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
@@ -1086,7 +1200,7 @@ The following commands are available:
         (t nil)))
 
 (defun replique/make-repl
-    (buffer-name host port repl-type &optional pop-buff)
+    (buffer-name host port repl-type init-ns &optional pop-buff)
   (-let* ((buff (make-comint (concat " " buffer-name) `(,host . ,port)))
           (proc (get-buffer-process buff))
           (chan-src (replique/process-filter-chan proc))
@@ -1111,22 +1225,24 @@ The following commands are available:
             (let ((session (gethash :client resp)))
               ;; Reset process filter to the default one
               (set-process-filter proc 'comint-output-filter)
-              (set-buffer buff)
-              (replique/mode)
-              (process-send-string proc repl-cmd)
-              (let ((repl `((:session . ,session)
-                            (:buffer . ,buff)
-                            (:eval-chan . ,(replique-async/chan)))))
-                (when (equal :clj repl-type)
-                  (setcdr (assoc :clj-repls props)
-                          (push repl clj-repls))
-                  (setcdr (assoc :active-clj-repl props) repl))
-                (when (equal :cljs repl-type)
-                  (setcdr (assoc :cljs-repls props)
-                          (push repl clj-repls))
-                  (setcdr (assoc :active-cljs-repl props) repl)))
-              (when pop-buff
-                (pop-to-buffer buff))))))))))
+               (set-buffer buff)
+               (replique/mode)
+               (process-send-string proc repl-cmd)
+               (let ((repl `((:type . ,repl-type)
+                             (:session . ,session)
+                             (:ns . ,init-ns)
+                             (:buffer . ,buff)
+                             (:eval-chan . ,(replique-async/chan)))))
+                 (when (equal :clj repl-type)
+                   (setcdr (assoc :clj-repls props)
+                           (push repl clj-repls))
+                   (setcdr (assoc :active-clj-repl props) repl))
+                 (when (equal :cljs repl-type)
+                   (setcdr (assoc :cljs-repls props)
+                           (push repl clj-repls))
+                   (setcdr (assoc :active-cljs-repl props) repl)))
+               (when pop-buff
+                 (pop-to-buffer buff))))))))))
 
 (defun replique/repl-existing (props)
   (-let (((&alist :active active
@@ -1149,10 +1265,12 @@ The following commands are available:
               (cljs-buff-name (replique/cljs-buff-name
                                directory host port)))
          (when (equal '() clj-repls)
-           (replique/make-repl clj-buff-name host port :clj t))
+           (replique/make-repl clj-buff-name host
+                               port :clj 'user t))
          (when (equal '() cljs-repls)
            (replique/cljs-buff-name directory host port)
-           (replique/make-repl cljs-buff-name host port :cljs)))))))
+           (replique/make-repl cljs-buff-name host
+                               port :cljs 'cljs.user)))))))
 
 (defun replique/on-tooling-repl-close
     (tooling-chan-src host port process event)
@@ -1224,12 +1342,12 @@ The following commands are available:
                   (replique/set-active-process host port nil)
                   (cond ((equal :clj repl-type)
                          (replique/make-repl
-                          clj-buff-name host port :clj t))
+                          clj-buff-name host port :clj 'user t))
                         ((equal :cljs repl-type)
                          (replique/make-repl
-                          clj-buff-name host port :clj)
+                          clj-buff-name host port :clj 'user)
                          (replique/make-repl
-                          cljs-buff-name host port :cljs t))
+                          cljs-buff-name host port :cljs 'cljs.user t))
                         (t (replique/cleanup-repls host port)
                            (error "Error while starting the REPL. Invalid REPL type: %s" repl-type)))))))))))))
 
