@@ -893,7 +893,7 @@ This allows you to temporarily modify read-only buffers too."
      props
      `((:type . ,msg-type)
        (:context . ,(replique/form-with-prefix))
-       (:ns . ,(cdr (assoc :ns repl)))
+       (:ns . (quote ,(cdr (assoc :ns repl))))
        (:prefix . ,prefix)))
     (replique-async/<!
      tooling-chan
