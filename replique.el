@@ -905,11 +905,11 @@ This allows you to temporarily modify read-only buffers too."
                (message "completion failed with prefix %s" prefix))
            (funcall company-callback (gethash :candidates resp))))))))
 
-(defun replique/auto-complete-clj (prefix company-callback props clj-repl)
+(defun replique/auto-complete* (prefix company-callback props msg-type)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
     (replique/send-tooling-msg
      props
-     `((:type . :clj-completion)
+     `((:type . ,msg-type)
        (:context . ,(replique/form-with-prefix))
        (:ns . (quote ,(make-symbol (clojure-find-ns))))
        (:prefix . ,prefix)))
@@ -923,8 +923,11 @@ This allows you to temporarily modify read-only buffers too."
                (message "completion failed with prefix %s" prefix))
            (funcall company-callback (gethash :candidates resp))))))))
 
+(defun replique/auto-complete-clj (prefix company-callback props clj-repl)
+  (replique/auto-complete* prefix company-callback props :clj-completion))
+
 (defun replique/auto-complete-cljs (prefix company-callback props cljs-repl)
-  (funcall company-callback '()))
+  (replique/auto-complete* prefix company-callback props :cljs-completion))
 
 (defun replique/auto-complete (prefix company-callback)
   (replique/with-modes-dispatch
