@@ -109,15 +109,17 @@
 
 (defun replique/get-repl-by-buffer
     (buffer &optional error-on-nil)
-  (let* ((props (replique/active-process-props error-on-nil))
-         (clj-repls (cdr (assoc :clj-repls props)))
-         (cljs-repls (cdr (assoc :cljs-repls props))))
-    (or (-first (lambda (repl)
-                  (eq (cdr (assoc :buffer repl)) buffer))
-                clj-repls)
-        (-first (lambda (repl)
-                  (eq (cdr (assoc :buffer repl)) buffer))
-                cljs-repls))))
+  (-some
+   (lambda (props)
+     (let* ((clj-repls (cdr (assoc :clj-repls props)))
+            (cljs-repls (cdr (assoc :cljs-repls props))))
+       (or (-first (lambda (repl)
+                     (eq (cdr (assoc :buffer repl)) buffer))
+                   clj-repls)
+           (-first (lambda (repl)
+                     (eq (cdr (assoc :buffer repl)) buffer))
+                   cljs-repls))))
+   replique/processes))
 
 (defun replique/set-active-process
     (host port &optional display-msg)
