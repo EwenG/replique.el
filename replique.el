@@ -95,6 +95,15 @@
   (->> (replique/active-process-props error-on-nil)
        (assoc :active-cljs-repl) cdr))
 
+(defun replique/get-active-repl-by-type (type &optional error-on-nil)
+  (let ((res (-first (lambda (repl)
+                       (equal type (cdr (assoc :type repl))))
+                     (list (replique/get-active-clj-repl error-on-nil)
+                           (replique/get-active-cljs-repl error-on-nil)))))
+    (when (and error-on-nil (null res))
+      (error "Invalid type %s" type))
+    res))
+
 (defun replique/get-repl-by-session
     (repl-type session &optional error-on-nil)
   (let* ((props (replique/active-process-props error-on-nil))
@@ -948,6 +957,27 @@ This allows you to temporarily modify read-only buffers too."
                       (derived-mode-p 'replique/mode))
               (replique/symbol-backward)))
     (candidates `(:async . ,(-partial 'replique/auto-complete arg)))))
+
+(defun replique/eval-form (repl-type form)
+  (message "Evaluating form %s ..." form)
+  (-let* ((form (replace-regexp-in-string "\n" " " form))
+          (repl (replique/get-active-repl-by-type repl-type t))
+          (eval-chan (cdr (assoc :eval-chan repl)))
+          (buff (cdr (assoc :buffer repl)))
+          (res nil)
+          (p (start-process "" nil nil)))
+    (with-current-buffer buff
+      (replique/comint-send-input-from-source form))
+    (replique-async/<!
+     eval-chan
+     (lambda (msg)
+       (setq res msg)
+       (process-send-string p "\n")
+       (delete-process p)))
+    (accept-process-output p)
+    (if (gethash :error res)
+        (gethash :value res)
+      (gethash :result res))))
 
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
