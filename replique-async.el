@@ -19,8 +19,15 @@
   (replique-async/chan-impl nil :listeners nil :providers nil))
 
 (defmethod replique-async/<!
-  ((ch replique-async/chan-impl) listener-callback)
-  (let ((provider (pop (oref ch providers))))
+  ((ch replique-async/chan-impl) listener-callback &optional next-tick)
+  (let (;; next-tick can be used to run the callback using a different
+        ;; dynamic context than the provider
+        (listener-callback (if next-tick
+                               (lambda (msg)
+                                 (run-at-time
+                                  nil nil listener-callback msg))
+                             listener-callback))
+        (provider (pop (oref ch providers))))
     (if provider
         (-let (((&alist :item item
                         :provider-callback provider-callback)

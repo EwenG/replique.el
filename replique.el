@@ -187,7 +187,8 @@
                   eval-chan
                   (lambda (msg)
                     (when msg
-                      (replique/display-eval-result msg buff))))))
+                      (replique/display-eval-result msg buff)))
+                  t)))
               ;; Point is after the prompt but (before the end of line or
               ;; the sexpr is not terminated)
               ((comint-after-pmark-p) (comint-accumulate))
@@ -385,7 +386,8 @@
      eval-chan
      (lambda (msg)
        (when msg
-         (funcall display-result-fn msg buff))))))
+         (funcall display-result-fn msg buff)))
+     t)))
 
 (defun replique/send-input-from-source-cljc
     (input-clj input-cljs display-result-fn display-results-fn
@@ -417,19 +419,22 @@
                  chan
                  (lambda (msg2)
                    (funcall display-results-fn
-                    msg1 msg2 clj-buff cljs-buff)))))))
+                            msg1 msg2 clj-buff cljs-buff))))
+              t)))
           (clj-buff
            (replique-async/<!
                      clj-eval-chan
                      (lambda (msg)
                        (when msg
-                         (funcall display-result-fn msg clj-buff)))))
+                         (funcall display-result-fn msg clj-buff)))
+                     t))
           (cljs-buff
            (replique-async/<!
                      cljs-eval-chan
                      (lambda (msg)
                        (when msg
-                         (funcall display-result-fn msg cljs-buff))))))))
+                         (funcall display-result-fn msg cljs-buff)))
+                     t)))))
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
@@ -588,7 +593,8 @@
              (progn
                (message (replique-edn/pr-str err))
                (error "List css failed"))
-           (funcall callback (gethash :css-infos resp))))))))
+           (funcall callback (gethash :css-infos resp)))))
+     t)))
 
 (defun replique/load-css (file-path props cljs-repl)
   (replique/list-css
@@ -633,7 +639,8 @@
                 (progn
                   (message (replique-edn/pr-str err))
                   (message "load-css %s: failed" file-path))
-              (message "load-css %s: done" file-path)))))))))
+              (message "load-css %s: done" file-path))))
+        t)))))
 
 (defun replique/list-sass (file-path props cljs-repl callback)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
@@ -649,7 +656,8 @@
              (progn
                (message (replique-edn/pr-str err))
                (error "List sass failed"))
-           (funcall callback (gethash :sass-infos resp))))))))
+           (funcall callback (gethash :sass-infos resp)))))
+     t)))
 
 (defun replique/load-scss (file-path props cljs-repl)
   (replique/list-sass
@@ -661,11 +669,10 @@
                              candidates (concat "data-uri:" file-path))
                             candidates
                           (append candidates '("*new-data-uri*"))))
-            (target-file (with-local-quit
-                           (ido-completing-read
-                            "Compile scss to: "
-                            candidates
-                            nil t))))
+            (target-file (ido-completing-read
+                          "Compile scss to: "
+                          candidates
+                          nil t)))
        (if (null target-file)
            nil
          (let* ((scheme (cond ((string= "*new-data-uri*" target-file)
@@ -703,7 +710,8 @@
                     (progn
                       (message (replique-edn/pr-str err))
                       (message "load-scss %s: failed" file-path))
-                  (message "load-scss %s: done" file-path)))))))))))
+                  (message "load-scss %s: done" file-path))))
+            t)))))))
 
 (defun replique/load-file ()
   "Load a file in a replique REPL"
@@ -858,7 +866,8 @@ This allows you to temporarily modify read-only buffers too."
              (progn
                (message (replique-edn/pr-str err))
                (message "jump-to-definition %s: failed" symbol))
-           (replique/goto-file symbol (gethash :meta resp))))))))
+           (replique/goto-file symbol (gethash :meta resp)))))
+     t)))
 
 (defun replique/jump-to-definition-cljs (symbol props cljs-repl)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
@@ -877,7 +886,8 @@ This allows you to temporarily modify read-only buffers too."
              (progn
                (message (replique-edn/pr-str err))
                (message "jump-to-definition %s: failed" symbol))
-           (replique/goto-file symbol (gethash :meta resp))))))))
+           (replique/goto-file symbol (gethash :meta resp)))))
+     t)))
 
 (defun replique/jump-to-definition (symbol)
   (interactive (let* ((sym-at-point (replique/symbol-at-point))
@@ -914,7 +924,8 @@ This allows you to temporarily modify read-only buffers too."
              (progn
                (message (replique-edn/pr-str err))
                (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp))))))))
+           (funcall company-callback (gethash :candidates resp)))))
+     t)))
 
 (defun replique/auto-complete* (prefix company-callback props msg-type)
   (let ((tooling-chan (cdr (assoc :tooling-chan props))))
@@ -932,7 +943,8 @@ This allows you to temporarily modify read-only buffers too."
              (progn
                (message (replique-edn/pr-str err))
                (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp))))))))
+           (funcall company-callback (gethash :candidates resp)))))
+     t)))
 
 (defun replique/auto-complete-clj (prefix company-callback props clj-repl)
   (replique/auto-complete* prefix company-callback props :clj-completion))
