@@ -5,6 +5,7 @@
 
 (require 'dash)
 (require 'dash-functional)
+(require 'eieio)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -474,6 +475,14 @@
           (symbol-value actions))
     (push "" (symbol-value result))))
 
+(defun replique-edn/position (c s)
+  (let* ((start 0)
+         (end (length s)))
+    (while (and (< start end) (not (equal c (aref s start))))
+      (setq start (1+ start)))
+    (if (and (< start end) (not (equal 0 end)))
+        start nil)))
+
 (defun replique-edn/parse-symbol (state)
   (-let* (((&alist :reader reader
                    :actions actions
@@ -484,7 +493,7 @@
           (token (when (and (not (string= "" token))
                             (not (string-suffix-p ":" token))
                             (not (string-prefix-p "::" token)))
-                   (let* ((ns-idx (position ?/ token))
+                   (let* ((ns-idx (replique-edn/position ?/ token))
                           (ns (when ns-idx
                                 (substring-no-properties
                                  token 0 ns-idx))))
@@ -498,10 +507,11 @@
                                           (not (string= "" sym))
                                           (not (string-suffix-p ":" ns))
                                           (or (string= sym "/")
-                                              (not (position ?/ sym))))
+                                              (not (replique-edn/position
+                                                    ?/ sym))))
                                  (list ns sym)))))
                        (when (or (string= token "/")
-                                 (not (position ?/ token)))
+                                 (not (replique-edn/position ?/ token)))
                          (list nil token)))))))
     (push token (symbol-value result))))
 
