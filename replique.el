@@ -1,5 +1,5 @@
 ;;; replique2.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.11.0") (company "0.8.12") (dash-functional "1.2.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.11.0") (company "0.9.0") (dash-functional "1.2.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -308,11 +308,11 @@
             (replique/format-load-file-message cljs-msg))))))
 
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
-  (let* ((props-sym (gensym))
-         (clj-repl-sym (gensym))
-         (cljs-repl-sym (gensym))
-         (clj-buff-sym (gensym))
-         (cljs-buff-sym (gensym))
+  (let* ((props-sym (make-symbol "props-sym"))
+         (clj-repl-sym (make-symbol "clj-repl-sym"))
+         (cljs-repl-sym (make-symbol "cljs-repl-sym"))
+         (clj-buff-sym (make-symbol "clj-buff-sym"))
+         (cljs-buff-sym (make-symbol "cljs-buff-sym"))
          (dispatch-code
           (mapcar
            (lambda (item)
@@ -811,7 +811,11 @@ This allows you to temporarily modify read-only buffers too."
        (goto-char temporary-point))
      temporary-res))
 
-(defun replique/form-with-prefix ()
+(defun replique/strip-text-properties(txt)
+  (set-text-properties 0 (length txt) nil txt)
+  txt)
+
+(defun replique/form-with-prefix* ()
   (let ((bounds (replique/bounds-of-symbol-at-point)))
     (replique/temporary-invisible-change
      (if bounds
@@ -819,6 +823,19 @@ This allows you to temporarily modify read-only buffers too."
                 (insert "__prefix__")
                 (thing-at-point 'defun))
        nil))))
+
+;; Execute in a temp buffer because company-mode expects the current buffer
+;; to not change at all
+(defun replique/form-with-prefix ()
+  (let ((defun-bounds (bounds-of-thing-at-point 'defun)))
+    (when defun-bounds
+      (let* ((point-offset-backward (- (cdr defun-bounds) (point)))
+             (defun-content (buffer-substring (car defun-bounds)
+                                              (cdr defun-bounds))))
+        (with-temp-buffer
+          (insert defun-content)
+          (backward-char point-offset-backward)
+          (replique/form-with-prefix*))))))
 
 (defun replique/pos-at-line-col (l c)
   (when l
@@ -963,12 +980,14 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/company-backend (command &optional arg &rest ignored)
   (interactive (list 'interactive))
-  (case command
-    (interactive (company-begin-backend 'replique/company-backend))
-    (prefix (when (or (derived-mode-p 'clojure-mode)
-                      (derived-mode-p 'replique/mode))
-              (replique/symbol-backward)))
-    (candidates `(:async . ,(-partial 'replique/auto-complete arg)))))
+  (cond
+   ((equal command 'interactive)
+    (company-begin-backend 'replique/company-backend))
+   ((equal command 'prefix) (when (or (derived-mode-p 'clojure-mode)
+                                      (derived-mode-p 'replique/mode))
+                              (replique/symbol-backward)))
+   ((equal command 'candidates)
+    `(:async . ,(-partial 'replique/auto-complete arg)))))
 
 (defun replique/eval-form (repl-type form)
   (message "Evaluating form %s ..." form)
