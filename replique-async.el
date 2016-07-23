@@ -1,4 +1,4 @@
-;;; replique-async2.el ---   -*- lexical-binding: t; -*-
+;;; replique-async.el ---   -*- lexical-binding: t; -*-
 ;;; Commentary:
 
 ;;; Code:
