@@ -7,6 +7,9 @@
   "Comment out one or more s-expressions."
   nil)
 
+(defun replique-async/with-new-dyn-context (fn &rest args)
+  (apply 'run-at-time nil nil fn args))
+
 (defclass replique-async/chan-impl ()
   ((listeners :initarg :listeners
               :type (or null cons)
@@ -20,21 +23,14 @@
 
 (defmethod replique-async/<!
   ((ch replique-async/chan-impl) listener-callback &optional next-tick)
-  (let (;; next-tick can be used to run the callback using a different
-        ;; dynamic context than the provider
-        (listener-callback (if next-tick
-                               (lambda (msg)
-                                 (run-at-time
-                                  nil nil listener-callback msg))
-                             listener-callback))
-        (provider (pop (oref ch providers))))
+  (let ((provider (pop (oref ch providers))))
     (if provider
         (-let (((&alist :item item
                         :provider-callback provider-callback)
                 provider))
-          (funcall listener-callback item)
+          (replique-async/with-new-dyn-context listener-callback item)
           (when provider-callback
-            (funcall provider-callback))
+            (replique-async/with-new-dyn-context provider-callback))
           item)
       (progn (->> `((:listener-callback . ,listener-callback))
                   list
@@ -47,8 +43,8 @@
   (let ((listener (pop (oref ch listeners))))
     (if listener
         (-let (((&alist :listener-callback listener-callback) listener))
-          (funcall listener-callback item)
-          (funcall provider-callback)
+          (replique-async/with-new-dyn-context listener-callback item)
+          (replique-async/with-new-dyn-context provider-callback)
           item)
       (progn (->> `((:item . ,item)
                     (:provider-callback . ,provider-callback))
@@ -62,7 +58,7 @@
   (let ((listener (pop (oref ch listeners))))
     (if listener
         (-let (((&alist :listener-callback listener-callback) listener))
-          (funcall listener-callback item)
+          (replique-async/with-new-dyn-context listener-callback item)
           item)
       (progn (->> `((:item . ,item))
                   list
