@@ -14,7 +14,13 @@
     (spit (str {:repl (-> @#'clojure.core.server/servers
                           (get :replique) :socket (.getLocalPort))}))
     (.deleteOnExit))
-  (println "REPL started"))
+  (prn {:host (-> @#'clojure.core.server/servers
+                  (get :replique) :socket
+                  (.getInetAddress) (.getHostAddress)
+                  server/normalize-ip-address)
+        :port (-> @#'clojure.core.server/servers
+                  (get :replique) :socket (.getLocalPort))
+        :directory (.getAbsolutePath (java.io.File. "."))}))
 
 (defmethod server/tooling-msg-handle :repl-infos [msg]
   (assoc (server/repl-infos) :repl-type :clj))
