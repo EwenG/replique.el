@@ -1442,10 +1442,14 @@ The following commands are available:
 
 (defun replique/repls-or-repl-by (filtering-fn source &rest args)
   (-let* ((pred (lambda (repl-props)
-                  (-all? (-lambda ((k . v))
-                             (or (not (plist-member args k))
-                                 (equal (plist-get args k) v)))
-                         repl-props)))
+                  (and
+                   (-all? (-lambda ((k . v))
+                            (or (not (plist-member args k))
+                                (equal (plist-get args k) v)))
+                          repl-props)
+                   (-all? (-lambda ((k . v))
+                            (plist-member repl-props k))
+                          args))))
           (found (funcall filtering-fn pred source)))
     (if (and (null found) (plist-get args :error-on-nil))
         (user-error "No started REPL")
@@ -1499,10 +1503,12 @@ The following commands are available:
     (replique/replace-or-remove removed-repl new-active-repl replique/active-repls)))
 
 (defun replique/close-tooling-repl (repl)
-  (-let (((&alist :proc tooling-proc) repl))
+  (-let (((&alist :network-proc tooling-network-proc :proc tooling-proc) repl))
+    (when (process-live-p tooling-network-proc)
+      (set-process-filter tooling-network-proc (lambda (proc string) nil))
+      (process-send-eof tooling-network-proc))
     (when (process-live-p tooling-proc)
-      (set-process-filter tooling-proc (lambda (proc string) nil))
-      (process-send-eof tooling-proc))
+      (delete-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))
     (replique/update-active-tooling-repl repl)))
 
@@ -1549,6 +1555,7 @@ The following commands are available:
          (chan (replique/process-filter-chan proc)))
     (replique-async/<!
      chan (lambda (x)
+            (set-process-filter proc (lambda (proc string) nil))
             ;;TODO handle errors while reading (if proc throws an exception)
             (let* ((repl-infos (replique-edn/read-string x))
                    (host (gethash :host repl-infos))
@@ -1558,17 +1565,18 @@ The following commands are available:
                    (tooling-chan (replique/process-filter-chan network-proc))
                    (repl-props `((:directory . ,directory)
                                  (:repl-type . :tooling)
-                                 (:proc . ,network-proc)
+                                 (:proc . ,proc)
+                                 (:network-proc . ,network-proc)
                                  (:host . ,host)
                                  (:port . ,port)
                                  (:chan . ,tooling-chan))))
               (set-process-sentinel
-               proc (-partial 'replique/on-tooling-repl-close2 chan host port))
+               network-proc (-partial 'replique/on-tooling-repl-close2 chan host port))
               ;; Discard the prompt
               (replique-async/<!
                tooling-chan (lambda (x)
                               (process-send-string
-                               proc
+                               network-proc
                                "(ewen.replique.server/shared-tooling-repl)\n")
                               (push repl-props replique/repls)
                               (replique-async/put! out-chan repl-props))))))))
@@ -1580,6 +1588,52 @@ The following commands are available:
               (print (process-status p)))
             tooling-procs)))
 
+(defun replique/on-repl-close2 (host port buffer process event)
+  (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
+    (when closing-repl
+      (cond ((string= "deleted\n" event)
+             (replique/close-repl closing-repl))
+            ((string= "connection broken by remote peer\n" event)
+             (with-current-buffer buffer
+               (save-excursion
+                 (goto-char (point-max))
+                 (insert (concat "\n" event "\n"))))
+             (replique/close-repl closing-repl))
+            (t nil)))))
+
+(defun replique/make-repl2 (buffer-name host port make-active)
+  (-let* ((buff (make-comint (concat " " buffer-name) `(,host . ,port)))
+          (proc (get-buffer-process buff))
+          (chan-src (replique/process-filter-chan proc))
+          (repl-cmd (format "(ewen.replique.server/repl :clj)\n")))
+    (set-process-sentinel
+     proc (-partial 'replique/on-repl-close2 host port buff))
+    ;; Discard the prompt
+    (replique-async/<!
+     chan-src
+     (lambda (x)
+       (let ((chan (replique/edn-read-stream chan-src)))
+         (process-send-string proc "(ewen.replique.server/tooling-repl)\n")
+         ;; Get the session number
+         (process-send-string proc "clojure.core.server/*session*\n")
+         (replique-async/<!
+          chan
+          (lambda (resp)
+            (let ((session (gethash :client resp)))
+              ;; Reset process filter to the default one
+              (set-process-filter proc 'comint-output-filter)
+              (set-buffer buff)
+              (replique/mode)
+              (process-send-string proc repl-cmd)
+              (let ((repl `((:type . :clj)
+                            (:session . ,session)
+                            (:ns . 'user)
+                            (:buffer . ,buff)
+                            (:eval-chan . ,(replique-async/chan)))))
+                (push repl replique/repls))
+              (when t
+                (pop-to-buffer buff))))))))))
+
 ;;;###autoload
 (defun replique/repl2 (&optional directory host port)
   (interactive            
@@ -1588,12 +1642,10 @@ The following commands are available:
          (host "127.0.0.1")
          (port (read-number "Port number: " 0)))
      (list directory host port)))
-  
   (if (not (replique/is-valid-port-nb? port))
       (message "Invalid port number: %d" port)
     (when (not (replique/is-lein-project directory))
       (error "Not a lein project"))
-    
     (let* ((existing-repl (replique/repl-by :host host :port port :repl-type :tooling))
            (tooling-repl-chan (replique-async/chan)))
       (if existing-repl
@@ -1601,8 +1653,12 @@ The following commands are available:
         (replique/make-tooling-repl host port directory tooling-repl-chan))
       (replique-async/<!
        tooling-repl-chan
-       (lambda (tooling-repl)
-         (replique/close-repls host (cdr (assoc :port tooling-repl))))))))
+       (-lambda ((&alist :directory directory
+                         :host host :port port
+                         :chan tooling-chan))
+         (let* ((buff-name (replique/clj-buff-name directory host port)))
+           (replique/make-repl2 buff-name host port))
+         (comment (replique/close-repls host (cdr (assoc :port tooling-repl)))))))))
 
 (provide 'replique)
 
