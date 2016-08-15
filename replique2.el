@@ -683,34 +683,36 @@ The following commands are available:
     (replique-async/<!
      chan (lambda (x)
             (set-process-filter proc (lambda (proc string) nil))
-            ;;TODO handle errors while reading (if proc throws an exception)
-            (let* ((repl-infos (replique-edn/read-string x))
-                   (host (gethash :host repl-infos))
-                   (port (gethash :port repl-infos))
-                   (directory (replique/normalize-directory-name
-                               (gethash :directory repl-infos)))
-                   (network-proc (open-network-stream directory nil host port))
-                   (tooling-chan (replique/process-filter-chan network-proc)))
-              (set-process-sentinel
-               network-proc (-partial 'replique/on-tooling-repl-close chan host port))
-              ;; Discard the prompt
-              (replique-async/<!
-               tooling-chan (lambda (x)
-                              (process-send-string
-                               network-proc
-                               "(ewen.replique.server/shared-tooling-repl)\n")
-                              (let* ((tooling-chan (-> tooling-chan
-                                                       replique/edn-read-stream
-                                                       replique/dispatch-eval-msg))
-                                     (repl-props `((:directory . ,directory)
-                                                   (:repl-type . :tooling)
-                                                   (:proc . ,proc)
-                                                   (:network-proc . ,network-proc)
-                                                   (:host . ,host)
-                                                   (:port . ,port)
-                                                   (:chan . ,tooling-chan))))
-                                (push repl-props replique/repls)
-                                (replique-async/put! out-chan repl-props)))))))))
+            ;; Catch errors during the clojure process startup
+            (condition-case nil
+                (let* ((repl-infos (replique-edn/read-string x))
+                       (host (gethash :host repl-infos))
+                       (port (gethash :port repl-infos))
+                       (directory (replique/normalize-directory-name
+                                   (gethash :directory repl-infos)))
+                       (network-proc (open-network-stream directory nil host port))
+                       (tooling-chan (replique/process-filter-chan network-proc)))
+                  (set-process-sentinel
+                   network-proc (-partial 'replique/on-tooling-repl-close chan host port))
+                  ;; Discard the prompt
+                  (replique-async/<!
+                   tooling-chan (lambda (x)
+                                  (process-send-string
+                                   network-proc
+                                   "(ewen.replique.server/shared-tooling-repl)\n")
+                                  (let* ((tooling-chan (-> tooling-chan
+                                                           replique/edn-read-stream
+                                                           replique/dispatch-eval-msg))
+                                         (repl-props `((:directory . ,directory)
+                                                       (:repl-type . :tooling)
+                                                       (:proc . ,proc)
+                                                       (:network-proc . ,network-proc)
+                                                       (:host . ,host)
+                                                       (:port . ,port)
+                                                       (:chan . ,tooling-chan))))
+                                    (push repl-props replique/repls)
+                                    (replique-async/put! out-chan repl-props)))))
+              (error (error "Error while starting the REPL: %s" x)))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
