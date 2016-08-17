@@ -104,7 +104,7 @@
 ;; Auto completion
 
 (defun replique/auto-complete-session (prefix company-callback props repl)
-  (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
+  (let* ((tooling-chan (cdr (assoc :chan props)))
          (repl-type (cdr (assoc :repl-type repl)))
          (msg-type (cond ((equal :clj repl-type)
                           :clj-completion)
