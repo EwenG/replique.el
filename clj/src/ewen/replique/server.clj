@@ -1,6 +1,6 @@
 (ns ewen.replique.server
   (:require [clojure.main]
-            [clojure.core.server :refer [*session*]]
+            [clojure.core.server :refer [start-server *session*]]
             [clojure.java.io :refer [file]]
             [ewen.replique.compliment.context :as context]
             [ewen.replique.compliment.sources.local-bindings
@@ -52,6 +52,27 @@
                 (.getInetAddress) (.getHostAddress) normalize-ip-address)
       :port (-> (:socket server-infos) (.getLocalPort))}}))
 
+(defmethod repl-dispatch [:clj nil]
+  [{:keys [port type cljs-env directory] :as opts}]
+  (try
+    (alter-var-root #'directory (constantly directory))
+    (start-server {:port port :name :replique
+                   :accept 'clojure.core.server/repl
+                   :server-daemon false})
+    (doto (file ".replique-port")
+      (spit (str {:repl (-> @#'clojure.core.server/servers
+                            (get :replique) :socket (.getLocalPort))}))
+      (.deleteOnExit))
+    (prn {:host (-> @#'clojure.core.server/servers
+                    (get :replique) :socket
+                    (.getInetAddress) (.getHostAddress)
+                    normalize-ip-address)
+          :port (-> @#'clojure.core.server/servers
+                    (get :replique) :socket (.getLocalPort))
+          :directory (.getAbsolutePath (file "."))})
+    (catch Throwable t
+      (prn {:error t}))))
+
 (defn tooling-repl []
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
@@ -79,6 +100,11 @@
 
 (defn shutdown []
   (clojure.core.server/stop-servers))
+
+(defmethod tooling-msg-handle :shutdown [msg]
+  (with-tooling-response msg
+    (shutdown)
+    {:shutdown true}))
 
 (defmulti repl (fn [type] type))
 
