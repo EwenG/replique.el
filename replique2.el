@@ -17,6 +17,13 @@
   "Comment out one or more s-expressions."
   nil)
 
+(defun replique/alist-to-map (alist)
+  (let ((m (make-hash-table :test 'equal)))
+    (mapcar (-lambda ((k . v))
+              (puthash k v m))
+            alist)
+    m))
+
 (defun replique/keyword-to-string (k)
   (substring (symbol-name k) 1))
 
@@ -115,7 +122,7 @@
      t)))
 
 (defun replique/auto-complete* (prefix company-callback props msg-type)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
+  (let ((tooling-chan (cdr (assoc :chan props))))
     (replique/send-tooling-msg
      props
      `((:repl-type . ,msg-type)
@@ -248,7 +255,7 @@ This allows you to temporarily modify read-only buffers too."
   (let ((depth (car (parse-partial-sexp start limit))))
     (if (<= depth 0) t nil)))
 
-(defun replique/comint-send-input ()
+(defun replique/comint-send-input (&optional no-read-eval-chan)
   (interactive)
   (let* ((buff (current-buffer))
          (repl (replique/repl-by :buffer buff))
@@ -261,7 +268,15 @@ This allows you to temporarily modify read-only buffers too."
                ;; terminated
                (and (equal (point) (point-max))
                     (replique/comint-is-closed-sexpr pmark (point)))
-               (comint-send-input))
+               (comint-send-input)
+               ;; when replique/comint-send-input is called programmatically, the channel is
+               ;; already handled elsewhere
+               (when (null no-read-eval-chan)
+                 (replique-async/<!
+                  eval-chan
+                  (lambda (msg)
+                    (when msg
+                      (replique/display-eval-result msg buff))))))
               ;; Point is after the prompt but (before the end of line or
               ;; the sexpr is not terminated)
               ((comint-after-pmark-p) (comint-accumulate))
@@ -413,7 +428,7 @@ This allows you to temporarily modify read-only buffers too."
     (let ((old-input (replique/comint-kill-input)))
          (goto-char (process-mark process))
          (insert input)
-         (replique/comint-send-input)
+         (replique/comint-send-input t)
          (goto-char (process-mark process))
          (insert old-input))))
 
@@ -448,11 +463,13 @@ This allows you to temporarily modify read-only buffers too."
              (replique-async/<!
               clj-eval-chan
               (lambda (msg)
-                (replique-async/put! chan msg)))
+                (when msg
+                  (replique-async/put! chan msg))))
              (replique-async/<!
               cljs-eval-chan
               (lambda (msg)
-                (replique-async/put! chan msg)))
+                (when msg
+                  (replique-async/put! chan msg))))
              (replique-async/<!
               chan
               (lambda (msg1)
@@ -629,27 +646,40 @@ The following commands are available:
 (defun replique/is-valid-port-nb? (port-nb)
   (< -1 port-nb 65535))
 
+(defun replique/send-tooling-msg (tooling-repl msg)
+  (-let (((&alist :network-proc tooling-network-proc) tooling-repl)
+         (msg (replique/alist-to-map msg)))
+    (process-send-string
+     tooling-network-proc
+     (format "(ewen.replique.server/tooling-msg-handle %s)\n"
+             (replique-edn/pr-str msg)))))
+
 (defun replique/close-tooling-repl (repl)
-  (-let (((&alist :network-proc tooling-network-proc :proc tooling-proc) repl))
-    (when (process-live-p tooling-network-proc)
-      (set-process-filter tooling-network-proc (lambda (proc string) nil))
-      (process-send-eof tooling-network-proc))
+  (-let (((&alist :proc tooling-proc :chan tooling-chan) repl))
+    (replique-async/close! tooling-chan)
     (when (process-live-p tooling-proc)
       (delete-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
 (defun replique/close-repl (repl-props)
-  (-let* (((&alist :buffer buffer :host host :port port) repl-props)
-          (proc (get-buffer-process buffer)))
+  (-let* (((&alist :buffer buffer :host host :port port :eval-chan eval-chan) repl-props))
+    (replique-async/close! eval-chan)
     (setq replique/repls (delete repl-props replique/repls))
-    (when (and proc (process-live-p proc))
-      (process-send-eof proc))
     ;; If the only repl left is a tooling repl, then close it
     (let ((other-repls (replique/repls-by :host host :port port)))
       (when (-all? (-lambda ((&alist :repl-type repl-type))
                      (equal :tooling repl-type))
                    other-repls)
-        (mapcar 'replique/close-tooling-repl other-repls)))))
+        (mapcar (lambda (tooling-repl)
+                  (-let (((&alist :chan tooling-chan) tooling-repl))
+                    (replique/send-tooling-msg tooling-repl `((:type . :shutdown)))
+                    (replique-async/<!
+                     tooling-chan
+                     (lambda (msg)
+                       (when (gethash :error msg)
+                         (error "Error while shuting down the REPL: %s"
+                                (replique-edn/pr-str (gethash :error msg))))))))
+                other-repls)))))
 
 (defun replique/close-repls (host port)
   (let* ((repls (replique/repls-by :host host :port port))
@@ -663,7 +693,6 @@ The following commands are available:
               (replique/close-repl))
             not-tooling-repls)
     (mapcar (lambda (repl)
-              (replique/remove-from-active-repls host port)
               (replique/close-tooling-repl repl))
             tooling-repls)))
 
@@ -679,40 +708,39 @@ The following commands are available:
   (let* ((default-directory directory)
          (repl-cmd (replique/lein-command port))
          (proc (apply 'start-file-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (chan (replique/process-filter-chan proc)))
+         (chan (replique/edn-read-stream (replique/process-filter-chan proc))))
     (replique-async/<!
-     chan (lambda (x)
+     chan (lambda (repl-infos)
             (set-process-filter proc (lambda (proc string) nil))
-            ;; Catch errors during the clojure process startup
-            (condition-case nil
-                (let* ((repl-infos (replique-edn/read-string x))
-                       (host (gethash :host repl-infos))
-                       (port (gethash :port repl-infos))
-                       (directory (replique/normalize-directory-name
-                                   (gethash :directory repl-infos)))
-                       (network-proc (open-network-stream directory nil host port))
-                       (tooling-chan (replique/process-filter-chan network-proc)))
-                  (set-process-sentinel
-                   network-proc (-partial 'replique/on-tooling-repl-close chan host port))
-                  ;; Discard the prompt
-                  (replique-async/<!
-                   tooling-chan (lambda (x)
-                                  (process-send-string
-                                   network-proc
-                                   "(ewen.replique.server/shared-tooling-repl)\n")
-                                  (let* ((tooling-chan (-> tooling-chan
-                                                           replique/edn-read-stream
-                                                           replique/dispatch-eval-msg))
-                                         (repl-props `((:directory . ,directory)
-                                                       (:repl-type . :tooling)
-                                                       (:proc . ,proc)
-                                                       (:network-proc . ,network-proc)
-                                                       (:host . ,host)
-                                                       (:port . ,port)
-                                                       (:chan . ,tooling-chan))))
-                                    (push repl-props replique/repls)
-                                    (replique-async/put! out-chan repl-props)))))
-              (error (error "Error while starting the REPL: %s" x)))))))
+            (if (gethash :error repl-infos)
+                (message "Error while starting the REPL: %s"
+                         (replique-edn/pr-str (gethash :error repl-infos)))
+              (let* ((host (gethash :host repl-infos))
+                     (port (gethash :port repl-infos))
+                     (directory (replique/normalize-directory-name
+                                 (gethash :directory repl-infos)))
+                     (network-proc (open-network-stream directory nil host port))
+                     (tooling-chan (replique/process-filter-chan network-proc)))
+                (set-process-sentinel
+                 network-proc (-partial 'replique/on-tooling-repl-close chan host port))
+                ;; Discard the prompt
+                (replique-async/<!
+                 tooling-chan (lambda (x)
+                                (process-send-string
+                                 network-proc
+                                 "(ewen.replique.server/shared-tooling-repl)\n")
+                                (let* ((tooling-chan (-> tooling-chan
+                                                         replique/edn-read-stream
+                                                         replique/dispatch-eval-msg))
+                                       (repl-props `((:directory . ,directory)
+                                                     (:repl-type . :tooling)
+                                                     (:proc . ,proc)
+                                                     (:network-proc . ,network-proc)
+                                                     (:host . ,host)
+                                                     (:port . ,port)
+                                                     (:chan . ,tooling-chan))))
+                                  (push repl-props replique/repls)
+                                  (replique-async/put! out-chan repl-props))))))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
@@ -801,8 +829,7 @@ The following commands are available:
                            :host host :port port
                            :chan tooling-chan))
            (let* ((buff-name (replique/clj-buff-name directory :clj)))
-             (replique/make-repl buff-name host port t))
-           (comment (replique/close-repls host (cdr (assoc :port tooling-repl))))))))))
+             (replique/make-repl buff-name host port t))))))))
 
 (defvar replique/edn-tag-readers
   `((error . identity)

@@ -6,24 +6,30 @@
 
 (defmethod server/repl-dispatch [:clj nil]
   [{:keys [port type cljs-env directory] :as opts}]
-  (alter-var-root #'server/directory (constantly directory))
-  (start-server {:port port :name :replique
-                 :accept 'clojure.core.server/repl
-                 :server-daemon false})
-  (doto (file ".replique-port")
-    (spit (str {:repl (-> @#'clojure.core.server/servers
-                          (get :replique) :socket (.getLocalPort))}))
-    (.deleteOnExit))
-  (prn {:host (-> @#'clojure.core.server/servers
-                  (get :replique) :socket
-                  (.getInetAddress) (.getHostAddress)
-                  server/normalize-ip-address)
-        :port (-> @#'clojure.core.server/servers
-                  (get :replique) :socket (.getLocalPort))
-        :directory (.getAbsolutePath (java.io.File. "."))}))
+  (try
+    (alter-var-root #'server/directory (constantly directory))
+    (start-server {:port port :name :replique
+                   :accept 'clojure.core.server/repl
+                   :server-daemon false})
+    (doto (file ".replique-port")
+      (spit (str {:repl (-> @#'clojure.core.server/servers
+                            (get :replique) :socket (.getLocalPort))}))
+      (.deleteOnExit))
+    (prn {:host (-> @#'clojure.core.server/servers
+                    (get :replique) :socket
+                    (.getInetAddress) (.getHostAddress)
+                    server/normalize-ip-address)
+          :port (-> @#'clojure.core.server/servers
+                    (get :replique) :socket (.getLocalPort))
+          :directory (.getAbsolutePath (java.io.File. "."))})
+    (catch Throwable t
+      (prn {:error t}))))
 
-(defmethod server/tooling-msg-handle :repl-infos [msg]
-  (assoc (server/repl-infos) :repl-type :clj))
+#_(defmethod server/tooling-msg-handle :repl-infos [msg]
+  (server/with-tooling-response msg
+    (assoc (server/repl-infos) :repl-type :clj)))
 
 (defmethod server/tooling-msg-handle :shutdown [msg]
-  (server/shutdown))
+  (server/with-tooling-response msg
+    (server/shutdown)
+    {:shutdown true}))
