@@ -16,55 +16,77 @@
               :initform '())
    (providers :initarg :providers
               :type (or null cons)
-              :initform '())))
+              :initform '())
+   (closed :initarg :closed
+           :type boolean
+           :initform nil)))
 
 (defun replique-async/chan ()
   (replique-async/chan-impl nil :listeners nil :providers nil))
 
+(defmethod replique-async/close!
+  ((ch replique-async/chan-impl))
+  (mapcar (-lambda ((&alist :listener-callback l-cb))
+            (when l-cb (replique-async/with-new-dyn-context l-cb nil)))
+          (oref ch listeners))
+  (mapcar (-lambda ((&alist :provider-callback p-cb))
+            (when p-cb (replique-async/with-new-dyn-context p-cb)))
+          (oref ch providers))
+  (oset ch listeners '())
+  (oset ch providers '())
+  (oset ch closed t))
+
 (defmethod replique-async/<!
   ((ch replique-async/chan-impl) listener-callback &optional next-tick)
-  (let ((provider (pop (oref ch providers))))
-    (if provider
-        (-let (((&alist :item item
-                        :provider-callback provider-callback)
-                provider))
-          (replique-async/with-new-dyn-context listener-callback item)
-          (when provider-callback
-            (replique-async/with-new-dyn-context provider-callback))
-          item)
-      (progn (->> `((:listener-callback . ,listener-callback))
-                  list
-                  (append (oref ch :listeners))
-                  (oset ch :listeners))
-             nil))))
+  (if (oref ch closed)
+      (progn (replique-async/with-new-dyn-context listener-callback nil)
+             nil)
+    (let ((provider (pop (oref ch providers))))
+      (if provider
+          (-let (((&alist :item item
+                          :provider-callback provider-callback)
+                  provider))
+            (replique-async/with-new-dyn-context listener-callback item)
+            (when provider-callback
+              (replique-async/with-new-dyn-context provider-callback))
+            item)
+        (progn (->> `((:listener-callback . ,listener-callback))
+                    list
+                    (append (oref ch :listeners))
+                    (oset ch :listeners))
+               nil)))))
 
 (defmethod replique-async/>!
   ((ch replique-async/chan-impl) item provider-callback)
-  (let ((listener (pop (oref ch listeners))))
-    (if listener
-        (-let (((&alist :listener-callback listener-callback) listener))
-          (replique-async/with-new-dyn-context listener-callback item)
-          (replique-async/with-new-dyn-context provider-callback)
-          item)
-      (progn (->> `((:item . ,item)
-                    (:provider-callback . ,provider-callback))
-                  list
-                  (append (oref ch :providers))
-                  (oset ch :providers))
-             nil))))
+  (cond ((null item) (error "Can't put nil on channel"))
+        ((oref ch closed) nil)
+        (t (let ((listener (pop (oref ch listeners))))
+             (if listener
+                 (-let (((&alist :listener-callback listener-callback) listener))
+                   (replique-async/with-new-dyn-context listener-callback item)
+                   (replique-async/with-new-dyn-context provider-callback)
+                   item)
+               (progn (->> `((:item . ,item)
+                             (:provider-callback . ,provider-callback))
+                           list
+                           (append (oref ch :providers))
+                           (oset ch :providers))
+                      nil))))))
 
 (defmethod replique-async/put!
   ((ch replique-async/chan-impl) item)
-  (let ((listener (pop (oref ch listeners))))
-    (if listener
-        (-let (((&alist :listener-callback listener-callback) listener))
-          (replique-async/with-new-dyn-context listener-callback item)
-          item)
-      (progn (->> `((:item . ,item))
-                  list
-                  (append (oref ch :providers))
-                  (oset ch :providers))
-             nil))))
+  (cond ((null item) (error "Can't put nil on channel"))
+        ((oref ch closed) nil)
+        (t (let ((listener (pop (oref ch listeners))))
+             (if listener
+                 (-let (((&alist :listener-callback listener-callback) listener))
+                   (replique-async/with-new-dyn-context listener-callback item)
+                   item)
+               (progn (->> `((:item . ,item))
+                           list
+                           (append (oref ch :providers))
+                           (oset ch :providers))
+                      nil))))))
 
 
 (comment
