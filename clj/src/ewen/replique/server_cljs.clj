@@ -170,8 +170,7 @@
   (cljs.repl.browser/constrain-order
    order
    (fn []
-     ;; When sessions are implemented, we should only print in the
-     ;; output stream of the "currently active" cljs REPL
+     ;; Maybe we should print only in the currently active REPL instead of all REPLs
      (doseq [[out out-lock] @cljs-outs]
        (binding [*out* out]
          (with-lock out-lock
