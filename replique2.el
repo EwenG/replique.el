@@ -38,6 +38,13 @@
      nil 'visible)
     buffers))
 
+(defun replique/symprompt (prompt default)
+  (list (let* ((prompt (if default
+                           (format "%s (default %s): " prompt default)
+                         (concat prompt ": ")))
+               (ans (read-string prompt)))
+          (if (zerop (length ans)) default ans))))
+
 ;; New project REPL / new REPL buffer
 
 ;; Active tooling buffer
@@ -106,7 +113,7 @@
                          (t (error "Invalid REPL type: %s" repl-type)))))
     (replique/send-tooling-msg
      props
-     `((:repl-type . ,msg-type)
+     `((:type . ,msg-type)
        (:context . ,(replique/form-with-prefix))
        (:ns . (quote ,(cdr (assoc :ns repl))))
        (:prefix . ,prefix)))
@@ -125,7 +132,7 @@
   (let ((tooling-chan (cdr (assoc :chan props))))
     (replique/send-tooling-msg
      props
-     `((:repl-type . ,msg-type)
+     `((:type . ,msg-type)
        (:context . ,(replique/form-with-prefix))
        (:ns . (quote ,(make-symbol (clojure-find-ns))))
        (:prefix . ,prefix)))
@@ -148,12 +155,36 @@
 
 (defun replique/auto-complete (prefix company-callback)
   (replique/with-modes-dispatch
-   (replique/mode . (-partial 'replique/auto-complete-session
-                              prefix company-callback))
-   (clojure-mode . (-partial 'replique/auto-complete-clj
-                             prefix company-callback))
-   (clojurescript-mode . (-partial 'replique/auto-complete-cljs
-                                   prefix company-callback))))
+   (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
+   (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
+   (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
+
+(defun replique/in-ns-clj (ns-name props clj-repl)
+  (replique/send-input-from-source-clj-cljs
+   (format "(clojure.core/in-ns '%s)" ns-name)
+   'replique/display-eval-result
+   props clj-repl))
+
+(defun replique/in-ns-cljs (ns-name props cljs-repl)
+  (replique/send-input-from-source-clj-cljs
+   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+   'replique/display-eval-result
+   props cljs-repl))
+
+(defun replique/in-ns-cljc (ns-name props clj-repl cljs-repl)
+  (replique/send-input-from-source-cljc
+   (format "(clojure.core/in-ns '%s)" ns-name)
+   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+   'replique/display-eval-result
+   'replique/display-eval-results
+   props clj-repl cljs-repl))
+
+(defun replique/in-ns (ns-name)
+  (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
+  (replique/with-modes-dispatch
+   (clojure-mode . (-partial 'replique/in-ns-clj ns-name))
+   (clojurescript-mode . (-partial 'replique/in-ns-cljs ns-name))
+   (clojurec-mode . (-partial 'replique/in-ns-cljc ns-name))))
 
 (defun replique/skip-regexp-forward (regexp)
   (let ((data (match-data)))
@@ -304,6 +335,27 @@ This allows you to temporarily modify read-only buffers too."
     (replique/message-nolog
      (replique/format-eval-message msg))))
 
+(defun replique/display-eval-results (msg1 msg2 clj-buff cljs-buff)
+  (let ((visible-buffers (replique/visible-buffers))
+        (clj-msg (-first (lambda (msg)
+                           (equal :clj (gethash :repl-type msg)))
+                         (list msg1 msg2)))
+        (cljs-msg (-first (lambda (msg)
+                            (equal :cljs (gethash :repl-type msg)))
+                          (list msg1 msg2))))
+    (cond ((and (not (-contains? visible-buffers clj-buff))
+                (not (-contains? visible-buffers cljs-buff)))
+           (replique/message-nolog
+            "%s\n%s"
+            (replique/format-eval-message clj-msg)
+            (replique/format-eval-message cljs-msg)))
+          ((not (-contains? visible-buffers clj-buff))
+           (replique/message-nolog
+            (replique/format-eval-message clj-msg)))
+          ((not (-contains? visible-buffers cljs-buff))
+           (replique/message-nolog
+            (replique/format-eval-message cljs-msg))))))
+
 (defun replique/format-load-file-message (msg)
   (if (gethash :error msg)
       (let ((value (gethash :value msg))
@@ -370,8 +422,7 @@ This allows you to temporarily modify read-only buffers too."
                             (funcall ,f
                                      ,props-sym
                                      ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojure or Clojurescript REPL"))))
+                          (user-error "No active Clojure or Clojurescript REPL"))))
                      ((equal 'clojurescript-mode m)
                       `((equal 'clojurescript-mode major-mode)
                         (if ,cljs-buff-sym
@@ -382,20 +433,17 @@ This allows you to temporarily modify read-only buffers too."
                         (if (or ,clj-buff-sym ,cljs-buff-sym)
                             (funcall ,f ,props-sym
                                      ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojure or Clojurescript REPL"))))
+                          (user-error "No active Clojure or Clojurescript REPL"))))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
                         (if ,cljs-buff-sym
                             (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojurescript REPL"))))
+                          (user-error "No active Clojurescript REPL"))))
                      ((equal 'scss-mode m)
                       `((equal 'scss-mode major-mode)
                         (if ,cljs-buff-sym
                             (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojurescript REPL"))))
+                          (user-error "No active Clojurescript REPL"))))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f ,props-sym
