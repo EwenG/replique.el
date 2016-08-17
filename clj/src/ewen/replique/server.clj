@@ -30,9 +30,9 @@
 (defmulti repl-dispatch (fn [{:keys [type cljs-env]}]
                           [type cljs-env]))
 
-(defmacro with-tooling-response [msg resp]
+(defmacro with-tooling-response [msg & resp]
   `(let [type# (:type ~msg)]
-     (try (merge {:type type#} ~resp)
+     (try (merge {:type type#} ~@resp)
           (catch Throwable t#
             {:type type#
              :error t#}))))
