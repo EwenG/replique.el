@@ -619,6 +619,21 @@ This allows you to temporarily modify read-only buffers too."
   :type 'regexp
   :group 'replique)
 
+(defcustom replique/lein-script "/Users/egr/bin/lein"
+  "Leiningen script path"
+  :type 'file
+  :group 'replique)
+
+(defcustom replique/clojure-jar "/Users/egr/bin/lein"
+  ""
+  :type 'file
+  :group 'replique)
+
+(defcustom replique/clojurescript-jar nil
+  ""
+  :type 'file
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -627,7 +642,7 @@ This allows you to temporarily modify read-only buffers too."
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
     map))
-
+(customize-set-variable 'replique/clojure-jar "rr")
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
   (setq comint-prompt-regexp replique/prompt)
@@ -675,9 +690,26 @@ The following commands are available:
   :lighter "Replique" :keymap replique/minor-mode-map
   (add-to-list 'company-backends 'replique/company-backend))
 
+(defun replique/raw-command-classpath ()
+  (cond ((and (null replique/clojure-jar)
+              (null replique/clojurescript-jar))
+         (error "None of the clojure or clojurescript jar have been configured"))
+        ((null replique/clojurescript-jar)
+         (format "%s:%sclj/src" replique/clojure-jar (replique/replique-root-dir)))
+        ((null replique/clojure-jar)
+         (format "%s:%sclj/src" replique/clojurescript-jar (replique/replique-root-dir)))
+        (t
+         (format "%s:%s:%sclj/src"
+                 replique/clojure-jar replique/clojurescript-jar
+                 (replique/replique-root-dir)))))
+
+(defun replique/raw-command (port)
+  `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "ewen.replique.main"
+    ,(format "{:type :clj :port %s}" (number-to-string port))))
+
 (defun replique/lein-command (port)
-  `("/Users/egr/bin/lein" "update-in" ":source-paths" "conj"
-    ,(format "\"%ssrc\"" (replique/replique-root-dir))
+  `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
+    ,(format "\"%sclj/src\"" (replique/replique-root-dir))
     "--" "run" "-m" "ewen.replique.main/-main"
     ,(format "{:type :clj :port %s}" (number-to-string port))))
 
@@ -752,11 +784,58 @@ The following commands are available:
          (replique/close-repls host port))
         (t nil)))
 
+;; java -cp "/Users/egr/bin/clojure-1.8.0.jar:/Users/egr/bin/cljs-1.9.216.jar:/Users/egr/replique.el/clj/src" clojure.main -m ewen.replique.main "{:type :clj :port 0}"
+
+(defun replique/dispatch-repl-cmd (directory port)
+  (if (replique/is-lein-project directory) 
+      (replique/lein-command port)
+    (replique/raw-command port)))
+
+(defun replique/is-in-exec-path (file absolute?)
+  (-> (-mapcat
+       (lambda (dir)
+         (directory-files dir absolute?))
+       exec-path)
+      (-contains? file)))
+
+(defun replique/repl-cmd-pre-cond (directory)
+  (let ((is-lein-project (replique/is-lein-project directory)))
+    (cond ((and is-lein-project
+                replique/lein-script
+                (not (replique/is-in-exec-path replique/lein-script t)))
+           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script"
+                    replique/lein-script)
+           nil)
+          ((and is-lein-project
+                (not replique/lein-script)
+                (not (replique/is-in-exec-path "lein" nil)))
+           (message "Error while starting the REPL. No lein script found in exec-path")
+           nil)
+          ((and (not is-lein-project)
+                (not replique/clojure-jar)
+                (not replique/clojurescript-jar))
+           (message "Error while starting the REPL. None of replique/clojure-jar or replique/clojurescript-jar have been customized")
+           nil)
+          ((and (not is-lein-project)
+                replique/clojure-jar
+                (not (replique/is-in-exec-path replique/clojure-jar t)))
+           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/clojure-jar" replique/clojure-jar)
+           nil)
+          ((and (not is-lein-project)
+                replique/clojurescript-jar
+                (not (replique/is-in-exec-path replique/clojurescript-jar t)))
+           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/clojurescript-jar" replique/clojurescript-jar)
+           nil)
+          (t t))))
+
 (defun replique/make-tooling-repl (host port directory out-chan)
   (let* ((default-directory directory)
-         (repl-cmd (replique/lein-command port))
-         (proc (apply 'start-file-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (chan (replique/edn-read-stream (replique/process-filter-chan proc))))
+         (repl-cmd (replique/dispatch-repl-cmd directory port))
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+         (chan (replique/edn-read-stream (replique/process-filter-chan proc)
+                                         (lambda (proc-out-s)
+                                           (error "Error while starting the REPL: %s"
+                                                  proc-out-s)))))
     (replique-async/<!
      chan (lambda (repl-infos)
             (set-process-filter proc (lambda (proc string) nil))
@@ -859,25 +938,25 @@ The following commands are available:
      ;; Normalizing the directory name is necessary in order to be able to search repls
      ;; by directory name
      (list (replique/normalize-directory-name directory) host port)))
-  (if (not (replique/is-valid-port-nb? port))
-      (message "Invalid port number: %d" port)
-    (progn
-      (when (not (replique/is-lein-project directory))
-        (error "Not a lein project"))
-      (let* ((existing-repl (replique/repl-by
-                             :directory directory
-                             :repl-type :tooling))
-             (tooling-repl-chan (replique-async/chan)))
-        (if existing-repl
-            (replique-async/put! tooling-repl-chan existing-repl)
-          (replique/make-tooling-repl host port directory tooling-repl-chan))
-        (replique-async/<!
-         tooling-repl-chan
-         (-lambda ((&alist :directory directory
-                           :host host :port port
-                           :chan tooling-chan))
-           (let* ((buff-name (replique/clj-buff-name directory :clj)))
-             (replique/make-repl buff-name host port t))))))))
+  (cond ((not (replique/is-valid-port-nb? port))
+         (message "Invalid port number: %d" port))
+        ((not (replique/repl-cmd-pre-cond directory))
+         nil)
+        (t
+         (let* ((existing-repl (replique/repl-by
+                                :directory directory
+                                :repl-type :tooling))
+                (tooling-repl-chan (replique-async/chan)))
+           (if existing-repl
+               (replique-async/put! tooling-repl-chan existing-repl)
+             (replique/make-tooling-repl host port directory tooling-repl-chan))
+           (replique-async/<!
+            tooling-repl-chan
+            (-lambda ((&alist :directory directory
+                              :host host :port port
+                              :chan tooling-chan))
+              (let* ((buff-name (replique/clj-buff-name directory :clj)))
+                (replique/make-repl buff-name host port t))))))))
 
 (defvar replique/edn-tag-readers
   `((error . identity)
@@ -903,44 +982,46 @@ The following commands are available:
     (replique/dispatch-eval-msg* in-chan out-chan)
     out-chan))
 
-(defun replique/edn-read-stream* (chan-in chan-out edn-state)
+(defun replique/edn-read-stream* (chan-in chan-out edn-state &optional error-handler)
   (replique-async/<!
    chan-in
    (lambda (s)
-     (let ((continue t))
-       (while continue
-         (let* ((reader (replique-edn/reader nil :str s))
-                (result-state (assoc :result-state
-                                     (symbol-value edn-state)))
-                (result-state (if result-state (cdr result-state) nil)))
-           (if (equal :waiting (symbol-value result-state))
-               (replique-edn/set-reader edn-state reader)
-             (-> (replique-edn/init-state reader edn-state)
-                 (replique-edn/set-tagged-readers
-                  replique/edn-tag-readers)))
-           (replique-edn/read edn-state)
-           (-let (((&alist :result result
-                           :result-state result-state)
-                   (symbol-value edn-state))
-                  (rest-string
-                   (replique-edn/reader-rest-string reader)))
-             (when (and
-                    (not (equal :waiting (symbol-value result-state)))
-                    (car (symbol-value result)))
-               (replique-async/put!
-                chan-out (car (symbol-value result))))
-             (if (not (string= "" rest-string))
-                 (setq s rest-string)
-               (setq continue nil)))))
-       (replique/edn-read-stream* chan-in chan-out edn-state)))))
+     (condition-case err
+         (let ((continue t))
+           (while continue
+             (let* ((reader (replique-edn/reader nil :str s))
+                    (result-state (assoc :result-state
+                                         (symbol-value edn-state)))
+                    (result-state (if result-state (cdr result-state) nil)))
+               (if (equal :waiting (symbol-value result-state))
+                   (replique-edn/set-reader edn-state reader)
+                 (-> (replique-edn/init-state reader edn-state)
+                     (replique-edn/set-tagged-readers
+                      replique/edn-tag-readers)))
+               (replique-edn/read edn-state)
+               (-let (((&alist :result result
+                               :result-state result-state)
+                       (symbol-value edn-state))
+                      (rest-string
+                       (replique-edn/reader-rest-string reader)))
+                 (when (and
+                        (not (equal :waiting (symbol-value result-state)))
+                        (car (symbol-value result)))
+                   (replique-async/put!
+                    chan-out (car (symbol-value result))))
+                 (if (not (string= "" rest-string))
+                     (setq s rest-string)
+                   (setq continue nil)))))
+           (replique/edn-read-stream* chan-in chan-out edn-state error-handler))
+         (error (funcall error-handler s))))))
 
-(defun replique/edn-read-stream (chan-in)
+(defun replique/edn-read-stream (chan-in &optional error-handler)
   (let ((edn-state (-> (replique-edn/reader nil :str "")
                        replique-edn/init-state
                        (replique-edn/set-tagged-readers
                         replique/edn-tag-readers)))
         (chan-out (replique-async/chan)))
-    (replique/edn-read-stream* chan-in chan-out edn-state)
+    (replique/edn-read-stream* chan-in chan-out edn-state error-handler)
     chan-out))
 
 (comment
