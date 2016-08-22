@@ -17,10 +17,20 @@
   "Comment out one or more s-expressions."
   nil)
 
+;; There is no way to distinguish between a list with one item and an alist entry which
+;; value is nil. This function consideres lists with one item as alist entries which value
+;; is nil
+(defun replique/alistp (maybe-alist)
+  (and (consp maybe-alist)
+       (-every? 'consp maybe-alist)))
+
 (defun replique/alist-to-map (alist)
   (let ((m (make-hash-table :test 'equal)))
     (mapcar (-lambda ((k . v))
-              (puthash k v m))
+              (let ((v (if (replique/alistp v)
+                           (replique/alist-to-map v)
+                         v)))
+                (puthash k v m)))
             alist)
     m))
 
@@ -888,8 +898,7 @@ The following commands are available:
           (proc (get-buffer-process buff))
           (chan-src (replique/process-filter-chan proc))
           (repl-cmd (format "(ewen.replique.server/repl :clj)\n")))
-    (set-process-sentinel
-     proc (-partial 'replique/on-repl-close host port buff))
+    (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
     ;; Discard the prompt
     (replique-async/<!
      chan-src
@@ -1025,16 +1034,26 @@ The following commands are available:
     chan-out))
 
 (comment
- (defvar in-chan (replique-async/chan))
- (defvar out-chan (replique/edn-read-stream in-chan))
-
- (replique-async/<!
-  out-chan
-  (lambda (x)
-    (print x)))
-
- (replique-async/put! in-chan "3 ")
- )
+ (replique/send-tooling-msg
+     props
+     `((:type . :set-cljs-env)
+       (:cljs-env . :browser)
+       (:compiler-opts . ((:output-to . "out")))
+       (:repl-opts . ((:port . 9000)))))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (let ((err (gethash :error resp)))
+         (if err
+             (progn
+               (message (replique-edn/pr-str err))
+               (message "Failed to create cljs environment %s"
+                        `((:type . :set-cljs-env)
+                          (:cljs-env . :browser)
+                          (:compiler-env . ((:output-to . "out")))
+                          (:repl-env . ((:port . 9000))))))
+           (message "Created cljs env")))))
+    )
 
 (provide 'replique2)
 
