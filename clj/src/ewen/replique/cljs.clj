@@ -9,7 +9,7 @@
             [cljs.analyzer :as ana])
   (:import [java.io File]))
 
-(defn compute-asset-path [asset-path output-dir rel-path]
+#_(defn compute-asset-path [asset-path output-dir rel-path]
   (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
         output-dir (if output-dir (str "\"" output-dir "\"") "null")
         rel-path (if rel-path (str "\"" rel-path "\"") "null")]
@@ -210,7 +210,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 ;; This is achieved by removing wrap-js.
 ;; Otherwise, macros get evaled 2 times
 
-(alter-var-root
+#_(alter-var-root
  #'cljs.repl/evaluate-form
  (constantly
   (fn evaluate-form
