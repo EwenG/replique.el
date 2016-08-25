@@ -108,10 +108,22 @@
 
 (defmulti repl (fn [type] type))
 
+(Thread/setDefaultUncaughtExceptionHandler
+ (reify Thread$UncaughtExceptionHandler
+   (uncaughtException [_ thread ex]
+     (binding [*out* tooling-err]
+       (with-lock tooling-err-lock
+         (prn {:type :eval
+               :error true
+               :repl-type :clj
+               :ns (ns-name *ns*)
+               :value ex}))))))
+
+(comment
+  (.start (Thread. (fn [] (throw (Exception. "e")))))
+  )
+
 (defmethod repl :clj [type]
-  ;; Make all threads print in this repl by default
-  (alter-var-root #'*out* (constantly *out*))
-  (alter-var-root #'*err* (constantly *err*))
   (println "Clojure" (clojure-version))
   (clojure.main/repl
    :init clojure.core.server/repl-init

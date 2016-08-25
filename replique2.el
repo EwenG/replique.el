@@ -634,7 +634,7 @@ This allows you to temporarily modify read-only buffers too."
   :type 'file
   :group 'replique)
 
-(defcustom replique/clojure-jar "/Users/egr/bin/lein"
+(defcustom replique/clojure-jar "/Users/egr/bin/clojure-1.9.0-alpha11.jar"
   ""
   :type 'file
   :group 'replique)
@@ -975,7 +975,15 @@ The following commands are available:
   (replique-async/<!
    in-chan
    (lambda (msg)
-     (cond ((equal :eval (gethash :type msg))
+     (cond (;; Global error (uncaught exception)
+            (and 
+             (gethash :error msg)
+             (null (gethash :session msg)))
+            (message
+             (format "UncaughtException: %s"
+                     (replique-edn/pr-str (gethash :value msg))))
+            (replique/dispatch-eval-msg* in-chan out-chan))
+           ((equal :eval (gethash :type msg))
             (let ((repl (replique/repl-by
                          :repl-type (gethash :repl-type msg)
                          :session (gethash :client (gethash :session msg)))))
@@ -1035,24 +1043,24 @@ The following commands are available:
 
 (comment
  (replique/send-tooling-msg
-     props
-     `((:type . :set-cljs-env)
-       (:cljs-env . :browser)
-       (:compiler-opts . ((:output-to . "out")))
-       (:repl-opts . ((:port . 9000)))))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "Failed to create cljs environment %s"
-                        `((:type . :set-cljs-env)
-                          (:cljs-env . :browser)
-                          (:compiler-env . ((:output-to . "out")))
-                          (:repl-env . ((:port . 9000))))))
-           (message "Created cljs env")))))
+  props
+  `((:type . :set-cljs-env)
+    (:cljs-env . :browser)
+    (:compiler-env . ((:output-to . "out")))
+    (:repl-env . ((:port . 9000)))))
+ (replique-async/<!
+  tooling-chan
+  (lambda (resp)
+    (let ((err (gethash :error resp)))
+      (if err
+          (progn
+            (message (replique-edn/pr-str err))
+            (message "Failed to create cljs environment %s"
+                     `((:type . :set-cljs-env)
+                       (:cljs-env . :browser)
+                       (:compiler-env . ((:output-to . "out/main.js")))
+                       (:repl-env . ((:port . 9000))))))
+        (message "Created cljs env")))))
     )
 
 (provide 'replique2)
