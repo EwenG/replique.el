@@ -116,6 +116,7 @@
          (prn {:type :eval
                :error true
                :repl-type :clj
+               :thread (.getName thread)
                :ns (ns-name *ns*)
                :value ex}))))))
 

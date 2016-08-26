@@ -924,8 +924,7 @@ The following commands are available:
                             (:buffer . ,buff)
                             (:eval-chan . ,(replique-async/chan)))))
                 (push repl replique/repls))
-              (when t
-                (pop-to-buffer buff))))))))))
+              (display-buffer buff)))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
   (let ((repl-type-string (replique/keyword-to-string repl-type)))
@@ -978,9 +977,11 @@ The following commands are available:
      (cond (;; Global error (uncaught exception)
             (and 
              (gethash :error msg)
-             (null (gethash :session msg)))
+             (gethash :thread msg))
             (message
-             (format "UncaughtException: %s"
+             (format "%s - Thread: %s - Exception: %s"
+                     (propertize "Uncaught exception" 'face '(:foreground "red"))
+                     (gethash :thread msg)
                      (replique-edn/pr-str (gethash :value msg))))
             (replique/dispatch-eval-msg* in-chan out-chan))
            ((equal :eval (gethash :type msg))
