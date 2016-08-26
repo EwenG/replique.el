@@ -25,7 +25,8 @@
             [ewen.replique.compliment.core :as compliment])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.net URL ServerSocket]
-           [java.util.concurrent SynchronousQueue]
+           [java.util.concurrent SynchronousQueue Executors ThreadFactory
+            RejectedExecutionException]
            [java.net SocketException]
            [clojure.lang IExceptionInfo]
            [java.util.concurrent.locks ReentrantLock]))
@@ -44,35 +45,28 @@
        (finally
          (.unlock lockee#)))))
 
-(defn make-eval-queue [repl-env]
-  (let [queue-in (SynchronousQueue. true)
-        queue-out (SynchronousQueue. true)
-        close-flag (atom false)
-        ;; Assumption: The REPL thread will not die between sending a message into eval-queue
-        ;; and reading the result from evaled-queue
-        worker (Thread.
-                (fn []
-                  (binding [cljs.repl.browser/browser-state (:browser-state repl-env)
-                            cljs.repl.browser/ordering (:ordering repl-env)
-                            cljs.repl.browser/es (:es repl-env)
-                            cljs.repl.server/state (:server-state repl-env)]
-                    (loop []
-                      (let [js (.take queue-in)]
-                        (when (not (= js ::close-eval-queue))
-                          (->> (try
-                                 (cljs.repl.browser/browser-eval js)
-                                 (catch SocketException e
-                                   {:status :error
-                                    :value "Connection broken"}))
-                               (.put queue-out))
-                          (recur))))))
-                "repl-env-eval")]
-    (doto worker
-      (.setDaemon true)
-      (.start))
-    {:queue-in queue-in
-     :queue-out queue-out
-     :close-flag close-flag}))
+(defn make-eval-executor-thread-factory [repl-env]
+  (reify ThreadFactory
+    (newThread [this runnable]
+      (binding [cljs.repl.browser/browser-state (:browser-state repl-env)
+                cljs.repl.browser/ordering (:ordering repl-env)
+                cljs.repl.browser/es (:es repl-env)
+                cljs.repl.server/state (:server-state repl-env)]
+        (Thread. ((ns-resolve 'clojure.core 'binding-conveyor-fn)
+                  (fn [] (.run runnable))))))))
+
+(defn make-eval-executor [repl-env]
+  (-> (make-eval-executor-thread-factory repl-env)
+      (Executors/newSingleThreadExecutor)))
+
+(defn make-eval-task [js]
+  (reify Callable
+    (call [this]
+      (try
+        (cljs.repl.browser/browser-eval js)
+        (catch SocketException e
+          {:status :error
+           :value "Connection broken"})))))
 
 (defn f->src [f]
   (cond (util/url? f) f
@@ -170,20 +164,15 @@
   [repl-env provides url]
   (cljs.repl/-evaluate repl-env nil nil (slurp url)))
 
-(defn close-eval-queue! [{:keys [queue-in close-flag]}]
-  (reset! close-flag true)
-  (.put queue-in ::close-eval-queue))
-
-(defrecord BrowserEnv [wrapped eval-queue setup-ret]
+(defrecord BrowserEnv [wrapped eval-executor setup-ret]
   cljs.repl/IJavaScriptEnv
   (-setup [this opts] setup-ret)
   (-evaluate [this _ _ js]
-    (if @(:close-flag eval-queue)
-      {:status :error
-       :value "Connection broken"}
-      (do
-        (.put (:queue-in eval-queue) js)
-        (.take (:queue-out eval-queue)))))
+    (try (-> (.submit eval-executor (make-eval-task js))
+             (.get))
+         (catch RejectedExecutionException e
+           {:status :error
+            :value "Connection broken"})))
   (-load [this provides url]
     (load-javascript this provides url))
   ;; We don't want the repl-env to be closed on cljs-repl exit
@@ -199,11 +188,16 @@
     (cljs.repl/-get-error wrapped e env opts)))
 
 (defn tear-down-repl-env [repl-env]
-  (close-eval-queue! (:eval-queue repl-env))
+  (.shutdown (:eval-executor repl-env))
+  ;; Unblock waiting threads, if any
+  (when-let [p (:promised-conn @(:server-state repl-env))]
+    ;; A conn (stream?) must be delivered getOuputStream
+    (deliver p "{:status :error
+                :value \"Connection broken\"}"))
   (cljs.repl/-tear-down (:wrapped repl-env)))
 
-(defn custom-benv [benv eval-queue setup-ret]
-  (merge (BrowserEnv. benv eval-queue setup-ret) benv))
+(defn custom-benv [benv eval-executor setup-ret]
+  (merge (BrowserEnv. benv eval-executor setup-ret) benv))
 
 ;; Used instead of cljs.repl.browser to avoid compiling client.js.
 ;; client.js is not needed because the browser repl uses xhr with cors
@@ -292,9 +286,9 @@
      (cljs-env/with-compiler-env compiler-env*
        (comp/with-core-cljs nil
          (fn []
-           (let [eval-queue (make-eval-queue repl-env*)
+           (let [eval-executor (make-eval-executor repl-env*)
                  repl-env* (->> (setup repl-env* nil)
-                                (custom-benv repl-env* eval-queue))]
+                                (custom-benv repl-env* eval-executor))]
              (try
                (let [port (-> @(:server-state repl-env*)
                               :socket
@@ -320,9 +314,16 @@
                  (dosync
                   (ref-set compiler-env compiler-env*)
                   (ref-set repl-env repl-env*)))
+               ;; Shutdown eval-executor ?
                (catch Throwable t
-                 (cljs.repl/-tear-down repl-env*)
+                 (tear-down-repl-env repl-env*)
                  (throw t))))))))))
+
+(defmethod server/tooling-msg-handle :shutdown [msg]
+  (with-tooling-response msg
+    (when @repl-env (tear-down-repl-env @repl-env))
+    (server/shutdown)
+    {:shutdown true}))
 
 (defmethod server/tooling-msg-handle :set-cljs-env [msg]
   (with-tooling-response msg
@@ -378,7 +379,8 @@
     :compiler-env {:output-to "out/main.js"}
     :repl-env {:port 9001}})
 
-  @(:server-state @repl-env)
-
   (tear-down-repl-env @repl-env)
+
+  @(:server-state @repl-env)
+  
   )
