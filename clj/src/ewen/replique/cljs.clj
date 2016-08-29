@@ -173,6 +173,10 @@
  (fn [request conn opts]
    (when (and cljs.repl.browser/browser-state
               (:return-value-fn @cljs.repl.browser/browser-state))
+     ;; When the browser disconnects, it seems that writing in the socket does not always
+     ;; throw an exception. As a consequence the repl may hang for ever because it waits for
+     ;; a response from the browser. This kind of mitigates this situation (reloading the page
+     ;; should unblock the repl)
      ((:return-value-fn @cljs.repl.browser/browser-state)
       "{:status :error
        :value \"Connection broken\"}"))
