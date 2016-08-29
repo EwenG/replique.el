@@ -34,6 +34,7 @@
 (defonce compiler-env (ref nil))
 (defonce repl-env (ref nil))
 (defonce cljs-outs (atom #{}))
+(def ^:dynamic *stopped-eval-executor?* false)
 
 (defmacro ^:private with-lock
   [lock-expr & body]
@@ -62,11 +63,22 @@
 (defn make-eval-task [js]
   (reify Callable
     (call [this]
-      (try
-        (cljs.repl.browser/browser-eval js)
-        (catch SocketException e
-          {:status :error
-           :value "Connection broken"})))))
+      (if *stopped-eval-executor?*
+        {:status :error
+         :value "Connection broken"}
+        (try
+          (cljs.repl.browser/browser-eval js)
+          ;; If the repl-env is shutdown
+          (catch InterruptedException e
+            {:status :error
+             :value "Connection broken"})
+          ;; Other errors, socket closed by the client ...
+          (catch SocketException e
+            (doseq [[out lock] @cljs-outs]
+              (binding [*out* out]
+                (prn e)))
+            {:status :error
+             :value "Connection broken"}))))))
 
 (defn f->src [f]
   (cond (util/url? f) f
@@ -188,13 +200,13 @@
     (cljs.repl/-get-error wrapped e env opts)))
 
 (defn tear-down-repl-env [repl-env]
-  (.shutdown (:eval-executor repl-env))
-  ;; Unblock waiting threads, if any
-  (when-let [p (:promised-conn @(:server-state repl-env))]
-    ;; A conn (stream?) must be delivered getOuputStream
-    (deliver p "{:status :error
-                :value \"Connection broken\"}"))
-  (cljs.repl/-tear-down (:wrapped repl-env)))
+  (cljs.repl/-tear-down (:wrapped repl-env))
+  ;; Interrupt the currently executing task, if any
+  ;; Pending tasks are returned
+  (let [pendingTasks (.shutdownNow (:eval-executor repl-env))]
+    (binding [*stopped-eval-executor?* true]
+      (doseq [task pendingTasks]
+        (.run task)))))
 
 (defn custom-benv [benv eval-executor setup-ret]
   (merge (BrowserEnv. benv eval-executor setup-ret) benv))
@@ -333,7 +345,7 @@
 
 (defn repl-caught [e repl-env opts]
   (binding [*out* server/tooling-err]
-    (with-lock server/tooling-err-lock
+    (with-lock server/tooling-out-lock
       (-> (assoc {:type :eval
                   :error true
                   :repl-type :cljs
@@ -382,5 +394,9 @@
   (tear-down-repl-env @repl-env)
 
   @(:server-state @repl-env)
+  @(:browser-state @repl-env)
+  (:connection @(:server-state @repl-env))
+  (.isClosed (:connection @(:server-state @repl-env)))
+  (.isConnected (:connection @(:server-state @repl-env)))
   
   )

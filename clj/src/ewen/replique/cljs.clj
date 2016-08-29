@@ -171,6 +171,11 @@
  (fn [{:keys [path]} _ _]
    (= path "/"))
  (fn [request conn opts]
+   (when (and cljs.repl.browser/browser-state
+              (:return-value-fn @cljs.repl.browser/browser-state))
+     ((:return-value-fn @cljs.repl.browser/browser-state)
+      "{:status :error
+       :value \"Connection broken\"}"))
    (let [url (format "http://%s" (:host (:headers request)))]
      (server/send-and-close
       conn 200

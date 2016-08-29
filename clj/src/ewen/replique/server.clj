@@ -15,7 +15,6 @@
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
-(defonce tooling-err-lock (ReentrantLock.))
 
 (defmacro ^:private with-lock
   [lock-expr & body]
@@ -88,7 +87,7 @@
 (defn shared-tooling-repl []
   (with-lock tooling-out-lock
     (alter-var-root #'tooling-out (constantly *out*)))
-  (with-lock tooling-err-lock
+  (with-lock tooling-out-lock
     (alter-var-root #'tooling-err (constantly *err*)))
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
@@ -112,7 +111,7 @@
  (reify Thread$UncaughtExceptionHandler
    (uncaughtException [_ thread ex]
      (binding [*out* tooling-err]
-       (with-lock tooling-err-lock
+       (with-lock tooling-out-lock
          (prn {:type :eval
                :error true
                :repl-type :clj
@@ -130,7 +129,7 @@
    :init clojure.core.server/repl-init
    :caught (fn [e]
              (binding [*out* tooling-err]
-               (with-lock tooling-err-lock
+               (with-lock tooling-out-lock
                  (prn {:type :eval
                        :error true
                        :repl-type :clj
