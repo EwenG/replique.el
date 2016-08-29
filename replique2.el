@@ -986,9 +986,9 @@ The following commands are available:
             (replique/dispatch-eval-msg* in-chan out-chan))
            ((equal :eval (gethash :type msg))
             (let ((repl (replique/repl-by
-                         :repl-type (gethash :repl-type msg)
                          :session (gethash :client (gethash :session msg)))))
               (when repl
+                (setcdr (assoc :repl-type repl) (gethash :repl-type msg))
                 (setcdr (assoc :ns repl) (gethash :ns msg))
                 (replique-async/put! (cdr (assoc :eval-chan repl)) msg)))
             (replique/dispatch-eval-msg* in-chan out-chan))
@@ -1066,4 +1066,11 @@ The following commands are available:
 
 (provide 'replique2)
 
-;;; replique.el ends here
+
+;; handle defunct tooling procs
+;; Handle browser disconnected (the connection is not there anymore)
+
+;; replique.el ends here
+
+
+
