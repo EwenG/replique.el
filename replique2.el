@@ -1068,7 +1068,6 @@ The following commands are available:
 
 
 ;; handle defunct tooling procs
-;; Handle browser disconnected (the connection is not there anymore)
 
 ;; replique.el ends here
 

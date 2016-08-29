@@ -36,6 +36,10 @@
 (defonce cljs-outs (atom #{}))
 (def ^:dynamic *stopped-eval-executor?* false)
 
+(def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
+                             [cljs.pprint :refer [pprint] :refer-macros [pp]]])
+(def env {:context :expr :locals {}})
+
 (defmacro ^:private with-lock
   [lock-expr & body]
   `(let [lockee# ~(with-meta lock-expr
@@ -380,7 +384,22 @@
                                :ns ana/*cljs-ns*
                                :result result})))
                      (with-lock out-lock
-                       (println result)))})
+                       (println result)))
+            :init (fn []
+                    ;; Let the client know that we are entering a cljs repl
+                    (binding [*out* server/tooling-out]
+                      (with-lock server/tooling-out-lock
+                        (prn {:type :eval
+                              :repl-type :cljs
+                              :session *session*
+                              :ns ana/*cljs-ns*
+                              :result "nil"})))
+                    (cljs.repl/evaluate-form
+                     @repl-env env "<cljs repl>"
+                     (with-meta
+                       `(~'ns ~'cljs.user
+                         (:require ~@default-repl-requires))
+                       {:line 1 :column 1})))})
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))
 
