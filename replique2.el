@@ -56,6 +56,7 @@
           (if (zerop (length ans)) default ans))))
 
 (defvar replique/repls nil)
+;; A tooling repl may not be closed when there is a pending non daemon thread
 (defvar replique/defunct-repls nil)
 
 (defun replique/plist->alist (plist)
@@ -650,7 +651,7 @@ This allows you to temporarily modify read-only buffers too."
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
     map))
-(customize-set-variable 'replique/clojure-jar "rr")
+
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
   (setq comint-prompt-regexp replique/prompt)
