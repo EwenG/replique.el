@@ -55,13 +55,8 @@
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
-;; New project REPL / new REPL buffer
-
-;; Active tooling buffer
-;; Active buffers for each tooling buffer
-;; A list of all buffers
-
 (defvar replique/repls nil)
+(defvar replique/defunct-repls nil)
 
 (defun replique/plist->alist (plist)
   (let ((alist '()))
@@ -94,6 +89,9 @@
 
 (defun replique/repls-by (&rest args)
   (apply 'replique/repls-or-repl-by '-filter replique/repls args))
+
+(defun replique/defunct-repl-by (&rest args)
+  (apply 'replique/repls-or-repl-by '-first replique/defunct-repls args))
 
 (defun replique/active-repl (repl-type &optional error-on-nil)
   (if error-on-nil
@@ -749,6 +747,7 @@ The following commands are available:
     (replique-async/close! tooling-chan)
     (when (process-live-p tooling-proc)
       (delete-process tooling-proc))
+    (setq replique/defunct-repls (delete repl replique/defunct-repls))
     (setq replique/repls (delete repl replique/repls))))
 
 (defun replique/close-repl (repl-props)
@@ -762,6 +761,8 @@ The following commands are available:
                    other-repls)
         (mapcar (lambda (tooling-repl)
                   (-let (((&alist :chan tooling-chan) tooling-repl))
+                    (setq replique/repls (delete tooling-repl replique/repls))
+                    (push tooling-repl replique/defunct-repls)
                     (replique/send-tooling-msg tooling-repl `((:type . :shutdown)))
                     (replique-async/<!
                      tooling-chan
@@ -784,7 +785,10 @@ The following commands are available:
             not-tooling-repls)
     (mapcar (lambda (repl)
               (replique/close-tooling-repl repl))
-            tooling-repls)))
+            tooling-repls)
+    (mapcar (lambda (repl)
+              (replique/close-tooling-repl repl))
+            replique/defunct-repls)))
 
 (defun replique/on-tooling-repl-close
     (tooling-chan-src host port process event)
