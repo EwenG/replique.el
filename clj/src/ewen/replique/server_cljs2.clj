@@ -22,7 +22,8 @@
              :refer [bindings-from-context]]
             [clojure.data.json :as json]
             [cljs.tagged-literals :as tags]
-            [ewen.replique.compliment.core :as compliment])
+            [ewen.replique.compliment.core :as compliment]
+            [clojure.spec :as s])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.net URL ServerSocket]
            [java.util.concurrent SynchronousQueue Executors ThreadFactory
@@ -345,7 +346,7 @@
   (with-tooling-response msg
     (let [{:keys [compiler-opts repl-opts]} (init-opts msg)]
       (init-browser-env compiler-opts repl-opts)
-      {})))
+      msg)))
 
 (defn repl-caught [e repl-env opts]
   (binding [*out* server/tooling-err]
@@ -368,7 +369,7 @@
   (let [out-lock (ReentrantLock.)]
     (swap! cljs-outs conj [*out* out-lock])
     (when-not (:connection @(:server-state @repl-env))
-      (println "Waiting for browser to connect ..."))
+      (println (format "Waiting for browser to connect on port %d ..." (:port @repl-env))))
     (apply
      (partial cljs.repl/repl @repl-env)
      (->> (merge
