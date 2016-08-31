@@ -34,6 +34,11 @@
             alist)
     m))
 
+(defun replique/update-alist (alist key val)
+  (let ((updated-alist (copy-alist alist)))
+    (setcdr (assoc key updated-alist) val)
+    updated-alist))
+
 (defun replique/keyword-to-string (k)
   (substring (symbol-name k) 1))
 
@@ -65,6 +70,13 @@
       (setq alist (push `(,(car plist) . ,(cadr plist)) alist))
       (setq plist (cddr plist)))
     alist))
+
+(defun replique/update-repl (old-repl updated-repl)
+  (setq replique/repls (mapcar (lambda (repl)
+                                 (if (eq repl old-repl)
+                                     updated-repl
+                                   repl))
+                               replique/repls)))
 
 (defun replique/repls-or-repl-by (filtering-fn source &rest args)
   (-let* ((pred (lambda (repl-props)
@@ -405,6 +417,11 @@ This allows you to temporarily modify read-only buffers too."
            (replique/message-nolog
             (replique/format-load-file-message cljs-msg))))))
 
+(defun replique/file-in-root-dir (tooling-repl file-name)
+  (and file-name
+       (equal (cdr (assoc :directory tooling-repl))
+              (file-name-directory file-name))))
+
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((props-sym (make-symbol "props-sym"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
@@ -416,6 +433,8 @@ This allows you to temporarily modify read-only buffers too."
            (lambda (item)
              (let ((m (car item))
                    (f (cdr item)))
+               ;; The order of priority is the order of the modes as defined during
+               ;; the use of the macro
                (cond ((equal 'clojure-mode m)
                       `((equal 'clojure-mode major-mode)
                         (if ,clj-buff-sym
@@ -456,7 +475,22 @@ This allows you to temporarily modify read-only buffers too."
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f ,props-sym
-                                 (replique/repl-by :buffer (current-buffer))))))))
+                                 (replique/repl-by :buffer (current-buffer)))))
+                     ((equal :leiningen m)
+                      `((and (equal 'clojure-mode major-mode)
+                             (equal "project.clj" (file-name-nondirectory (buffer-file-name)))
+                             (replique/file-in-root-dir ,props-sym (buffer-file-name)))
+                        (if (or ,clj-buff-sym ,cljs-buff-sym)
+                            (funcall ,f ,props-sym)
+                          (user-error "No active Clojure or Clojurescript REPL"))))
+                     ((equal :repl-env m)
+                      `((and (equal 'clojure-mode major-mode)
+                             (equal ".replique-repl-env.clj"
+                                    (file-name-nondirectory (buffer-file-name)))
+                             (replique/file-in-root-dir ,props-sym (buffer-file-name)))
+                        (if (or ,clj-buff-sym ,cljs-buff-sym)
+                            (funcall ,f ,props-sym)
+                          (user-error "No active Clojure or Clojurescript REPL")))))))
            modes-alist))
          (dispatch-code (append dispatch-code
                                 '((t (user-error
@@ -611,12 +645,34 @@ This allows you to temporarily modify read-only buffers too."
    'replique/display-load-file-results
    props clj-repl cljs-repl))
 
+(defun replique/load-repl-env (file-path tooling-repl)
+  (message "Loading REPL environement...")
+  (condition-case err
+      (let* ((repl-env-opts (replique-edn/read-string (buffer-string)))
+             (tooling-chan (cdr (assoc :chan tooling-repl))))
+        (puthash :type :set-cljs-env repl-env-opts)
+        (replique/send-tooling-msg tooling-repl repl-env-opts)
+        (replique-async/<!
+         tooling-chan
+         (lambda (resp)
+           (let ((err (gethash :error resp)))
+             (if err
+                 (progn
+                   (message (replique-edn/pr-str err))
+                   (message "Loading REPL environement: failed"))
+               (progn
+                 (message "Loading REPL environement: done")
+                 (print resp)))))))
+    (error (message "Error while loading REPL environment: %s"
+                    (error-message-string err)))))
+
 (defun replique/load-file ()
   "Load a file in a replique REPL"
   (interactive)
   (let ((file-path (buffer-file-name)))
     (comint-check-source file-path)
     (replique/with-modes-dispatch
+     (:repl-env . (-partial 'replique/load-repl-env file-path))
      (clojure-mode* . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path))
@@ -737,7 +793,7 @@ The following commands are available:
 
 (defun replique/send-tooling-msg (tooling-repl msg)
   (-let (((&alist :network-proc tooling-network-proc) tooling-repl)
-         (msg (replique/alist-to-map msg)))
+         (msg (if (replique/alistp msg) (replique/alist-to-map msg) msg)))
     (process-send-string
      tooling-network-proc
      (format "(ewen.replique.server/tooling-msg-handle %s)\n"
@@ -843,14 +899,33 @@ The following commands are available:
            nil)
           (t t))))
 
+(defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
+  (replique-async/<!
+   proc-chan (lambda (msg)
+               (cond
+                (filtered? (progn
+                             (replique-async/put! filtered-chan msg)
+                             (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
+                ((equal "Starting Clojure REPL..." (s-trim msg))
+                 (replique/skip-repl-starting-output* proc-chan filtered-chan t))
+                (t (progn
+                     (message msg)
+                     (replique/skip-repl-starting-output* proc-chan filtered-chan)))))))
+
+(defun replique/skip-repl-starting-output (proc-chan)
+  (let ((filtered-chan (replique-async/chan)))
+    (replique/skip-repl-starting-output* proc-chan filtered-chan)
+    filtered-chan))
+
 (defun replique/make-tooling-repl (host port directory out-chan)
   (let* ((default-directory directory)
          (repl-cmd (replique/dispatch-repl-cmd directory port))
          (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (chan (replique/edn-read-stream (replique/process-filter-chan proc)
-                                         (lambda (proc-out-s)
-                                           (error "Error while starting the REPL: %s"
-                                                  proc-out-s)))))
+         (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
+         (chan (replique/edn-read-stream
+                proc-chan
+                (lambda (proc-out-s)
+                  (error "Error while starting the REPL: %s" proc-out-s)))))
     (replique-async/<!
      chan (lambda (repl-infos)
             (set-process-filter proc (lambda (proc string) nil))
@@ -993,8 +1068,10 @@ The following commands are available:
             (let ((repl (replique/repl-by
                          :session (gethash :client (gethash :session msg)))))
               (when repl
-                (setcdr (assoc :repl-type repl) (gethash :repl-type msg))
-                (setcdr (assoc :ns repl) (gethash :ns msg))
+                (replique/update-repl
+                 repl (-> repl
+                          (replique/update-alist :repl-type (gethash :repl-type msg))
+                          (replique/update-alist :ns (gethash :ns msg))))
                 (replique-async/put! (cdr (assoc :eval-chan repl)) msg)))
             (replique/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
@@ -1047,32 +1124,10 @@ The following commands are available:
     (replique/edn-read-stream* chan-in chan-out edn-state error-handler)
     chan-out))
 
-(comment
- (replique/send-tooling-msg
-  props
-  `((:type . :set-cljs-env)
-    (:cljs-env . :browser)
-    (:compiler-env . ((:output-to . "out")))
-    (:repl-env . ((:port . 9000)))))
- (replique-async/<!
-  tooling-chan
-  (lambda (resp)
-    (let ((err (gethash :error resp)))
-      (if err
-          (progn
-            (message (replique-edn/pr-str err))
-            (message "Failed to create cljs environment %s"
-                     `((:type . :set-cljs-env)
-                       (:cljs-env . :browser)
-                       (:compiler-env . ((:output-to . "out/main.js")))
-                       (:repl-env . ((:port . 9000))))))
-        (message "Created cljs env")))))
-    )
-
 (provide 'replique2)
 
-
-;; handle defunct tooling procs
+;; Handle defunct tooling procs
+;; Existing repl with defunct
 
 ;; replique.el ends here
 

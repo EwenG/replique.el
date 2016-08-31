@@ -53,6 +53,7 @@
 
 (defmethod repl-dispatch [:clj nil]
   [{:keys [port type cljs-env directory] :as opts}]
+  (println "Starting Clojure REPL...")
   (try
     (alter-var-root #'directory (constantly directory))
     (start-server {:port port :name :replique
