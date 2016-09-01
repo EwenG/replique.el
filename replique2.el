@@ -174,8 +174,16 @@
 (defun replique/auto-complete-cljs (prefix company-callback props cljs-repl)
   (replique/auto-complete* prefix company-callback props :cljs-completion))
 
+(defun replique/auto-complete-lein (prefix company-callback tooling-repl)
+  (funcall company-callback '()))
+
+(defun replique/auto-complete-cljs-env (prefix company-callback tooling-repl)
+  (funcall company-callback '()))
+
 (defun replique/auto-complete (prefix company-callback)
   (replique/with-modes-dispatch
+   (:leiningen . (-partial 'replique/auto-complete-lein prefix company-callback))
+   (:cljs-env . (-partial 'replique/auto-complete-cljs-env prefix company-callback))
    (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
@@ -483,7 +491,7 @@ This allows you to temporarily modify read-only buffers too."
                         (if (or ,clj-buff-sym ,cljs-buff-sym)
                             (funcall ,f ,props-sym)
                           (user-error "No active Clojure or Clojurescript REPL"))))
-                     ((equal :repl-env m)
+                     ((equal :cljs-env m)
                       `((and (equal 'clojure-mode major-mode)
                              (equal ".replique-repl-env.clj"
                                     (file-name-nondirectory (buffer-file-name)))
@@ -655,14 +663,12 @@ This allows you to temporarily modify read-only buffers too."
         (replique-async/<!
          tooling-chan
          (lambda (resp)
-           (let ((err (gethash :error resp)))
-             (if err
-                 (progn
-                   (message (replique-edn/pr-str err))
-                   (message "Loading REPL environement: failed"))
-               (progn
-                 (message "Loading REPL environement: done")
-                 (print resp)))))))
+           (cond ((gethash :error resp)
+                  (message (replique-edn/pr-str (gethash :error resp)))
+                  (message "Loading REPL environement: failed"))
+                 ((gethash :invalid resp)
+                  (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
+                 (t (message "Loading REPL environement: done"))))))
     (error (message "Error while loading REPL environment: %s"
                     (error-message-string err)))))
 
@@ -672,7 +678,7 @@ This allows you to temporarily modify read-only buffers too."
   (let ((file-path (buffer-file-name)))
     (comint-check-source file-path)
     (replique/with-modes-dispatch
-     (:repl-env . (-partial 'replique/load-repl-env file-path))
+     (:cljs-env . (-partial 'replique/load-repl-env file-path))
      (clojure-mode* . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path))

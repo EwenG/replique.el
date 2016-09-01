@@ -6,7 +6,9 @@
             [ewen.replique.compliment.sources.local-bindings
              :refer [bindings-from-context]]
             [ewen.replique.compliment.core :as compliment]
-            [ewen.replique.compliment.sources :as compliment-sources])
+            [ewen.replique.compliment.sources :as compliment-sources]
+            [clojure.spec :as s]
+            [clojure.stacktrace :refer [print-stack-trace]])
   (:import [java.util.concurrent.locks ReentrantLock]
            [java.io File]))
 
@@ -118,7 +120,7 @@
                :repl-type :clj
                :thread (.getName thread)
                :ns (ns-name *ns*)
-               :value ex}))))))
+               :value (with-out-str (print-stack-trace ex))}))))))
 
 (comment
   (.start (Thread. (fn [] (throw (Exception. "e")))))
@@ -147,6 +149,18 @@
                       :ns (ns-name *ns*)
                       :result (pr-str result)})))
             (prn result))))
+
+(defmethod tooling-msg-handle :set-cljs-env [msg]
+  (with-tooling-response msg
+    (require 'ewen.replique.server-cljs)
+    (let [init-browser-env (ns-resolve 'ewen.replique.server-cljs 'init-browser-env)
+          init-opts (ns-resolve 'ewen.replique.server-cljs 'init-opts)
+          conformed-msg (s/conform :ewen.replique.server-cljs/cljs-env msg)]
+      (if (= ::s/invalid conformed-msg)
+        {:invalid (s/explain-str :ewen.replique.server-cljs/cljs-env msg)}
+        (let [{:keys [compiler-opts repl-opts]} (init-opts msg)]
+          (init-browser-env compiler-opts repl-opts)
+          msg)))))
 
 (defn format-meta [{:keys [file] :as meta} keys]
   (let [f (and file (File. file))]

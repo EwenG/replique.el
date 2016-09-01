@@ -22,26 +22,42 @@
              :refer [bindings-from-context]]
             [clojure.data.json :as json]
             [cljs.tagged-literals :as tags]
-            [ewen.replique.compliment.core :as compliment])
-  (:import [java.io File]
-           [java.net URL]
-           [java.util.concurrent SynchronousQueue]
+            [ewen.replique.compliment.core :as compliment]
+            [clojure.spec :as s])
+  (:import [java.io File BufferedReader InputStreamReader]
+           [java.net URL ServerSocket]
+           [java.util.concurrent SynchronousQueue Executors ThreadFactory
+            RejectedExecutionException]
            [java.net SocketException]
            [clojure.lang IExceptionInfo]
            [java.util.concurrent.locks ReentrantLock]))
 
-(comment
-  (let [res1 (future (cljs.repl/-evaluate ewen.replique.server-cljs/repl-env nil nil "3"))
-        res2 (future (cljs.repl/-evaluate ewen.replique.server-cljs/repl-env nil nil "4"))]
-    [@res1 @res2])
-  )
-
-(defonce compiler-env nil)
-(defonce repl-env nil)
-(defonce env {:context :expr :locals {}})
-(defonce eval-queue (SynchronousQueue. true))
-(defonce evaled-queue (SynchronousQueue. true))
+(defonce compiler-env (ref nil))
+(defonce repl-env (ref nil))
 (defonce cljs-outs (atom #{}))
+(def ^:dynamic *stopped-eval-executor?* false)
+
+(def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
+                             [cljs.pprint :refer [pprint] :refer-macros [pp]]])
+(def env {:context :expr :locals {}})
+
+(s/def ::cljs-env-type #{:browser :webapp})
+(s/def ::output-to string?)
+(s/def ::main string?)
+(s/def ::compiler-env (s/keys :req-un [::output-to] :opt-un [::main]))
+(s/def ::port number?)
+(s/def ::repl-env (s/keys :req-un [::port]))
+(s/def ::cljs-env (s/keys :req-un [::cljs-env-type ::compiler-env ::repl-env]))
+
+(comment
+  (s/conform ::cljs-env {:cljs-env-type :browser
+                         :compiler-env {:output-to "out/main.js"}
+                         :repl-env {:port 9001}})
+  (s/explain-str ::cljs-env {:cljs-env-type :browser
+                             :compiler-env {:output-to "out/main.js"}
+                             :repl-env2 {:port 9001}})
+  (s/explain-str ::cljs-env [])
+  )
 
 (defmacro ^:private with-lock
   [lock-expr & body]
@@ -52,6 +68,40 @@
        ~@body
        (finally
          (.unlock lockee#)))))
+
+(defn make-eval-executor-thread-factory [repl-env]
+  (reify ThreadFactory
+    (newThread [this runnable]
+      (binding [cljs.repl.browser/browser-state (:browser-state repl-env)
+                cljs.repl.browser/ordering (:ordering repl-env)
+                cljs.repl.browser/es (:es repl-env)
+                cljs.repl.server/state (:server-state repl-env)]
+        (Thread. ((ns-resolve 'clojure.core 'binding-conveyor-fn)
+                  (fn [] (.run runnable))))))))
+
+(defn make-eval-executor [repl-env]
+  (-> (make-eval-executor-thread-factory repl-env)
+      (Executors/newSingleThreadExecutor)))
+
+(defn make-eval-task [js]
+  (reify Callable
+    (call [this]
+      (if *stopped-eval-executor?*
+        {:status :error
+         :value "Connection broken"}
+        (try
+          (cljs.repl.browser/browser-eval js)
+          ;; If the repl-env is shutdown
+          (catch InterruptedException e
+            {:status :error
+             :value "Connection broken"})
+          ;; Other errors, socket closed by the client ...
+          (catch SocketException e
+            (doseq [[out lock] @cljs-outs]
+              (binding [*out* out]
+                (prn e)))
+            {:status :error
+             :value "Connection broken"}))))))
 
 (defn f->src [f]
   (cond (util/url? f) f
@@ -78,13 +128,6 @@
                  (util/ns->relpath ns (util/ext (:source-url compiled))))
         (slurp src)))
      compiled)))
-
-(defn repl-cljs-on-disk [compiled repl-opts opts]
-  (let [sources (closure/add-dependencies
-                 (merge repl-opts opts)
-                 compiled)]
-    (doseq [source sources]
-      (closure/source-on-disk opts source))))
 
 (defn foreign->output-file [foreign opts]
   (let [output-path (closure/rel-output-path
@@ -114,69 +157,38 @@
                       (into js-files))]
     (deps/dependency-order js-files)))
 
-(defn init-class-loader []
-  (let [cl (.getContextClassLoader (Thread/currentThread))]
-    (.setContextClassLoader (Thread/currentThread)
-                            (clojure.lang.DynamicClassLoader. cl))))
+(defn repl-cljs-on-disk [compiled repl-opts opts]
+  (let [sources (closure/add-dependencies
+                 (merge repl-opts opts)
+                 compiled)]
+    (doseq [source sources]
+      (closure/source-on-disk opts source))))
 
-(defmulti init-opts :cljs-env)
+(defmulti init-opts :cljs-env-type)
 
-(defmethod init-opts :browser [{:keys [browser-env-port
-                                       browser-env-out
-                                       browser-env-main] :as opts}]
-  (let [output-dir (.getParent (file browser-env-out))]
-    {:comp-opts (merge {:output-to browser-env-out
-                        :output-dir output-dir
-                        :optimizations :none
-                        :recompile-dependents false}
-                       (when browser-env-main
-                         {:main browser-env-main}))
+(defn init-opts* [{{output-to :output-to} :compiler-env
+                   {port :port main :main} :repl-env}]
+  (let [output-dir (-> (file output-to) (.getAbsoluteFile) (.getParent))]
+    {:compiler-opts (merge {:output-to (-> (file output-to) (.getAbsolutePath))
+                            :output-dir output-dir
+                            :optimizations :none
+                            :recompile-dependents false
+                            :preloads ['ewen.replique.cljs_env.repl
+                                       'ewen.replique.cljs_env.browser]}
+                           (when main {:main main}))
      :repl-opts {:analyze-path []
-                 :port browser-env-port
-                 :serve-static true
-                 :static-dir ["." output-dir]
-                 :src []}}))
+                 :port port}}))
 
-(defmethod init-opts :webapp [{:keys [webapp-env-port
-                                      webapp-env-out
-                                      webapp-env-main] :as opts}]
-  (let [output-dir (.getParent (file webapp-env-out))]
-    {:comp-opts (merge {:output-to webapp-env-out
-                        :output-dir output-dir
-                        :optimizations :none
-                        :recompile-dependents false}
-                       (when webapp-env-main
-                         {:main webapp-env-main}))
-     :repl-opts {:analyze-path []
-                 :port webapp-env-port
-                 :serve-static false
-                 :src []}}))
+(defmethod init-opts :browser [{{output-to :output-to} :compiler-env :as opts}]
+  (let [opts (init-opts* opts)
+        output-dir (get-in opts [:compiler-opts :output-dir])]
+    (update-in opts [:repl-opts] merge
+               {:serve-static true
+                :static-dir ["." output-dir]})))
 
-(defmethod init-opts :replique [{:keys [directory] :as opts}]
-  (let [output-dir (file directory "out")]
-    {:comp-opts (merge {:output-to (.getAbsolutePath
-                                    (file output-dir "main.js"))
-                        :output-dir (.getAbsolutePath output-dir)
-                        :optimizations :none
-                        :recompile-dependents false})
-     :repl-opts {:analyze-path []
-                 :port 0
-                 :serve-static true
-                 :static-dir [output-dir]
-                 :src []}}))
-
-(defmethod cljs.repl.browser/handle-post :print
-  [{:keys [content order]} conn _ ]
-  (cljs.repl.browser/constrain-order
-   order
-   (fn []
-     ;; Maybe we should print only in the currently active REPL instead of all REPLs
-     (doseq [[out out-lock] @cljs-outs]
-       (binding [*out* out]
-         (with-lock out-lock
-           (print (read-string content))
-           (.flush *out*))))))
-  (cljs.repl.server/send-and-close conn 200 "ignore__"))
+(defmethod init-opts :webapp [opts]
+  (-> (init-opts* opts)
+      (update-in [:repl-opts] merge {:serve-static false})))
 
 ;; Bypass the cljs load-javascript function in order to use the
 ;; race condition free "browser-eval" function
@@ -189,14 +201,18 @@
   [repl-env provides url]
   (cljs.repl/-evaluate repl-env nil nil (slurp url)))
 
-(defrecord BrowserEnv [wrapped setup-ret]
+(defrecord BrowserEnv [wrapped eval-executor setup-ret]
   cljs.repl/IJavaScriptEnv
   (-setup [this opts] setup-ret)
   (-evaluate [this _ _ js]
-    (.put eval-queue js)
-    (.take evaled-queue))
+    (try (-> (.submit eval-executor (make-eval-task js))
+             (.get))
+         (catch RejectedExecutionException e
+           {:status :error
+            :value "Connection broken"})))
   (-load [this provides url]
     (load-javascript this provides url))
+  ;; We don't want the repl-env to be closed on cljs-repl exit
   (-tear-down [this] nil)
   cljs.repl/IReplEnvOptions
   (-repl-options [this]
@@ -208,6 +224,18 @@
   (-get-error [this e env opts]
     (cljs.repl/-get-error wrapped e env opts)))
 
+(defn tear-down-repl-env [repl-env]
+  (cljs.repl/-tear-down (:wrapped repl-env))
+  ;; Interrupt the currently executing task, if any
+  ;; Pending tasks are returned
+  (let [pendingTasks (.shutdownNow (:eval-executor repl-env))]
+    (binding [*stopped-eval-executor?* true]
+      (doseq [task pendingTasks]
+        (.run task)))))
+
+(defn custom-benv [benv eval-executor setup-ret]
+  (merge (BrowserEnv. benv eval-executor setup-ret) benv))
+
 ;; Used instead of cljs.repl.browser to avoid compiling client.js.
 ;; client.js is not needed because the browser repl uses xhr with cors
 ;; instead of crosspagechannel
@@ -216,34 +244,7 @@
             cljs.repl.browser/ordering (:ordering repl-env)
             cljs.repl.browser/es (:es repl-env)
             cljs.repl.server/state (:server-state repl-env)]
-    (println "Waiting for browser to connect ...")
     (cljs.repl.server/start repl-env)))
-
-(defn custom-benv [benv setup-ret]
-  (merge (BrowserEnv. benv setup-ret) benv))
-
-(defn setup-benv [repl-env]
-  (let [setup-ret (setup repl-env nil)]
-    (doto (Thread.
-           (fn []
-             (binding [cljs.repl.browser/browser-state
-                       (:browser-state repl-env)
-                       cljs.repl.browser/ordering (:ordering repl-env)
-                       cljs.repl.browser/es (:es repl-env)
-                       cljs.repl.server/state (:server-state repl-env)]
-               (loop []
-                 (let [js (.take eval-queue)
-                       evaled (try
-                                (cljs.repl.browser/browser-eval js)
-                                (catch SocketException e
-                                  {:status :error
-                                   :value "Connection broken"}))]
-                   (.put evaled-queue evaled))
-                 (recur))))
-           "repl-env-eval")
-      (.setDaemon true)
-      (.start))
-    setup-ret))
 
 (defn compute-asset-path [asset-path output-dir rel-path]
   (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
@@ -300,8 +301,8 @@
           "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
           "if(typeof goog == \"undefined\") document.write('<script src=\"'+ assetPath +'/goog/base.js\"></script>');\n"
           "document.write('<script src=\"'+ assetPath +'/cljs_deps.js\"></script>');\n"
-          "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.repl\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
-          "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.browser\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
+          #_"document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.repl\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
+          #_"document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.browser\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
           (when (:main opts)
             (when-let [main (try (-> (:main opts)
                                      ana-api/parse-ns :ns)
@@ -314,91 +315,56 @@
   ([comp-opts repl-opts]
    (init-browser-env comp-opts repl-opts true))
   ([comp-opts repl-opts output-main-file?]
-   (alter-var-root #'compiler-env (-> comp-opts
-                                      closure/add-implicit-options
-                                      cljs-env/default-compiler-env
-                                      constantly))
-   (let [repl-env* (apply cljs.repl.browser/repl-env
-                          (apply concat repl-opts))]
-     (cljs-env/with-compiler-env compiler-env
+   (let [compiler-env* (-> comp-opts
+                           closure/add-implicit-options
+                           cljs-env/default-compiler-env)
+         repl-env* (apply cljs.repl.browser/repl-env (apply concat repl-opts))]
+     (when @repl-env (tear-down-repl-env @repl-env))
+     (cljs-env/with-compiler-env compiler-env*
        (comp/with-core-cljs nil
          (fn []
-           (let [setup-ret (setup-benv repl-env*)]
-             (alter-var-root
-              #'repl-env
-              (constantly (custom-benv repl-env* setup-ret))))))
-       (let [port (-> @(:server-state repl-env)
-                      :socket
-                      (.getLocalPort))
-             repl-src "ewen/replique/cljs_env/repl.cljs"
-             benv-src "ewen/replique/cljs_env/browser.cljs"
-             repl-compiled (repl-compile-cljs repl-src comp-opts false)
-             benv-compiled (repl-compile-cljs benv-src comp-opts false)]
-         (repl-cljs-on-disk
-          repl-compiled (#'cljs.repl/env->opts repl-env) comp-opts)
-         (repl-cljs-on-disk
-          benv-compiled (#'cljs.repl/env->opts repl-env)comp-opts)
-         (->> (refresh-cljs-deps comp-opts)
-              (closure/output-deps-file
-               (assoc comp-opts :output-to
-                      (str (util/output-directory comp-opts)
-                           File/separator "cljs_deps.js"))))
-         (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
-           util/mkdirs
-           (spit (slurp (io/resource "goog/deps.js"))))
-         (when output-main-file?
-           (output-main-file comp-opts port)))))))
+           (let [eval-executor (make-eval-executor repl-env*)
+                 repl-env* (->> (setup repl-env* nil)
+                                (custom-benv repl-env* eval-executor))]
+             (try
+               (let [port (-> @(:server-state repl-env*)
+                              :socket
+                              (.getLocalPort))
+                     repl-src "ewen/replique/cljs_env/repl.cljs"
+                     benv-src "ewen/replique/cljs_env/browser.cljs"
+                     repl-compiled (repl-compile-cljs repl-src comp-opts false)
+                     benv-compiled (repl-compile-cljs benv-src comp-opts false)]
+                 (repl-cljs-on-disk
+                  repl-compiled (#'cljs.repl/env->opts repl-env*) comp-opts)
+                 (repl-cljs-on-disk
+                  benv-compiled (#'cljs.repl/env->opts repl-env*) comp-opts)
+                 (->> (refresh-cljs-deps comp-opts)
+                      (closure/output-deps-file
+                       (assoc comp-opts :output-to
+                              (str (util/output-directory comp-opts)
+                                   File/separator "cljs_deps.js"))))
+                 (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
+                   util/mkdirs
+                   (spit (slurp (io/resource "goog/deps.js"))))
+                 (when output-main-file?
+                   (output-main-file comp-opts port))
+                 (dosync
+                  (ref-set compiler-env compiler-env*)
+                  (ref-set repl-env repl-env*)))
+               ;; Shutdown eval-executor ?
+               (catch Throwable t
+                 (tear-down-repl-env repl-env*)
+                 (throw t))))))))))
 
-(defn compile-ui []
-  (let [{:keys [comp-opts repl-opts]} (init-opts {:cljs-env :replique})]
-    (cljs-env/with-compiler-env (cljs-env/default-compiler-env)
-      (let [main-src "ewen/replique/ui/main.cljs"
-            main-compiled (repl-compile-cljs main-src comp-opts false)]
-        (repl-cljs-on-disk main-compiled {} comp-opts)
-        (->> (refresh-cljs-deps comp-opts)
-             (closure/output-deps-file
-              (assoc comp-opts :output-to
-                     (str (util/output-directory comp-opts)
-                          File/separator "cljs_deps.js"))))
-        (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
-          util/mkdirs
-          (spit (slurp (io/resource "goog/deps.js"))))))))
-
-(defn output-index-html [{:keys [output-dir]}]
-  (closure/output-one-file {:output-to (str output-dir "/index.html")}
-                           (str "<html>
-    <body>
-        <script type=\"text/javascript\" src=\"main.js\"></script>
-    </body>
-</html>")))
-
-(def special-fns
-  {'ewen.replique.server-cljs/server-connection?
-   (fn [repl-env env form opts]
-     (prn (if (:connection @(:server-state repl-env))
-            true false)))})
-
-;; Customize repl-read to avoid quitting the REPL on :clj/quit
-;; Unfortunatly, this is cannot be handled by the cljs :read hook
-(defn repl-read
-  ([request-prompt request-exit]
-   (repl-read request-prompt request-exit cljs.repl/*repl-opts*))
-  ([request-prompt request-exit opts]
-   (binding [*in* (if (true? (:source-map-inline opts))
-                    ((:reader opts))
-                    *in*)]
-     (or ({:line-start request-prompt :stream-end request-exit}
-          (cljs.repl/skip-whitespace *in*))
-         (let [input (reader/read
-                      {:read-cond :allow :features #{:cljs}} *in*)]
-           (cljs.repl/skip-if-eol *in*)
-           (if (= :cljs/quit input)
-             '(do :cljs/quit)
-             input))))))
+(defmethod server/tooling-msg-handle :shutdown [msg]
+  (with-tooling-response msg
+    (when @repl-env (tear-down-repl-env @repl-env))
+    (server/shutdown)
+    {:shutdown true}))
 
 (defn repl-caught [e repl-env opts]
   (binding [*out* server/tooling-err]
-    (with-lock server/tooling-err-lock
+    (with-lock server/tooling-out-lock
       (-> (assoc {:type :eval
                   :error true
                   :repl-type :cljs
@@ -412,18 +378,17 @@
           prn)))
   (cljs.repl/repl-caught e repl-env opts))
 
-(defmethod server/repl :cljs [type]
+(defn cljs-repl []
+  {:pre [(not (nil? (and @compiler-env @repl-env)))]}
   (let [out-lock (ReentrantLock.)]
     (swap! cljs-outs conj [*out* out-lock])
-    (when-not (:connection @(:server-state repl-env))
-      (println "Waiting for browser to connect ..."))
+    (when-not (:connection @(:server-state @repl-env))
+      (println (format "Waiting for browser to connect on port %d ..." (:port @repl-env))))
     (apply
-     (partial cljs.repl/repl repl-env)
+     (partial cljs.repl/repl @repl-env)
      (->> (merge
-           (:options @compiler-env)
-           {:compiler-env compiler-env
-            :read repl-read
-            :quit-prompt #()
+           (:options @@compiler-env)
+           {:compiler-env @compiler-env
             :caught repl-caught
             :print (fn [result]
                      (binding [*out* server/tooling-out]
@@ -434,425 +399,121 @@
                                :ns ana/*cljs-ns*
                                :result result})))
                      (with-lock out-lock
-                       (println result)))})
+                       (println result)))
+            :init (fn []
+                    ;; Let the client know that we are entering a cljs repl
+                    (binding [*out* server/tooling-out]
+                      (with-lock server/tooling-out-lock
+                        (prn {:type :eval
+                              :repl-type :cljs
+                              :session *session*
+                              :ns ana/*cljs-ns*
+                              :result "nil"})))
+                    (cljs.repl/evaluate-form
+                     @repl-env env "<cljs repl>"
+                     (with-meta
+                       `(~'ns ~'cljs.user
+                         (:require ~@default-repl-requires))
+                       {:line 1 :column 1})))})
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))
 
-(defmethod server/repl-dispatch [:cljs :browser]
-  [{:keys [port type cljs-env directory sass-bin] :as opts}]
-  (alter-var-root #'server/directory (constantly directory))
-  (alter-var-root #'server/sass-bin (constantly sass-bin))
-  #_(init-class-loader)
-  (let [{:keys [comp-opts repl-opts]} (init-opts opts)]
-    (init-browser-env comp-opts repl-opts false)
-    (start-server {:port port :name :replique
-                   :accept 'clojure.core.server/repl
-                   :server-daemon false})
-    (doto (file ".replique-port")
-      (spit (str {:repl (-> @#'clojure.core.server/servers
-                            (get :replique) :socket (.getLocalPort))
-                  :cljs-env (-> @(:server-state repl-env)
-                                :socket (.getLocalPort))}))
-      (.deleteOnExit))
-    (println "REPL started")))
-
-(defmethod server/repl-dispatch [:cljs :webapp]
-  [{:keys [port type cljs-env directory sass-bin] :as opts}]
-  (alter-var-root #'server/directory (constantly directory))
-  (alter-var-root #'server/sass-bin (constantly sass-bin))
-  #_(init-class-loader)
-  (let [{:keys [comp-opts repl-opts]} (init-opts opts)]
-    (init-browser-env comp-opts repl-opts)
-    (start-server {:port port :name :replique
-                   :accept 'clojure.core.server/repl
-                   :server-daemon false})
-    (doto (file ".replique-port")
-      (spit (str {:repl (-> @#'clojure.core.server/servers
-                            (get :replique) :socket (.getLocalPort))
-                  :cljs-env (-> @(:server-state repl-env)
-                                :socket (.getLocalPort))}))
-      (.deleteOnExit))
-    (println "REPL started")))
-
-(defmethod server/repl-dispatch [:cljs :replique]
-  [{:keys [port type cljs-env directory sass-bin] :as opts}]
-  (alter-var-root #'server/directory (constantly directory))
-  (alter-var-root #'server/sass-bin (constantly sass-bin))
-  #_(init-class-loader)
-  (let [{:keys [comp-opts repl-opts]} (init-opts opts)]
-    (init-browser-env comp-opts repl-opts false)
-    (start-server {:port port :name :replique
-                   :accept 'clojure.core.server/repl
-                   :server-daemon false})
-    (doto (file ".replique-port")
-      (spit (str {:repl (-> @#'clojure.core.server/servers
-                            (get :replique) :socket (.getLocalPort))
-                  :cljs-env (-> @(:server-state repl-env)
-                                :socket (.getLocalPort))}))
-      (.deleteOnExit))
-    (println "REPL started")))
-
-(defmethod server/tooling-msg-handle :repl-infos [msg]
-  (assoc (server/repl-infos)
-         :repl-type :cljs
-         :cljs-env
-         {:host (-> @(:server-state repl-env)
-                    :socket
-                    (.getLocalPort))
-          :port (-> @(:server-state repl-env)
-                    :socket
-                    (.getInetAddress) (.getHostAddress)
-                    server/normalize-ip-address)}))
-
-(defmethod server/tooling-msg-handle :shutdown [msg]
-  (binding [cljs.repl.server/state (:server-state repl-env)]
-    (cljs.repl.server/stop))
-  (.shutdown (:es repl-env))
-  (server/shutdown))
-
-(defmethod server/tooling-msg-handle :list-css [msg]
-  (with-tooling-response
-    msg
-    {:css-infos (-> (cljs.repl/-evaluate
-                     repl-env "<cljs repl>" 1
-                     "ewen.replique.cljs_env.browser.list_css_infos();")
-                    :value
-                    read-string)}))
-
-(defn css-infos-process-uri [{:keys [file-path uri scheme]
-                              :as css-infos}]
-  (if (= "data" scheme)
-    (assoc css-infos
-           :uri
-           (->> (slurp file-path)
-                ewen.replique.sourcemap/encode-base-64
-                (str "data:text/css;base64,")))
-    css-infos))
-
-(defmethod server/tooling-msg-handle :load-css [msg]
-  (with-tooling-response
-    msg
-    {:result (->> (css-infos-process-uri msg)
-                  pr-str pr-str
-                  (format "ewen.replique.cljs_env.browser.reload_css(%s);")
-                  (cljs.repl/-evaluate
-                   repl-env "<cljs repl>" 1)
-                  :value)}))
-
-(defn assoc-css-file [output-dir {:keys [uri] :as css-infos}]
-  (let [url (URL. uri)]
-    (if (and (= "file" (.getProtocol url))
-             (.exists (File. (.toURI url))))
-      (assoc css-infos :css-file
-             (->> (.getPath url)
-                  (File.)
-                  (.getAbsolutePath)))
-      (assoc css-infos :css-file
-             (->> (.getPath url)
-                  (File. output-dir)
-                  (.getAbsolutePath))))))
-
-(defn assoc-sourcemap [{:keys [scheme css-file uri] :as css-infos}]
-  (cond (= "http" scheme)
-        (assoc css-infos :sourcemap
-               (ewen.replique.sourcemap/css-file->sourcemap css-file))
-        (= "data" scheme)
-        (-> (assoc css-infos :sourcemap
-                   (ewen.replique.sourcemap/data->sourcemap uri))
-            (dissoc :uri))
-        :else nil))
-
-(defn assoc-child-source [path {:keys [sourcemap css-file file-path]
-                                :as css-infos}]
-  (if (nil? sourcemap)
-    (assoc css-infos :child-source path)
-    (let [css-file (-> (or css-file file-path)
-                       ewen.replique.sourcemap/str->path)
-          paths (->> (get sourcemap "sources")
-                     (map #(ewen.replique.sourcemap/str->path %)))
-          path (ewen.replique.sourcemap/str->path path)
-          compare-fn #(let [ref (.normalize path)
-                            other (.normalize
-                                   (.resolveSibling css-file %))]
-                        (when (.equals ref other) (str %)))
-          child-source (some compare-fn paths)]
-      (if child-source
-        (assoc css-infos :child-source child-source)
-        nil))))
-
-(comment
-  (assoc-child-source "/home/egr/replique.el/lein-project/resources/ff.scss"
-                      {:scheme "http", :uri "http://localhost:36466/ff.css", :css-file "/home/egr/replique.el/lein-project/out/ff.css", :sourcemap {"version" 3, "file" "ff.css", "sources" ["../resources/ff.scss"], "sourcesContent" ["body {\n\n}\n"], "mappings" "", "names" []}})
-  )
-
-(defn assoc-main-source [path {:keys [child-source sourcemap]
-                               :as css-infos}]
-  (if (nil? sourcemap)
-    (assoc css-infos :main-source path)
-    (let [path (ewen.replique.sourcemap/str->path path)
-          main-path (-> (get sourcemap "sources") first
-                        ewen.replique.sourcemap/str->path)
-          child-path (ewen.replique.sourcemap/str->path child-source)
-          relative-path (.relativize child-path main-path)]
-      (->> (.resolve path relative-path)
-           (.normalize)
-           str
-           (assoc css-infos :main-source)))))
-
-(defmethod server/tooling-msg-handle :list-sass
-  [{:keys [file-path] :as msg}]
-  (with-tooling-response msg
-    (let [output-dir (:output-dir (:options @compiler-env))
-          css-infos (->
-                     (cljs.repl/-evaluate
-                      repl-env "<cljs repl>" 1
-                      "ewen.replique.cljs_env.browser.list_css_infos();")
-                     :value
-                     read-string)
-          {css-http "http" css-data "data"}
-          (group-by :scheme css-infos)
-          css-http (doall
-                    (map (partial assoc-css-file output-dir) css-http))
-          css-http (doall
-                    (map assoc-sourcemap css-http))
-          css-http (doall
-                    (keep #(assoc-child-source file-path %) css-http))
-          css-http (doall
-                    (map #(assoc-main-source file-path %) css-http))
-          css-data (doall
-                    (map assoc-sourcemap css-data))
-          css-data (doall
-                    (keep #(assoc-child-source file-path %) css-data))]
-      {:sass-infos (into css-http css-data)})))
-
 (comment
   (server/tooling-msg-handle
-   {:type :list-sass
-    :file-path "/home/egr/electron/resources/replique/resources/stylesheet/main.scss"})
+   {:type :set-cljs-env
+    :cljs-env-type :browser
+    :compiler-env {:output-to "out/main.js"}
+    :repl-env {:port 9001}})
+
+  (tear-down-repl-env @repl-env)
+
+  @(:server-state @repl-env)
+  @(:browser-state @repl-env)
+  (:connection @(:server-state @repl-env))
+  (.isClosed (:connection @(:server-state @repl-env)))
+  (.isConnected (:connection @(:server-state @repl-env)))
+  
   )
-
-(defn compile-sass [input-path output-path]
-  (let [pb (ProcessBuilder.
-            (list server/sass-bin input-path output-path))
-        p (.start pb)
-        out (.getInputStream p)
-        err (.getErrorStream p)]
-    (if (= 0 (.waitFor p))
-      [true (slurp out)]
-      [false (slurp err)])))
-
-(comment
-  (compile-sass
-   "/home/egr/clojure/wreak-todomvc/test.scss"
-   "test.css")
-  )
-
-(defn remove-path-extension [path]
-  (let [last-separator-index (.lastIndexOf path File/separator)
-        file-name (if (= -1 last-separator-index)
-                    path
-                    (.substring path (+ 1 last-separator-index)))
-        extension-index (.lastIndexOf file-name ".")
-        extension-index (cond
-                          (= -1 extension-index)
-                          -1
-                          (= -1 last-separator-index)
-                          (.lastIndexOf file-name ".")
-                          :else (-> (.lastIndexOf file-name ".")
-                                    (+ (count path))
-                                    (- (count file-name))))]
-    (if (= -1 extension-index)
-      path
-      (.substring path 0 extension-index))))
-
-(defn compile-sass-data
-  [repl-env {:keys [scheme file-path main-source sass-path]
-             :as msg}]
-  (let [[success css-text]
-        (compile-sass
-         main-source
-         (str (remove-path-extension file-path) ".css"))]
-    (if success
-      (->> (ewen.replique.sourcemap/encode-base-64 css-text)
-           (str "data:text/css;base64,")
-           (assoc msg :uri))
-      (assoc msg :error css-text))))
-
-(defn compile-sass-http
-  [repl-env {:keys [scheme file-path main-source sass-path uri]
-             :as msg}]
-  (let [[success css-text] (compile-sass main-source file-path)]
-    (when success
-      (doto (io/file file-path)
-        util/mkdirs
-        (spit css-text)))
-    (if success
-      msg
-      (merge msg {:error css-text}))))
-
-(defmethod server/tooling-msg-handle :load-scss
-  [{:keys [scheme] :as msg}]
-  (with-tooling-response msg
-    (let [msg (if (= scheme "data")
-                (compile-sass-data repl-env msg)
-                (compile-sass-http repl-env msg))]
-      (if (:error msg)
-        msg
-        (->> msg pr-str pr-str
-             (format "ewen.replique.cljs_env.browser.reload_css(%s);")
-             (cljs.repl/-evaluate
-              repl-env "<cljs repl>" 1)
-             :value
-             (hash-map :result))))))
-
-(comment
-  (server/tooling-msg-handle
-   {:type :load-scss
-    :scheme "http"
-    :uri "http://localhost:36466/ff.css"
-    :file-path "/home/egr/replique.el/lein-project/out/ff.css"
-    :main-source nil})
-  )
-
-(defn resolve-ns-alias [comp-env current-ns alias]
-  (get-in @comp-env [::ana/namespaces
-                     current-ns :requires alias]))
-
-(comment
-  (get (get @compiler-env :js-dependency-index) "goog.string.format")
-  )
-
-(defn resolve-var
-  [comp-env current-ns sym]
-  (if (= "js" (namespace sym))
-    {:not-found :js}
-    (let [s (str sym)]
-      (cond
-        (not (nil? (namespace sym)))
-        (let [ns (namespace sym)
-              ns (if (= "clojure.core" ns) "cljs.core" ns)
-              ns (symbol ns)
-              full-ns (resolve-ns-alias comp-env current-ns ns)]
-          (merge (ana/gets @comp-env ::ana/namespaces full-ns
-                           :defs (symbol (name sym)))
-                 {:name (symbol (str full-ns) (str (name sym)))
-                  :ns full-ns}))
-
-        (not (nil? (ana/gets @comp-env
-                             ::ana/namespaces current-ns
-                             :uses sym)))
-        (let [full-ns (ana/gets @comp-env
-                                ::ana/namespaces current-ns
-                                :uses sym)]
-          (merge
-           (ana/gets @comp-env ::ana/namespaces full-ns :defs sym)
-           {:name (symbol (str full-ns) (str sym))
-            :ns full-ns}))
-
-        (not (nil? (ana/gets @comp-env
-                             ::ana/namespaces current-ns
-                             :imports sym)))
-        (recur comp-env current-ns (ana/gets @comp-env
-                                             ::ana/namespaces current-ns
-                                             :imports sym))
-
-        (not (nil? (ana/gets @comp-env :js-dependency-index s)))
-        (merge (select-keys (ana/gets @comp-env :js-dependency-index s)
-                            [:file])
-               {:name s})
-
-        (and (.contains s ".") (not (.contains s "..")))
-        (let [idx (.indexOf s ".")
-              prefix (symbol (subs s 0 idx))
-              suffix (subs s (inc idx))]
-          (let [info (ana/gets @comp-env
-                               ::ana/namespaces current-ns
-                               :defs prefix)]
-            (if-not (nil? info)
-              (merge info
-                     {:name (symbol (str current-ns) (str sym))
-                      :ns current-ns})
-              (merge (ana/gets @comp-env
-                               ::ana/namespaces prefix
-                               :defs (symbol suffix))
-                     {:name (if (= "" prefix)
-                              (symbol suffix)
-                              (symbol (str prefix) suffix))
-                      :ns prefix}))))
-
-        :else
-        (let [full-ns (cond
-                        (not (nil? (ana/gets @comp-env
-                                             ::ana/namespaces current-ns
-                                             :defs sym)))
-                        current-ns
-                        (cljs-env/with-compiler-env comp-env
-                          (ana/core-name? env sym))
-                        'cljs.core
-                        :else current-ns)]
-          (merge (ana/gets @comp-env
-                           ::ana/namespaces full-ns :defs sym)
-                 {:name (symbol (str full-ns) (str sym))
-                  :ns full-ns}))))))
-
-(defmethod server/tooling-msg-handle :cljs-var-meta
-  [{:keys [context ns symbol keys] :as msg}]
-  (with-tooling-response msg
-    (let [ctx (when context (binding [reader/*data-readers*
-                                      tags/*cljs-data-readers*]
-                              (reader/read-string context)))
-          ctx (context/parse-context ctx)
-          bindings (bindings-from-context ctx)
-          keys (into #{} keys)]
-      (cond
-        (or (nil? ns) (nil? symbol))
-        {:meta nil}
-        (and ctx (contains? (into #{} bindings) (name symbol)))
-        {:not-found :local-binding}
-        :else
-        (let [v (when (symbol? symbol)
-                  (resolve-var compiler-env ns symbol))
-              meta (when v
-                     (server/format-meta v keys))]
-          (if (empty? meta)
-            {:meta nil}
-            {:meta meta}))))))
-
-(comment
-  (server/tooling-msg-handle {:type :cljs-var-meta
-                              :context nil
-                              :ns 'ewen.replique.ui.dashboard
-                              :symbol 'goog.string.format
-                              :keys [:column :line :file]})
-
-  (server/tooling-msg-handle {:type :cljs-var-meta
-                              :context nil
-                              :ns 'ewen.replique.ui.dashboard
-                              :symbol 'node/require
-                              :keys [:column :line :file]})
-
-  (server/tooling-msg-handle {:type :cljs-var-meta
-                              :context nil
-                              :ns 'ewen.replique.ui.dashboard
-                              :symbol 'add-watch
-                              :keys [:column :line :file]})
-  )
-
-(defmethod server/tooling-msg-handle :cljs-completion
-  [{:keys [context ns prefix] :as msg}]
-  (with-tooling-response msg
-    (let [ctx (when context (binding [reader/*data-readers*
-                                      tags/*cljs-data-readers*]
-                              (reader/read-string context)))]
-      {:candidates (compliment/completions
-                    prefix {:ns ns :context ctx
-                            :cljs-comp-env compiler-env
-                            :sources [:ewen.replique.compliment.sources.ns-mappings/ns-mappings]})})))
 
 
 (comment
-  (server/tooling-msg-handle {:type :cljs-completion
-                              :context nil
-                              :ns 'ewen.replique.ui.dashboard
-                              :prefix "replique-d"})
+  {:settings
+   {:custom-cljs-jar nil,
+    :clj-jar-source "embedded",
+    :downloaded-clj-jar "clojure-1.8.0.jar",
+    :lein-source "embedded",
+    :custom-clj-jar nil,
+    :custom-lein-script nil,
+    :sass-bin
+    "/Users/egr/electron/resources/replique/runnables/replique_sass_3.2.5_0.0.1",
+    :cljs-jar-source "embedded",
+    :downloaded-cljs-jar "cljs-1.7.228.jar"},
+   :repls
+   {"64bedc2f-6bed-4606-8c00-ec4a87a83b20"
+    {:directory "/Users/egr/clojure/clojurescript",
+     :type :cljs,
+     :cljs-env :webapp,
+     :browser-env-random-port true,
+     :webapp-env-random-port true,
+     :browser-env-out "/Users/egr/clojure/clojurescript/out/main.js",
+     :webapp-env-out "/Users/egr/clojure/clojurescript/out/main.js",
+     :random-port true},
+    "e8a61e4e-8753-4b68-960f-e832091b2b0c"
+    {:browser-env-out nil,
+     :directory "/Users/egr/electron/resources/replique",
+     :browser-env-random-port true,
+     :webapp-env-main
+     "/Users/egr/electron/resources/replique/src/ewen/replique/ui/dashboard.cljs",
+     :type :cljs,
+     :webapp-env-out
+     "/Users/egr/electron/resources/replique/bootstrap.js",
+     :random-port true,
+     :browser-env-port 455,
+     :webapp-env-port 334,
+     :cljs-env :replique,
+     :webapp-env-random-port false,
+     :browser-env-main nil},
+    "9bef4632-56bf-4b4c-8592-314fc299222d"
+    {:browser-env-out "/Users/egr/clojure/todo-ddom/out/main.js",
+     :directory "/Users/egr/clojure/todo-ddom",
+     :browser-env-random-port true,
+     :webapp-env-main
+     "/Users/egr/clojure/todo-ddom/src/todo_ddom/view.cljc",
+     :type :cljs,
+     :webapp-env-out
+     "/Users/egr/clojure/todo-ddom/resources/public/javascript/main.js",
+     :random-port true,
+     :cljs-env :webapp,
+     :webapp-env-random-port true},
+    "f9bcca73-0e6f-4d1d-af62-3e5d7bb5ef14"
+    {:directory "/Users/egr/clojure/clj-http",
+     :type :clj,
+     :cljs-env :browser,
+     :browser-env-random-port true,
+     :webapp-env-random-port true,
+     :random-port true},
+    "a03858d3-e526-4906-a0bd-e9c48c5a4619"
+    {:directory "/Users/egr/clojure/prismic-kit-clj",
+     :type :clj,
+     :cljs-env :browser,
+     :browser-env-random-port true,
+     :webapp-env-random-port true,
+     :random-port true},
+    "fa8920a7-1136-4a10-aab2-8058c7947987"
+    {:directory "/Users/egr/clojure/hiccup",
+     :type :cljs,
+     :cljs-env :browser,
+     :browser-env-random-port true,
+     :webapp-env-random-port true,
+     :browser-env-out "/Users/egr/clojure/hiccup/out/main.js",
+     :random-port true},
+    "3b72e538-05ad-48e8-8f5e-7a2ed5a23260"
+    {:directory "/Users/egr/clojure/inccup",
+     :type :cljs,
+     :cljs-env :browser,
+     :browser-env-random-port true,
+     :webapp-env-random-port true,
+     :browser-env-out "/Users/egr/clojure/inccup/out/main.js",
+     :random-port true}},
+   :version "0.0.1"}
   )
