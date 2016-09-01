@@ -41,11 +41,18 @@
                              [cljs.pprint :refer [pprint] :refer-macros [pp]]])
 (def env {:context :expr :locals {}})
 
+(defn can-write-file? [path]
+  (let [f (File. path)]
+    (and (.canWrite f) (not (.isDirectory f)))))
+
+(defn port-number? [port-nb]
+  (< -1 port-nb 65535))
+
 (s/def ::cljs-env-type #{:browser :webapp})
-(s/def ::output-to string?)
+(s/def ::output-to can-write-file?)
 (s/def ::main string?)
 (s/def ::compiler-env (s/keys :req-un [::output-to] :opt-un [::main]))
-(s/def ::port number?)
+(s/def ::port port-number?)
 (s/def ::repl-env (s/keys :req-un [::port]))
 (s/def ::cljs-env (s/keys :req-un [::cljs-env-type ::compiler-env ::repl-env]))
 
@@ -302,8 +309,7 @@
           "if(typeof goog == \"undefined\") document.write('<script src=\"'+ assetPath +'/goog/base.js\"></script>');\n"
           "document.write('<script src=\"'+ assetPath +'/cljs_deps.js\"></script>');\n"
           (when (:main opts)
-            (when-let [main (try (-> (:main opts)
-                                     ana-api/parse-ns :ns)
+            (when-let [main (try (-> (:main opts) ana-api/parse-ns :ns)
                                  (catch Exception e nil))]
               (str "document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"" (comp/munge main) "\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
                    "document.write('<script>if (typeof goog != \"undefined\") {ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");} else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');")))
