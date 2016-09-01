@@ -301,8 +301,6 @@
           "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
           "if(typeof goog == \"undefined\") document.write('<script src=\"'+ assetPath +'/goog/base.js\"></script>');\n"
           "document.write('<script src=\"'+ assetPath +'/cljs_deps.js\"></script>');\n"
-          #_"document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.repl\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
-          #_"document.write('<script>if (typeof goog != \"undefined\") { goog.require(\"ewen.replique.cljs_env.browser\"); } else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');\n"
           (when (:main opts)
             (when-let [main (try (-> (:main opts)
                                      ana-api/parse-ns :ns)
@@ -434,6 +432,19 @@
   (.isConnected (:connection @(:server-state @repl-env)))
   
   )
+
+(defmethod cljs.repl.browser/handle-post :print
+  [{:keys [content order]} conn _ ]
+  (cljs.repl.browser/constrain-order
+   order
+   (fn []
+     ;; Maybe we should print only in the currently active REPL instead of all REPLs
+     (doseq [[out out-lock] @cljs-outs]
+       (binding [*out* out]
+         (with-lock out-lock
+           (print (read-string content))
+           (.flush *out*))))))
+  (cljs.repl.server/send-and-close conn 200 "ignore__"))
 
 
 (comment
