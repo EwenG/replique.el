@@ -527,7 +527,7 @@ This allows you to temporarily modify read-only buffers too."
          (insert old-input))))
 
 (defun replique/send-input-from-source-clj-cljs
-    (input display-result-fn props repl)
+    (input callback props repl)
   (let ((buff (cdr (assoc :buffer repl)))
         (eval-chan (cdr (assoc :eval-chan repl))))
     (with-current-buffer buff
@@ -536,8 +536,7 @@ This allows you to temporarily modify read-only buffers too."
      eval-chan
      (lambda (msg)
        (when msg
-         (funcall display-result-fn msg buff)))
-     t)))
+         (funcall callback msg buff))))))
 
 (defun replique/send-input-from-source-cljc
     (input-clj input-cljs display-result-fn display-results-fn
@@ -648,6 +647,24 @@ This allows you to temporarily modify read-only buffers too."
    'replique/display-load-file-results
    props clj-repl cljs-repl))
 
+(defun replique/restart-cljs-repls (tooling-repl)
+  (let* ((directory (cdr (assoc :directory tooling-repl)))
+         (cljs-repls (replique/repls-by :directory directory
+                                        :repl-type :cljs)))
+    (mapcar (lambda (cljs-repl)
+              (replique/send-input-from-source-clj-cljs
+               ":cljs/quit"
+               (lambda (msg buff)
+                 (replique/send-input-from-source-clj-cljs
+                  "(ewen.replique.server-cljs/cljs-repl)"
+                  (lambda (msg buff)
+                    nil)
+                  tooling-repl
+                  cljs-repl))
+               tooling-repl
+               cljs-repl))
+            cljs-repls)))
+
 (defun replique/load-repl-env (file-path tooling-repl)
   (message "Loading REPL environement...")
   (condition-case err
@@ -663,7 +680,9 @@ This allows you to temporarily modify read-only buffers too."
                   (message "Loading REPL environement: failed"))
                  ((gethash :invalid resp)
                   (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
-                 (t (message "Loading REPL environement: done"))))))
+                 (t
+                  (replique/restart-cljs-repls tooling-repl)
+                  (message "Loading REPL environement: done"))))))
     (error (message "Error while loading REPL environment: %s"
                     (error-message-string err)))))
 
@@ -968,7 +987,7 @@ The following commands are available:
              (replique/close-repl closing-repl))
             (t nil)))))
 
-(defun replique/make-repl (buffer-name host port make-active)
+(defun replique/make-repl (buffer-name directory host port make-active)
   (-let* ((buff (get-buffer-create buffer-name))
           (buff (make-comint-in-buffer buffer-name buff `(,host . ,port)))
           (proc (get-buffer-process buff))
@@ -992,7 +1011,8 @@ The following commands are available:
               (set-buffer buff)
               (replique/mode)
               (process-send-string proc repl-cmd)
-              (let ((repl `((:host . ,host)
+              (let ((repl `((:directory . ,directory)
+                            (:host . ,host)
                             (:port . ,port)
                             (:repl-type . :clj)
                             (:session . ,session)
@@ -1012,35 +1032,36 @@ The following commands are available:
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (file-truename directory)))
 
+;; Port number is ignored when a REPL process is already existing - the existing REPL port
+;; number is used instead
 ;;;###autoload
 (defun replique/repl (&optional directory host port)
   (interactive            
    (let ((directory (read-directory-name
                      "Project directory: " (replique/guess-project-root-dir) nil t))
-         (host "127.0.0.1")
-         (port (read-number "Port number: " 0)))
+         (host "127.0.0.1"))
      ;; Normalizing the directory name is necessary in order to be able to search repls
      ;; by directory name
-     (list (replique/normalize-directory-name directory) host port)))
-  (cond ((not (replique/is-valid-port-nb? port))
-         (message "Invalid port number: %d" port))
-        ((not (replique/repl-cmd-pre-cond directory))
-         nil)
-        (t
-         (let* ((existing-repl (replique/repl-by
-                                :directory directory
-                                :repl-type :tooling))
-                (tooling-repl-chan (replique-async/chan)))
-           (if existing-repl
-               (replique-async/put! tooling-repl-chan existing-repl)
-             (replique/make-tooling-repl host port directory tooling-repl-chan))
-           (replique-async/<!
-            tooling-repl-chan
-            (-lambda ((&alist :directory directory
-                              :host host :port port
-                              :chan tooling-chan))
-              (let* ((buff-name (replique/clj-buff-name directory :clj)))
-                (replique/make-repl buff-name host port t))))))))
+     (list (replique/normalize-directory-name directory) host)))
+  (if (not (replique/repl-cmd-pre-cond directory))
+      nil
+    (let* ((existing-repl (replique/repl-by
+                           :directory directory
+                           :repl-type :tooling))
+           (tooling-repl-chan (replique-async/chan)))
+      (if existing-repl
+          (replique-async/put! tooling-repl-chan existing-repl)
+        (let ((port (or port (read-number "Port number: " 0))))
+          (if (not (replique/is-valid-port-nb? port))
+              (message "Invalid port number: %d" port)
+            (replique/make-tooling-repl host port directory tooling-repl-chan))))
+      (replique-async/<!
+       tooling-repl-chan
+       (-lambda ((&alist :directory directory
+                         :host host :port port
+                         :chan tooling-chan))
+         (let* ((buff-name (replique/clj-buff-name directory :clj)))
+           (replique/make-repl buff-name directory host port t)))))))
 
 (defvar replique/edn-tag-readers
   `((error . identity)
@@ -1122,8 +1143,12 @@ The following commands are available:
 
 (provide 'replique2)
 
-;; Handle defunct tooling procs
-;; Existing repl with defunct
+;; Save started REPLs to disk, with their type (:clj, :cljs) and name
+;; Choose active REPL, choose active proc
+;; API namespace for public functions
+;; Make starting a new REPl proc possible using symbolic links
+;; Renaming of repls, including when changing REPL type
+;; Interactive function for opening .replique-cljs-env.clj and closing a proc
 
 ;; replique.el ends here
 
