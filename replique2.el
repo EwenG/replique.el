@@ -1067,6 +1067,28 @@ The following commands are available:
   `((error . identity)
     (object . identity)))
 
+(defun replique/maybe-rename-buffer (repl new-repl-type)
+  (let* ((repl-type (cdr (assoc :repl-type repl)))
+         (repl-type-s (replique/keyword-to-string repl-type))
+         (new-repl-type-s (replique/keyword-to-string new-repl-type))
+         (repl-buffer (cdr (assoc :buffer repl))))
+    (when (and (not (equal repl-type new-repl-type))
+               (string-suffix-p
+                (format "*%s*" repl-type-s)
+                (buffer-name repl-buffer)))
+      (let* ((new-buffer-name (replace-regexp-in-string
+                               (format "\\*%s\\*$" repl-type-s)
+                               (format "*%s*" new-repl-type-s)
+                               (buffer-name repl-buffer)))
+             (use-dialog-box nil)
+             (rename-buffer? (yes-or-no-p
+                              (format
+                               "Rename REPL %s to %s? "
+                               (buffer-name repl-buffer) new-buffer-name))))
+        (when rename-buffer?
+          (with-current-buffer repl-buffer
+            (rename-buffer new-buffer-name)))))))
+
 (defun replique/dispatch-eval-msg* (in-chan out-chan)
   (replique-async/<!
    in-chan
@@ -1085,6 +1107,7 @@ The following commands are available:
             (let ((repl (replique/repl-by
                          :session (gethash :client (gethash :session msg)))))
               (when repl
+                (replique/maybe-rename-buffer repl (gethash :repl-type msg))
                 (replique/update-repl
                  repl (-> repl
                           (replique/update-alist :repl-type (gethash :repl-type msg))
@@ -1149,6 +1172,7 @@ The following commands are available:
 ;; Make starting a new REPl proc possible using symbolic links
 ;; Renaming of repls, including when changing REPL type
 ;; Interactive function for opening .replique-cljs-env.clj and closing a proc
+;; Interactive function for switching repl
 
 ;; replique.el ends here
 
