@@ -699,6 +699,30 @@ This allows you to temporarily modify read-only buffers too."
      (css-mode . (-partial 'replique/load-css file-path))
      (scss-mode . (-partial 'replique/load-scss file-path)))))
 
+(defun replique/switch-active-repl (repl-buff-name)
+  "Switch the currently active REPL"
+  (interactive
+   (let* ((repls (-filter (-lambda ((&alist :repl-type repl-type))
+                            (not (equal :tooling repl-type)))
+                          replique/repls))
+          (repl-names (mapcar (-lambda ((&alist :buffer buffer))
+                                (buffer-name buffer))
+                              repls)))
+     (when (null repls)
+       (user-error "No started REPL"))
+     (list (ido-completing-read "Switch to REPL: " repl-names nil t))))
+  (let* ((buffer (get-buffer repl-buff-name))
+         (repl (replique/repl-by :buffer buffer))
+         (repl-type (cdr (assoc :repl-type repl)))
+         (prev-active-repl (replique/repl-by :repl-type repl-type))
+         (prev-active-buffer (cdr (assoc :buffer prev-active-repl)))
+         (prev-active-windows (get-buffer-window-list prev-active-buffer)))
+    (setq replique/repls (delete repl replique/repls))
+    (setq replique/repls (push repl replique/repls))
+    (mapcar (lambda (window)
+              (set-window-buffer window buffer))
+            prev-active-windows)))
+
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
   :type 'regexp
@@ -726,6 +750,7 @@ This allows you to temporarily modify read-only buffers too."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
+    (define-key map "\C-xr" 'replique/switch-active-repl)
     map))
 
 (define-derived-mode replique/mode comint-mode "Replique"
@@ -744,6 +769,7 @@ This allows you to temporarily modify read-only buffers too."
     (define-key map "\C-\M-x" 'replique/eval-defn)
     (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
+    (define-key map "\C-xr" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'pop-tag-mark)
     (easy-menu-define replique/minor-mode-menu map
@@ -756,6 +782,8 @@ This allows you to temporarily modify read-only buffers too."
         ["Load file" replique/load-file t]
         "--"
         ["Set REPL ns" replique/in-ns t]
+        "--"
+        ["Switch active REPL" replique/switch-active-repl t]
         "--"
         ["Jump to definition" replique/jump-to-definition t]
         ))
@@ -1172,7 +1200,6 @@ The following commands are available:
 ;; Make starting a new REPl proc possible using symbolic links
 ;; Renaming of repls, including when changing REPL type
 ;; Interactive function for opening .replique-cljs-env.clj and closing a proc
-;; Interactive function for switching repl
 
 ;; replique.el ends here
 
