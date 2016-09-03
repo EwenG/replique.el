@@ -488,7 +488,7 @@ This allows you to temporarily modify read-only buffers too."
                           (user-error "No active Clojure or Clojurescript REPL"))))
                      ((equal :cljs-env m)
                       `((and (equal 'clojure-mode major-mode)
-                             (equal ".replique-repl-env.clj"
+                             (equal ".replique-cljs-repl-env.clj"
                                     (file-name-nondirectory (buffer-file-name)))
                              (replique/file-in-root-dir ,props-sym (buffer-file-name)))
                         (if (or ,clj-buff-sym ,cljs-buff-sym)
@@ -665,8 +665,8 @@ This allows you to temporarily modify read-only buffers too."
                cljs-repl))
             cljs-repls)))
 
-(defun replique/load-repl-env (file-path tooling-repl)
-  (message "Loading REPL environement...")
+(defun replique/load-cljs-repl-env (tooling-repl &optional callback)
+  (message "Loading Clojurescript REPL environement...")
   (condition-case err
       (let* ((repl-env-opts (replique-edn/read-string (buffer-string)))
              (tooling-chan (cdr (assoc :chan tooling-repl))))
@@ -677,13 +677,15 @@ This allows you to temporarily modify read-only buffers too."
          (lambda (resp)
            (cond ((gethash :error resp)
                   (message (replique-edn/pr-str (gethash :error resp)))
-                  (message "Loading REPL environement: failed"))
+                  (message "Loading Clojurescript REPL environement: failed"))
                  ((gethash :invalid resp)
                   (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
                  (t
                   (replique/restart-cljs-repls tooling-repl)
-                  (message "Loading REPL environement: done"))))))
-    (error (message "Error while loading REPL environment: %s"
+                  (message "Loading Clojurescript REPL environement: done")))
+           (when callback
+             (funcall callback resp)))))
+    (error (message "Error while loading Clojurescript REPL environment: %s"
                     (error-message-string err)))))
 
 (defun replique/load-file ()
@@ -692,7 +694,7 @@ This allows you to temporarily modify read-only buffers too."
   (let ((file-path (buffer-file-name)))
     (comint-check-source file-path)
     (replique/with-modes-dispatch
-     (:cljs-env . (-partial 'replique/load-repl-env file-path))
+     (:cljs-env . (-partial 'replique/load-cljs-repl-env))
      (clojure-mode* . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path))
@@ -967,6 +969,7 @@ The following commands are available:
 
 (defun replique/make-tooling-repl (host port directory out-chan)
   (let* ((default-directory directory)
+         (random-port? (equal port 0))
          (repl-cmd (replique/dispatch-repl-cmd directory port))
          (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
@@ -991,21 +994,35 @@ The following commands are available:
                 ;; Discard the prompt
                 (replique-async/<!
                  tooling-chan (lambda (x)
+                                ;; No need to wait for the return value of shared-tooling-repl
+                                ;; since it does not print anything
                                 (process-send-string
                                  network-proc
                                  "(ewen.replique.server/shared-tooling-repl)\n")
                                 (let* ((tooling-chan (-> tooling-chan
                                                          replique/edn-read-stream
                                                          replique/dispatch-eval-msg))
-                                       (repl-props `((:directory . ,directory)
-                                                     (:repl-type . :tooling)
-                                                     (:proc . ,proc)
-                                                     (:network-proc . ,network-proc)
-                                                     (:host . ,host)
-                                                     (:port . ,port)
-                                                     (:chan . ,tooling-chan))))
-                                  (push repl-props replique/repls)
-                                  (replique-async/put! out-chan repl-props))))))))))
+                                       (tooling-repl `((:directory . ,directory)
+                                                       (:repl-type . :tooling)
+                                                       (:proc . ,proc)
+                                                       (:network-proc . ,network-proc)
+                                                       (:host . ,host)
+                                                       (:port . ,port)
+                                                       (:random-port? . ,random-port?)
+                                                       (:chan . ,tooling-chan)))
+                                       (cljs-env-file (concat
+                                                       directory
+                                                       ".replique-cljs-repl-env.clj")))
+                                  (if (file-exists-p cljs-env-file)
+                                      (with-current-buffer (find-file-noselect cljs-env-file)
+                                        (replique/load-cljs-repl-env
+                                         tooling-repl (lambda (resp)
+                                                        (push tooling-repl replique/repls)
+                                                        (replique-async/put!
+                                                         out-chan tooling-repl))))
+                                    (progn (push tooling-repl replique/repls)
+                                           (replique-async/put!
+                                            out-chan tooling-repl))))))))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
@@ -1081,6 +1098,30 @@ The following commands are available:
         (insert (->> replique/repls
                      (mapcar (-lambda ((&alist :host host :port port
                                                :repl-type repl-type
+                                               :random-port? random-port?
+                                               :buffer buffer))
+                               (if (equal repl-type :tooling)
+                                   `((:host . ,host) (:port . ,port)
+                                     (:random-port? . ,random-port?)
+                                     (:repl-type . ,repl-type))
+                                 `((:host . ,host) (:port . ,port)
+                                   (:repl-type . ,repl-type)
+                                   (:buffer-name . ,(buffer-name buffer))))))
+                     (mapcar 'replique/alist-to-map)
+                     (replique-edn/pr-str)))))))
+
+(defun replique/read-tooling-repl (directory)
+  (let ((repls (replique/repls-by :directory directory)))
+    (if (or
+         (null repls)
+         (and (equal 1 (length repls))
+              (equal :tooling (cdr (assoc :repl-type (car repls))))))
+        (when (file-exists-p (concat directory ".replique-repls"))
+          (delete-file (concat directory ".replique-repls")))
+      (with-temp-file (concat directory ".replique-repls")
+        (insert (->> replique/repls
+                     (mapcar (-lambda ((&alist :host host :port port
+                                               :repl-type repl-type
                                                :buffer buffer))
                                (if (equal repl-type :tooling)
                                    `((:host . ,host) (:port . ,port)
@@ -1142,19 +1183,9 @@ The following commands are available:
         (let* ((new-buffer-name (replace-regexp-in-string
                                  (format "\\*%s\\*$" repl-type-s)
                                  (format "*%s*" new-repl-type-s)
-                                 (buffer-name repl-buffer)))
-               (use-dialog-box nil)
-               (rename-buffer? (condition-case err
-                                   (yes-or-no-p
-                                    (format
-                                     "Rename REPL %s to %s? "
-                                     (buffer-name repl-buffer) new-buffer-name))
-                                 (error
-                                  (message (error-message-string err))
-                                  nil))))
-          (when rename-buffer?
-            (with-current-buffer repl-buffer
-              (rename-buffer new-buffer-name)))))
+                                 (buffer-name repl-buffer))))
+          (with-current-buffer repl-buffer
+            (rename-buffer new-buffer-name))))
       (replique/update-repl
        repl (replique/update-alist repl :repl-type new-repl-type))
       (replique/save-repls directory))))
@@ -1242,6 +1273,7 @@ The following commands are available:
 ;; Auto complete, jump to definition
 ;; Epresent
 ;; css, garden, js
+;; Don't write .replique-port
 
 ;; replique.el ends here
 
