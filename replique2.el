@@ -856,9 +856,14 @@ The following commands are available:
     (setq replique/repls (delete repl replique/repls))))
 
 (defun replique/close-repl (repl-props)
-  (-let* (((&alist :buffer buffer :host host :port port :eval-chan eval-chan) repl-props))
+  (-let* (((&alist :buffer buffer
+                   :host host :port port
+                   :eval-chan eval-chan
+                   :directory directory)
+           repl-props))
     (replique-async/close! eval-chan)
     (setq replique/repls (delete repl-props replique/repls))
+    (replique/save-repls directory)
     ;; If the only repl left is a tooling repl, then close it
     (let ((other-repls (replique/repls-by :host host :port port)))
       (when (-all? (-lambda ((&alist :repl-type repl-type))
@@ -1047,7 +1052,14 @@ The following commands are available:
                             (:ns . 'user)
                             (:buffer . ,buff)
                             (:eval-chan . ,(replique-async/chan)))))
-                (push repl replique/repls))
+                (push repl replique/repls)
+                (replique/save-repls directory))
+              (with-current-buffer buff
+                (add-hook 'post-command-hook
+                          (lambda ()
+                            (when (equal 'rename-buffer this-command)
+                              (replique/save-repls directory)))
+                          t t))
               (display-buffer buff)))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1056,6 +1068,28 @@ The following commands are available:
      (format "*replique*%s*%s*"
              (file-name-nondirectory (directory-file-name directory))
              repl-type-string))))
+
+(defun replique/save-repls (directory)
+  (let ((repls (replique/repls-by :directory directory)))
+    (if (or
+         (null repls)
+         (and (equal 1 (length repls))
+              (equal :tooling (cdr (assoc :repl-type (car repls))))))
+        (when (file-exists-p (concat directory ".replique-repls"))
+          (delete-file (concat directory ".replique-repls")))
+      (with-temp-file (concat directory ".replique-repls")
+        (insert (->> replique/repls
+                     (mapcar (-lambda ((&alist :host host :port port
+                                               :repl-type repl-type
+                                               :buffer buffer))
+                               (if (equal repl-type :tooling)
+                                   `((:host . ,host) (:port . ,port)
+                                     (:repl-type . ,repl-type))
+                                 `((:host . ,host) (:port . ,port)
+                                   (:repl-type . ,repl-type)
+                                   (:buffer-name . ,(buffer-name buffer))))))
+                     (mapcar 'replique/alist-to-map)
+                     (replique-edn/pr-str)))))))
 
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (file-truename directory)))
@@ -1095,27 +1129,35 @@ The following commands are available:
   `((error . identity)
     (object . identity)))
 
-(defun replique/maybe-rename-buffer (repl new-repl-type)
-  (let* ((repl-type (cdr (assoc :repl-type repl)))
+(defun replique/on-repl-type-change (repl new-repl-type)
+  (let* ((directory (cdr (assoc :directory repl)))
+         (repl-type (cdr (assoc :repl-type repl)))
          (repl-type-s (replique/keyword-to-string repl-type))
          (new-repl-type-s (replique/keyword-to-string new-repl-type))
          (repl-buffer (cdr (assoc :buffer repl))))
-    (when (and (not (equal repl-type new-repl-type))
-               (string-suffix-p
-                (format "*%s*" repl-type-s)
-                (buffer-name repl-buffer)))
-      (let* ((new-buffer-name (replace-regexp-in-string
-                               (format "\\*%s\\*$" repl-type-s)
-                               (format "*%s*" new-repl-type-s)
-                               (buffer-name repl-buffer)))
-             (use-dialog-box nil)
-             (rename-buffer? (yes-or-no-p
-                              (format
-                               "Rename REPL %s to %s? "
-                               (buffer-name repl-buffer) new-buffer-name))))
-        (when rename-buffer?
-          (with-current-buffer repl-buffer
-            (rename-buffer new-buffer-name)))))))
+    (when (not (equal repl-type new-repl-type))
+      (when (string-suffix-p
+             (format "*%s*" repl-type-s)
+             (buffer-name repl-buffer))
+        (let* ((new-buffer-name (replace-regexp-in-string
+                                 (format "\\*%s\\*$" repl-type-s)
+                                 (format "*%s*" new-repl-type-s)
+                                 (buffer-name repl-buffer)))
+               (use-dialog-box nil)
+               (rename-buffer? (condition-case err
+                                   (yes-or-no-p
+                                    (format
+                                     "Rename REPL %s to %s? "
+                                     (buffer-name repl-buffer) new-buffer-name))
+                                 (error
+                                  (message (error-message-string err))
+                                  nil))))
+          (when rename-buffer?
+            (with-current-buffer repl-buffer
+              (rename-buffer new-buffer-name)))))
+      (replique/update-repl
+       repl (replique/update-alist repl :repl-type new-repl-type))
+      (replique/save-repls directory))))
 
 (defun replique/dispatch-eval-msg* (in-chan out-chan)
   (replique-async/<!
@@ -1135,11 +1177,9 @@ The following commands are available:
             (let ((repl (replique/repl-by
                          :session (gethash :client (gethash :session msg)))))
               (when repl
-                (replique/maybe-rename-buffer repl (gethash :repl-type msg))
+                (replique/on-repl-type-change repl (gethash :repl-type msg))
                 (replique/update-repl
-                 repl (-> repl
-                          (replique/update-alist :repl-type (gethash :repl-type msg))
-                          (replique/update-alist :ns (gethash :ns msg))))
+                 repl (replique/update-alist repl :ns (gethash :ns msg)))
                 (replique-async/put! (cdr (assoc :eval-chan repl)) msg)))
             (replique/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
@@ -1198,10 +1238,11 @@ The following commands are available:
 ;; Choose active REPL, choose active proc
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
-;; Renaming of repls, including when changing REPL type
 ;; Interactive function for opening .replique-cljs-env.clj and closing a proc
+;; Auto complete, jump to definition
+;; Epresent
+;; css, garden, js
 
 ;; replique.el ends here
-
 
 
