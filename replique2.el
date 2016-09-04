@@ -1244,12 +1244,11 @@ The following commands are available:
          (new-repl-type-s (replique/keyword-to-string new-repl-type))
          (repl-buffer (cdr (assoc :buffer repl))))
     (when (not (equal repl-type new-repl-type))
-      (when (string-suffix-p
-             (format "*%s*" repl-type-s)
-             (buffer-name repl-buffer))
+      (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
+                            (buffer-name repl-buffer))
         (let* ((new-buffer-name (replace-regexp-in-string
-                                 (format "\\*%s\\*$" repl-type-s)
-                                 (format "*%s*" new-repl-type-s)
+                                 (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
+                                 (format "*%s*\\1" new-repl-type-s)
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
             (rename-buffer new-buffer-name))))
