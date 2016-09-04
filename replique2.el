@@ -1339,6 +1339,8 @@ The following commands are available:
 ;; Auto complete, jump to definition
 ;; Epresent
 ;; css, garden, js
+;; sourcepath, classpath live reload
+;; var explorer
 
 ;; replique.el ends here
 

@@ -218,30 +218,3 @@
                        :keys '(:column :line :file)})
 
   )
-
-(defmethod tooling-msg-handle :clj-completion
-  [{:keys [context ns prefix] :as msg}]
-  (with-tooling-response msg
-    (let [ctx (when context (read-string context))]
-      {:candidates (compliment/completions prefix {:ns ns :context ctx})})))
-
-
-(comment
-  (tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'ewen.replique.server
-                       :prefix "tooli"})
-
-  (tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'ewen.replique.compliment.sources
-                       :prefix "all-s"})
-
-  (tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'ewen.foo
-                       :prefix "foo"})
-
-  (let [eeeeee "e"]
-    eee)
-  )
