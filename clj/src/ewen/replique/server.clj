@@ -61,10 +61,6 @@
     (start-server {:port port :name :replique
                    :accept 'clojure.core.server/repl
                    :server-daemon false})
-    (doto (file ".replique-port")
-      (spit (str {:repl (-> @#'clojure.core.server/servers
-                            (get :replique) :socket (.getLocalPort))}))
-      (.deleteOnExit))
     (prn {:host (-> @#'clojure.core.server/servers
                     (get :replique) :socket
                     (.getInetAddress) (.getHostAddress)
@@ -161,6 +157,10 @@
         (let [{:keys [compiler-opts repl-opts]} (init-opts msg)]
           (init-browser-env compiler-opts repl-opts)
           msg)))))
+
+(defn cljs-repl []
+  (require 'ewen.replique.server-cljs)
+  ((ns-resolve 'ewen.replique.server-cljs 'cljs-repl)))
 
 (defn format-meta [{:keys [file] :as meta} keys]
   (let [f (and file (File. file))]
