@@ -863,22 +863,30 @@ The following commands are available:
              (replique-edn/pr-str msg)))))
 
 ;; Note: a tooling repl may not be closed when there is a pending non daemon thread
-(defun replique/close-tooling-repl (repl)
+;; We don't want to save REPLs when closing the process, as opposed to closing a single REPL
+(defun replique/close-tooling-repl (repl &optional dont-save-repls?)
   (-let (((&alist :proc tooling-proc :chan tooling-chan) repl))
     (replique-async/close! tooling-chan)
     (when (process-live-p tooling-proc)
       (delete-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
-(defun replique/close-repl (repl-props)
+(defun replique/close-repl (repl-props &optional dont-save-repls?)
   (-let* (((&alist :buffer buffer
                    :host host :port port
                    :eval-chan eval-chan
-                   :directory directory)
-           repl-props))
+                   :directory directory
+                   :buffer buffer)
+           repl-props)
+          (proc (get-buffer-process buffer)))
+    (when proc
+      (set-process-sentinel proc nil)
+      (delete-process proc))
+    (kill-buffer buffer)
     (replique-async/close! eval-chan)
     (setq replique/repls (delete repl-props replique/repls))
-    (replique/save-repls directory)
+    (when (not dont-save-repls?)
+      (replique/save-repls directory))
     ;; If the only repl left is a tooling repl, then close it
     (let ((other-repls (replique/repls-by :host host :port port)))
       (when (-all? (-lambda ((&alist :repl-type repl-type))
@@ -890,12 +898,12 @@ The following commands are available:
                     (replique-async/<!
                      tooling-chan
                      (lambda (msg)
-                       (when (gethash :error msg)
-                         (error "Error while shuting down the REPL: %s"
+                       (when (and msg (gethash :error msg))
+                         (error "Error while shutting down the REPL: %s"
                                 (replique-edn/pr-str (gethash :error msg))))))))
                 other-repls)))))
 
-(defun replique/close-repls (host port)
+(defun replique/close-repls (host port &optional dont-save-repls?)
   (let* ((repls (replique/repls-by :host host :port port))
          (not-tooling-repls (-filter (-lambda ((&alist :repl-type repl-type))
                                        (not (equal repl-type :tooling)))
@@ -904,7 +912,7 @@ The following commands are available:
                                    (equal repl-type :tooling))
                                  repls)))
     (mapcar (lambda (repl)
-              (replique/close-repl))
+              (replique/close-repl repl dont-save-repls?))
             not-tooling-repls)
     (mapcar (lambda (repl)
               (replique/close-tooling-repl repl))
@@ -1039,8 +1047,7 @@ The following commands are available:
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
-    (when closing-repl
-      (cond ((string= "deleted\n" event)
+    (when closing-repl      (cond ((string= "deleted\n" event)
              (replique/close-repl closing-repl))
             ((string= "connection broken by remote peer\n" event)
              (with-current-buffer buffer
@@ -1049,6 +1056,15 @@ The following commands are available:
                  (insert (concat "\n" event "\n"))))
              (replique/close-repl closing-repl))
             (t nil)))))
+
+(defun replique/close-process (directory)
+  (interactive
+   (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
+          (directories (mapcar (lambda (repl) (cdr (assoc :directory repl))) tooling-repls)))
+     (list (ido-completing-read "Close process: " directories nil t))))
+  (-let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
+          ((&alist :host host :port port) tooling-repl))
+    (replique/close-repls host port t)))
 
 (defun replique/make-repl (buffer-name directory host port &optional repl-type)
   (-let* ((buff (get-buffer-create buffer-name))
@@ -1130,11 +1146,11 @@ The following commands are available:
                      (mapcar 'replique/alist-to-map)
                      (replique-edn/pr-str)))))))
 
-;; TODO revert validated order
+
 (defun replique/validate-saved-repls (validated saved-repls)
   (if (null saved-repls)
       validated
-      (when (hash-table-p (car saved-repls))
+    (when (hash-table-p (car saved-repls))
         (let* ((saved-repl (car saved-repls))
                (repl-type (gethash :repl-type saved-repl))
                (host (gethash :host  saved-repl))
@@ -1316,7 +1332,6 @@ The following commands are available:
 
 (provide 'replique2)
 
-;; Save started REPLs to disk, with their type (:clj, :cljs) and name
 ;; Choose active REPL, choose active proc
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
@@ -1324,7 +1339,7 @@ The following commands are available:
 ;; Auto complete, jump to definition
 ;; Epresent
 ;; css, garden, js
-;; Check if saved repls are removed when closing a process
+;; Test behavior when cljs is not on the classpath
 
 ;; replique.el ends here
 
