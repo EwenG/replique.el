@@ -1,8 +1,7 @@
 (ns ewen.replique.compliment.sources.class-members
   "Completion for both static and non-static class members."
   (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils :refer [fuzzy-matches-no-skip?
-                                                    resolve-class]]
+            [ewen.replique.compliment.utils :refer [fuzzy-matches-no-skip? resolve-class]]
             [clojure.string :refer [join]])
   (:import [java.lang.reflect Method Field Member Modifier]))
 
@@ -94,7 +93,9 @@
             :when
             (or (not klass)
                 (some #(= klass (.getDeclaringClass ^Member %)) members))]
-        (str "." member-name)))))
+        {:candidate (str "." member-name)
+         :type (if (instance? Method (first members))
+                 :method :field)}))))
 
 ;; ### Member documentation
 
@@ -206,7 +207,7 @@
   "Returns all static members for a given class."
   [^Class class]
   (update-static-cache class)
-  (keys (@static-members-cache class)))
+  (@static-members-cache class))
 
 (defn static-members-candidates
   "Returns a list of static member candidates."
@@ -217,11 +218,13 @@
           member-prefix (or member-prefix "")]
       (when cl
         (let [inparts? (re-find #"[A-Z]" member-prefix)]
-          (for [member (static-members cl)
+          (for [[^String member-name members] (static-members cl)
                 :when  (if inparts?
-                         (camel-case-matches? member-prefix member)
-                         (.startsWith ^String member member-prefix))]
-            (str cl-name "/" member)))))))
+                         (camel-case-matches? member-prefix member-name)
+                         (.startsWith member-name member-prefix))]
+            {:candidate (str cl-name "/" member-name)
+             :type (if (instance? Method (first members))
+                     :static-method :static-field)}))))))
 
 (defn resolve-static-member
   "Given a string representation of a static member returns Member object."
@@ -242,9 +245,4 @@
 
 (defsource ::static-members
   :candidates #'static-members-candidates
-  :doc #'static-member-doc
-  :tag-fn (fn [m {:keys [ns]}]
-            (assoc m :type (if (->> (resolve-static-member (:candidate m) ns)
-                                    first
-                                    (instance? Method))
-                             :static-method :static-field))))
+  :doc #'static-member-doc)

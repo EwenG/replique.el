@@ -4,6 +4,11 @@
   (:import java.io.File
            [java.util.jar JarFile JarEntry]))
 
+(def ^:dynamic *extra-metadata*
+  "Signals to downstream sources which additional information about completion
+  candidates they should attach . Should be a set of keywords."
+  nil)
+
 (defn fuzzy-matches?
   "Tests if symbol matches the prefix when symbol is split into parts on
   separator."
@@ -72,7 +77,9 @@
   (if android-vm?
     ()
     (mapcat #(.split (or (System/getProperty %) "") File/pathSeparator)
-            ["sun.boot.class.path" "java.ext.dirs" "java.class.path"])))
+            ["sun.boot.class.path" "java.ext.dirs" "java.class.path"
+             ;; This is where Boot keeps references to dependencies.
+             "fake.class.path"])))
 
 (defn- list-files
   "Given a path (either a jar file, directory with classes or directory with

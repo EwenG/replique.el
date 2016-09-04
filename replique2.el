@@ -154,8 +154,9 @@
              (progn
                (message (replique-edn/pr-str err))
                (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp)))))
-     t)))
+           (let* ((candidates (gethash :candidates resp))
+                  (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+             (funcall company-callback candidates))))))))
 
 (defun replique/auto-complete* (prefix company-callback props msg-type)
   (let ((tooling-chan (cdr (assoc :chan props))))
@@ -173,8 +174,9 @@
              (progn
                (message (replique-edn/pr-str err))
                (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp)))))
-     t)))
+           (let* ((candidates (gethash :candidates resp))
+                  (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+             (funcall company-callback candidates))))))))
 
 (defun replique/auto-complete-clj (prefix company-callback props clj-repl)
   (replique/auto-complete* prefix company-callback props :clj-completion))
@@ -1340,6 +1342,7 @@ The following commands are available:
 ;; css, garden, js
 ;; sourcepath, classpath live reload
 ;; var explorer
+;; Check reflection *warn-on-reflection*
 
 ;; replique.el ends here
 

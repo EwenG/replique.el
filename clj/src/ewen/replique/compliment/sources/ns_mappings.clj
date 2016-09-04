@@ -1,15 +1,15 @@
 (ns ewen.replique.compliment.sources.ns-mappings
   "Completion for vars and classes in the current namespace."
   (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils
-             :refer [fuzzy-matches? resolve-namespace]]
+            [ewen.replique.compliment.utils :refer [fuzzy-matches? resolve-namespace
+                                                    *extra-metadata*]]
             [ewen.replique.namespace :as replique-ns])
   (:import java.io.StringWriter))
 
 (defn var-symbol?
   "Test if prefix resembles a var name."
   [x]
-  (re-matches #"[^\.\/\:]*([^\/\:]+\/[^\.\/\:]*)?" x))
+  (re-matches #"([^\/\:][^\.\/]*([^\/\:]*\/[^\.\/]*)?)?" x))
 
 (defn dash-matches?
   "Tests if prefix partially matches a var name with dashes as
@@ -25,7 +25,8 @@
                            (.split s "/") ())
         scope (when scope-name
                 (resolve-namespace (symbol scope-name) ns cljs-comp-env))
-        prefix (if scope (or sym "") s)]
+        prefix (if scope
+                 (or sym "") s)]
     [scope-name scope prefix]))
 
 (defn try-get-ns-from-context
@@ -56,21 +57,31 @@
                   ns-form-namespace
                   (replique-ns/ns-publics ns-form-namespace cljs-comp-env)
                   :else (replique-ns/ns-map ns cljs-comp-env))]
-       (for [[var _] vars
-             :let [var-name (name var)]
+       (for [[var-sym var] vars
+             :let [var-name (name var-sym)
+                   {:keys [arglists doc] :as var-meta} (meta var)]
              :when (dash-matches? prefix var-name)]
-         (if scope
-           (str scope-name "/" var-name)
-           var-name))))))
+         (if (= (type var) Class)
+          {:candidate var-name, :type :class,
+           :package (when-let [pkg (.getPackage ^Class var)]
+                      ;; Some classes don't have a package
+                      (.getName ^Package pkg))}
+
+          (cond-> {:candidate (if scope
+                                (str scope-name "/" var-name)
+                                var-name)
+                   :type (cond (:macro var-meta) :macro
+                               arglists :function
+                               :else :var)
+                   :ns (str (or (:ns var-meta) ns))}
+            (and arglists(:arglists *extra-metadata*))
+            (assoc :arglists (apply list (map pr-str arglists))))))))))
 
 (defsource ::ns-mappings
   :candidates #'candidates
   :doc (constantly nil))
 
 (comment
-  (get (:cljs.analyzer/namespaces @compiler-env) 'ewen.replique.test3)
-
-  {:name ewen.replique.test3, :doc nil, :excludes #{}, :use-macros nil, :require-macros nil, :uses {pr cljs.core, prn cljs.core}, :requires {cc cljs.core, cljs.core cljs.core}, :imports nil, :defs {rr {:name ewen.replique.test3/rr, :file "/home/egr/replique.el/clojure/ewen/replique/out/ewen/replique/test3.cljs", :line 4, :column 1, :end-line 4, :end-column 8, :meta {:file "/home/egr/replique.el/clojure/ewen/replique/out/ewen/replique/test3.cljs", :line 4, :column 6, :end-line 4, :end-column 8}}, tt {:protocol-inline nil, :meta {:file "/home/egr/replique.el/clojure/ewen/replique/out/ewen/replique/test3.cljs", :line 6, :column 8, :end-line 6, :end-column 10, :private true, :arglists (quote ([]))}, :private true, :name ewen.replique.test3/tt, :variadic false, :file "/home/egr/replique.el/clojure/ewen/replique/out/ewen/replique/test3.cljs", :end-column 10, :method-params ([]), :protocol-impl nil, :arglists-meta (nil nil), :column 1, :line 6, :end-line 6, :max-fixed-arity 0, :fn-var true, :arglists (quote ([]))}}}
 
   (ewen.replique.reflection/find-ns 'ewen.replique.test3 @compiler-env)
   (ewen.replique.reflection/find-ns 'blabla @compiler-env)
@@ -78,4 +89,12 @@
   (count (ewen.replique.reflection/ns-core-refers 'ewen.replique.test3 @compiler-env))
   (first (ewen.replique.reflection/ns-core-refers 'ewen.replique.test3 @compiler-env))
   (count (ewen.replique.reflection/ns-map 'ewen.replique.test3 @compiler-env))
+
+  (get (:cljs.analyzer/namespaces @@compiler-env) 'cljs.user)
+
+  {:rename-macros {}, :renames {}, :use-macros {doc cljs.repl, find-doc cljs.repl, dir cljs.repl, pst cljs.repl, pp cljs.pprint, source cljs.repl, apropos cljs.repl}, :excludes #{}, :name cljs.user, :imports nil, :requires {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :uses {pprint cljs.pprint}, :require-macros {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :doc nil}
+
+  (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
+  (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
+
   )

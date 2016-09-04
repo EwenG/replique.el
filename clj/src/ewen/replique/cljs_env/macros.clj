@@ -31,18 +31,18 @@
    (load-file* :cljs file-path))
   ([type file-path]
    (cond (= :cljs type)
-         (cljs-env/with-compiler-env compiler-env
-           (let [opts (:options @compiler-env)
+         (cljs-env/with-compiler-env @compiler-env
+           (let [opts (:options @@compiler-env)
                  compiled (repl-compile-cljs file-path opts)]
              (repl-cljs-on-disk
-              compiled (#'cljs.repl/env->opts repl-env) opts)
+              compiled (#'cljs.repl/env->opts @repl-env) opts)
              (->> (refresh-cljs-deps opts)
                   (closure/output-deps-file
                    (assoc opts :output-to
                           (str (util/output-directory opts)
                                File/separator "cljs_deps.js"))))
              (:value (repl-eval-compiled
-                      compiled repl-env file-path opts))))
+                      compiled @repl-env file-path opts))))
          (= :clj type)
          (str (clojure.core/load-file file-path))
          :else
@@ -64,7 +64,7 @@
              assoc-in [::ana/namespaces ns-name]
              {:name ns-name})
       (cljs.repl/-evaluate
-       repl-env "<cljs repl>" 1
+       @repl-env "<cljs repl>" 1
        (str "goog.provide('" (comp/munge ns-name) "');")))
     (let [in-ns-res (set! ana/*cljs-ns* ns-name)]
       `(quote ~in-ns-res))))
