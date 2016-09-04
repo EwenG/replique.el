@@ -1332,14 +1332,13 @@ The following commands are available:
 
 (provide 'replique2)
 
-;; Choose active REPL, choose active proc
+;; Choose active proc
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
-;; Interactive function for opening .replique-cljs-env.clj and closing a proc
+;; Interactive function for opening .replique-cljs-env.clj
 ;; Auto complete, jump to definition
 ;; Epresent
 ;; css, garden, js
-;; Test behavior when cljs is not on the classpath
 
 ;; replique.el ends here
 

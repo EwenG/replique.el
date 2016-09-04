@@ -51,18 +51,27 @@
 (s/def ::cljs-env-type #{:browser :webapp})
 (s/def ::output-to can-write-file?)
 (s/def ::main string?)
-(s/def ::compiler-env (s/keys :req-un [::output-to] :opt-un [::main]))
+(s/def ::compiler-opts (s/keys :req-un [::output-to] :opt-un [::main]))
 (s/def ::port port-number?)
-(s/def ::repl-env (s/keys :req-un [::port]))
-(s/def ::cljs-env (s/keys :req-un [::cljs-env-type ::compiler-env ::repl-env]))
+(s/def ::repl-opts (s/keys :req-un [::port]))
+(defmulti cljs-env-type :cljs-env-type)
+(defmethod cljs-env-type :browser [_]
+  (s/keys :req-un [::cljs-env-type ::compiler-opts ::repl-opts]))
+(defmethod cljs-env-type :webapp [_]
+  (s/and (s/keys :req-un [::cljs-env-type ::compiler-opts ::repl-opts])
+         #(contains? (:compiler-opts %) :main)))
+(s/def ::cljs-env (s/multi-spec cljs-env-type :cljs-env-type))
 
 (comment
   (s/conform ::cljs-env {:cljs-env-type :browser
-                         :compiler-env {:output-to "out/main.js"}
-                         :repl-env {:port 9001}})
+                         :compiler-opts {:output-to "out/main.js"}
+                         :repl-opts {:port 9001}})
+  (s/explain ::cljs-env {:cljs-env-type :browser
+                         :compiler-opts {:output-to "out/main.js"}
+                         :repl-opts {:port 9001}})
   (s/explain-str ::cljs-env {:cljs-env-type :browser
-                             :compiler-env {:output-to "out/main.js"}
-                             :repl-env2 {:port 9001}})
+                             :compiler-opts {:output-to "out/main.js"}
+                             :repl-opts2 {:port 9001}})
   (s/explain-str ::cljs-env [])
   )
 
@@ -173,8 +182,8 @@
 
 (defmulti init-opts :cljs-env-type)
 
-(defn init-opts* [{{output-to :output-to} :compiler-env
-                   {port :port main :main} :repl-env}]
+(defn init-opts* [{{output-to :output-to} :compiler-opts
+                   {port :port main :main} :repl-opts}]
   (let [output-dir (-> (file output-to) (.getAbsoluteFile) (.getParent))]
     {:compiler-opts (merge {:output-to (-> (file output-to) (.getAbsolutePath))
                             :output-dir output-dir
@@ -186,7 +195,7 @@
      :repl-opts {:analyze-path []
                  :port port}}))
 
-(defmethod init-opts :browser [{{output-to :output-to} :compiler-env :as opts}]
+(defmethod init-opts :browser [{{output-to :output-to} :compiler-opts :as opts}]
   (let [opts (init-opts* opts)
         output-dir (get-in opts [:compiler-opts :output-dir])]
     (update-in opts [:repl-opts] merge
@@ -426,8 +435,8 @@
   (server/tooling-msg-handle
    {:type :set-cljs-env
     :cljs-env-type :browser
-    :compiler-env {:output-to "out/main.js"}
-    :repl-env {:port 9001}})
+    :compiler-opts {:output-to "out/main.js"}
+    :repl-opts {:port 9001}})
 
   (tear-down-repl-env @repl-env)
 
