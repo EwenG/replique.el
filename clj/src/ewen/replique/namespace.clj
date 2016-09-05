@@ -1,5 +1,5 @@
 (ns ewen.replique.namespace
-  (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases all-ns]))
+  (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases all-ns meta]))
 
 (defn all-ns
   ([]
@@ -7,7 +7,7 @@
   ([cljs-comp-env]
    (if-not cljs-comp-env
      (clojure.core/all-ns)
-     (keys (:cljs.analyzer/namespaces cljs-comp-env)))))
+     (keys (:cljs.analyzer/namespaces @cljs-comp-env)))))
 
 (defrecord CljsNamespace [name doc excludes use-macros require-macros uses
                           requires imports defs])
@@ -43,7 +43,7 @@
          (remove (fn [[k v]] (:private v)))
          (into {})))
   (ns-map [ns cljs-comp-env]
-    (->> (select-keys ns [:imports :uses :defs])
+    (->> (select-keys ns [:imports :uses :defs :use-macros])
          (map second)
          (apply merge)
          (merge (ns-core-refers ns cljs-comp-env))))
@@ -72,3 +72,9 @@
     (clojure.core/ns-map ns))
   (ns-aliases [ns cljs-comp-env]
     (clojure.core/ns-aliases ns)))
+
+(defn meta [var]
+  (if (= (type var) clojure.lang.Var)
+    (clojure.core/meta var)
+    (:meta var)))
+
