@@ -1,3 +1,5 @@
-(ns ewen.replique.compliment.ns-mappings-cljs-test)
+(ns ewen.replique.compliment.ns-mappings-cljs-test
+  (:require-macros [ewen.replique.compliment.ns-mappings-clj-test :refer [my-macro]]))
 
-(defn public-fn [])
+(defn my-fn "rr" [])
+

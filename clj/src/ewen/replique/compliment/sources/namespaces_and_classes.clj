@@ -4,7 +4,8 @@
             [ewen.replique.compliment.utils
              :refer [fuzzy-matches? defmemoized] :as utils]
             [ewen.replique.compliment.sources.class-members
-             :refer [classname-doc]])
+             :refer [classname-doc]]
+            [ewen.replique.namespace :as replique-ns])
   (:import java.io.File))
 
 (defn nscl-symbol?
@@ -22,17 +23,19 @@
 
 (defn imported-classes
   "Returns names of all classes imported into a given namespace."
-  [ns]
-  (for [[_ ^Class val] (ns-map ns) :when (class? val)]
-    (.getName val)))
+  [ns compiler-env]
+  (when (not compiler-env)
+    (for [[_ ^Class val] (ns-map ns) :when (class? val)]
+      (.getName val))))
 
 (defmemoized all-classes-short-names
   "Returns a map where short classnames are matched with vectors with
   package-qualified classnames."
-  []
-  (group-by #(-> (re-matches #"([^\.]+\.)*([^\.]+)" %)
-                 (nth 2))
-            (reduce into [] (vals (utils/classes-on-classpath)))))
+  [cljs-comp-env]
+  (when (not cljs-comp-env)
+    (group-by #(-> (re-matches #"([^\.]+\.)*([^\.]+)" %)
+                   (nth 2))
+              (reduce into [] (vals (utils/classes-on-classpath cljs-comp-env))))))
 
 (defn- analyze-import-context
   "Checks if the completion is called from ns import declaration. If so, and the
@@ -52,60 +55,62 @@
 
 (defn- get-all-full-names
   "Returns a list of package-qualified classnames given a short classname."
-  [prefix]
+  [prefix cljs-comp-env]
   (reduce-kv (fn [l, ^String short-name, full-names]
                (if (.startsWith short-name prefix)
                  (concat l (map (fn [c] {:candidate c, :type :class})
                                 full-names))
                  l))
              ()
-             (all-classes-short-names)))
+             (all-classes-short-names cljs-comp-env)))
 
 (defn- get-classes-by-package-name
   "Returns simple classnames that match the `prefix` and belong to `pkg-name`."
-  [prefix pkg-name]
+  [prefix pkg-name cljs-comp-env]
   (reduce-kv (fn [l, ^String short-name, full-names]
                (if (and (.startsWith short-name prefix)
                         (some #(.startsWith ^String % pkg-name) full-names))
                  (conj l {:candidate short-name, :type :class})
                  l))
              ()
-             (all-classes-short-names)))
+             (all-classes-short-names cljs-comp-env)))
 
 (defn candidates
   "Returns a list of namespace and classname completions."
-  [^String prefix, ns context]
-  (when (nscl-symbol? prefix)
-    (let [has-dot (> (.indexOf prefix ".") -1)
-          import-ctx (analyze-import-context context)]
-      ((comp distinct concat)
-       (for [ns-str (concat (map (comp name ns-name) (all-ns))
-                            (when-not has-dot
-                              (map name (keys (ns-aliases ns)))))
-             :when (nscl-matches? prefix ns-str)]
-         {:candidate ns-str, :type :namespace})
-       (for [class-str (imported-classes ns)
-             :when (nscl-matches? prefix class-str)]
-         {:candidate class-str, :type :class})
-       (cond (= import-ctx :root) (get-all-full-names prefix)
-             import-ctx (get-classes-by-package-name prefix import-ctx))
-       ;; Fuzziness is too slow for all classes, so just startsWith.
-       ;; Also have to do clever tricks to keep the performance high.
-       (if has-dot
-         (concat (for [[root-pkg classes] (utils/classes-on-classpath)
-                       :when (.startsWith prefix root-pkg)
-                       ^String cl-str classes
-                       :when (.startsWith cl-str prefix)]
-                   {:candidate cl-str, :type :class})
-                 (for [ns-str (utils/namespaces-on-classpath)
-                       :when (nscl-matches? prefix ns-str)]
-                   {:candidate ns-str, :type :namespace}))
-         (concat (for [[^String root-pkg _] (utils/classes-on-classpath)
-                       :when (.startsWith root-pkg prefix)]
-                   {:candidate (str root-pkg "."), :type :class})
-                 (for [^String ns-str (utils/namespaces-on-classpath)
-                       :when (.startsWith ns-str prefix)]
-                   {:candidate ns-str, :type :namespace})))))))
+  ([^String prefix, ns context]
+   (candidates prefix ns context nil))
+  ([^String prefix, ns context cljs-comp-env]
+   (when (nscl-symbol? prefix)
+     (let [has-dot (> (.indexOf prefix ".") -1)
+           import-ctx (analyze-import-context context)]
+       ((comp distinct concat)
+        (for [ns-str (concat (map (comp name ns-name) (replique-ns/all-ns cljs-comp-env))
+                             (when-not has-dot
+                               (map name (keys (replique-ns/ns-aliases ns cljs-comp-env)))))
+              :when (nscl-matches? prefix ns-str)]
+          {:candidate ns-str, :type :namespace})
+        (for [class-str (imported-classes ns cljs-comp-env)
+              :when (nscl-matches? prefix class-str)]
+          {:candidate class-str, :type :class})
+        (cond (= import-ctx :root) (get-all-full-names prefix cljs-comp-env)
+              import-ctx (get-classes-by-package-name prefix import-ctx cljs-comp-env))
+        ;; Fuzziness is too slow for all classes, so just startsWith.
+        ;; Also have to do clever tricks to keep the performance high.
+        (if has-dot
+          (concat (for [[root-pkg classes] (utils/classes-on-classpath cljs-comp-env)
+                        :when (.startsWith prefix root-pkg)
+                        ^String cl-str classes
+                        :when (.startsWith cl-str prefix)]
+                    {:candidate cl-str, :type :class})
+                  (for [ns-str (utils/namespaces-on-classpath cljs-comp-env)
+                        :when (nscl-matches? prefix ns-str)]
+                    {:candidate ns-str, :type :namespace}))
+          (concat (for [[^String root-pkg _] (utils/classes-on-classpath cljs-comp-env)
+                        :when (.startsWith root-pkg prefix)]
+                    {:candidate (str root-pkg "."), :type :class})
+                  (for [^String ns-str (utils/namespaces-on-classpath cljs-comp-env)
+                        :when (.startsWith ns-str prefix)]
+                    {:candidate ns-str, :type :namespace}))))))))
 
 (defn doc [ns-or-class-str curr-ns]
   (when (nscl-symbol? ns-or-class-str)
@@ -118,4 +123,9 @@
 
 (defsource ::namespaces-and-classes
   :candidates #'candidates
-  :doc #'doc)
+  :doc (constantly nil))
+
+(comment
+  (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  (candidates "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil @compiler-env)
+  )

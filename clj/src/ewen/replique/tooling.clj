@@ -47,7 +47,8 @@
                     prefix {:ns ns :context ctx
                             :cljs-comp-env @server-cljs/compiler-env
                             :sources
-                            [:ewen.replique.compliment.sources.ns-mappings/ns-mappings]})})))
+                            [:ewen.replique.compliment.sources.ns-mappings/ns-mappings
+                             :ewen.replique.compliment.sources.namespaces-and-classes/namespaces-and-classes]})})))
 
 
 (comment

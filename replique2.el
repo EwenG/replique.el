@@ -1343,6 +1343,8 @@ The following commands are available:
 ;; sourcepath, classpath live reload
 ;; var explorer
 ;; Check reflection *warn-on-reflection*
+;; compliment: namespaces_and_classes -> search in goog closure libs
+;; compliment documentation, metadata
 
 ;; replique.el ends here
 

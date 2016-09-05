@@ -59,23 +59,23 @@
                   :else (replique-ns/ns-map ns cljs-comp-env))]
        (for [[var-sym var] vars
              :let [var-name (name var-sym)
-                   {:keys [arglists doc] :as var-meta} (meta var)]
+                   {:keys [arglists doc] :as var-meta} (replique-ns/meta var)]
              :when (dash-matches? prefix var-name)]
          (if (= (type var) Class)
-          {:candidate var-name, :type :class,
-           :package (when-let [pkg (.getPackage ^Class var)]
-                      ;; Some classes don't have a package
-                      (.getName ^Package pkg))}
+           {:candidate var-name, :type :class,
+            :package (when-let [pkg (.getPackage ^Class var)]
+                       ;; Some classes don't have a package
+                       (.getName ^Package pkg))}
 
-          (cond-> {:candidate (if scope
-                                (str scope-name "/" var-name)
-                                var-name)
-                   :type (cond (:macro var-meta) :macro
-                               arglists :function
-                               :else :var)
-                   :ns (str (or (:ns var-meta) ns))}
-            (and arglists(:arglists *extra-metadata*))
-            (assoc :arglists (apply list (map pr-str arglists))))))))))
+           (cond-> {:candidate (if scope
+                                 (str scope-name "/" var-name)
+                                 var-name)
+                    :type (cond (:macro var-meta) :macro
+                                arglists :function
+                                :else :var)
+                    :ns (str (or (:ns var-meta) ns))}
+             (and arglists(:arglists *extra-metadata*))
+             (assoc :arglists (apply list (map pr-str arglists))))))))))
 
 (defsource ::ns-mappings
   :candidates #'candidates
@@ -90,11 +90,21 @@
   (first (ewen.replique.reflection/ns-core-refers 'ewen.replique.test3 @compiler-env))
   (count (ewen.replique.reflection/ns-map 'ewen.replique.test3 @compiler-env))
 
+  (require '[ewen.replique.server-cljs :refer [compiler-env]])
   (get (:cljs.analyzer/namespaces @@compiler-env) 'cljs.user)
 
   {:rename-macros {}, :renames {}, :use-macros {doc cljs.repl, find-doc cljs.repl, dir cljs.repl, pst cljs.repl, pp cljs.pprint, source cljs.repl, apropos cljs.repl}, :excludes #{}, :name cljs.user, :imports nil, :requires {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :uses {pprint cljs.pprint}, :require-macros {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :doc nil}
 
   (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
   (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
+
+  (get (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
+       'my-fn)
+  (get (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
+       'my-fn)
+
+  (:macros (get (:cljs.analyzer/namespaces @@compiler-env) 'ewen.replique.compliment.ns-mappings-clj-test))
+
+  (candidates "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil @compiler-env)
 
   )

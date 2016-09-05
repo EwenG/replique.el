@@ -116,20 +116,21 @@
   "Returns a map of all classes that can be located on the classpath. Key
   represent the root package of the class, and value is a list of all classes
   for that package."
-  []
-  (->> (for [^String file (all-files-on-classpath)
-             :when (and (.endsWith file ".class") (not (.contains file "__"))
-                        (not (.contains file "$")))]
-         (.. (if (.startsWith file File/separator)
-               (.substring file 1) file)
-             (replace ".class" "") (replace File/separator ".")))
-       (group-by #(subs % 0 (max (.indexOf ^String % ".") 0)))))
+  [cljs-comp-env]
+  (when cljs-comp-env
+    (->> (for [^String file (all-files-on-classpath)
+               :when (and (.endsWith file ".class") (not (.contains file "__"))
+                          (not (.contains file "$")))]
+           (.. (if (.startsWith file File/separator)
+                 (.substring file 1) file)
+               (replace ".class" "") (replace File/separator ".")))
+         (group-by #(subs % 0 (max (.indexOf ^String % ".") 0))))))
 
 (defmemoized namespaces-on-classpath
   "Returns the list of all Clojure namespaces obtained by classpath scanning."
-  []
+  [cljs-comp-env]
   (set (for [^String file (all-files-on-classpath)
-             :when (and (.endsWith file ".clj")
+             :when (and (.endsWith file (if cljs-comp-env ".cljs" ".clj"))
                         (not (.startsWith file "META-INF")))
              :let [[_ ^String nsname] (re-matches #"[^\w]?(.+)\.clj" file)]
              :when nsname]
