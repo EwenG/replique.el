@@ -17,12 +17,12 @@
             [cljs.closure :as cljsc]
             [ewen.replique.cljs]
             [ewen.replique.sourcemap]
-            [ewen.replique.compliment.context :as context]
-            [ewen.replique.compliment.sources.local-bindings
+            [compliment.context :as context]
+            [compliment.sources.local-bindings
              :refer [bindings-from-context]]
             [clojure.data.json :as json]
             [cljs.tagged-literals :as tags]
-            [ewen.replique.compliment.core :as compliment])
+            [compliment.core :as compliment])
   (:import [java.io File]
            [java.net URL]
            [java.util.concurrent SynchronousQueue]
@@ -847,7 +847,7 @@
       {:candidates (compliment/completions
                     prefix {:ns ns :context ctx
                             :cljs-comp-env compiler-env
-                            :sources [:ewen.replique.compliment.sources.ns-mappings/ns-mappings]})})))
+                            :sources [:compliment.sources.ns-mappings/ns-mappings]})})))
 
 
 (comment

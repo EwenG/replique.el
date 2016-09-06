@@ -1,8 +1,7 @@
-(ns ewen.replique.compliment.sources.local-bindings
+(ns compliment.sources.local-bindings
   "Completion source for local bindings introduced by defn, let and the like."
-  (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.sources.ns-mappings
-             :refer [var-symbol? dash-matches?]]))
+  (:require [compliment.sources :refer [defsource]]
+            [compliment.sources.ns-mappings :refer [var-symbol? dash-matches?]]))
 
 (def let-like-forms '#{let if-let when-let if-some when-some})
 
@@ -61,11 +60,13 @@
 
 (defn candidates
   "Returns a list of local bindings inside the context that match prefix."
-  [prefix _ context]
-  (when (var-symbol? prefix)
-    (for [binding (bindings-from-context context)
-          :when (dash-matches? prefix binding)]
-      {:candidate binding, :type :local})))
+  ([prefix ns context]
+   (candidates nil prefix ns context))
+  ([comp-env prefix _ context]
+   (when (var-symbol? prefix)
+        (for [binding (bindings-from-context context)
+              :when (dash-matches? prefix binding)]
+          {:candidate binding, :type :local}))))
 
 (defsource ::local-bindings
   :candidates #'candidates

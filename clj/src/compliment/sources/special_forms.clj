@@ -1,8 +1,8 @@
-(ns ewen.replique.compliment.sources.special-forms
+(ns compliment.sources.special-forms
   "Completion for Clojure's special forms."
   (:require [clojure.repl :as repl]
-            [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.sources.ns-mappings :as vars]))
+            [compliment.sources :refer [defsource]]
+            [compliment.sources.ns-mappings :as vars]))
 
 (def ^:private special-forms
   (set (map name '[def if do quote var recur throw try catch
@@ -18,14 +18,16 @@
 
 (defn candidates
   "Returns list of completions for special forms."
-  [prefix _ context]
-  (when (and (vars/var-symbol? prefix) (first-item-in-list? context))
-    (for [form special-forms
-          :when (vars/dash-matches? prefix form)]
-      {:candidate form
-       :type :special-form})))
+  ([prefix ns context]
+   (candidates prefix ns context))
+  ([comp-env prefix _ context]
+   (when (and (vars/var-symbol? prefix) (first-item-in-list? context))
+     (for [form special-forms
+           :when (vars/dash-matches? prefix form)]
+       {:candidate form
+        :type :special-form}))))
 
-#_(defn doc
+(defn doc
   "Documentation function for special forms."
   [symbol-str _]
   (when (and (vars/var-symbol? symbol-str) (special-forms symbol-str))
@@ -33,15 +35,17 @@
 
 (defsource ::special-forms
   :candidates #'candidates
-  :doc (constantly nil))
+  :doc #'doc)
 
 (defn literal-candidates
   "We define `true`, `false`, and `nil` in a separate source because they are
   not context-dependent (don't have to be first items in the list)."
-  [prefix _ __]
-  (->> ["true" "false" "nil"]
-       (filter #(.startsWith ^String % prefix))
-       (map (fn [c] {:candidate c, :type :special-form}))))
+  ([prefix ns context]
+   (literal-candidates nil prefix ns context))
+  ([comp-env prefix ns context]
+   (->> ["true" "false" "nil"]
+        (filter #(.startsWith ^String % prefix))
+        (map (fn [c] {:candidate c, :type :special-form})))))
 
 (defsource ::literals
   :candidates #'literal-candidates

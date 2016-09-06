@@ -1,6 +1,5 @@
-(ns ewen.replique.compliment.utils
+(ns compliment.utils
   "Functions and utilities for source implementations."
-  (:require [ewen.replique.namespace :as replique-ns])
   (:import java.io.File
            [java.util.jar JarFile JarEntry]))
 
@@ -47,15 +46,6 @@
   (when-let [val (try (ns-resolve ns sym)
                       (catch ClassNotFoundException ex nil))]
     (when (class? val) val)))
-
-(defn resolve-namespace
-  "Tries to resolve a namespace from the given symbol, either from a
-  fully qualified name or an alias in the given namespace."
-  ([sym ns]
-   (resolve-namespace sym ns nil))
-  ([sym ns cljs-comp-env]
-   (or (replique-ns/find-ns sym cljs-comp-env)
-       (get (replique-ns/ns-aliases ns cljs-comp-env) sym))))
 
 (defmacro ^{:doc "Defines a memoized function."
             :forms '([name doc-string? [params*] body])}
@@ -106,7 +96,7 @@
               :when (not (.isDirectory file))]
           (.replace ^String (.getPath file) path ""))))
 
-(defmemoized ^:private all-files-on-classpath
+(defmemoized all-files-on-classpath
   "Returns a list of all files on the classpath, including those located inside
   jar files."
   []
@@ -116,25 +106,14 @@
   "Returns a map of all classes that can be located on the classpath. Key
   represent the root package of the class, and value is a list of all classes
   for that package."
-  [cljs-comp-env]
-  (when cljs-comp-env
-    (->> (for [^String file (all-files-on-classpath)
-               :when (and (.endsWith file ".class") (not (.contains file "__"))
-                          (not (.contains file "$")))]
-           (.. (if (.startsWith file File/separator)
-                 (.substring file 1) file)
-               (replace ".class" "") (replace File/separator ".")))
-         (group-by #(subs % 0 (max (.indexOf ^String % ".") 0))))))
-
-(defmemoized namespaces-on-classpath
-  "Returns the list of all Clojure namespaces obtained by classpath scanning."
-  [cljs-comp-env]
-  (set (for [^String file (all-files-on-classpath)
-             :when (and (.endsWith file (if cljs-comp-env ".cljs" ".clj"))
-                        (not (.startsWith file "META-INF")))
-             :let [[_ ^String nsname] (re-matches #"[^\w]?(.+)\.clj" file)]
-             :when nsname]
-         (.. nsname (replace File/separator ".") (replace "_" "-")))))
+  []
+  (->> (for [^String file (all-files-on-classpath)
+             :when (and (.endsWith file ".class") (not (.contains file "__"))
+                        (not (.contains file "$")))]
+         (.. (if (.startsWith file File/separator)
+               (.substring file 1) file)
+             (replace ".class" "") (replace File/separator ".")))
+       (group-by #(subs % 0 (max (.indexOf ^String % ".") 0)))))
 
 (defmemoized project-resources
   "Returns a list of all non-code files in the current project."

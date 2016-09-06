@@ -1,9 +1,9 @@
-(ns ewen.replique.compliment.sources.ns-mappings
+(ns compliment.sources.ns-mappings
   "Completion for vars and classes in the current namespace."
-  (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils :refer [fuzzy-matches? resolve-namespace
-                                                    *extra-metadata*]]
-            [ewen.replique.namespace :as replique-ns])
+  (:refer-clojure :exclude [ns-publics ns-map meta])
+  (:require [compliment.sources :refer [defsource]]
+            [compliment.utils :refer [fuzzy-matches? *extra-metadata*]]
+            [compliment.environment :refer [ns-publics ns-map meta resolve-namespace]])
   (:import java.io.StringWriter))
 
 (defn var-symbol?
@@ -20,11 +20,11 @@
 (defn get-scope-and-prefix
   "Tries to get take apart scope namespace and prefix in prefixes like
   `scope/var`."
-  [^String s ns cljs-comp-env]
+  [comp-env ^String s, ns]
   (let [[scope-name sym] (if (> (.indexOf s "/") -1)
                            (.split s "/") ())
         scope (when scope-name
-                (resolve-namespace (symbol scope-name) ns cljs-comp-env))
+                (resolve-namespace comp-env (symbol scope-name) ns))
         prefix (if scope
                  (or sym "") s)]
     [scope-name scope prefix]))
@@ -41,25 +41,49 @@
                         (= (second (:form ns-def)) :refer))))
       (find-ns (first (:form ns-def))))))
 
+(defn generate-docstring
+  "Generates a docstring from a given var metadata. Copied from
+  `clojure.repl` with some minor modifications."
+  [m]
+  (binding [*out* (StringWriter.)]
+    (println (str (when-let [ns (:ns m)] (str (ns-name ns) "/")) (:name m)))
+    (cond
+      (:forms m) (doseq [f (:forms m)]
+                   (print "  ")
+                   (prn f))
+      (:arglists m) (prn (:arglists m)))
+    (if (:special-form m)
+      (do
+        (println "Special Form")
+        (println " " (:doc m))
+        (if (contains? m :url)
+          (when (:url m)
+            (println (str "\n  Please see http://clojure.org/" (:url m))))
+          (println (str "\n  Please see http://clojure.org/special_forms#"
+                        (:name m)))))
+      (do
+        (when (:macro m)
+          (println "Macro"))
+        (println " " (:doc m))))
+    (str *out*)))
+
 (defn candidates
   "Returns a list of namespace-bound candidates, with namespace being
   either the scope (if prefix is scoped), `ns` arg or the namespace
   extracted from context if inside `ns` declaration."
-  ([^String prefix ns context]
-   (candidates prefix ns context nil))
-  ([^String prefix ns context cljs-comp-env]
-   (if (var-symbol? prefix)
-     (let [[scope-name scope ^String prefix]
-           (get-scope-and-prefix prefix ns cljs-comp-env)
+  ([^String prefix, ns context]
+   (candidates nil prefix ns context))
+  ([comp-env ^String prefix, ns context]
+   (when (var-symbol? prefix)
+     (let [[scope-name scope ^String prefix] (get-scope-and-prefix comp-env prefix ns)
            ns-form-namespace (try-get-ns-from-context context)
            vars (cond
-                  scope (replique-ns/ns-publics scope cljs-comp-env)
-                  ns-form-namespace
-                  (replique-ns/ns-publics ns-form-namespace cljs-comp-env)
-                  :else (replique-ns/ns-map ns cljs-comp-env))]
+                  scope (ns-publics comp-env scope)
+                  ns-form-namespace (ns-publics comp-env ns-form-namespace)
+                  :else (ns-map comp-env ns))]
        (for [[var-sym var] vars
              :let [var-name (name var-sym)
-                   {:keys [arglists doc] :as var-meta} (replique-ns/meta var)]
+                   {:keys [arglists doc] :as var-meta} (meta var)]
              :when (dash-matches? prefix var-name)]
          (if (= (type var) Class)
            {:candidate var-name, :type :class,
@@ -75,7 +99,17 @@
                                 :else :var)
                     :ns (str (or (:ns var-meta) ns))}
              (and arglists(:arglists *extra-metadata*))
-             (assoc :arglists (apply list (map pr-str arglists))))))))))
+             (assoc :arglists (apply list (map pr-str arglists)))
+
+             )))))))
+
+(defn doc
+  "Documentation function for this sources' completions."
+  [symbol-str ns]
+  (if (var-symbol? symbol-str)
+    (when-let [var (ns-resolve ns (symbol symbol-str))]
+      (when (meta var)
+        (generate-docstring (meta var))))))
 
 (defsource ::ns-mappings
   :candidates #'candidates
@@ -83,14 +117,14 @@
 
 (comment
 
-  (ewen.replique.reflection/find-ns 'ewen.replique.test3 @compiler-env)
-  (ewen.replique.reflection/find-ns 'blabla @compiler-env)
-  (ewen.replique.reflection/ns-publics 'ewen.replique.test3 @compiler-env)
-  (count (ewen.replique.reflection/ns-core-refers 'ewen.replique.test3 @compiler-env))
-  (first (ewen.replique.reflection/ns-core-refers 'ewen.replique.test3 @compiler-env))
-  (count (ewen.replique.reflection/ns-map 'ewen.replique.test3 @compiler-env))
-
   (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  
+  (type (compliment.environment/find-ns (->CljsCompilerEnv @compiler-env) 'cljs.core))
+  (count (compliment.environment/ns-publics (->CljsCompilerEnv @compiler-env) 'cljs.core))
+  (count (compliment.environment/ns-core-refers (->CljsCompilerEnv @compiler-env) 'cljs.core))
+  (count (compliment.environment/ns-map (->CljsCompilerEnv @compiler-env) 'cljs.core))
+
   (get (:cljs.analyzer/namespaces @@compiler-env) 'cljs.user)
 
   {:rename-macros {}, :renames {}, :use-macros {doc cljs.repl, find-doc cljs.repl, dir cljs.repl, pst cljs.repl, pp cljs.pprint, source cljs.repl, apropos cljs.repl}, :excludes #{}, :name cljs.user, :imports nil, :requires {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :uses {pprint cljs.pprint}, :require-macros {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :doc nil}
@@ -98,13 +132,12 @@
   (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
   (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
 
-  (get (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
+  (get (compliment.environment/ns-publics nil 'ewen.replique.compliment.ns-mappings-clj-test)
        'my-fn)
-  (get (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
+  (get (compliment.environment/ns-publics (->CljsCompilerEnv @compiler-env) 'ewen.replique.compliment.ns-mappings-cljs-test)
        'my-fn)
 
-  (:macros (get (:cljs.analyzer/namespaces @@compiler-env) 'ewen.replique.compliment.ns-mappings-clj-test))
-
-  (candidates "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil @compiler-env)
+  (candidates (->CljsCompilerEnv @compiler-env) "clj" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
+  (candidates "cloj" 'ewen.replique.compliment.ns-mappings-clj-test nil)
 
   )

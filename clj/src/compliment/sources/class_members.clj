@@ -1,7 +1,7 @@
-(ns ewen.replique.compliment.sources.class-members
+(ns compliment.sources.class-members
   "Completion for both static and non-static class members."
-  (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils :refer [fuzzy-matches-no-skip? resolve-class]]
+  (:require [compliment.sources :refer [defsource]]
+            [compliment.utils :refer [fuzzy-matches-no-skip? resolve-class]]
             [clojure.string :refer [join]])
   (:import [java.lang.reflect Method Field Member Modifier]))
 
@@ -81,21 +81,23 @@
 
 (defn members-candidates
   "Returns a list of Java non-static fields and methods candidates."
-  [prefix ns context]
-  (when (class-member-symbol? prefix)
-    (let [prefix (subs prefix 1)
-          inparts? (re-find #"[A-Z]" prefix)
-          klass (try-get-object-class context)]
-      (for [[member-name members] (get-all-members ns)
-            :when (if inparts?
-                    (camel-case-matches? prefix member-name)
-                    (.startsWith ^String member-name prefix))
-            :when
-            (or (not klass)
-                (some #(= klass (.getDeclaringClass ^Member %)) members))]
-        {:candidate (str "." member-name)
-         :type (if (instance? Method (first members))
-                 :method :field)}))))
+  ([prefix ns context]
+   (members-candidates nil prefix ns context))
+  ([comp-env prefix ns context]
+   (when (class-member-symbol? prefix)
+     (let [prefix (subs prefix 1)
+           inparts? (re-find #"[A-Z]" prefix)
+           klass (try-get-object-class context)]
+       (for [[member-name members] (get-all-members ns)
+             :when (if inparts?
+                     (camel-case-matches? prefix member-name)
+                     (.startsWith ^String member-name prefix))
+             :when
+             (or (not klass)
+                 (some #(= klass (.getDeclaringClass ^Member %)) members))]
+         {:candidate (str "." member-name)
+          :type (if (instance? Method (first members))
+                  :method :field)})))))
 
 ;; ### Member documentation
 
@@ -211,20 +213,22 @@
 
 (defn static-members-candidates
   "Returns a list of static member candidates."
-  [^String prefix, ns context]
-  (when (static-member-symbol? prefix)
-    (let [[cl-name member-prefix] (.split prefix "/")
-          cl (resolve-class ns (symbol cl-name))
-          member-prefix (or member-prefix "")]
-      (when cl
-        (let [inparts? (re-find #"[A-Z]" member-prefix)]
-          (for [[^String member-name members] (static-members cl)
-                :when  (if inparts?
-                         (camel-case-matches? member-prefix member-name)
-                         (.startsWith member-name member-prefix))]
-            {:candidate (str cl-name "/" member-name)
-             :type (if (instance? Method (first members))
-                     :static-method :static-field)}))))))
+  ([^String prefix, ns context]
+   (static-members-candidates nil prefix ns context))
+  ([comp-env ^String prefix, ns context]
+   (when (static-member-symbol? prefix)
+     (let [[cl-name member-prefix] (.split prefix "/")
+           cl (resolve-class ns (symbol cl-name))
+           member-prefix (or member-prefix "")]
+       (when cl
+         (let [inparts? (re-find #"[A-Z]" member-prefix)]
+           (for [[^String member-name members] (static-members cl)
+                 :when  (if inparts?
+                          (camel-case-matches? member-prefix member-name)
+                          (.startsWith member-name member-prefix))]
+             {:candidate (str cl-name "/" member-name)
+              :type (if (instance? Method (first members))
+                      :static-method :static-field)})))))))
 
 (defn resolve-static-member
   "Given a string representation of a static member returns Member object."

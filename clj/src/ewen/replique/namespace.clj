@@ -1,26 +1,44 @@
 (ns ewen.replique.namespace
   (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases all-ns meta]))
 
+(defn- dynaload
+  [s]
+  (let [ns (namespace s)]
+    (assert ns)
+    (require (symbol ns))
+    (let [v (resolve s)]
+      (if v
+        @v
+        (throw (RuntimeException. (str "Var " s " is not on the classpath")))))))
+
+(def ^:private cljs-all-ns
+  (delay (dynaload 'cljs.analyzer.api/all-ns)))
+
+(def ^:private cljs-find-ns
+  (delay (dynaload 'cljs.analyzer.api/find-ns)))
+
+(def ^:private cljs-ns-publics
+  (delay (dynaload 'cljs.analyzer.api/ns-publics)))
+
 (defn all-ns
   ([]
    (all-ns nil))
   ([cljs-comp-env]
    (if-not cljs-comp-env
      (clojure.core/all-ns)
-     (keys (:cljs.analyzer/namespaces @cljs-comp-env)))))
+     (@cljs-all-ns cljs-comp-env))))
 
 (defrecord CljsNamespace [name doc excludes use-macros require-macros uses
                           requires imports defs])
 
 (defn find-ns
-  ([ns]
-   (find-ns ns nil))
-  ([ns cljs-comp-env]
+  ([sym]
+   (find-ns sym nil))
+  ([sym cljs-comp-env]
    (if-not cljs-comp-env
-     (clojure.core/find-ns ns)
-     (as-> (:cljs.analyzer/namespaces @cljs-comp-env) $
-       (get $ ns)
-       (when $ (map->CljsNamespace $))))))
+     (clojure.core/find-ns sym)
+     (when-let [found-ns (@cljs-find-ns cljs-comp-env sym)]
+       (map->CljsNamespace found-ns)))))
 
 (defprotocol Namespace
   (ns-publics [ns comp-env])
@@ -31,7 +49,7 @@
   "Returns a list of cljs.core vars visible to the ns."
   [ns cljs-comp-env]
   (let [vars (ns-publics 'cljs.core cljs-comp-env)
-        excludes (:excludes (find-ns ns cljs-comp-env))]
+        excludes (:excludes ns)]
     (apply dissoc vars excludes)))
 
 (extend-protocol Namespace
@@ -53,8 +71,7 @@
   (ns-publics [ns cljs-comp-env]
     (if-not cljs-comp-env
       (clojure.core/ns-publics ns)
-      (ns-publics (find-ns ns cljs-comp-env)
-                  cljs-comp-env)))
+      (@cljs-ns-publics cljs-comp-env ns)))
   (ns-map [ns cljs-comp-env]
     (if-not cljs-comp-env
       (clojure.core/ns-map ns)

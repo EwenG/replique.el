@@ -2,11 +2,11 @@
   (:require [clojure.main]
             [clojure.core.server :refer [start-server *session*]]
             [clojure.java.io :refer [file]]
-            [ewen.replique.compliment.context :as context]
-            [ewen.replique.compliment.sources.local-bindings
+            [compliment.context :as context]
+            [compliment.sources.local-bindings
              :refer [bindings-from-context]]
-            [ewen.replique.compliment.core :as compliment]
-            [ewen.replique.compliment.sources :as compliment-sources]
+            [compliment.core :as compliment]
+            [compliment.sources :as compliment-sources]
             [clojure.spec :as s]
             [clojure.stacktrace :refer [print-stack-trace]])
   (:import [java.util.concurrent.locks ReentrantLock]
@@ -207,7 +207,7 @@
 
   (tooling-msg-handle {:type :clj-var-meta
                        :context nil
-                       :ns 'ewen.replique.compliment.core
+                       :ns 'compliment.core
                        :symbol 'all-sources
                        :keys '(:column :line :file)})
 

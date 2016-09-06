@@ -17,12 +17,12 @@
             [cljs.closure :as cljsc]
             [ewen.replique.cljs]
             [ewen.replique.sourcemap]
-            [ewen.replique.compliment.context :as context]
-            [ewen.replique.compliment.sources.local-bindings
+            [compliment.context :as context]
+            [compliment.sources.local-bindings
              :refer [bindings-from-context]]
             [clojure.data.json :as json]
             [cljs.tagged-literals :as tags]
-            [ewen.replique.compliment.core :as compliment]
+            [compliment.core :as compliment]
             [clojure.spec :as s])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.net URL ServerSocket]

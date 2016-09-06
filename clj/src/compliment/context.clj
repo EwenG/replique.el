@@ -1,4 +1,4 @@
-(ns ewen.replique.compliment.context
+(ns compliment.context
   "Utilities for parsing and storing the current completion context."
   (:require [clojure.walk :refer [walk]]))
 
@@ -42,7 +42,7 @@
   Transformed it looks like:
 
   `({:idx :baz, :map-role :value, :form {:baz __prefix__}}
-    {:idx :foo, :map-role :value, :form {:foo {:baz __prefix__}, :bar 42}}
+    {:idx :foo, :map-role :key, :form {:foo {:baz __prefix__}, :bar 42}}
     {:idx 0, :form ({:foo {:baz __prefix__}, :bar 42} :quux)}
     {:idx 2, :form (dotimes [i 10] ({:foo {:baz __prefix__}, :bar 42} :quux))})`."
   [context]

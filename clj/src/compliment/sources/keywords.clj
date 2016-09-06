@@ -1,7 +1,8 @@
-(ns ewen.replique.compliment.sources.keywords
+(ns compliment.sources.keywords
   "Completion for keywords interned globally across the application"
-  (:require [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils :refer [defmemoized resolve-namespace]])
+  (:require [compliment.sources :refer [defsource]]
+            [compliment.utils :refer [defmemoized]]
+            [compliment.environment :refer [resolve-namespace]])
   (:import java.lang.reflect.Field))
 
 (defmemoized ^:private keywords-table
@@ -47,16 +48,18 @@
       (tagged-candidate (str "::" alias "/" (name kw))))))
 
 (defn candidates
-  [^String prefix, ns _]
-  (let [single-colon? (.startsWith prefix ":")
-        double-colon? (.startsWith prefix "::")
-        has-slash? (> (.indexOf prefix "/") -1)]
-    (cond (and double-colon? has-slash?) (aliased-candidates prefix ns)
-          double-colon? (concat (qualified-candidates prefix ns)
-                                (namespace-alias-candidates prefix ns))
-          single-colon? (for [[kw _] (keywords-table)
-                              :when (.startsWith (str kw) (subs prefix 1))]
-                          (tagged-candidate (str ":" kw))))))
+  ([^String prefix, ns context]
+   (candidates nil prefix ns context))
+  ([comp-env ^String prefix, ns _]
+   (let [single-colon? (.startsWith prefix ":")
+            double-colon? (.startsWith prefix "::")
+            has-slash? (> (.indexOf prefix "/") -1)]
+        (cond (and double-colon? has-slash?) (aliased-candidates prefix ns)
+              double-colon? (concat (qualified-candidates prefix ns)
+                                    (namespace-alias-candidates prefix ns))
+              single-colon? (for [[kw _] (keywords-table)
+                                  :when (.startsWith (str kw) (subs prefix 1))]
+                              (tagged-candidate (str ":" kw)))))))
 
 (defsource ::keywords
   :candidates #'candidates

@@ -3,12 +3,13 @@
             [ewen.replique.server-cljs :as server-cljs]
             [clojure.tools.reader :as reader]
             [cljs.tagged-literals :as tags]
-            [ewen.replique.compliment.core :as compliment]
-            [ewen.replique.compliment.context :as context]
-            [ewen.replique.compliment.sources.local-bindings
+            [compliment.core :as compliment]
+            [compliment.context :as context]
+            [compliment.sources.local-bindings
              :refer [bindings-from-context]]
-            [ewen.replique.compliment.core :as compliment]
-            [ewen.replique.compliment.sources :as compliment-sources]))
+            [compliment.core :as compliment]
+            [compliment.sources :as compliment-sources]
+            [compliment.environment :refer [->CljsCompilerEnv]]))
 
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
@@ -25,7 +26,7 @@
 
   (server/tooling-msg-handle {:type :clj-completion
                        :context nil
-                       :ns 'ewen.replique.compliment.sources
+                       :ns 'compliment.sources
                        :prefix "all-s"})
 
   (server/tooling-msg-handle {:type :clj-completion
@@ -44,11 +45,12 @@
                                       tags/*cljs-data-readers*]
                               (reader/read-string context)))]
       {:candidates (compliment/completions
-                    prefix {:ns ns :context ctx
-                            :cljs-comp-env @server-cljs/compiler-env
-                            :sources
-                            [:ewen.replique.compliment.sources.ns-mappings/ns-mappings
-                             :ewen.replique.compliment.sources.namespaces-and-classes/namespaces-and-classes]})})))
+                    prefix
+                    {:ns ns :context ctx
+                     :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                     :sources
+                     [:compliment.sources.ns-mappings/ns-mappings
+                      :compliment.sources.namespaces-and-classes/namespaces-and-classes]})})))
 
 
 (comment

@@ -1,8 +1,8 @@
-(ns ewen.replique.compliment.sources.resources
+(ns compliment.sources.resources
   "Completion for bundled resource files."
   (:require [clojure.java.io :as io]
-            [ewen.replique.compliment.sources :refer [defsource]]
-            [ewen.replique.compliment.utils :as utils])
+            [compliment.sources :refer [defsource]]
+            [compliment.utils :as utils])
   (:import java.io.File
            java.net.URLConnection))
 
@@ -20,12 +20,14 @@
 
 (defn candidates
   "Returns list of completions for project resources if within certain context."
-  [prefix _ context]
-  (when (inside-resource-call? context)
-    (for [^String res (utils/project-resources)
-          :when (.startsWith res prefix)]
-      {:candidate res
-       :type :resource})))
+  ([prefix ns context]
+   (candidates nil prefix ns context))
+  ([comp-env prefix _ context]
+   (when (inside-resource-call? context)
+     (for [^String res (utils/project-resources)
+           :when (.startsWith res prefix)]
+       {:candidate res
+        :type :resource}))))
 
 (defn doc
   "Documentation function for project resources."

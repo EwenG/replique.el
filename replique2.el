@@ -1346,6 +1346,8 @@ The following commands are available:
 ;; compliment: namespaces_and_classes -> search in goog closure libs
 ;; compliment documentation, metadata
 
+;; compliment-core -> *ns* vs ana/*cljs-ns* ??
+
 ;; replique.el ends here
 
 

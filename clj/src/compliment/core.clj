@@ -3,18 +3,33 @@
 ;; editor. It is intended to be maximally editor-agnostic where
 ;; possible, to avoid duplicating implementation in different clients.
 
-(ns ewen.replique.compliment.core
+(ns compliment.core
   "Core namespace. Most interactions with Compliment should happen
   through functions defined here."
-  (:require [ewen.replique.compliment.sources ns-mappings
-             namespaces-and-classes class-members keywords
-             special-forms local-bindings resources]
-            [ewen.replique.namespace :as replique-ns])
-  (:use [ewen.replique.compliment.sources :only [all-sources]]
-        [ewen.replique.compliment.context :only [cache-context]]
-        [ewen.replique.compliment.utils :refer [*extra-metadata*]]
-        [clojure.string :only [join]])
+  (:refer-clojure :exclude [find-ns])
+  (:require (compliment.sources ns-mappings
+                                namespaces-and-classes
+                                class-members
+                                keywords
+                                special-forms
+                                local-bindings
+                                resources)
+            [compliment.sources :refer [all-sources]]
+            [compliment.context :refer [cache-context]]
+            [compliment.utils :refer [*extra-metadata*]]
+            [compliment.environment :refer [find-ns default-ns]]
+            [clojure.string :refer [join]])
   (:import java.util.Comparator))
+
+(def all-files
+  "List of all Compliment files in an order they should be loaded. This is
+  required by REPLy."
+  (map (partial format "compliment/%s.clj")
+       ["utils" "environment" "context" "sources" "sources/class_members"
+        "sources/ns_mappings" "sources/namespaces_and_classes"
+        "sources/keywords" "sources/special_forms" "sources/local_bindings"
+        "sources/resources"
+        "core"]))
 
 (def ^:private by-length-comparator
   (reify Comparator
@@ -33,12 +48,11 @@
 (defn ensure-ns
   "Takes either a namespace object or a symbol and returns the corresponding
   namespace if it exists, otherwise returns `user` namespace."
-  [ns cljs-comp-env]
+  [comp-env ns]
   (cond (instance? clojure.lang.Namespace ns) ns
-        (symbol? ns) (or (replique-ns/find-ns ns cljs-comp-env)
-                         (if cljs-comp-env
-                           (replique-ns/find-ns 'cljs.user cljs-comp-env)
-                           (replique-ns/find-ns 'user nil)))
+        (symbol? ns) (or (find-ns comp-env ns)
+                         (find-ns comp-env (default-ns comp-env))
+                         *ns*)
         :else *ns*))
 
 (defn completions
@@ -50,16 +64,16 @@
   - :plain-candidates - if true, returns plain strings instead of maps;
   - :extra-metadata - set of extra fields to add to the maps;
   - :sources - list of source keywords to use;
-  - :cljs-comp-env - the cljs compilation environment to be used when
-  completion is requested from clojurescript."
+  - :comp-env - the compilation environment to be used - nil for Clojure, the
+  Clojurescript compilation environment for Clojurescript ..."
   ([prefix]
    (completions prefix {}))
   ([prefix options-map]
    (if (string? options-map)
      (completions prefix {:context options-map})
-     (let [{:keys [ns context sort-order sources extra-metadata cljs-comp-env]
+     (let [{:keys [ns context sort-order sources extra-metadata comp-env]
             :or {sort-order :by-length}} options-map
-           ns (ensure-ns ns cljs-comp-env)
+           ns (ensure-ns comp-env ns)
            options-map (assoc options-map :ns ns)
            ctx (cache-context context)
            sort-fn (if (= sort-order :by-name)
@@ -72,10 +86,7 @@
                                    (if sources
                                      (all-sources sources)
                                      (all-sources)))]
-           (as-> (mapcat (fn [f] (if cljs-comp-env
-           (f prefix ns ctx cljs-comp-env)
-           (f prefix ns ctx)))
-           candidate-fns)
+           (as-> (mapcat (fn [f] (f comp-env prefix ns ctx)) candidate-fns)
                candidates
 
              (if (= sort-order :by-name)
@@ -85,6 +96,7 @@
              (if (:plain-candidates options-map)
                (map :candidate candidates)
                candidates)
+
              (doall candidates))))))))
 
 (defn documentation
