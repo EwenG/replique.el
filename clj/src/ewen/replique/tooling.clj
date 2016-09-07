@@ -14,8 +14,7 @@
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    (let [ctx (when context (read-string context))]
-      {:candidates (compliment/completions prefix {:ns ns :context ctx})})))
+    {:candidates (compliment/completions prefix {:ns ns :context context})}))
 
 
 (comment
@@ -34,10 +33,6 @@
                        :ns 'ewen.foo
                        :prefix "foo"})
 
-  (let [eeeeee "e"]
-    eee)
-  )
-
 (defmethod server/tooling-msg-handle :cljs-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
@@ -54,8 +49,9 @@
 
 
 (comment
-  (server/tooling-msg-handle {:type :cljs-completion
-                              :context nil
-                              :ns 'ewen.replique.cljs-env.repl
-                              :prefix "send-r"})
+  (count
+   (:candidates (server/tooling-msg-handle {:type :cljs-completion
+                                            :context nil
+                                            :ns 'cljs.user
+                                            :prefix "goog"})))
   )

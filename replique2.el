@@ -149,14 +149,15 @@
     (replique-async/<!
      tooling-chan
      (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "completion failed with prefix %s" prefix))
-           (let* ((candidates (gethash :candidates resp))
-                  (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
-             (funcall company-callback candidates))))))))
+       (when resp
+         (let ((err (gethash :error resp)))
+           (if err
+               (progn
+                 (message (replique-edn/pr-str err))
+                 (message "completion failed with prefix %s" prefix))
+             (let* ((candidates (gethash :candidates resp))
+                    (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+               (funcall company-callback candidates)))))))))
 
 (defun replique/auto-complete* (prefix company-callback props msg-type)
   (let ((tooling-chan (cdr (assoc :chan props))))
@@ -169,14 +170,15 @@
     (replique-async/<!
      tooling-chan
      (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "completion failed with prefix %s" prefix))
-           (let* ((candidates (gethash :candidates resp))
-                  (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
-             (funcall company-callback candidates))))))))
+       (when resp
+         (let ((err (gethash :error resp)))
+           (if err
+               (progn
+                 (message (replique-edn/pr-str err))
+                 (message "completion failed with prefix %s" prefix))
+             (let* ((candidates (gethash :candidates resp))
+                    (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+               (funcall company-callback candidates)))))))))
 
 (defun replique/auto-complete-clj (prefix company-callback props clj-repl)
   (replique/auto-complete* prefix company-callback props :clj-completion))
@@ -1345,8 +1347,11 @@ The following commands are available:
 ;; Check reflection *warn-on-reflection*
 ;; compliment: namespaces_and_classes -> search in goog closure libs
 ;; compliment documentation, metadata
+;; compliment invalidate memoized on classpath update
 
-;; compliment-core -> *ns* vs ana/*cljs-ns* ??
+;; compliment -> preprocess the context to determine which source must be used
+
+;; Check for nil when reading from chan because the chan can be closed
 
 ;; replique.el ends here
 

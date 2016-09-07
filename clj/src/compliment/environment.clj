@@ -29,6 +29,12 @@
 (def ^:private cljs-ns-publics
   (delay (dynaload 'cljs.analyzer.api/ns-publics)))
 
+(def ^:private cljs-ns-var
+  (delay (dynaload 'cljs.analyzer/*cljs-ns*)))
+
+(def ^:private cljs-get-js-index
+  (delay (dynaload 'cljs.analyzer.api/get-js-index)))
+
 (defprotocol Namespace
   (all-ns [comp-env])
   (find-ns [comp-env sym])
@@ -93,14 +99,17 @@
   (or (find-ns comp-env sym) (get (ns-aliases comp-env ns) sym)))
 
 (defprotocol EnvDefaults
+  (ns-var [comp-env])
   (file-extension [comp-env])
   (default-ns [comp-env]))
 
 (extend-protocol EnvDefaults
   CljsCompilerEnv
+  (ns-var [comp-env] (find-ns comp-env @cljs-ns-var))
   (file-extension [_] "cljs")
   (default-ns [_] "cljs.user")
   nil
+  (ns-var [_] *ns*)
   (file-extension [_] "clj")
   (default-ns [_] "user"))
 
@@ -110,6 +119,25 @@
   (set (for [^String file (all-files-on-classpath)
              :when (and (.endsWith file (file-extension comp-env))
                         (not (.startsWith file "META-INF")))
-             :let [[_ ^String nsname] (re-matches #"[^\w]?(.+)\.clj" file)]
+             :let [[_ ^String nsname] (->
+                                       "[^\\w]?(.+)(\\.%s|\\.cljc)"
+                                       (format (file-extension comp-env))
+                                       re-pattern 
+                                       (re-matches file))]
              :when nsname]
          (.. nsname (replace File/separator ".") (replace "_" "-")))))
+
+(defmemoized provides-from-js-dependency-index [comp-env]
+  (->> comp-env get-wrapped (@cljs-get-js-index) vals (mapcat :provides) set))
+
+(comment
+  (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  
+  (file-extension (->CljsCompilerEnv compiler-env))
+  (namespaces-on-classpath (->CljsCompilerEnv compiler-env))
+  (filter #(.endsWith % "cljs") (all-files-on-classpath))
+  
+  (count (provides-from-js-dependency-index (->CljsCompilerEnv @compiler-env)))
+  )
+
+

@@ -17,7 +17,7 @@
             [compliment.sources :refer [all-sources]]
             [compliment.context :refer [cache-context]]
             [compliment.utils :refer [*extra-metadata*]]
-            [compliment.environment :refer [find-ns default-ns]]
+            [compliment.environment :refer [find-ns default-ns ns-var]]
             [clojure.string :refer [join]])
   (:import java.util.Comparator))
 
@@ -52,8 +52,8 @@
   (cond (instance? clojure.lang.Namespace ns) ns
         (symbol? ns) (or (find-ns comp-env ns)
                          (find-ns comp-env (default-ns comp-env))
-                         *ns*)
-        :else *ns*))
+                         (ns-var comp-env))
+        :else (ns-var comp-env)))
 
 (defn completions
   "Returns a list of completions for the given prefix. Options map can contain

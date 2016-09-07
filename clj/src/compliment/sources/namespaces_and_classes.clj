@@ -4,8 +4,8 @@
   (:require [compliment.sources :refer [defsource]]
             [compliment.utils :refer [fuzzy-matches? defmemoized] :as utils]
             [compliment.sources.class-members :refer [classname-doc]]
-            [compliment.environment :refer [all-ns ns-aliases namespaces-on-classpath]])
-  (:import java.io.File))
+            [compliment.environment :refer [all-ns ns-aliases namespaces-on-classpath provides-from-js-dependency-index]])
+  (:import java.io.File compliment.environment.CljsCompilerEnv))
 
 (defn nscl-symbol?
   "Tests if prefix looks like a namespace or classname."
@@ -103,14 +103,22 @@
                       {:candidate cl-str, :type :class}))
                   (for [ns-str (namespaces-on-classpath comp-env)
                         :when (nscl-matches? prefix ns-str)]
-                    {:candidate ns-str, :type :namespace}))
+                    {:candidate ns-str, :type :namespace})
+                  (when (= CljsCompilerEnv (type comp-env))
+                    (for [ns-str (provides-from-js-dependency-index comp-env)
+                          :when (nscl-matches? prefix ns-str)]
+                      {:candidate ns-str, :type :namespace})))
           (concat (when (not comp-env)
                     (for [[^String root-pkg _] (utils/classes-on-classpath)
                           :when (.startsWith root-pkg prefix)]
                       {:candidate (str root-pkg "."), :type :class}))
                   (for [^String ns-str (namespaces-on-classpath comp-env)
                         :when (.startsWith ns-str prefix)]
-                    {:candidate ns-str, :type :namespace}))))))))
+                    {:candidate ns-str, :type :namespace})
+                  (when (= CljsCompilerEnv (type comp-env))
+                    (for [ns-str (provides-from-js-dependency-index comp-env)
+                        :when (nscl-matches? prefix ns-str)]
+                    {:candidate ns-str, :type :namespace})))))))))
 
 (defn doc [ns-or-class-str curr-ns]
   (when (nscl-symbol? ns-or-class-str)
@@ -131,4 +139,5 @@
   
   (candidates (->CljsCompilerEnv @compiler-env) "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
   (candidates "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
+  (candidates (->CljsCompilerEnv @compiler-env) "goog.ed" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
   )
