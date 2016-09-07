@@ -33,19 +33,18 @@
                        :ns 'ewen.foo
                        :prefix "foo"})
 
+  )
+
 (defmethod server/tooling-msg-handle :cljs-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    (let [ctx (when context (binding [reader/*data-readers*
-                                      tags/*cljs-data-readers*]
-                              (reader/read-string context)))]
-      {:candidates (compliment/completions
-                    prefix
-                    {:ns ns :context ctx
-                     :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
-                     :sources
-                     [:compliment.sources.ns-mappings/ns-mappings
-                      :compliment.sources.namespaces-and-classes/namespaces-and-classes]})})))
+    {:candidates (compliment/completions
+                  prefix
+                  {:ns ns :context context
+                   :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                   :sources
+                   [:compliment.sources.ns-mappings/ns-mappings
+                    :compliment.sources.namespaces-and-classes/namespaces-and-classes]})}))
 
 
 (comment
