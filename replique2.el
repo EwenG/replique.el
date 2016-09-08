@@ -41,6 +41,22 @@
              map)
     alist))
 
+(defun replique/map (&rest data)
+  (let ((l (length data)))
+    (when (not (= 0 (logand l 1)))
+      (user-error "Map must contain an even number of forms"))
+    (let ((m (make-hash-table :test 'equal))
+          (data-rest data))
+      (while data-rest
+        (puthash (car data-rest) (cadr data-rest) m)
+        (setq data-rest (cddr data-rest)))
+      m)))
+
+(comment
+ 
+ #s(hash-table test equal data (1 3 1.2 4) size 2)
+ )
+
 (defun replique/update-alist (alist key val)
   (let ((updated-alist (copy-alist alist)))
     (setcdr (assoc key updated-alist) val)
@@ -1333,6 +1349,14 @@ The following commands are available:
     (replique/edn-read-stream* chan-in chan-out edn-state error-handler)
     chan-out))
 
+(comment
+ (defun replique/read-chan* ()
+   )
+ 
+ (defun replique/read-chan (chan-in &optional error-handler)
+   )
+ )
+
 (provide 'replique2)
 
 ;; Choose active proc
@@ -1356,3 +1380,42 @@ The following commands are available:
 ;; replique.el ends here
 
 
+(comment
+ (defun string-reader (strings)
+   (let ((position 0)
+         (unread-chars '())
+         (r (make-symbol "string-reader")))
+     (lambda (&optional char-back)
+       (print "e")
+       (print char-back)
+       (cond (char-back
+              (push char-back unread-chars))
+             ((car unread-chars)
+              (pop unread-chars))
+             ((< position (length (car strings)))
+              (aref (car strings) position)
+              (setq position (1+ position)))
+             (t nil))
+       ?e)))
+
+ (defun ee ()
+   (print "e"))
+
+ (read (string-reader '("(e) ")))
+
+ (read 'ee)
+
+ (read (let ((str "TEST")
+             (pos 0)
+             (prev nil))
+         (lambda (&optional ch)
+           (print "rr")
+           (cond
+            (ch (push ch prev))
+            (prev (pop prev))
+            ((< pos (length str))
+             (prog1 (aref str pos)
+               (setq pos (1+ pos))))))))
+
+ (benchmark-run 20 (read "(\"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\")"))
+ )
