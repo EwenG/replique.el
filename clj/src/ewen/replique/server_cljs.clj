@@ -1,6 +1,7 @@
 (ns ewen.replique.server-cljs
   (:require [ewen.replique.server :refer [with-tooling-response]
              :as server]
+            [ewen.replique.elisp-printer :as elisp]
             [clojure.core.server :refer [start-server *session*]]
             [clojure.java.io :as io :refer [file]]
             [cljs.repl.browser]
@@ -388,7 +389,8 @@
                                   (:type (ex-data e))))
                           (:value (:error (ex-data e)))
                           (.getMessage e)))
-          prn)))
+          prn
+          #_elisp/prn)))
   (cljs.repl/repl-caught e repl-env opts))
 
 (defn cljs-repl []
@@ -406,7 +408,7 @@
             :print (fn [result]
                      (binding [*out* server/tooling-out]
                        (with-lock server/tooling-out-lock
-                         (prn {:type :eval
+                         (prn #_elisp/prn {:type :eval
                                :repl-type :cljs
                                :session *session*
                                :ns ana/*cljs-ns*
@@ -417,7 +419,7 @@
                     ;; Let the client know that we are entering a cljs repl
                     (binding [*out* server/tooling-out]
                       (with-lock server/tooling-out-lock
-                        (prn {:type :eval
+                        (prn #_elisp/prn {:type :eval
                               :repl-type :cljs
                               :session *session*
                               :ns ana/*cljs-ns*

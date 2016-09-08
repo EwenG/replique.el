@@ -8,7 +8,8 @@
             [compliment.core :as compliment]
             [compliment.sources :as compliment-sources]
             [clojure.spec :as s]
-            [clojure.stacktrace :refer [print-stack-trace]])
+            [clojure.stacktrace :refer [print-stack-trace]]
+            [ewen.replique.elisp-printer :as elisp])
   (:import [java.util.concurrent.locks ReentrantLock]
            [java.io File]))
 
@@ -94,7 +95,7 @@
      :prompt #()
      :print (fn [result]
               (with-lock tooling-out-lock
-                (prn result))))))
+                (prn #_elisp/prn result))))))
 
 (defn shutdown []
   (clojure.core.server/stop-servers))
@@ -111,7 +112,7 @@
    (uncaughtException [_ thread ex]
      (binding [*out* tooling-err]
        (with-lock tooling-out-lock
-         (prn {:type :eval
+         (prn #_elisp/prn {:type :eval
                :error true
                :repl-type :clj
                :thread (.getName thread)
@@ -129,7 +130,7 @@
    :caught (fn [e]
              (binding [*out* tooling-err]
                (with-lock tooling-out-lock
-                 (prn {:type :eval
+                 (prn #_elisp/prn {:type :eval
                        :error true
                        :repl-type :clj
                        :session *session*
@@ -139,11 +140,11 @@
    :print (fn [result]
             (binding [*out* tooling-out]
               (with-lock tooling-out-lock
-                (prn {:type :eval
+                (prn #_elisp/prn {:type :eval
                       :repl-type :clj
                       :session *session*
                       :ns (ns-name *ns*)
-                      :result (pr-str result)})))
+                                  :result (pr-str result)})))
             (prn result))))
 
 (defmethod tooling-msg-handle :set-cljs-env [msg]
