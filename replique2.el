@@ -41,7 +41,7 @@
              map)
     alist))
 
-(defun replique/map (&rest data)
+(defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))
       (user-error "Map must contain an even number of forms"))
