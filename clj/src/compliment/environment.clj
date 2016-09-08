@@ -107,11 +107,11 @@
   CljsCompilerEnv
   (ns-var [comp-env] (find-ns comp-env @cljs-ns-var))
   (file-extension [_] "cljs")
-  (default-ns [_] "cljs.user")
+  (default-ns [_] 'cljs.user)
   nil
   (ns-var [_] *ns*)
   (file-extension [_] "clj")
-  (default-ns [_] "user"))
+  (default-ns [_] 'user))
 
 (defmemoized namespaces-on-classpath
   "Returns the list of all Clojure/Clojurescript/... namespaces obtained by classpath scanning."
