@@ -52,11 +52,6 @@
         (setq data-rest (cddr data-rest)))
       m)))
 
-(comment
- 
- #s(hash-table test equal data (1 3 1.2 4) size 2)
- )
-
 (defun replique/update-alist (alist key val)
   (let ((updated-alist (copy-alist alist)))
     (setcdr (assoc key updated-alist) val)
@@ -1012,7 +1007,9 @@ The following commands are available:
   (let* ((default-directory directory)
          (random-port? (equal port 0))
          (repl-cmd (replique/dispatch-repl-cmd directory port))
-         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+         (proc (apply 'start-process directory
+                      (generate-new-buffer-name (format " *%s*" directory))
+                      (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
          (chan (replique/edn-read-stream
                 proc-chan
@@ -1350,11 +1347,29 @@ The following commands are available:
     chan-out))
 
 (comment
- (defun replique/read-chan* ()
-   )
- 
- (defun replique/read-chan (chan-in &optional error-handler)
-   )
+ (defun replique/read-process-out (chan-out state proc string)
+   (when (buffer-live-p (process-buffer proc))
+     (with-current-buffer (process-buffer proc)
+       (let ((continue t)
+             (insert-string? t))
+         (while continue
+           (let ((prev-start (point)))
+             (when insert-string?
+               (insert string)
+               (setq insert-string? nil))
+             (let ((new-state (parse-partial-sexp prev-start (point-max) 0 nil state)))
+               (if (not (= 0 (car state)))
+                   (progn
+                     (setq state new-state)
+                     (setq continue false))
+                 (progn
+                   (goto-char prev-start)
+                   (let ((o (read (delete-and-extract-region prev-start (car state)))))
+                     (setq state nil)
+                     (when (= (car state) (point-max))
+                       (setq continue nil))
+                     (replique-async/put! chan-out o)))))))))))
+
  )
 
 (provide 'replique2)
@@ -1378,44 +1393,3 @@ The following commands are available:
 ;; Check for nil when reading from chan because the chan can be closed
 
 ;; replique.el ends here
-
-
-(comment
- (defun string-reader (strings)
-   (let ((position 0)
-         (unread-chars '())
-         (r (make-symbol "string-reader")))
-     (lambda (&optional char-back)
-       (print "e")
-       (print char-back)
-       (cond (char-back
-              (push char-back unread-chars))
-             ((car unread-chars)
-              (pop unread-chars))
-             ((< position (length (car strings)))
-              (aref (car strings) position)
-              (setq position (1+ position)))
-             (t nil))
-       ?e)))
-
- (defun ee ()
-   (print "e"))
-
- (read (string-reader '("(e) ")))
-
- (read 'ee)
-
- (read (let ((str "TEST")
-             (pos 0)
-             (prev nil))
-         (lambda (&optional ch)
-           (print "rr")
-           (cond
-            (ch (push ch prev))
-            (prev (pop prev))
-            ((< pos (length str))
-             (prog1 (aref str pos)
-               (setq pos (1+ pos))))))))
-
- (benchmark-run 20 (read "(\"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\" \"goog.editor.ee\")"))
- )
