@@ -1347,28 +1347,31 @@ The following commands are available:
     chan-out))
 
 (comment
- (defun replique/read-process-out (chan-out state proc string)
-   (when (buffer-live-p (process-buffer proc))
-     (with-current-buffer (process-buffer proc)
-       (let ((continue t)
-             (insert-string? t))
-         (while continue
-           (let ((prev-start (point)))
-             (when insert-string?
-               (insert string)
-               (setq insert-string? nil))
-             (let ((new-state (parse-partial-sexp prev-start (point-max) 0 nil state)))
-               (if (not (= 0 (car state)))
-                   (progn
-                     (setq state new-state)
-                     (setq continue false))
-                 (progn
-                   (goto-char prev-start)
-                   (let ((o (read (delete-and-extract-region prev-start (car state)))))
-                     (setq state nil)
-                     (when (= (car state) (point-max))
-                       (setq continue nil))
-                     (replique-async/put! chan-out o)))))))))))
+ (defun replique/make-read-process-out ()
+   (let ((chan-out (replique-async/chan))
+         (state nil))
+     (lambda (proc string)
+       (when (buffer-live-p (process-buffer proc))
+         (with-current-buffer (process-buffer proc)
+           (let ((continue t)
+                 (insert-string? t))
+             (while continue
+               (let ((prev-start (point)))
+                 (when insert-string?
+                   (insert string)
+                   (setq insert-string? nil))
+                 (let ((new-state (parse-partial-sexp prev-start (point-max) 0 nil state)))
+                   (if (not (= 0 (car state)))
+                       (progn
+                         (setq state new-state)
+                         (setq continue false))
+                     (progn
+                       (goto-char prev-start)
+                       (let ((o (read (delete-and-extract-region prev-start (car state)))))
+                         (setq state nil)
+                         (when (= (car state) (point-max))
+                           (setq continue nil))
+                         (replique-async/put! chan-out o)))))))))))))
 
  )
 
