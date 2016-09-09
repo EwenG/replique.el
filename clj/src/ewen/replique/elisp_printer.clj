@@ -57,12 +57,12 @@
 
 (defn- print-prefix-map [m print-one w]
   (print-sequential
-   (format "#s(hash-table text equal size %d data (" (count m))
-    (fn [e ^Writer w]
-      (do (print-one (key e) w) (.append w \space) (print-one (val e) w)))
-    " "
-    ")"
-    (seq m) w))
+   (format "#s(hash-table test equal size %d data (" (count m))
+   (fn [e ^Writer w]
+     (do (print-one (key e) w) (.append w \space) (print-one (val e) w)))
+   " "
+   "))"
+   (seq m) w))
 
 (defn- print-map [m print-one w]
   (print-prefix-map m print-one w))
@@ -77,19 +77,19 @@
   (print-method [(symbol (.getClassName o)) (symbol (.getMethodName o)) (.getFileName o) (.getLineNumber o)] w))
 
 (defn- print-throwable [^Throwable o ^Writer w]
-  (.write w "{\n :cause ")
+  (.write w "#s(hash-table test equal data (\n :cause ")
   (let [{:keys [cause data via trace]} (Throwable->map o)
-        print-via #(do (.write w "{:type ")
-		               (print-method (:type %) w)
-					   (.write w "\n   :message ")
-					   (print-method (:message %) w)
-             (when-let [data (:data %)]
-               (.write w "\n   :data ")
-               (print-method (clojure.core/pr-str data) w))
-             (when-let [at (:at %)]
-               (.write w "\n   :at ")
-               (print-method (:at %) w))
-             (.write w "}"))]
+        print-via #(do (.write w "#s(hash-table test equal data (\n :type ")
+                       (print-method (:type %) w)
+                       (.write w "\n   :message ")
+                       (print-method (:message %) w)
+                       (when-let [data (:data %)]
+                         (.write w "\n   :data ")
+                         (print-method (clojure.core/pr-str data) w))
+                       (when-let [at (:at %)]
+                         (.write w "\n   :at ")
+                         (print-method (:at %) w))
+                       (.write w "))"))]
     (print-method cause w)
     (when data
       (.write w "\n :data ")
@@ -97,10 +97,10 @@
     (when via
       (.write w "\n :via\n [")
       (when-let [fv (first via)]
-	    (print-via fv)
+        (print-via fv)
         (doseq [v (rest via)]
           (.write w "\n  ")
-		  (print-via v)))
+          (print-via v)))
       (.write w "]"))
     (when trace
       (.write w "\n :trace\n [")
@@ -110,7 +110,7 @@
           (.write w "\n  ")
           (print-method t w)))
       (.write w "]")))
-  (.write w "}"))
+  (.write w "))"))
 
 ;; Throwable will print almost like Clojure, but directly as a map, without the tag reader.
 ;; Also :data is returned as a string because we don't control what it contains.
