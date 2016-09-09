@@ -859,7 +859,7 @@ The following commands are available:
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))
 
-(defun replique/process-filter-chan (proc)
+(defun replique/process-filter-chan (proc &optional print?)
   (let ((chan (replique-async/chan)))
     (set-process-filter
      proc (lambda (proc string)
@@ -1003,16 +1003,21 @@ The following commands are available:
     (replique/skip-repl-starting-output* proc-chan filtered-chan)
     filtered-chan))
 
+(comment (chan (replique/edn-read-stream
+                         proc-chan
+                         (lambda (proc-out-s)
+                           (error "Error while starting the REPL: %s" proc-out-s)))))
+
 (defun replique/make-tooling-repl (host port directory out-chan)
   (let* ((default-directory directory)
          (random-port? (equal port 0))
          (repl-cmd (replique/dispatch-repl-cmd directory port))
          (proc (apply 'start-process directory
-                      (generate-new-buffer-name (format " *%s*" directory))
+                      nil
                       (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
-         (chan (replique/edn-read-stream
-                proc-chan
+         (chan (replique/read-chan
+                proc-chan proc
                 (lambda (proc-out-s)
                   (error "Error while starting the REPL: %s" proc-out-s)))))
     (replique-async/<!
@@ -1038,7 +1043,7 @@ The following commands are available:
                                  network-proc
                                  "(ewen.replique.server/shared-tooling-repl)\n")
                                 (let* ((tooling-chan (-> tooling-chan
-                                                         replique/edn-read-stream
+                                                         (replique/read-chan network-proc)
                                                          replique/dispatch-eval-msg))
                                        (tooling-repl `((:directory . ,directory)
                                                        (:repl-type . :tooling)
@@ -1347,33 +1352,62 @@ The following commands are available:
     chan-out))
 
 (comment
- (defun replique/make-read-process-out ()
-   (let ((chan-out (replique-async/chan))
-         (state nil))
-     (lambda (proc string)
-       (when (buffer-live-p (process-buffer proc))
-         (with-current-buffer (process-buffer proc)
-           (let ((continue t)
-                 (insert-string? t))
-             (while continue
-               (let ((prev-start (point)))
-                 (when insert-string?
-                   (insert string)
-                   (setq insert-string? nil))
-                 (let ((new-state (parse-partial-sexp prev-start (point-max) 0 nil state)))
-                   (if (not (= 0 (car state)))
-                       (progn
-                         (setq state new-state)
-                         (setq continue false))
-                     (progn
-                       (goto-char prev-start)
-                       (let ((o (read (delete-and-extract-region prev-start (car state)))))
-                         (setq state nil)
-                         (when (= (car state) (point-max))
-                           (setq continue nil))
-                         (replique-async/put! chan-out o)))))))))))))
-
+ 
+ (parse-partial-sexp 1 (point-max) 0 nil '(4 4083 4095 nil nil nil 0 nil nil (3 38 73 4083)))
  )
+
+(defun replique/read-chan*
+    (chan-in chan-out buffer proc state &optional error-handler)
+  (replique-async/<!
+   chan-in
+   (lambda (string)
+     (condition-case err
+         (progn
+           (when (null buffer)
+             (setq buffer (->> (process-name proc)
+                               (format "*%s*")
+                               (concat " ")
+                               generate-new-buffer)))
+           (with-current-buffer buffer
+             (let ((continue t)
+                   (insert-string? t))
+               (while continue
+                 (let ((parse-start (point)))
+                   (when insert-string?
+                     (insert string)
+                     (setq insert-string? nil))
+                   (let ((new-state (parse-partial-sexp parse-start (point-max) 0 nil state))
+                         (parse-end (point)))
+                     (if (not (= 0 (car new-state)))
+                         (progn
+                           (setq state new-state)
+                           (setq continue nil))
+                       (if (= parse-start parse-end)
+                           (progn
+                             (setq continue nil)
+                             (when buffer
+                               (kill-buffer buffer)
+                               (setq buffer nil)))
+                         (progn
+                           (goto-char parse-start)
+                           (let* ((s (delete-and-extract-region (point-min) parse-end))
+                                  (s (s-trim s))
+                                  (o (when (and s (not (equal "" s))) (read s))))
+                             (setq state nil)
+                             (when o
+                               (replique-async/put! chan-out o)))))))))))
+           (replique/read-chan* chan-in chan-out buffer proc state error-handler))
+       (error
+        (if error-handler
+            (funcall error-handler string)
+          (error (error-message-string err))))))))
+
+(defun replique/read-chan (chan-in proc &optional error-handler)
+  (let ((chan-out (replique-async/chan))
+        (state nil)
+        (buffer nil))
+    (replique/read-chan* chan-in chan-out buffer proc state error-handler)
+    chan-out))
 
 (provide 'replique2)
 

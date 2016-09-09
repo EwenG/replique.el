@@ -389,8 +389,7 @@
                                   (:type (ex-data e))))
                           (:value (:error (ex-data e)))
                           (.getMessage e)))
-          prn
-          #_elisp/prn)))
+          elisp/prn)))
   (cljs.repl/repl-caught e repl-env opts))
 
 (defn cljs-repl []
@@ -408,22 +407,22 @@
             :print (fn [result]
                      (binding [*out* server/tooling-out]
                        (with-lock server/tooling-out-lock
-                         (prn #_elisp/prn {:type :eval
-                               :repl-type :cljs
-                               :session *session*
-                               :ns ana/*cljs-ns*
-                               :result result})))
+                         (elisp/prn {:type :eval
+                                     :repl-type :cljs
+                                     :session *session*
+                                     :ns ana/*cljs-ns*
+                                     :result result})))
                      (with-lock out-lock
                        (println result)))
             :init (fn []
                     ;; Let the client know that we are entering a cljs repl
                     (binding [*out* server/tooling-out]
                       (with-lock server/tooling-out-lock
-                        (prn #_elisp/prn {:type :eval
-                              :repl-type :cljs
-                              :session *session*
-                              :ns ana/*cljs-ns*
-                              :result "nil"})))
+                        (elisp/prn {:type :eval
+                                    :repl-type :cljs
+                                    :session *session*
+                                    :ns ana/*cljs-ns*
+                                    :result "nil"})))
                     (cljs.repl/evaluate-form
                      @repl-env env "<cljs repl>"
                      (with-meta

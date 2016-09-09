@@ -62,13 +62,13 @@
     (start-server {:port port :name :replique
                    :accept 'clojure.core.server/repl
                    :server-daemon false})
-    (prn {:host (-> @#'clojure.core.server/servers
-                    (get :replique) :socket
-                    (.getInetAddress) (.getHostAddress)
-                    normalize-ip-address)
-          :port (-> @#'clojure.core.server/servers
-                    (get :replique) :socket (.getLocalPort))
-          :directory (.getAbsolutePath (file "."))})
+    (elisp/prn {:host (-> @#'clojure.core.server/servers
+                          (get :replique) :socket
+                          (.getInetAddress) (.getHostAddress)
+                          normalize-ip-address)
+                :port (-> @#'clojure.core.server/servers
+                          (get :replique) :socket (.getLocalPort))
+                :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
       (prn {:error t}))))
 
@@ -95,7 +95,7 @@
      :prompt #()
      :print (fn [result]
               (with-lock tooling-out-lock
-                (prn #_elisp/prn result))))))
+                (elisp/prn result))))))
 
 (defn shutdown []
   (clojure.core.server/stop-servers))
@@ -112,12 +112,12 @@
    (uncaughtException [_ thread ex]
      (binding [*out* tooling-err]
        (with-lock tooling-out-lock
-         (prn #_elisp/prn {:type :eval
-               :error true
-               :repl-type :clj
-               :thread (.getName thread)
-               :ns (ns-name *ns*)
-               :value (with-out-str (print-stack-trace ex))}))))))
+         (elisp/prn {:type :eval
+                     :error true
+                     :repl-type :clj
+                     :thread (.getName thread)
+                     :ns (ns-name *ns*)
+                     :value (with-out-str (print-stack-trace ex))}))))))
 
 (comment
   (.start (Thread. (fn [] (throw (Exception. "e")))))
@@ -130,21 +130,21 @@
    :caught (fn [e]
              (binding [*out* tooling-err]
                (with-lock tooling-out-lock
-                 (prn #_elisp/prn {:type :eval
-                       :error true
-                       :repl-type :clj
-                       :session *session*
-                       :ns (ns-name *ns*)
-                       :value (.getMessage e)})))
+                 (elisp/prn {:type :eval
+                             :error true
+                             :repl-type :clj
+                             :session *session*
+                             :ns (ns-name *ns*)
+                             :value (.getMessage e)})))
              (clojure.main/repl-caught e))
    :print (fn [result]
             (binding [*out* tooling-out]
               (with-lock tooling-out-lock
-                (prn #_elisp/prn {:type :eval
-                      :repl-type :clj
-                      :session *session*
-                      :ns (ns-name *ns*)
-                                  :result (pr-str result)})))
+                (elisp/prn {:type :eval
+                            :repl-type :clj
+                            :session *session*
+                            :ns (ns-name *ns*)
+                            :result (pr-str result)})))
             (prn result))))
 
 (defmethod tooling-msg-handle :set-cljs-env [msg]
