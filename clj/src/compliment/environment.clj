@@ -1,8 +1,10 @@
 (ns compliment.environment
   "Unify Clojure platforms (Clojure, Clojurescript, ...) environments"
-  (:refer-clojure :exclude [find-ns ns-publics ns-map ns-aliases all-ns meta])
-  (:require [compliment.utils :refer [defmemoized all-files-on-classpath]])
-  (:import [java.io File]))
+  (:refer-clojure :exclude [ns-name find-ns ns-publics ns-map ns-aliases all-ns meta])
+  (:require [compliment.utils :refer [defmemoized all-files-on-classpath]]
+            [clojure.set])
+  (:import [java.io File]
+           [java.lang.reflect Field]))
 
 (defprotocol ICljsCompilerEnv
   (get-wrapped [compile-env]))
@@ -35,15 +37,27 @@
 (def ^:private cljs-get-js-index
   (delay (dynaload 'cljs.analyzer.api/get-js-index)))
 
-(defprotocol Namespace
+(defprotocol NamespaceEnv
   (all-ns [comp-env])
   (find-ns [comp-env sym])
   (ns-publics [comp-env ns])
   (ns-map [comp-env ns])
   (ns-aliases [comp-env ns]))
 
+(defprotocol Namespace
+  (ns-name [ns]))
+
 (defrecord CljsNamespace [name doc excludes use-macros require-macros uses
                           requires imports defs])
+
+(extend-protocol Namespace
+  CljsNamespace
+  (ns-name [ns]
+    (if (symbol? ns) ns
+        (:name ns)))
+  clojure.lang.Namespace
+  (ns-name [ns]
+    (clojure.core/ns-name ns)))
 
 (defn ns-core-refers
   "Returns a list of cljs.core vars visible to the ns."
@@ -52,7 +66,7 @@
         excludes (:excludes ns)]
     (apply dissoc vars excludes)))
 
-(extend-protocol Namespace
+(extend-protocol NamespaceEnv
   CljsCompilerEnv
   (all-ns [comp-env]
     (@cljs-all-ns (get-wrapped comp-env)))
@@ -130,14 +144,48 @@
 (defmemoized provides-from-js-dependency-index [comp-env]
   (->> comp-env get-wrapped (@cljs-get-js-index) vals (mapcat :provides) set))
 
+(defprotocol Env
+  (keywords [comp-env]))
+
+(defn constant-table->keyword [constant-table]
+  (->> (keys constant-table)
+       (filter keyword?)
+       (map #(symbol (namespace %) (name %)))))
+
+(extend-protocol Env
+  CljsCompilerEnv
+  (keywords [comp-env]
+    (let [global-constant-table (:cljs.analyzer/constant-table @(get-wrapped comp-env))
+          constant-tables (->>
+                           @(get-wrapped comp-env)
+                           :cljs.analyzer/namespaces
+                           (map (comp :cljs.analyzer/constant-table second))
+                           (cons global-constant-table))]
+      (->> (map constant-table->keyword constant-tables)
+           (reduce #(into %1 %2) #{}))))
+  nil
+  (keywords [_]
+    (let [^Field field (.getDeclaredField clojure.lang.Keyword "table")]
+      (.setAccessible field true)
+      (.keySet (.get field nil)))))
+
 (comment
   (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  (def comp-env (->CljsCompilerEnv @compiler-env))
+
+  (ns-name (find-ns comp-env 'cljs.user))
   
-  (file-extension (->CljsCompilerEnv compiler-env))
-  (namespaces-on-classpath (->CljsCompilerEnv compiler-env))
+  (file-extension comp-env)
+  (namespaces-on-classpath comp-env)
   (filter #(.endsWith % "cljs") (all-files-on-classpath))
   
-  (count (provides-from-js-dependency-index (->CljsCompilerEnv @compiler-env)))
+  (count (provides-from-js-dependency-index comp-env))
+
+  (:cljs.analyzer/constant-table @@compiler-env)
+  (:cljs.analyzer/constants (get (:cljs.analyzer/namespaces @@compiler-env) 'ewen.replique.compliment.ns-mappings-cljs-test))
+
+  (keywords nil)
+  (keywords comp-env)
+
+  (ns-name nil (find-ns nil 'ewen.replique.compliment.ns-mappings-clj-test))
   )
-
-

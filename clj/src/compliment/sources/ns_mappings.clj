@@ -1,9 +1,9 @@
 (ns compliment.sources.ns-mappings
   "Completion for vars and classes in the current namespace."
-  (:refer-clojure :exclude [ns-publics ns-map meta])
+  (:refer-clojure :exclude [ns-publics ns-map meta find-ns])
   (:require [compliment.sources :refer [defsource]]
             [compliment.utils :refer [fuzzy-matches? *extra-metadata*]]
-            [compliment.environment :refer [ns-publics ns-map meta resolve-namespace]])
+            [compliment.environment :refer [ns-publics ns-map meta resolve-namespace find-ns]])
   (:import java.io.StringWriter))
 
 (defn var-symbol?
@@ -31,7 +31,7 @@
 
 (defn try-get-ns-from-context
   "Tries to extract a namespace name if context is a `ns` definition."
-  [context]
+  [comp-env context]
   (let [[var-list ns-def use-def top-form] context]
     (when (and (sequential? (:form var-list))
                (= (first (:form top-form)) 'ns)
@@ -39,7 +39,7 @@
                         (= (second (:form ns-def)) :only))
                    (and (= (first (:form use-def)) :require)
                         (= (second (:form ns-def)) :refer))))
-      (find-ns (first (:form ns-def))))))
+      (find-ns comp-env (first (:form ns-def))))))
 
 (defn generate-docstring
   "Generates a docstring from a given var metadata. Copied from
@@ -76,7 +76,7 @@
   ([comp-env ^String prefix, ns context]
    (when (var-symbol? prefix)
      (let [[scope-name scope ^String prefix] (get-scope-and-prefix comp-env prefix ns)
-           ns-form-namespace (try-get-ns-from-context context)
+           ns-form-namespace (try-get-ns-from-context comp-env context)
            vars (cond
                   scope (ns-publics comp-env scope)
                   ns-form-namespace (ns-publics comp-env ns-form-namespace)
@@ -119,11 +119,12 @@
 
   (require '[ewen.replique.server-cljs :refer [compiler-env]])
   (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (type (compliment.environment/find-ns (->CljsCompilerEnv @compiler-env) 'cljs.core))
-  (count (compliment.environment/ns-publics (->CljsCompilerEnv @compiler-env) 'cljs.core))
-  (count (compliment.environment/ns-core-refers (->CljsCompilerEnv @compiler-env) 'cljs.core))
-  (count (compliment.environment/ns-map (->CljsCompilerEnv @compiler-env) 'cljs.core))
+  (type (compliment.environment/find-ns comp-env 'cljs.core))
+  (count (compliment.environment/ns-publics comp-env 'cljs.core))
+  (count (compliment.environment/ns-core-refers comp-env 'cljs.core))
+  (count (compliment.environment/ns-map comp-env 'cljs.core))
 
   (get (:cljs.analyzer/namespaces @@compiler-env) 'cljs.user)
 
@@ -134,10 +135,10 @@
 
   (get (compliment.environment/ns-publics nil 'ewen.replique.compliment.ns-mappings-clj-test)
        'my-fn)
-  (get (compliment.environment/ns-publics (->CljsCompilerEnv @compiler-env) 'ewen.replique.compliment.ns-mappings-cljs-test)
+  (get (compliment.environment/ns-publics comp-env 'ewen.replique.compliment.ns-mappings-cljs-test)
        'my-fn)
 
-  (candidates (->CljsCompilerEnv @compiler-env) "clj" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
-  (candidates "cloj" 'ewen.replique.compliment.ns-mappings-clj-test nil)
+  (candidates comp-env "clj" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates "cloj" (find-ns nil 'ewen.replique.compliment.ns-mappings-clj-test) nil)
 
   )

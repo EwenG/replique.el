@@ -1,5 +1,12 @@
-(ns ewen.replique.compliment.ns-mappings-clj-test)
+(ns ewen.replique.compliment.ns-mappings-clj-test
+  (:require [ewen.replique.tooling :as tooling]))
 
-(defn my-fn [])
+(defn my-fn [fff]
+  (let [e nil]
+    (e))
+  (prn "e")
+  nil)
 
 (defmacro my-macro [])
+
+::fffffff

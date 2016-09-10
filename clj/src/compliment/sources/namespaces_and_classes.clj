@@ -1,10 +1,11 @@
 (ns compliment.sources.namespaces-and-classes
   "Completion for namespace and class names."
-  (:refer-clojure :exclude [all-ns ns-aliases])
+  (:refer-clojure :exclude [all-ns ns-aliases find-ns])
   (:require [compliment.sources :refer [defsource]]
             [compliment.utils :refer [fuzzy-matches? defmemoized] :as utils]
             [compliment.sources.class-members :refer [classname-doc]]
-            [compliment.environment :refer [all-ns ns-aliases namespaces-on-classpath provides-from-js-dependency-index]])
+            [compliment.environment :refer [all-ns ns-aliases namespaces-on-classpath
+                                            provides-from-js-dependency-index find-ns]])
   (:import java.io.File compliment.environment.CljsCompilerEnv))
 
 (defn nscl-symbol?
@@ -120,7 +121,7 @@
                         :when (nscl-matches? prefix ns-str)]
                     {:candidate ns-str, :type :namespace})))))))))
 
-(defn doc [ns-or-class-str curr-ns]
+#_(defn doc [ns-or-class-str curr-ns]
   (when (nscl-symbol? ns-or-class-str)
     (if-let [ns (find-ns (symbol ns-or-class-str))]
       (str ns "\n" (:doc (meta ns)) "\n")
@@ -136,8 +137,9 @@
 (comment
   (require '[ewen.replique.server-cljs :refer [compiler-env]])
   (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (candidates (->CljsCompilerEnv @compiler-env) "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
-  (candidates "cljs.c" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
-  (candidates (->CljsCompilerEnv @compiler-env) "goog.ed" 'ewen.replique.compliment.ns-mappings-cljs-test nil)
+  (candidates comp-env "cljs.c" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates "cljs.c" (find-ns nil 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates comp-env "goog.ed" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
   )
