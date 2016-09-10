@@ -77,6 +77,8 @@
     (clojure.main/repl
      :init init-fn
      :prompt #()
+     :caught (fn [e]
+               (elisp/prn {:error e}))
      :print (fn [result]
               (prn result)))))
 
@@ -93,6 +95,10 @@
     (clojure.main/repl
      :init init-fn
      :prompt #()
+     :caught (fn [e]
+               (binding [*out* tooling-err]
+                 (with-lock tooling-out-lock
+                   (elisp/prn {:error e}))))
      :print (fn [result]
               (with-lock tooling-out-lock
                 (elisp/prn result))))))

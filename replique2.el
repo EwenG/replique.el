@@ -150,46 +150,52 @@
                           :clj-completion)
                          ((equal :cljs repl-type)
                           :cljs-completion)
-                         (t (error "Invalid REPL type: %s" repl-type)))))
-    (replique/send-tooling-msg
-     props
-     `((:type . ,msg-type)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(cdr (assoc :ns repl))))
-       (:prefix . ,prefix)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (gethash :error resp)))
-           (if err
-               (progn
-                 (message (replique-edn/pr-str err))
-                 (message "completion failed with prefix %s" prefix))
-             (let* ((candidates (gethash :candidates resp))
-                    (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
-               (funcall company-callback candidates)))))))))
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (msg-string (replique/format-tooling-message
+                      `((:type . ,msg-type)
+                        (:context . ,(replique/form-with-prefix))
+                        (:ns . (quote ,(cdr (assoc :ns repl))))
+                        (:prefix . ,prefix)))))
+    (if (not (replique/well-formed-tooling-msg? msg-string))
+        (message "Malformed tooling message: %s" msg-string)
+      (progn
+        (replique/send-tooling-msg props msg-string)
+        (replique-async/<!
+         tooling-chan
+         (lambda (resp)
+           (when resp
+             (let ((err (gethash :error resp)))
+               (if err
+                   (progn
+                     (message (replique-edn/pr-str err))
+                     (message "completion failed with prefix %s" prefix))
+                 (let* ((candidates (gethash :candidates resp))
+                        (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+                   (funcall company-callback candidates)))))))))))
 
 (defun replique/auto-complete* (prefix company-callback props msg-type)
-  (let ((tooling-chan (cdr (assoc :chan props))))
-    (replique/send-tooling-msg
-     props
-     `((:type . ,msg-type)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(make-symbol (clojure-find-ns))))
-       (:prefix . ,prefix)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (gethash :error resp)))
-           (if err
-               (progn
-                 (message (replique-edn/pr-str err))
-                 (message "completion failed with prefix %s" prefix))
-             (let* ((candidates (gethash :candidates resp))
-                    (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
-               (funcall company-callback candidates)))))))))
+  (let ((tooling-chan (cdr (assoc :chan props)))
+        (msg-string (replique/format-tooling-message
+                     `((:type . ,msg-type)
+                       (:context . ,(replique/form-with-prefix))
+                       (:ns . (quote ,(make-symbol (clojure-find-ns))))
+                       (:prefix . ,prefix)))))
+    (if (not (replique/well-formed-tooling-msg? msg-string))
+        (message "Malformed tooling message: %s" msg-string)
+      (progn
+        (replique/send-tooling-msg props msg-string)
+        (replique-async/<!
+         tooling-chan
+         (lambda (resp)
+           (when resp
+             (let ((err (gethash :error resp)))
+               (if err
+                   (progn
+                     (message (replique-edn/pr-str err))
+                     (message "completion failed with prefix %s" prefix))
+                 (let* ((candidates (gethash :candidates resp))
+                        (candidates (mapcar (lambda (c) (gethash :candidate c)) candidates)))
+                   (funcall company-callback candidates)))))))))))
 
 (defun replique/auto-complete-clj (prefix company-callback props clj-repl)
   (replique/auto-complete* prefix company-callback props :clj-completion))
@@ -238,47 +244,10 @@
    (clojurescript-mode . (-partial 'replique/in-ns-cljs ns-name))
    (clojurec-mode . (-partial 'replique/in-ns-cljc ns-name))))
 
-(defun replique/skip-regexp-forward (regexp)
-  (let ((data (match-data)))
-    (when (looking-at regexp)
-      (let ((match-length (-> (match-string 0)
-                              length)))
-        (forward-char match-length)
-        (set-match-data data)
-        (replique/skip-regexp-forward regexp)))
-    (set-match-data data)))
-
-(defun replique/skip-symbol-backward ()
-  (skip-chars-backward (concat "^" clojure--sym-forbidden-1st-chars))
-  (replique/skip-regexp-forward "#_\\|#\\|'"))
-
-(defun replique/skip-symbol-forward ()
-  (skip-chars-forward
-   (concat "^" clojure--sym-forbidden-rest-chars)))
-
 (defun replique/symbol-backward ()
-  (save-excursion
-    (let ((end (point)))
-      (replique/skip-symbol-backward)
-      (when (not (equal end (point)))
-        (buffer-substring-no-properties (point) end)))))
-
-(defun replique/symbol-at-point ()
-  (save-excursion
-    (replique/skip-symbol-backward)
-    (let ((begin (point)))
-      (replique/skip-symbol-forward)
-      (when (not (equal begin (point)))
-        (make-symbol
-         (buffer-substring-no-properties begin (point)))))))
-
-(defun replique/bounds-of-symbol-at-point ()
-  (save-excursion
-    (replique/skip-symbol-backward)
-    (let ((begin (point)))
-      (replique/skip-symbol-forward)
-      (when (not (equal begin (point)))
-        `(,begin . ,(point))))))
+  (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
+    (when sym-bounds
+      (buffer-substring-no-properties (car sym-bounds) (point)))))
 
 (defmacro replique/temporary-invisible-change (&rest forms)
   "Executes FORMS with a temporary buffer-undo-list, undoing on return.
@@ -302,7 +271,7 @@ This allows you to temporarily modify read-only buffers too."
   txt)
 
 (defun replique/form-with-prefix* ()
-  (let ((bounds (replique/bounds-of-symbol-at-point)))
+  (let ((bounds (bounds-of-thing-at-point 'symbol)))
     (replique/temporary-invisible-change
      (progn
        (when bounds (delete-region (car bounds) (cdr bounds)))
@@ -695,23 +664,27 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/load-cljs-repl-env (tooling-repl &optional callback)
   (message "Loading Clojurescript REPL environement...")
   (condition-case err
-      (let* ((repl-env-opts (replique-edn/read-string (buffer-string)))
-             (tooling-chan (cdr (assoc :chan tooling-repl))))
+      (let ((tooling-chan (cdr (assoc :chan tooling-repl)))
+            (repl-env-opts (replique-edn/read-string (buffer-string))))
         (puthash :type :set-cljs-env repl-env-opts)
-        (replique/send-tooling-msg tooling-repl repl-env-opts)
-        (replique-async/<!
-         tooling-chan
-         (lambda (resp)
-           (cond ((gethash :error resp)
-                  (message (replique-edn/pr-str (gethash :error resp)))
-                  (message "Loading Clojurescript REPL environement: failed"))
-                 ((gethash :invalid resp)
-                  (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
-                 (t
-                  (replique/restart-cljs-repls tooling-repl)
-                  (message "Loading Clojurescript REPL environement: done")))
-           (when callback
-             (funcall callback resp)))))
+        (let ((msg-string (replique/format-tooling-message repl-env-opts)))
+          (if (not (replique/well-formed-tooling-msg? msg-string))
+              (message "Malformed tooling message: %s" msg-string)
+            (progn
+              (replique/send-tooling-msg tooling-repl msg-string)
+              (replique-async/<!
+               tooling-chan
+               (lambda (resp)
+                 (cond ((gethash :error resp)
+                        (message (replique-edn/pr-str (gethash :error resp)))
+                        (message "Loading Clojurescript REPL environement: failed"))
+                       ((gethash :invalid resp)
+                        (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
+                       (t
+                        (replique/restart-cljs-repls tooling-repl)
+                        (message "Loading Clojurescript REPL environement: done")))
+                 (when callback
+                   (funcall callback resp))))))))
     (error (message "Error while loading Clojurescript REPL environment: %s"
                     (error-message-string err)))))
 
@@ -789,6 +762,7 @@ This allows you to temporarily modify read-only buffers too."
   (setq mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
+  (set-syntax-table clojure-mode-syntax-table)
   (add-to-list 'company-backends 'replique/company-backend))
 
 (defvar replique/minor-mode-map
@@ -868,13 +842,24 @@ The following commands are available:
 (defun replique/is-valid-port-nb? (port-nb)
   (< -1 port-nb 65535))
 
-(defun replique/send-tooling-msg (tooling-repl msg)
-  (-let (((&alist :network-proc tooling-network-proc) tooling-repl)
-         (msg (if (replique/alistp msg) (replique/alist-to-map msg) msg)))
-    (process-send-string
-     tooling-network-proc
-     (format "(ewen.replique.server/tooling-msg-handle %s)\n"
-             (replique-edn/pr-str msg)))))
+(defun replique/format-tooling-message (msg)
+  (->> (if (replique/alistp msg) (replique/alist-to-map msg) msg)
+       (replique-edn/pr-str)
+       (format "(ewen.replique.server/tooling-msg-handle %s)\n")))
+
+;; Ensures tooling message are valid clojure forms. Malformed clojure forms would break the
+;; communicaton between emacs and the Clojure process
+(defun replique/well-formed-tooling-msg? (msg)
+  (with-temp-buffer
+    (clojure-mode-variables)
+    (set-syntax-table clojure-mode-syntax-table)
+    (insert msg)
+    (let ((state (parse-partial-sexp (point-min) (point-max))))
+      (and (= 0 (car state)) (= (point) (point-max))))))
+
+(defun replique/send-tooling-msg (tooling-repl msg-string)
+  (-let (((&alist :network-proc tooling-network-proc) tooling-repl))
+    (process-send-string tooling-network-proc msg-string)))
 
 ;; Note: a tooling repl may not be closed when there is a pending non daemon thread
 ;; We don't want to save REPLs when closing the process, as opposed to closing a single REPL
@@ -908,7 +893,9 @@ The following commands are available:
                    other-repls)
         (mapcar (lambda (tooling-repl)
                   (-let (((&alist :chan tooling-chan) tooling-repl))
-                    (replique/send-tooling-msg tooling-repl `((:type . :shutdown)))
+                    (replique/send-tooling-msg
+                     tooling-repl (replique/format-tooling-message
+                                   `((:type . :shutdown))))
                     (replique-async/<!
                      tooling-chan
                      (lambda (msg)
@@ -1272,7 +1259,7 @@ The following commands are available:
                                  (format "*%s*\\1" new-repl-type-s)
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
-            (rename-buffer new-buffer-name))))
+            (rename-buffer (generate-new-buffer-name new-buffer-name)))))
       (replique/update-repl
        repl (replique/update-alist repl :repl-type new-repl-type))
       (replique/save-repls directory))))
@@ -1423,9 +1410,11 @@ The following commands are available:
 ;; Check reflection *warn-on-reflection*
 ;; compliment documentation, metadata
 ;; compliment invalidate memoized on classpath update
-
-;; compliment -> preprocess the context to determine which source must be used
-
+;; compliment for cljc
+;; compliment keywords cljs -> missing :require ... ?
+;; Remove emacs auto save files 
 ;; Check for nil when reading from chan because the chan can be closed
+;; replace alist by maps
+;; Remove all edn-read-stream, add :caught on tooling repl, also print in elisp
 
 ;; replique.el ends here
