@@ -304,11 +304,10 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/form-with-prefix* ()
   (let ((bounds (replique/bounds-of-symbol-at-point)))
     (replique/temporary-invisible-change
-     (if bounds
-         (progn (delete-region (car bounds) (cdr bounds))
-                (insert "__prefix__")
-                (thing-at-point 'defun))
-       nil))))
+     (progn
+       (when bounds (delete-region (car bounds) (cdr bounds)))
+       (insert "__prefix__")
+       (thing-at-point 'defun t)))))
 
 ;; Execute in a temp buffer because company-mode expects the current buffer
 ;; to not change at all
@@ -1412,6 +1411,7 @@ The following commands are available:
 (provide 'replique2)
 
 ;; Choose active proc
+;; Remove tooling messages REPL history, add load-file to main mode to load current ns
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
 ;; Interactive function for opening .replique-cljs-env.clj
@@ -1421,7 +1421,6 @@ The following commands are available:
 ;; sourcepath, classpath live reload
 ;; var explorer
 ;; Check reflection *warn-on-reflection*
-;; compliment: namespaces_and_classes -> search in goog closure libs
 ;; compliment documentation, metadata
 ;; compliment invalidate memoized on classpath update
 
