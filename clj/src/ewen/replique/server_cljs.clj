@@ -432,6 +432,15 @@
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))
 
+(defn set-cljs-env [{:keys [type cljs-env-opts] :as msg}]
+  (let [cljs-env-opts (read-string cljs-env-opts)
+        conformed-msg (s/conform ::cljs-env cljs-env-opts)]
+    (if (= ::s/invalid conformed-msg)
+      {:invalid (s/explain-str ::cljs-env conformed-msg)}
+      (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)]
+        (init-browser-env compiler-opts repl-opts)
+        msg))))
+
 (comment
   (server/tooling-msg-handle
    {:type :set-cljs-env

@@ -7,7 +7,6 @@
              :refer [bindings-from-context]]
             [compliment.core :as compliment]
             [compliment.sources :as compliment-sources]
-            [clojure.spec :as s]
             [clojure.stacktrace :refer [print-stack-trace]]
             [ewen.replique.elisp-printer :as elisp])
   (:import [java.util.concurrent.locks ReentrantLock]
@@ -80,7 +79,7 @@
      :caught (fn [e]
                (elisp/prn {:error e}))
      :print (fn [result]
-              (prn result)))))
+              (elisp/prn result)))))
 
 (comment
   (clojure.main/repl :prompt #())
@@ -156,14 +155,7 @@
 (defmethod tooling-msg-handle :set-cljs-env [msg]
   (with-tooling-response msg
     (require 'ewen.replique.server-cljs)
-    (let [init-browser-env (ns-resolve 'ewen.replique.server-cljs 'init-browser-env)
-          init-opts (ns-resolve 'ewen.replique.server-cljs 'init-opts)
-          conformed-msg (s/conform :ewen.replique.server-cljs/cljs-env msg)]
-      (if (= ::s/invalid conformed-msg)
-        {:invalid (s/explain-str :ewen.replique.server-cljs/cljs-env msg)}
-        (let [{:keys [compiler-opts repl-opts]} (init-opts msg)]
-          (init-browser-env compiler-opts repl-opts)
-          msg)))))
+    ((ns-resolve 'ewen.replique.server-cljs 'set-cljs-env) msg)))
 
 (defn cljs-repl []
   (require 'ewen.replique.server-cljs)

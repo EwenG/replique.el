@@ -156,7 +156,7 @@
                         (:context . ,(replique/form-with-prefix))
                         (:ns . (quote ,(cdr (assoc :ns repl))))
                         (:prefix . ,prefix)))))
-    (if (not (replique/well-formed-tooling-msg? msg-string))
+    (if (not (replique/is-valid-form? msg-string))
         (message "Malformed tooling message: %s" msg-string)
       (progn
         (replique/send-tooling-msg props msg-string)
@@ -180,7 +180,7 @@
                        (:context . ,(replique/form-with-prefix))
                        (:ns . (quote ,(make-symbol (clojure-find-ns))))
                        (:prefix . ,prefix)))))
-    (if (not (replique/well-formed-tooling-msg? msg-string))
+    (if (not (replique/is-valid-form? msg-string))
         (message "Malformed tooling message: %s" msg-string)
       (progn
         (replique/send-tooling-msg props msg-string)
@@ -664,27 +664,28 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/load-cljs-repl-env (tooling-repl &optional callback)
   (message "Loading Clojurescript REPL environement...")
   (condition-case err
-      (let ((tooling-chan (cdr (assoc :chan tooling-repl)))
-            (repl-env-opts (replique-edn/read-string (buffer-string))))
-        (puthash :type :set-cljs-env repl-env-opts)
-        (let ((msg-string (replique/format-tooling-message repl-env-opts)))
-          (if (not (replique/well-formed-tooling-msg? msg-string))
-              (message "Malformed tooling message: %s" msg-string)
-            (progn
-              (replique/send-tooling-msg tooling-repl msg-string)
-              (replique-async/<!
-               tooling-chan
-               (lambda (resp)
-                 (cond ((gethash :error resp)
-                        (message (replique-edn/pr-str (gethash :error resp)))
-                        (message "Loading Clojurescript REPL environement: failed"))
-                       ((gethash :invalid resp)
-                        (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
-                       (t
-                        (replique/restart-cljs-repls tooling-repl)
-                        (message "Loading Clojurescript REPL environement: done")))
-                 (when callback
-                   (funcall callback resp))))))))
+      (let* ((tooling-chan (cdr (assoc :chan tooling-repl)))
+             (cljs-env-opts (buffer-string))
+             (msg-string (replique/format-tooling-message
+                          `((:type . :set-cljs-env)
+                            (:cljs-env-opts . ,cljs-env-opts)))))
+        (if (not (replique/is-valid-form? cljs-env-opts))
+            (message "Invalid Clojurescript environment options: %s" msg-string)
+          (progn
+            (replique/send-tooling-msg tooling-repl msg-string)
+            (replique-async/<!
+             tooling-chan
+             (lambda (resp)
+               (cond ((gethash :error resp)
+                      (message (replique-edn/pr-str (gethash :error resp)))
+                      (message "Loading Clojurescript REPL environement: failed"))
+                     ((gethash :invalid resp)
+                      (message (s-replace-all '(("%" . "%%")) (gethash :invalid resp))))
+                     (t
+                      (replique/restart-cljs-repls tooling-repl)
+                      (message "Loading Clojurescript REPL environement: done")))
+               (when callback
+                 (funcall callback resp)))))))
     (error (message "Error while loading Clojurescript REPL environment: %s"
                     (error-message-string err)))))
 
@@ -849,7 +850,7 @@ The following commands are available:
 
 ;; Ensures tooling message are valid clojure forms. Malformed clojure forms would break the
 ;; communicaton between emacs and the Clojure process
-(defun replique/well-formed-tooling-msg? (msg)
+(defun replique/is-valid-form? (msg)
   (with-temp-buffer
     (clojure-mode-variables)
     (set-syntax-table clojure-mode-syntax-table)
@@ -989,11 +990,6 @@ The following commands are available:
     (replique/skip-repl-starting-output* proc-chan filtered-chan)
     filtered-chan))
 
-(comment (chan (replique/edn-read-stream
-                         proc-chan
-                         (lambda (proc-out-s)
-                           (error "Error while starting the REPL: %s" proc-out-s)))))
-
 (defun replique/make-tooling-repl (host port directory out-chan)
   (let* ((default-directory directory)
          (random-port? (equal port 0))
@@ -1085,7 +1081,7 @@ The following commands are available:
     (replique-async/<!
      chan-src
      (lambda (x)
-       (let ((chan (replique/edn-read-stream chan-src)))
+       (let ((chan (replique/read-chan chan-src proc)))
          (process-send-string proc "(ewen.replique.server/tooling-repl)\n")
          ;; Get the session number
          (process-send-string proc "clojure.core.server/*session*\n")
@@ -1140,19 +1136,20 @@ The following commands are available:
         (when (file-exists-p (concat directory ".replique-repls"))
           (delete-file (concat directory ".replique-repls")))
       (with-temp-file (concat directory ".replique-repls")
-        (insert (->> replique/repls
-                     (mapcar (-lambda ((&alist :host host :port port
-                                               :repl-type repl-type
-                                               :random-port? random-port?
-                                               :buffer buffer))
-                               (if (equal repl-type :tooling)
-                                   `((:host . ,host) (:port . ,port)
-                                     (:random-port? . ,random-port?)
-                                     (:repl-type . ,repl-type))
-                                 `((:repl-type . ,repl-type)
-                                   (:buffer-name . ,(buffer-name buffer))))))
-                     (mapcar 'replique/alist-to-map)
-                     (replique-edn/pr-str)))))))
+        (let* ((repls (->> replique/repls
+                           (mapcar (-lambda ((&alist :host host :port port
+                                                     :repl-type repl-type
+                                                     :random-port? random-port?
+                                                     :buffer buffer))
+                                     (if (equal repl-type :tooling)
+                                         `((:host . ,host) (:port . ,port)
+                                           (:random-port? . ,random-port?)
+                                           (:repl-type . ,repl-type))
+                                       `((:repl-type . ,repl-type)
+                                         (:buffer-name . ,(buffer-name buffer))))))
+                           (mapcar 'replique/alist-to-map)))
+               (repls-string (with-output-to-string (pp repls))))
+          (insert repls-string))))))
 
 
 (defun replique/validate-saved-repls (validated saved-repls)
@@ -1177,7 +1174,7 @@ The following commands are available:
                 ;; This is an error, return nil
                 (t nil))))))
 
-;; Returns nil on any error
+;; Returns nil in case of an error
 ;; Return 0 as port number in case of a random port
 (defun replique/read-saved-repls (directory)
   (when (file-exists-p (concat directory ".replique-repls"))
@@ -1185,7 +1182,7 @@ The following commands are available:
                           (insert-file-contents (concat directory ".replique-repls"))
                           (buffer-string)))
            (saved-repls (condition-case err
-                            (replique-edn/read-string saved-repls)
+                            (read saved-repls)
                           (error (message "Error while reading saved REPLs: %s"
                                           (error-message-string err))
                                  nil))))
@@ -1241,10 +1238,6 @@ The following commands are available:
                  (replique/make-repl buff-name directory host port))))
            (-partial saved-repls))))))
 
-(defvar replique/edn-tag-readers
-  `((error . identity)
-    (object . identity)))
-
 (defun replique/on-repl-type-change (repl new-repl-type)
   (let* ((directory (cdr (assoc :directory repl)))
          (repl-type (cdr (assoc :repl-type repl)))
@@ -1256,7 +1249,7 @@ The following commands are available:
                             (buffer-name repl-buffer))
         (let* ((new-buffer-name (replace-regexp-in-string
                                  (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
-                                 (format "*%s*\\1" new-repl-type-s)
+                                 (format "*%s*" new-repl-type-s)
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
             (rename-buffer (generate-new-buffer-name new-buffer-name)))))
@@ -1294,53 +1287,6 @@ The following commands are available:
   (let ((out-chan (replique-async/chan)))
     (replique/dispatch-eval-msg* in-chan out-chan)
     out-chan))
-
-(defun replique/edn-read-stream* (chan-in chan-out edn-state &optional error-handler)
-  (replique-async/<!
-   chan-in
-   (lambda (s)
-     (condition-case err
-         (let ((continue t))
-           (while continue
-             (let* ((reader (replique-edn/reader nil :str s))
-                    (result-state (assoc :result-state
-                                         (symbol-value edn-state)))
-                    (result-state (if result-state (cdr result-state) nil)))
-               (if (equal :waiting (symbol-value result-state))
-                   (replique-edn/set-reader edn-state reader)
-                 (-> (replique-edn/init-state reader edn-state)
-                     (replique-edn/set-tagged-readers
-                      replique/edn-tag-readers)))
-               (replique-edn/read edn-state)
-               (-let (((&alist :result result
-                               :result-state result-state)
-                       (symbol-value edn-state))
-                      (rest-string
-                       (replique-edn/reader-rest-string reader)))
-                 (when (and
-                        (not (equal :waiting (symbol-value result-state)))
-                        (car (symbol-value result)))
-                   (replique-async/put!
-                    chan-out (car (symbol-value result))))
-                 (if (not (string= "" rest-string))
-                     (setq s rest-string)
-                   (setq continue nil)))))
-           (replique/edn-read-stream* chan-in chan-out edn-state error-handler))
-         (error (funcall error-handler s))))))
-
-(defun replique/edn-read-stream (chan-in &optional error-handler)
-  (let ((edn-state (-> (replique-edn/reader nil :str "")
-                       replique-edn/init-state
-                       (replique-edn/set-tagged-readers
-                        replique/edn-tag-readers)))
-        (chan-out (replique-async/chan)))
-    (replique/edn-read-stream* chan-in chan-out edn-state error-handler)
-    chan-out))
-
-(comment
- 
- (parse-partial-sexp 1 (point-max) 0 nil '(4 4083 4095 nil nil nil 0 nil nil (3 38 73 4083)))
- )
 
 (defun replique/read-chan*
     (chan-in chan-out buffer proc state &optional error-handler)
@@ -1412,9 +1358,8 @@ The following commands are available:
 ;; compliment invalidate memoized on classpath update
 ;; compliment for cljc
 ;; compliment keywords cljs -> missing :require ... ?
-;; Remove emacs auto save files 
-;; Check for nil when reading from chan because the chan can be closed
+;; remove emacs auto save files 
+;; check for nil when reading from chan because the chan can be closed
 ;; replace alist by maps
-;; Remove all edn-read-stream, add :caught on tooling repl, also print in elisp
 
 ;; replique.el ends here
