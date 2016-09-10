@@ -14,24 +14,29 @@
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    {:candidates (compliment/completions prefix {:ns ns :context context})}))
-
+    {:candidates (compliment/completions
+                  prefix
+                  {:ns ns
+                   :context context
+                   #_:sources
+                   #_[:compliment.sources.ns-mappings/ns-mappings
+                      :compliment.sources.keywords/keywords]})}))
 
 (comment
   (server/tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'ewen.replique.server
-                       :prefix "tooli"})
+                              :context nil
+                              :ns 'ewen.replique.server
+                              :prefix "tooli"})
 
   (server/tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'compliment.sources
-                       :prefix "all-s"})
+                              :context nil
+                              :ns 'compliment.sources
+                              :prefix "all-s"})
 
   (server/tooling-msg-handle {:type :clj-completion
-                       :context nil
-                       :ns 'ewen.foo
-                       :prefix "foo"})
+                              :context nil
+                              :ns 'ewen.foo
+                              :prefix "foo"})
 
   )
 
@@ -44,13 +49,19 @@
                    :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
                    :sources
                    [:compliment.sources.ns-mappings/ns-mappings
-                    :compliment.sources.namespaces-and-classes/namespaces-and-classes]})}))
+                    :compliment.sources.namespaces-and-classes/namespaces-and-classes
+                    :compliment.sources.keywords/keywords]})}))
 
 
 (comment
-  (count
-   (:candidates (server/tooling-msg-handle {:type :cljs-completion
-                                            :context nil
-                                            :ns 'cljs.user
-                                            :prefix "goog"})))
+  (server/tooling-msg-handle {:type :cljs-completion
+                              :context nil
+                              :ns 'ewen.replique.compliment.ns-mappings-cljs-test
+                              :prefix ":cljs.c"})
+  
+  (server/tooling-msg-handle {:type :cljs-completion
+                              :context nil
+                              :ns 'ewen.replique.compliment.ns-mappings-cljs-test
+                              :prefix "::eee"})
+  
   )
