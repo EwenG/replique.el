@@ -145,7 +145,8 @@
   (->> comp-env get-wrapped (@cljs-get-js-index) vals (mapcat :provides) set))
 
 (defprotocol Env
-  (keywords [comp-env]))
+  (keywords [comp-env])
+  (special-forms [comp-env]))
 
 (defn constant-table->keyword [constant-table]
   (->> (keys constant-table)
@@ -163,11 +164,16 @@
                            (cons global-constant-table))]
       (->> (map constant-table->keyword constant-tables)
            (reduce #(into %1 %2) #{}))))
+  (special-forms [_]
+    (set (map name '[def if do quote recur throw try catch new set!])))
   nil
   (keywords [_]
     (let [^Field field (.getDeclaredField clojure.lang.Keyword "table")]
       (.setAccessible field true)
-      (.keySet (.get field nil)))))
+      (.keySet (.get field nil))))
+  (special-forms [_]
+    (set (map name '[def if do quote var recur throw try catch
+                   monitor-enter monitor-exit new set!]))))
 
 (comment
   (require '[ewen.replique.server-cljs :refer [compiler-env]])

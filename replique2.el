@@ -1076,7 +1076,7 @@ The following commands are available:
                                        :port port
                                        :repl-type (or repl-type :clj)
                                        :session session
-                                       :ns 'user
+                                       :ns user
                                        :buffer buff
                                        :eval-chan eval-chan)))
                 (push repl replique/repls)
@@ -1336,6 +1336,5 @@ The following commands are available:
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files 
 ;; check for nil when reading from chan because the chan can be closed
-;; replace alist by maps
 
 ;; replique.el ends here

@@ -2,11 +2,8 @@
   "Completion for Clojure's special forms."
   (:require [clojure.repl :as repl]
             [compliment.sources :refer [defsource]]
-            [compliment.sources.ns-mappings :as vars]))
-
-(def ^:private special-forms
-  (set (map name '[def if do quote var recur throw try catch
-                   monitor-enter monitor-exit new set!])))
+            [compliment.sources.ns-mappings :as vars]
+            [compliment.environment :refer [special-forms]]))
 
 (defn first-item-in-list?
   "If context is not nil, check if prefix is the first item in a list form."
@@ -22,12 +19,12 @@
    (candidates prefix ns context))
   ([comp-env prefix _ context]
    (when (and (vars/var-symbol? prefix) (first-item-in-list? context))
-     (for [form special-forms
+     (for [form (special-forms comp-env)
            :when (vars/dash-matches? prefix form)]
        {:candidate form
         :type :special-form}))))
 
-(defn doc
+#_(defn doc
   "Documentation function for special forms."
   [symbol-str _]
   (when (and (vars/var-symbol? symbol-str) (special-forms symbol-str))
@@ -35,7 +32,7 @@
 
 (defsource ::special-forms
   :candidates #'candidates
-  :doc #'doc)
+  :doc (constantly nil))
 
 (defn literal-candidates
   "We define `true`, `false`, and `nil` in a separate source because they are

@@ -17,10 +17,7 @@
     {:candidates (compliment/completions
                   prefix
                   {:ns (when ns (symbol ns))
-                   :context context
-                   #_:sources
-                   #_[:compliment.sources.ns-mappings/ns-mappings
-                      :compliment.sources.keywords/keywords]})}))
+                   :context context})}))
 
 (comment
   (server/tooling-msg-handle {:type :clj-completion
@@ -50,7 +47,10 @@
                    :sources
                    [:compliment.sources.ns-mappings/ns-mappings
                     :compliment.sources.namespaces-and-classes/namespaces-and-classes
-                    :compliment.sources.keywords/keywords]})}))
+                    :compliment.sources.keywords/keywords
+                    :compliment.sources.local-bindings/local-bindings
+                    :compliment.sources.special-forms/literals
+                    :compliment.sources.special-forms/special-forms]})}))
 
 
 (comment
