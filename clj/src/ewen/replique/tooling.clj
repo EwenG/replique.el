@@ -16,7 +16,7 @@
   (with-tooling-response msg
     {:candidates (compliment/completions
                   prefix
-                  {:ns ns
+                  {:ns (when ns (symbol ns))
                    :context context
                    #_:sources
                    #_[:compliment.sources.ns-mappings/ns-mappings
@@ -45,7 +45,7 @@
   (with-tooling-response msg
     {:candidates (compliment/completions
                   prefix
-                  {:ns ns :context context
+                  {:ns (when ns (symbol ns)) :context context
                    :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
                    :sources
                    [:compliment.sources.ns-mappings/ns-mappings
@@ -56,12 +56,12 @@
 (comment
   (server/tooling-msg-handle {:type :cljs-completion
                               :context nil
-                              :ns 'ewen.replique.compliment.ns-mappings-cljs-test
+                              :ns "ewen.replique.compliment.ns-mappings-cljs-test"
                               :prefix ":cljs.c"})
   
   (server/tooling-msg-handle {:type :cljs-completion
                               :context nil
-                              :ns 'ewen.replique.compliment.ns-mappings-cljs-test
+                              :ns "ewen.replique.compliment.ns-mappings-cljs-test"
                               :prefix "::eee"})
   
   )
