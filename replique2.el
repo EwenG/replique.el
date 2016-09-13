@@ -13,6 +13,7 @@
 (require 'replique-async)
 (require 'company)
 (require 'dashhash)
+(require 'repliquedoc)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -278,6 +279,8 @@ This allows you to temporarily modify read-only buffers too."
              (defun-content (buffer-substring (car defun-bounds)
                                               (cdr defun-bounds))))
         (with-temp-buffer
+          (clojure-mode-variables)
+          (set-syntax-table clojure-mode-syntax-table)
           (insert defun-content)
           (backward-char point-offset-backward)
           (replique/form-with-prefix*))))))
@@ -791,7 +794,8 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
-  (add-to-list 'company-backends 'replique/company-backend))
+  (add-to-list 'company-backends 'replique/company-backend)
+  (setq-local eldoc-documentation-function 'replique/eldoc-documentation-function))
 
 (defun replique/raw-command-classpath ()
   (cond ((and (null replique/clojure-jar)
@@ -819,7 +823,7 @@ The following commands are available:
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))
 
-(defun replique/process-filter-chan (proc &optional print?)
+(defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
     (set-process-filter
      proc (lambda (proc string)
@@ -1076,7 +1080,7 @@ The following commands are available:
                                        :port port
                                        :repl-type (or repl-type :clj)
                                        :session session
-                                       :ns user
+                                       :ns 'user
                                        :buffer buff
                                        :eval-chan eval-chan)))
                 (push repl replique/repls)
