@@ -58,7 +58,6 @@
                     :compliment.sources.special-forms/literals
                     :compliment.sources.special-forms/special-forms]})}))
 
-
 (comment
   (server/tooling-msg-handle {:type :cljs-completion
                               :context nil
@@ -71,6 +70,12 @@
                               :prefix "::eee"})
   
   )
+
+(defn format-function-call [fn-var]
+  (let [{:keys [name arglists]} (meta fn-var)]
+    (if (and name arglists)
+      (format "%s: %s" name (print-str arglists))
+      "")))
 
 (defn function-call [ns [fn-sym & _] bindings sym-at-point]
   (let [fn-sym (if (= '__prefix__ fn-sym)
@@ -96,6 +101,11 @@
 "
                               :ns "ewen.replique.server.tooling"
                               :symbol "method-with-class?"})
+  )
+
+(comment
+  (let [ee ee]
+    (ee "e" 3))
   )
 
 (defn method-with-class? [klass member]
@@ -135,7 +145,7 @@
           @fn
           (if (= :local-binding @fn)
             "Local binding"
-            (:name (meta @fn)))
+            (format-function-call @fn))
           :else nil)))))
 
 (defmethod server/tooling-msg-handle :repliquedoc

@@ -209,6 +209,27 @@
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
 
+(defun replique/eldoc-documentation-function (callback)
+  (let* ((tooling-repl (replique/active-repl :tooling))
+         (tooling-chan (-h/get tooling-repl :chan)))
+    (when tooling-chan
+      (replique/send-tooling-msg
+       tooling-repl
+       (-h/hash-map :type :repliquedoc
+                    :context (replique/form-with-prefix)
+                    :ns (clojure-find-ns)
+                    :symbol (symbol-name (symbol-at-point))))
+      (replique-async/<!
+       tooling-chan
+       (lambda (resp)
+         (when resp
+           (let ((err (-h/get resp :error)))
+             (if err
+                 (progn
+                   (message (replique-edn/pr-str err))
+                   (message "eldoc failed"))
+               (funcall callback (-h/get resp :doc))))))))))
+
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
    (format "(clojure.core/in-ns '%s)" ns-name)

@@ -4,39 +4,20 @@
 
 ;;; Code:
 
-(defun replique/eldoc-documentation-function (callback)
-  (let* ((tooling-repl (replique/active-repl :tooling))
-         (tooling-chan (-h/get tooling-repl :chan)))
-    (when tooling-chan
-      (replique/send-tooling-msg
-       tooling-repl
-       (-h/hash-map :type :repliquedoc
-                    :context (replique/form-with-point)
-                    :ns (clojure-find-ns)
-                    :symbol (symbol-at-point)))
-      (replique-async/<!
-       tooling-chan
-       (lambda (resp)
-         (when resp
-           (let ((err (-h/get resp :error)))
-             (if err
-                 (progn
-                   (message (replique-edn/pr-str err))
-                   (message "eldoc failed"))
-               (funcall callback (-h/get resp :doc))))))))))
+(defvar replique/eldoc-timer nil)
 
 (defun replique/eldoc-schedule-timer ()
-  (or (and eldoc-timer
-           (memq eldoc-timer timer-idle-list))
-      (setq eldoc-timer
+  (or (and replique/eldoc-timer
+           (memq replique/eldoc-timer timer-idle-list))
+      (setq replique/eldoc-timer
             (run-with-idle-timer
 	     eldoc-idle-delay t
-	     (lambda () (and eldoc-mode (replique/eldoc-print-current-symbol-info))))))
+	     (lambda () (and repliquedoc-mode (replique/eldoc-print-current-symbol-info))))))
 
   ;; If user has changed the idle delay, update the timer.
   (cond ((not (= eldoc-idle-delay eldoc-current-idle-delay))
          (setq eldoc-current-idle-delay eldoc-idle-delay)
-         (timer-set-idle-time eldoc-timer eldoc-idle-delay t))))
+         (timer-set-idle-time replique/eldoc-timer eldoc-idle-delay t))))
 
 (defun replique/eldoc-print-current-symbol-info ()
   (with-demoted-errors "eldoc error: %s"
@@ -57,14 +38,9 @@
   :group 'repliquedoc
   (if repliquedoc-mode
       (progn
-	(eldoc-mode)
-        (remove-hook 'post-command-hook 'eldoc-schedule-timer t)
-        (remove-hook 'pre-command-hook 'eldoc-pre-command-refresh-echo-area t)
-        (when eldoc-timer
-          (cancel-timer eldoc-timer)
-          (setq eldoc-timer nil))
+	(setq eldoc-last-message nil)
         (add-hook 'post-command-hook 'replique/eldoc-schedule-timer nil t))
-    (eldoc-mode -1)
+    (kill-local-variable 'eldoc-message-commands)
     (remove-hook 'post-command-hook 'replique/eldoc-schedule-timer t)))
 
 (provide 'repliquedoc)
