@@ -173,7 +173,7 @@
       (.keySet (.get field nil))))
   (special-forms [_]
     (set (map name '[def if do quote var recur throw try catch
-                   monitor-enter monitor-exit new set!]))))
+                     monitor-enter monitor-exit new set!]))))
 
 (comment
   (require '[ewen.replique.server-cljs :refer [compiler-env]])

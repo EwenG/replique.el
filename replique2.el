@@ -1362,5 +1362,7 @@ The following commands are available:
 ;; remove emacs auto save files 
 ;; check for nil when reading from chan because the chan can be closed
 ;; make print-length and print-level customizable
+;; Check print-length/print-level for cljs
+;; remove dash
 
 ;; replique.el ends here
