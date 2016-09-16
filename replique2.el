@@ -1361,5 +1361,6 @@ The following commands are available:
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files 
 ;; check for nil when reading from chan because the chan can be closed
+;; make print-length and print-level customizable
 
 ;; replique.el ends here

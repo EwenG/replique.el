@@ -130,27 +130,29 @@
 
 (defmethod repl :clj [type]
   (println "Clojure" (clojure-version))
-  (clojure.main/repl
-   :init clojure.core.server/repl-init
-   :caught (fn [e]
-             (binding [*out* tooling-err]
-               (with-lock tooling-out-lock
-                 (elisp/prn {:type :eval
-                             :error true
-                             :repl-type :clj
-                             :session *session*
-                             :ns (ns-name *ns*)
-                             :value (.getMessage e)})))
-             (clojure.main/repl-caught e))
-   :print (fn [result]
-            (binding [*out* tooling-out]
-              (with-lock tooling-out-lock
-                (elisp/prn {:type :eval
-                            :repl-type :clj
-                            :session *session*
-                            :ns (ns-name *ns*)
-                            :result (pr-str result)})))
-            (prn result))))
+  (binding [*print-length* 100
+            *print-level* 100]
+    (clojure.main/repl
+     :init clojure.core.server/repl-init
+     :caught (fn [e]
+               (binding [*out* tooling-err]
+                 (with-lock tooling-out-lock
+                   (elisp/prn {:type :eval
+                               :error true
+                               :repl-type :clj
+                               :session *session*
+                               :ns (ns-name *ns*)
+                               :value (.getMessage e)})))
+               (clojure.main/repl-caught e))
+     :print (fn [result]
+              (binding [*out* tooling-out]
+                (with-lock tooling-out-lock
+                  (elisp/prn {:type :eval
+                              :repl-type :clj
+                              :session *session*
+                              :ns (ns-name *ns*)
+                              :result (pr-str result)})))
+              (prn result)))))
 
 (defmethod tooling-msg-handle :set-cljs-env [msg]
   (with-tooling-response msg
