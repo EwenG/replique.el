@@ -141,40 +141,13 @@
 
 ;; Auto completion
 
-(defun replique/auto-complete-session (prefix company-callback tooling-repl repl)
-  (let* ((tooling-chan (-h/get tooling-repl :chan))
-         (repl-type (-h/get repl :repl-type))
-         (msg-type (cond ((equal :clj repl-type)
-                          :clj-completion)
-                         ((equal :cljs repl-type)
-                          :cljs-completion)
-                         (t (error "Invalid REPL type: %s" repl-type)))))
-    (replique/send-tooling-msg
-     tooling-repl
-     (-h/hash-map :type msg-type
-                  :context (replique/form-with-prefix)
-                  :ns (symbol-name (-h/get repl :ns))
-                  :prefix prefix))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (-h/get resp :error)))
-           (if err
-               (progn
-                 (message (replique-edn/pr-str err))
-                 (message "completion failed with prefix %s" prefix))
-             (let* ((candidates (-h/get resp :candidates))
-                    (candidates (mapcar (lambda (c) (-h/get c :candidate)) candidates)))
-               (funcall company-callback candidates)))))))))
-
-(defun replique/auto-complete* (prefix company-callback tooling-repl msg-type)
+(defun replique/auto-complete* (prefix company-callback tooling-repl msg-type ns)
   (let ((tooling-chan (-h/get tooling-repl :chan)))
     (replique/send-tooling-msg
      tooling-repl
      (-h/hash-map :type msg-type
                   :context (replique/form-with-prefix)
-                  :ns (clojure-find-ns)
+                  :ns ns
                   :prefix prefix))
     (replique-async/<!
      tooling-chan
@@ -189,11 +162,23 @@
                     (candidates (mapcar (lambda (c) (-h/get c :candidate)) candidates)))
                (funcall company-callback candidates)))))))))
 
+(defun replique/auto-complete-session (prefix company-callback tooling-repl repl)
+  (let* ((repl-type (-h/get repl :repl-type))
+         (msg-type (cond ((equal :clj repl-type)
+                          :clj-completion)
+                         ((equal :cljs repl-type)
+                          :cljs-completion)
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (ns (symbol-name (-h/get repl :ns))))
+    (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
+
 (defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
-  (replique/auto-complete* prefix company-callback tooling-repl :clj-completion))
+  (replique/auto-complete* prefix company-callback tooling-repl
+                           :clj-completion (clojure-find-ns)))
 
 (defun replique/auto-complete-cljs (prefix company-callback tooling-repl cljs-repl)
-  (replique/auto-complete* prefix company-callback tooling-repl :cljs-completion))
+  (replique/auto-complete* prefix company-callback tooling-repl
+                           :cljs-completion (clojure-find-ns)))
 
 (defun replique/auto-complete-lein (prefix company-callback tooling-repl)
   (funcall company-callback '()))
@@ -209,15 +194,14 @@
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
 
-(defun replique/eldoc-documentation-function (callback)
-  (let* ((tooling-repl (replique/active-repl :tooling))
-         (tooling-chan (-h/get tooling-repl :chan)))
+(defun replique/repliquedoc* (callback tooling-repl msg-type ns)
+  (let ((tooling-chan (-h/get tooling-repl :chan)))
     (when tooling-chan
       (replique/send-tooling-msg
        tooling-repl
-       (-h/hash-map :type :repliquedoc
+       (-h/hash-map :type msg-type
                     :context (replique/form-with-prefix)
-                    :ns (clojure-find-ns)
+                    :ns ns
                     :symbol (symbol-name (symbol-at-point))))
       (replique-async/<!
        tooling-chan
@@ -229,6 +213,28 @@
                    (message (replique-edn/pr-str err))
                    (message "eldoc failed"))
                (funcall callback (-h/get resp :doc))))))))))
+
+(defun replique/repliquedoc-session (callback tooling-repl repl)
+  (let* ((repl-type (-h/get repl :repl-type))
+         (msg-type (cond ((equal :clj repl-type)
+                          :repliquedoc-clj)
+                         ((equal :cljs repl-type)
+                          :repliquedoc-cljs)
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (ns (symbol-name (-h/get repl :ns))))
+    (replique/repliquedoc* callback tooling-repl msg-type ns)))
+
+(defun replique/repliquedoc-clj (callback tooling-repl repl)
+  (replique/repliquedoc* callback tooling-repl :repliquedoc-clj (clojure-find-ns)))
+
+(defun replique/repliquedoc-cljs (callback tooling-repl repl)
+  (replique/repliquedoc* callback tooling-repl :repliquedoc-cljs (clojure-find-ns)))
+
+(defun replique/eldoc-documentation-function (callback)
+  (replique/with-modes-dispatch
+   (replique/mode . (-partial 'replique/repliquedoc-session callback))
+   (clojure-mode . (-partial 'replique/repliquedoc-clj callback))
+   (clojurescript-mode . (-partial 'replique/repliquedoc-cljs callback))))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
@@ -774,7 +780,8 @@ This allows you to temporarily modify read-only buffers too."
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
-  (add-to-list 'company-backends 'replique/company-backend))
+  (add-to-list 'company-backends 'replique/company-backend)
+  (setq-local eldoc-documentation-function 'replique/eldoc-documentation-function))
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
