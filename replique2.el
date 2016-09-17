@@ -1,5 +1,5 @@
 ;;; replique2.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.12.0") (company "0.9.0") (dash-functional "1.2.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "25") (clojure-mode "4.0.1") (dash "2.12.0") (company "0.9.0") (dash-functional "1.2.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -13,7 +13,6 @@
 (require 'replique-async)
 (require 'company)
 (require 'dashhash)
-(require 'repliquedoc)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -194,7 +193,10 @@
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
 
-(defun replique/repliquedoc* (callback tooling-repl msg-type ns)
+;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
+;; response into an asynchronous one, we always return eldoc-last-message and call
+;; eldoc-message ourselves later
+(defun replique/repliquedoc* (tooling-repl msg-type ns)
   (let ((tooling-chan (-h/get tooling-repl :chan)))
     (when tooling-chan
       (replique/send-tooling-msg
@@ -212,9 +214,11 @@
                  (progn
                    (message (replique-edn/pr-str err))
                    (message "eldoc failed"))
-               (funcall callback (-h/get resp :doc))))))))))
+               (with-demoted-errors "eldoc error: %s"
+                 (eldoc-message (-h/get resp :doc))))))))))
+  eldoc-last-message)
 
-(defun replique/repliquedoc-session (callback tooling-repl repl)
+(defun replique/repliquedoc-session (tooling-repl repl)
   (let* ((repl-type (-h/get repl :repl-type))
          (msg-type (cond ((equal :clj repl-type)
                           :repliquedoc-clj)
@@ -222,19 +226,19 @@
                           :repliquedoc-cljs)
                          (t (error "Invalid REPL type: %s" repl-type))))
          (ns (symbol-name (-h/get repl :ns))))
-    (replique/repliquedoc* callback tooling-repl msg-type ns)))
+    (replique/repliquedoc* tooling-repl msg-type ns)))
 
-(defun replique/repliquedoc-clj (callback tooling-repl repl)
-  (replique/repliquedoc* callback tooling-repl :repliquedoc-clj (clojure-find-ns)))
+(defun replique/repliquedoc-clj (tooling-repl repl)
+  (replique/repliquedoc* tooling-repl :repliquedoc-clj (clojure-find-ns)))
 
-(defun replique/repliquedoc-cljs (callback tooling-repl repl)
-  (replique/repliquedoc* callback tooling-repl :repliquedoc-cljs (clojure-find-ns)))
+(defun replique/repliquedoc-cljs (tooling-repl repl)
+  (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns)))
 
-(defun replique/eldoc-documentation-function (callback)
+(defun replique/eldoc-documentation-function ()
   (replique/with-modes-dispatch
-   (replique/mode . (-partial 'replique/repliquedoc-session callback))
-   (clojure-mode . (-partial 'replique/repliquedoc-clj callback))
-   (clojurescript-mode . (-partial 'replique/repliquedoc-cljs callback))))
+   (replique/mode . 'replique/repliquedoc-session)
+   (clojure-mode . 'replique/repliquedoc-clj)
+   (clojurescript-mode . 'replique/repliquedoc-cljs)))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
@@ -781,7 +785,8 @@ This allows you to temporarily modify read-only buffers too."
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
   (add-to-list 'company-backends 'replique/company-backend)
-  (setq-local eldoc-documentation-function 'replique/eldoc-documentation-function))
+  (add-function :before-until (local 'eldoc-documentation-function)
+                'replique/eldoc-documentation-function))
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
@@ -823,7 +828,8 @@ The following commands are available:
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
   (add-to-list 'company-backends 'replique/company-backend)
-  (setq-local eldoc-documentation-function 'replique/eldoc-documentation-function))
+  (add-function :before-until (local 'eldoc-documentation-function)
+                'replique/eldoc-documentation-function))
 
 (defun replique/raw-command-classpath ()
   (cond ((and (null replique/clojure-jar)
@@ -1371,5 +1377,6 @@ The following commands are available:
 ;; make print-length and print-level customizable
 ;; Check print-length/print-level for cljs
 ;; remove dash
+;; Print eval results in *Message*
 
 ;; replique.el ends here

@@ -1,11 +1,12 @@
 (ns ewen.replique.repliquedoc
-  (:refer-clojure :exclude [find-ns meta])
+  (:refer-clojure :exclude [find-ns meta ns-resolve ns-name])
   (:require [clojure.set]
             [compliment.core :as compliment]
             [compliment.context :as context]
             [compliment.sources.local-bindings
              :refer [bindings-from-context]]
-            [compliment.environment :refer [->CljsCompilerEnv find-ns meta]]
+            [compliment.environment :refer [->CljsCompilerEnv find-ns meta
+                                            looks-like-var? ns-resolve ns-name]]
             [compliment.context :as context]
             [compliment.utils :refer [resolve-class]]
             [compliment.sources.class-members :refer [class-member-symbol?
@@ -19,15 +20,12 @@
 
 (defmulti format-call (fn [{:keys [type]}] type))
 
-(defmethod format-call :local-binding [{:keys [sym]}]
-  (format "%s: local binding" (name sym)))
-
-(defmethod format-call :var [{:keys [var]}]
-  (let [{:keys [ns name arglists]} (meta var)]
+(defmethod format-call :var [{:keys [var comp-env]}]
+  (let [{:keys [ns name arglists]} (meta comp-env var)]
     (cond (and name arglists)
-          (format "%s/%s: %s" ns name (print-str arglists))
+          (format "%s/%s: %s" (ns-name ns) name (print-str arglists))
           name
-          (format "%s/%s" ns name)
+          (format "%s/%s" (ns-name ns) name)
           :else "")))
 
 (defmethod format-call :method [{:keys [method]}]
@@ -53,7 +51,7 @@
             parameter-types return-type)))
 
 (comment
-  (server/tooling-msg-handle {:type :repliquedoc
+  (server/tooling-msg-handle {:type :repliquedoc-clj
                               :context "(.code __prefix__)
 "
                               :ns "ewen.replique.tooling"
@@ -101,16 +99,17 @@
                  sym-at-point
                  fn-sym)]
     (cond (get bindings (name fn-sym))
-          {:type :local-binding :sym fn-sym}
+          nil
+          ;; TODO cljs special-forms
           (get special-forms-clj fn-sym)
           {:type :special-form :sym fn-sym :arglists (get special-forms-arglists fn-sym)}
-          :else {:type :var :var (ns-resolve ns fn-sym)})))
+          :else (let [resolved (ns-resolve compiler-env ns fn-sym)]
+                  (when (looks-like-var? compiler-env resolved)
+                    {:type :var :var resolved :comp-env compiler-env})))))
 
 (comment
   (let [ee ee]
     (ee "e" 3))
-
-  
   )
 
 (defn method-with-class? [klass member]
@@ -130,7 +129,7 @@
                      object)
             object (when (and (symbol? object)
                               (not (get bindings (name object))))
-                     (ns-resolve ns object))
+                     (clojure.core/ns-resolve ns object))
             klass (when (= (type object) clojure.lang.Var)
                     (type (deref object)))
             members (get (get-all-members ns) method-name)
@@ -152,11 +151,18 @@
               {:type :static-method :method (first members)})))))))
 
 (comment
-  (server/tooling-msg-handle {:type :repliquedoc
+  (server/tooling-msg-handle {:type :repliquedoc-clj
                               :context "(__prefix__)
 "
                               :ns "ewen.replique.tooling"
                               :symbol "Integer/compare"})
+
+  (ewen.replique.server/tooling-msg-handle
+   {:type :repliquedoc-cljs
+    :context "(__prefix__)
+"
+    :ns "ewen.replique.compliment.ns-mappings-cljs-test"
+    :symbol "my-macro"})
   )
 
 (defprotocol Repliquedoc

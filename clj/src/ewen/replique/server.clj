@@ -130,8 +130,8 @@
 
 (defmethod repl :clj [type]
   (println "Clojure" (clojure-version))
-  (binding [*print-length* 100
-            *print-level* 100]
+  (binding [*print-length* 20
+            *print-level* 5]
     (clojure.main/repl
      :init clojure.core.server/repl-init
      :caught (fn [e]

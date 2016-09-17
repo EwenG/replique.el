@@ -83,7 +83,7 @@
                   :else (ns-map comp-env ns))]
        (for [[var-sym var] vars
              :let [var-name (name var-sym)
-                   {:keys [arglists doc] :as var-meta} (meta var)]
+                   {:keys [arglists doc] :as var-meta} (meta comp-env var)]
              :when (dash-matches? prefix var-name)]
          (if (= (type var) Class)
            {:candidate var-name, :type :class,
@@ -103,7 +103,7 @@
 
              )))))))
 
-(defn doc
+#_(defn doc
   "Documentation function for this sources' completions."
   [symbol-str ns]
   (if (var-symbol? symbol-str)
