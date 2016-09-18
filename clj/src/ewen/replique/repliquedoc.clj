@@ -19,37 +19,33 @@
   (:import [compliment.environment CljsCompilerEnv]
            [java.lang.reflect Method Member Modifier]))
 
-(defmulti format-call (fn [{:keys [type]}] type))
+(defmulti format-call (fn [{:keys [type]} index] type))
 
-(defmethod format-call :var [{:keys [var comp-env]}]
+(defmethod format-call :var [{:keys [var comp-env]} index]
   (let [{:keys [ns name arglists]} (meta comp-env var)]
     (cond (and name arglists)
-          (format "%s/%s: %s" (ns-name ns) name (print-str arglists))
+          {:name (format "%s/%s" (ns-name ns) name)
+           :arglists arglists
+           :index index}
           name
-          (format "%s/%s" (ns-name ns) name)
-          :else "")))
+          {:name (format "%s/%s" (ns-name ns) name)}
+          :else {})))
 
-(defmethod format-call :method [{:keys [method]}]
+(defn format-method [{:keys [method]} index]
   (let [klass (.getName (.getDeclaringClass method))
-        modifiers (Modifier/toString (.getModifiers method))
         parameter-types (->> (.getParameterTypes method)
-                             (map #(.getName %))
-                             (clojure.string/join " "))
-        return-type (.getName (.getReturnType method))]
-    (format "%s %s.%s (%s) -> %s"
-            modifiers klass (.getName method)
-            parameter-types return-type)))
+                             (mapv #(-> % (.getName) symbol)))
+        return-type (-> (.getReturnType method) (.getName) symbol)]
+    {:name (format "%s.%s" klass (.getName method))
+     :arglists (list parameter-types)
+     :index index
+     :return return-type}))
 
-(defmethod format-call :static-method [{:keys [method]}]
-  (let [klass (.getName (.getDeclaringClass method))
-        modifiers (Modifier/toString (.getModifiers method))
-        parameter-types (->> (.getParameterTypes method)
-                             (map #(.getName %))
-                             (clojure.string/join " "))
-        return-type (.getName (.getReturnType method))]
-    (format "%s %s/%s (%s) -> %s"
-            modifiers klass (.getName method)
-            parameter-types return-type)))
+(defmethod format-call :method [call index]
+  (format-method call index))
+
+(defmethod format-call :static-method [call index]
+  (format-method call index))
 
 (comment
   (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
@@ -70,14 +66,15 @@
   (.getName ee1)
   (.codePointAt ee2)
 
-  (defn ee ([^Double rr & {:keys [ee rr] :or {ee "e" rr "t"}}])
-  ([]))
-  (ee )
+  (defn ee
+    ([^String e])
+    ([^Double rr & {:keys [ee rr] :or {ee "e" rr "t"}}])
+    ([]))
+  (ee r r g e n)
   )
 
-
-(defmethod format-call :special-form [{:keys [sym arglists]}]
-  (format "%s: %s" (str sym) (print-str arglists)))
+(defmethod format-call :special-form [{:keys [sym arglists]} index]
+  {:name (str sym) :arglists arglists :index index})
 
 (def special-forms #{'def 'if 'do 'quote 'recur 'throw 'try 'catch 'new 'set!})
 (def special-forms-clj (clojure.set/union
@@ -85,21 +82,19 @@
                         #{'var 'monitor-enter 'monitor-exit}))
 
 (def special-forms-arglists
-  {'def '(def symbol doc-string? init?)
-   'if '(test then else)
-   'do '(do exprs*)
-   'quote '(quote form)
-   'recur '(recur exprs*)
-   'throw '(throw expr)
-   'try '(try expr* catch-clause* finally-clause?)
-   'catch '(catch classname name expr*)
-   'new '[(Classname. args*) (new Classname args*)]
-   'set! '[(set! var-symbol expr)
-           (set! (. instance-expr instanceFieldName-symbol) expr)
-           (set! (. Classname-symbol staticFieldName-symbol) expr)]
-   'var '(var symbol)
-   'monitor-enter '(monitor-enter x)
-   'monitor-exit '(monitor-exit x)})
+  {'def '([symbol doc-string? init?])
+   'if '([test then else])
+   'do '([exprs*])
+   'quote '([form])
+   'recur '([exprs*])
+   'throw '([expr])
+   'try '([expr* catch-clause* finally-clause?])
+   'catch '([classname name expr*])
+   'new '([classname args*])
+   'set! '([symbol expr])
+   'var '([symbol])
+   'monitor-enter '([x])
+   'monitor-exit '([x])})
 
 (defn function-call [compiler-env ns [fn-sym & _] bindings sym-at-point]
   (let [fn-sym (if (= '__prefix__ fn-sym)
@@ -182,16 +177,16 @@
   CljsCompilerEnv
   (handle-repliquedoc [comp-env ns context sym-at-point]
     (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-          [{:keys [form]} & _ :as context] (context/cache-context context)
+          [{:keys [form idx]} & _ :as context] (context/cache-context context)
           sym-at-point (and sym-at-point (symbol sym-at-point))]
       (when (and (list? form) (first form) (symbol? (first form)))
         (let [bindings (set (bindings-from-context context))
               fn (delay (function-call comp-env ns form bindings sym-at-point))]
-          (when @fn (format-call @fn))))))
+          (when @fn (format-call @fn idx))))))
   nil
   (handle-repliquedoc [comp-env ns context sym-at-point]
     (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-          [{:keys [form]} & _ :as context] (context/cache-context context)
+          [{:keys [form idx]} & _ :as context] (context/cache-context context)
           sym-at-point (and sym-at-point (symbol sym-at-point))]
       (when (and (list? form) (first form) (symbol? (first form)))
         (let [bindings (set (bindings-from-context context))
@@ -200,9 +195,9 @@
               fn (delay (function-call comp-env ns form bindings sym-at-point))]
           (cond
             @method
-            (format-call @method)
+            (format-call @method idx)
             @static-method
-            (format-call @static-method)
+            (format-call @static-method idx)
             @fn
-            (format-call @fn)
+            (format-call @fn idx)
             :else nil))))))

@@ -174,6 +174,38 @@
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
 
+(defun replique/repliquedoc-format-arglist (index arglist)
+  (let ((args-index 1)
+        (force-highlight nil))
+    (thread-first
+        (lambda (arg)
+          (cond ((equal '& arg)
+                 (when (<= args-index index)
+                   (setq force-highlight t))
+                 arg)
+                ((or force-highlight (equal index args-index))
+                 (setq args-index (1+ args-index))
+                 (replique-edn/with-face :object arg :face 'eldoc-highlight-function-argument))
+                (t
+                 (setq args-index (1+ args-index))
+                 arg)))
+      (mapcar arglist)
+      (seq-into 'vector))))
+
+(defun replique/repliquedoc-format-arglists (index arglists)
+  (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
+    (mapcar arglists)
+    replique-edn/print-str))
+
+(defun replique/repliquedoc-format (msg)
+  (map-let ((:name name) (:arglists arglists) (:return return) (:index index)) msg
+    (cond ((and arglists return)
+           (format "%s: %s -> %s"
+                   name (replique/repliquedoc-format-arglists index arglists) return))
+          (arglists
+           (format "%s: %s" name (replique/repliquedoc-format-arglists index arglists)))
+          (t (format "%s" name)))))
+
 ;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
 ;; response into an asynchronous one, we always return eldoc-last-message and call
 ;; eldoc-message ourselves later
@@ -196,7 +228,9 @@
                    (message (replique-edn/pr-str err))
                    (message "eldoc failed"))
                (with-demoted-errors "eldoc error: %s"
-                 (eldoc-message (replique/get resp :doc))))))))))
+                 (thread-first (replique/get resp :doc)
+                   replique/repliquedoc-format
+                   eldoc-message)))))))))
   eldoc-last-message)
 
 (defun replique/repliquedoc-session (tooling-repl repl)
