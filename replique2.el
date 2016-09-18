@@ -1,18 +1,16 @@
 ;;; replique2.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "25") (clojure-mode "4.0.1") (dash "2.12.0") (company "0.9.0") (dash-functional "1.2.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "25") (clojure-mode "4.0.1") (company "0.9.0") (s "1.9.0"))
 ;;; Commentary:
 
 ;;; Code:
 
-(require 'dash)
-(require 'dash-functional)
-(require 's)
 (require 'comint)
 (require 'clojure-mode)
 (require 'replique-edn)
 (require 'replique-async)
 (require 'company)
 (require 'dashhash)
+(require 'subr-x)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -42,26 +40,27 @@
 (defvar replique/repls nil)
 
 (defun replique/pp-repls ()
-  (->> replique/repls
-       (mapcar (lambda (repl)
-                 (let* ((repl (if (-h/contains? repl :buffer)
-                                  (-h/assoc repl :buffer '**)
-                                repl))
-                        (repl (if (-h/contains? repl :proc)
-                                  (-h/assoc repl :proc '**)
-                                repl))
-                        (repl (if (-h/contains? repl :network-proc)
-                                  (-h/assoc repl :network-proc '**)
-                                repl))
-                        (repl (if (-h/contains? repl :chan)
-                                  (-h/assoc repl :chan '**)
-                                repl))
-                        (repl (if (-h/contains? repl :eval-chan)
-                                  (-h/assoc repl :eval-chan '**)
-                                repl)))
-                   repl)))
-       (mapcar 'replique-edn/pr-str)
-       (s-join "\n")))
+  (string-join
+   (thread-last replique/repls
+     (mapcar (lambda (repl)
+               (let* ((repl (if (-h/contains? repl :buffer)
+                                (-h/assoc repl :buffer '**)
+                              repl))
+                      (repl (if (-h/contains? repl :proc)
+                                (-h/assoc repl :proc '**)
+                              repl))
+                      (repl (if (-h/contains? repl :network-proc)
+                                (-h/assoc repl :network-proc '**)
+                              repl))
+                      (repl (if (-h/contains? repl :chan)
+                                (-h/assoc repl :chan '**)
+                              repl))
+                      (repl (if (-h/contains? repl :eval-chan)
+                                (-h/assoc repl :eval-chan '**)
+                              repl)))
+                 repl)))
+     (mapcar 'replique-edn/pr-str))
+   "\n"))
 
 (defun replique/plist->alist (plist)
   (let ((alist '()))
@@ -77,50 +76,31 @@
                                    repl))
                                replique/repls)))
 
-(comment
- (defun replique/repls-or-repl-by (filtering-fn source &rest args)
-   (-let* ((pred (lambda (repl-props)
-                   (and
-                    (-all? (-lambda ((k . v))
-                             (or (equal :error-on-nil k)
-                                 (not (plist-member args k))
-                                 (equal (plist-get args k) v)))
-                           repl-props)
-                    (-all? (-lambda ((k . v))
-                             (-any? (-lambda ((repl-k . repl-v))
-                                      (or (equal :error-on-nil k)
-                                          (equal k repl-k)))
-                                    repl-props))
-                           (replique/plist->alist args)))))
-           (found (funcall filtering-fn pred source)))
-     (if (and (null found) (plist-get args :error-on-nil))
-         (user-error "No started REPL")
-       found)))
- )
-
 (defun replique/repls-or-repl-by (filtering-fn source &rest args)
-  (-let* ((pred (lambda (repl)
-                  (-all? (-lambda ((k . v))
-                           (or (equal :error-on-nil k)
-                               (and (-h/contains? repl k)
-                                    (equal v (-h/get repl k)))))
-                         (replique/plist->alist args))))
-          (found (funcall filtering-fn pred source)))
+  (let* ((pred (lambda (repl)
+                 (seq-every-p (lambda (arg)
+                                (let ((k (car arg))
+                                      (v (cdr arg)))
+                                  (or (equal :error-on-nil k)
+                                      (and (-h/contains? repl k)
+                                           (equal v (-h/get repl k))))))
+                              (replique/plist->alist args))))
+         (found (funcall filtering-fn pred source)))
     (if (and (null found) (plist-get args :error-on-nil))
         (user-error "No started REPL")
       found)))
 
 (defun replique/repl-by (&rest args)
-  (apply 'replique/repls-or-repl-by '-first replique/repls args))
+  (apply 'replique/repls-or-repl-by 'seq-find replique/repls args))
 
 (defun replique/repls-by (&rest args)
-  (apply 'replique/repls-or-repl-by '-filter replique/repls args))
+  (apply 'replique/repls-or-repl-by 'seq-filter replique/repls args))
 
 (defun replique/get-by (source &rest args)
-  (apply 'replique/repls-or-repl-by '-first source args))
+  (apply 'replique/repls-or-repl-by 'seq-find source args))
 
 (defun replique/get-all-by (source &rest args)
-  (apply 'replique/repls-or-repl-by '-filter source args))
+  (apply 'replique/repls-or-repl-by 'seq-filter source args))
 
 (defun replique/active-repl (repl-type &optional error-on-nil)
   (if error-on-nil
@@ -132,8 +112,8 @@
       default-directory))
 
 (defun replique/replique-root-dir ()
-  (-> (locate-library "replique")
-      file-name-directory))
+  (thread-first (locate-library "replique")
+    file-name-directory))
 
 
 
@@ -235,10 +215,12 @@
   (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns)))
 
 (defun replique/eldoc-documentation-function ()
-  (replique/with-modes-dispatch
-   (replique/mode . 'replique/repliquedoc-session)
-   (clojure-mode . 'replique/repliquedoc-clj)
-   (clojurescript-mode . 'replique/repliquedoc-cljs)))
+  ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
+  (when (not (null (replique/active-repl :tooling)))
+    (replique/with-modes-dispatch
+     (replique/mode . 'replique/repliquedoc-session)
+     (clojure-mode . 'replique/repliquedoc-clj)
+     (clojurescript-mode . 'replique/repliquedoc-cljs))))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
@@ -364,7 +346,7 @@ This allows you to temporarily modify read-only buffers too."
       (let ((value (-h/get msg :value))
             (repl-type (-h/get msg :repl-type))
             (ns (-h/get msg :ns)))
-        (if (s-starts-with-p "Error:" value)
+        (if (string-prefix-p "Error:" value)
             (format "(%s) %s=> %s"
                     (replique/keyword-to-string repl-type) ns value)
           (format "(%s) %s=> Error: %s"
@@ -376,28 +358,28 @@ This allows you to temporarily modify read-only buffers too."
               (replique/keyword-to-string repl-type) ns result))))
 
 (defun replique/display-eval-result (msg buff)
-  (when (not (-contains? (replique/visible-buffers) buff))
+  (when (not (seq-contains (replique/visible-buffers) buff))
     (replique/message-nolog
      (replique/format-eval-message msg))))
 
 (defun replique/display-eval-results (msg1 msg2 clj-buff cljs-buff)
   (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (-first (lambda (msg)
-                           (equal :clj (-h/get msg :repl-type)))
-                         (list msg1 msg2)))
-        (cljs-msg (-first (lambda (msg)
+        (clj-msg (seq-find (lambda (msg)
+                             (equal :clj (-h/get msg :repl-type)))
+                           (list msg1 msg2)))
+        (cljs-msg (seq-find (lambda (msg)
                             (equal :cljs (-h/get msg :repl-type)))
                           (list msg1 msg2))))
-    (cond ((and (not (-contains? visible-buffers clj-buff))
-                (not (-contains? visible-buffers cljs-buff)))
+    (cond ((and (not (seq-contains visible-buffers clj-buff))
+                (not (seq-contains visible-buffers cljs-buff)))
            (replique/message-nolog
             "%s\n%s"
             (replique/format-eval-message clj-msg)
             (replique/format-eval-message cljs-msg)))
-          ((not (-contains? visible-buffers clj-buff))
+          ((not (seq-contains visible-buffers clj-buff))
            (replique/message-nolog
             (replique/format-eval-message clj-msg)))
-          ((not (-contains? visible-buffers cljs-buff))
+          ((not (seq-contains visible-buffers cljs-buff))
            (replique/message-nolog
             (replique/format-eval-message cljs-msg))))))
 
@@ -405,7 +387,7 @@ This allows you to temporarily modify read-only buffers too."
   (if (-h/get msg :error)
       (let ((value (-h/get msg :value))
             (repl-type (-h/get msg :repl-type)))
-        (if (s-starts-with-p "Error:" value)
+        (if (string-prefix-p "Error:" value)
             (format "(%s) load-file: %s"
                     (replique/keyword-to-string repl-type) value)
           (format "(%s) load-file: Error: %s"
@@ -416,28 +398,28 @@ This allows you to temporarily modify read-only buffers too."
               (replique/keyword-to-string repl-type) result))))
 
 (defun replique/display-load-file-result (msg buff)
-  (when (not (-contains? (replique/visible-buffers) buff))
+  (when (not (seq-contains (replique/visible-buffers) buff))
     (replique/message-nolog
      (replique/format-load-file-message msg))))
 
 (defun replique/display-load-file-results (msg1 msg2 clj-buff cljs-buff)
   (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (-first (lambda (msg)
+        (clj-msg (seq-find (lambda (msg)
                            (equal :clj (-h/get msg :repl-type)))
                          (list msg1 msg2)))
-        (cljs-msg (-first (lambda (msg)
+        (cljs-msg (seq-find (lambda (msg)
                             (equal :cljs (-h/get msg :repl-type)))
                           (list msg1 msg2))))
-    (cond ((and (not (-contains? visible-buffers clj-buff))
-                (not (-contains? visible-buffers cljs-buff)))
+    (cond ((and (not (seq-contains visible-buffers clj-buff))
+                (not (seq-contains visible-buffers cljs-buff)))
            (replique/message-nolog
             "%s\n%s"
             (replique/format-load-file-message clj-msg)
             (replique/format-load-file-message cljs-msg)))
-          ((not (-contains? visible-buffers clj-buff))
+          ((not (seq-contains visible-buffers clj-buff))
            (replique/message-nolog
             (replique/format-load-file-message clj-msg)))
-          ((not (-contains? visible-buffers cljs-buff))
+          ((not (seq-contains visible-buffers cljs-buff))
            (replique/message-nolog
             (replique/format-load-file-message cljs-msg))))))
 
@@ -724,7 +706,7 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL"
   (interactive
-   (let* ((repls (-filter (lambda (repl)
+   (let* ((repls (seq-filter (lambda (repl)
                             (let ((repl-type (-h/get repl :repl-type)))
                               (not (equal :tooling repl-type))))
                           replique/repls))
@@ -901,9 +883,9 @@ The following commands are available:
       (replique/save-repls directory))
     ;; If the only repl left is a tooling repl, then close it
     (let ((other-repls (replique/repls-by :host host :port port)))
-      (when (-all? (lambda (repl)
-                     (equal :tooling (-h/get repl :repl-type)))
-                   other-repls)
+      (when (seq-every-p (lambda (repl)
+                           (equal :tooling (-h/get repl :repl-type)))
+                         other-repls)
         (mapcar (lambda (tooling-repl)
                   (let ((tooling-chan (-h/get tooling-repl :chan)))
                     (replique/send-tooling-msg
@@ -918,10 +900,10 @@ The following commands are available:
 
 (defun replique/close-repls (host port &optional dont-save-repls?)
   (let* ((repls (replique/repls-by :host host :port port))
-         (not-tooling-repls (-filter (lambda (repl)
+         (not-tooling-repls (seq-filter (lambda (repl)
                                        (not (equal :tooling (-h/get repl :repl-type))))
                                      repls))
-         (tooling-repls (-filter (lambda (repl)
+         (tooling-repls (seq-filter (lambda (repl)
                                    (equal :tooling (-h/get repl :repl-type)))
                                  repls)))
     (mapcar (lambda (repl)
@@ -947,11 +929,11 @@ The following commands are available:
     (replique/raw-command port)))
 
 (defun replique/is-in-exec-path (file absolute?)
-  (-> (-mapcat
-       (lambda (dir)
-         (directory-files dir absolute?))
-       exec-path)
-      (-contains? file)))
+  (thread-first (seq-mapcat
+                 (lambda (dir)
+                   (directory-files dir absolute?))
+                 exec-path)
+    (seq-contains file)))
 
 (defun replique/repl-cmd-pre-cond (directory)
   (let ((is-lein-project (replique/is-lein-project directory)))
@@ -990,7 +972,7 @@ The following commands are available:
                 (filtered? (progn
                              (replique-async/put! filtered-chan msg)
                              (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
-                ((equal "Starting Clojure REPL..." (s-trim msg))
+                ((equal "Starting Clojure REPL..." (string-trim msg))
                  (replique/skip-repl-starting-output* proc-chan filtered-chan t))
                 (t (progn
                      (message msg)
@@ -1337,7 +1319,7 @@ The following commands are available:
                          (progn
                            (goto-char parse-start)
                            (let* ((s (delete-and-extract-region (point-min) parse-end))
-                                  (s (s-trim s))
+                                  (s (string-trim s))
                                   (o (when (and s (not (equal "" s))) (read s))))
                              (setq state nil)
                              (when o

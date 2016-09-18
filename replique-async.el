@@ -1,7 +1,10 @@
 ;;; replique-async.el ---   -*- lexical-binding: t; -*-
+;;; Package-Requires: ((emacs "25"))
 ;;; Commentary:
 
 ;;; Code:
+
+(require 'subr-x)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -26,11 +29,15 @@
 
 (defmethod replique-async/close!
   ((ch replique-async/chan-impl))
-  (mapcar (-lambda ((&alist :listener-callback l-cb))
-            (when l-cb (replique-async/with-new-dyn-context l-cb nil)))
+  (mapcar (lambda (listener)
+            (let-alist listener
+              (when .:listener-callback (replique-async/with-new-dyn-context
+                                         .:listener-callback nil))))
           (oref ch listeners))
-  (mapcar (-lambda ((&alist :provider-callback p-cb))
-            (when p-cb (replique-async/with-new-dyn-context p-cb)))
+  (mapcar (lambda (provider)
+            (let-alist provider
+              (when .:provider-callback
+                (replique-async/with-new-dyn-context .:provider-callback))))
           (oref ch providers))
   (oset ch listeners '())
   (oset ch providers '())
@@ -43,17 +50,15 @@
              nil)
     (let ((provider (pop (oref ch providers))))
       (if provider
-          (-let (((&alist :item item
-                          :provider-callback provider-callback)
-                  provider))
-            (replique-async/with-new-dyn-context listener-callback item)
-            (when provider-callback
-              (replique-async/with-new-dyn-context provider-callback))
-            item)
-        (progn (->> `((:listener-callback . ,listener-callback))
-                    list
-                    (append (oref ch :listeners))
-                    (oset ch :listeners))
+          (let-alist provider
+            (replique-async/with-new-dyn-context listener-callback .:item)
+            (when .:provider-callback
+              (replique-async/with-new-dyn-context .:provider-callback))
+            .:item)
+        (progn (thread-last `((:listener-callback . ,listener-callback))
+                 list
+                 (append (oref ch :listeners))
+                 (oset ch :listeners))
                nil)))))
 
 (defmethod replique-async/>!
@@ -62,15 +67,15 @@
         ((oref ch closed) nil)
         (t (let ((listener (pop (oref ch listeners))))
              (if listener
-                 (-let (((&alist :listener-callback listener-callback) listener))
-                   (replique-async/with-new-dyn-context listener-callback item)
+                 (let-alist listener
+                   (replique-async/with-new-dyn-context .:listener-callback item)
                    (replique-async/with-new-dyn-context provider-callback)
                    item)
-               (progn (->> `((:item . ,item)
-                             (:provider-callback . ,provider-callback))
-                           list
-                           (append (oref ch :providers))
-                           (oset ch :providers))
+               (progn (thread-last `((:item . ,item)
+                                     (:provider-callback . ,provider-callback))
+                        list
+                        (append (oref ch :providers))
+                        (oset ch :providers))
                       nil))))))
 
 (defmethod replique-async/put!
@@ -79,13 +84,13 @@
         ((oref ch closed) nil)
         (t (let ((listener (pop (oref ch listeners))))
              (if listener
-                 (-let (((&alist :listener-callback listener-callback) listener))
-                   (replique-async/with-new-dyn-context listener-callback item)
+                 (let-alist listener
+                   (replique-async/with-new-dyn-context .:listener-callback item)
                    item)
-               (progn (->> `((:item . ,item))
-                           list
-                           (append (oref ch :providers))
-                           (oset ch :providers))
+               (progn (thread-last `((:item . ,item))
+                        list
+                        (append (oref ch :providers))
+                        (oset ch :providers))
                       nil))))))
 
 

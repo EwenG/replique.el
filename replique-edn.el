@@ -4,6 +4,7 @@
 ;;; Code:
 
 (require 'eieio)
+(require 'subr-x)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -52,7 +53,7 @@
         ((vectorp data)
          (format
           "[%s]"
-          (s-join " " (mapcar 'replique-edn/pr-str data))))
+          (string-join (mapcar 'replique-edn/pr-str data) " ")))
         ((hash-table-p data)
          (let ((l nil))
            (maphash
@@ -62,13 +63,11 @@
             data)
            (format
             "{%s}"
-            (s-join
-             " "
-             (mapcar 'replique-edn/pr-str (reverse l))))))
+            (string-join (mapcar 'replique-edn/pr-str (reverse l)) " "))))
         ((listp data)
          (format
           "(%s)"
-          (s-join " " (mapcar 'replique-edn/pr-str data))))
+          (string-join (mapcar 'replique-edn/pr-str data) " ")))
         (t (error "%s cannot be printed to EDN." data))))
 
 (provide 'replique-edn)
