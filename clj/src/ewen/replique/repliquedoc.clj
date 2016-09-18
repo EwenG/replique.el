@@ -14,7 +14,8 @@
                                                       try-get-object-class
                                                       get-all-members
                                                       static-members]]
-            [compliment.sources.local-bindings :refer [bindings-from-context]])
+            [compliment.sources.local-bindings :refer [bindings-from-context]]
+            [compliment.sources.ns-mappings :refer [var-symbol?]])
   (:import [compliment.environment CljsCompilerEnv]
            [java.lang.reflect Method Member Modifier]))
 
@@ -51,11 +52,17 @@
             parameter-types return-type)))
 
 (comment
-  (server/tooling-msg-handle {:type :repliquedoc-clj
-                              :context "(.code __prefix__)
+  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+                                            :context "(__prefix__)
 "
-                              :ns "ewen.replique.tooling"
-                              :symbol "ee3"})
+                                            :ns "ewen.replique.repliquedoc"
+                                            :symbol "."})
+
+  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+                                            :context "(clojure.core __prefix__)
+"
+                                            :ns "ewen.replique.repliquedoc"
+                                            :symbol "ee"})
   )
 (comment
   (def ee1 Class)
@@ -70,7 +77,7 @@
 
 
 (defmethod format-call :special-form [{:keys [sym arglists]}]
-  (format "%s: %s" (name sym) (print-str arglists)))
+  (format "%s: %s" (str sym) (print-str arglists)))
 
 (def special-forms #{'def 'if 'do 'quote 'recur 'throw 'try 'catch 'new 'set!})
 (def special-forms-clj (clojure.set/union
@@ -98,14 +105,16 @@
   (let [fn-sym (if (= '__prefix__ fn-sym)
                  sym-at-point
                  fn-sym)]
-    (cond (get bindings (name fn-sym))
-          nil
-          ;; TODO cljs special-forms
-          (get special-forms-clj fn-sym)
-          {:type :special-form :sym fn-sym :arglists (get special-forms-arglists fn-sym)}
-          :else (let [resolved (ns-resolve compiler-env ns fn-sym)]
-                  (when (looks-like-var? compiler-env resolved)
-                    {:type :var :var resolved :comp-env compiler-env})))))
+    ;; ns-resolve on something that is not a var may fail
+    (when (var-symbol? (str fn-sym))
+      (cond (get bindings (str fn-sym))
+            nil
+            ;; TODO cljs special-forms
+            (get special-forms-clj fn-sym)
+            {:type :special-form :sym fn-sym :arglists (get special-forms-arglists fn-sym)}
+            :else (let [resolved (ns-resolve compiler-env ns fn-sym)]
+                    (when (looks-like-var? compiler-env resolved)
+                      {:type :var :var resolved :comp-env compiler-env}))))))
 
 (comment
   (let [ee ee]
@@ -121,14 +130,15 @@
   (let [method-sym (if (= '__prefix__ method-sym)
                      sym-at-point
                      method-sym)]
-    (when (class-member-symbol? (name method-sym))
+    (when (class-member-symbol? (str method-sym))
       (let [;; Remove the starting "."
-            method-name (subs (name method-sym) 1)
+            method-name (subs (str method-sym) 1)
             object (if (= '__prefix__ object)
                      sym-at-point
                      object)
             object (when (and (symbol? object)
-                              (not (get bindings (name object))))
+                              (var-symbol? (str object))
+                              (not (get bindings (str object))))
                      (clojure.core/ns-resolve ns object))
             klass (when (= (type object) clojure.lang.Var)
                     (type (deref object)))
@@ -172,27 +182,27 @@
   CljsCompilerEnv
   (handle-repliquedoc [comp-env ns context sym-at-point]
     (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-        [{:keys [form]} & _ :as context] (context/cache-context context)
-        sym-at-point (and sym-at-point (symbol sym-at-point))]
-    (when (and (list? form) (first form) (symbol? (first form)))
-      (let [bindings (set (bindings-from-context context))
-            fn (delay (function-call comp-env ns form bindings sym-at-point))]
-        (when @fn (format-call @fn))))))
+          [{:keys [form]} & _ :as context] (context/cache-context context)
+          sym-at-point (and sym-at-point (symbol sym-at-point))]
+      (when (and (list? form) (first form) (symbol? (first form)))
+        (let [bindings (set (bindings-from-context context))
+              fn (delay (function-call comp-env ns form bindings sym-at-point))]
+          (when @fn (format-call @fn))))))
   nil
   (handle-repliquedoc [comp-env ns context sym-at-point]
     (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-        [{:keys [form]} & _ :as context] (context/cache-context context)
-        sym-at-point (and sym-at-point (symbol sym-at-point))]
-    (when (and (list? form) (first form) (symbol? (first form)))
-      (let [bindings (set (bindings-from-context context))
-            method (delay (method-call ns form bindings sym-at-point))
-            static-method (delay (static-method-call ns form bindings sym-at-point))
-            fn (delay (function-call comp-env ns form bindings sym-at-point))]
-        (cond
-          @method
-          (format-call @method)
-          @static-method
-          (format-call @static-method)
-          @fn
-          (format-call @fn)
-          :else nil))))))
+          [{:keys [form]} & _ :as context] (context/cache-context context)
+          sym-at-point (and sym-at-point (symbol sym-at-point))]
+      (when (and (list? form) (first form) (symbol? (first form)))
+        (let [bindings (set (bindings-from-context context))
+              method (delay (method-call ns form bindings sym-at-point))
+              static-method (delay (static-method-call ns form bindings sym-at-point))
+              fn (delay (function-call comp-env ns form bindings sym-at-point))]
+          (cond
+            @method
+            (format-call @method)
+            @static-method
+            (format-call @static-method)
+            @fn
+            (format-call @fn)
+            :else nil))))))
