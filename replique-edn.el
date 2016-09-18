@@ -42,13 +42,26 @@
             (replique-edn/pr-str
              (replique-edn/list-to-map l)))))
 
+(defclass replique-edn/with-face (replique-edn/printable)
+  ((object :initarg :object)
+   (face :initarg :face
+         :type symbol)))
+
+(defmethod replique-edn/print-method ((o replique-edn/with-face))
+  (propertize (replique-edn/pr-str (oref o :object))
+              'face (oref o :face)))
+
+(defvar replique-edn/print-readably t)
+
 (defun replique-edn/pr-str (data)
   (cond ((null data) "nil")
         ((equal t data) "true")
         ((replique-edn/printable-child-p data)
          (replique-edn/print-method data))
         ((numberp data) (format "%s" data))
-        ((stringp data) (replique-edn/write-string* data))
+        ((stringp data) (if replique-edn/print-readably
+                            (replique-edn/write-string* data)
+                          data))
         ((symbolp data) (format "%s" data))
         ((vectorp data)
          (format
@@ -69,6 +82,10 @@
           "(%s)"
           (string-join (mapcar 'replique-edn/pr-str data) " ")))
         (t (error "%s cannot be printed to EDN." data))))
+
+(defun replique-edn/print-str (data)
+  (let ((replique-edn/print-readably nil))
+    (replique-edn/pr-str data)))
 
 (provide 'replique-edn)
 
