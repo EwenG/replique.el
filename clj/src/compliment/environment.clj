@@ -134,19 +134,22 @@
   (looks-like-var? [_ var]
     (map? var))
   (meta [comp-env var]
-    ;; macros don't hanve a :meta key
-    (let [m (if (:macro var) var (:meta var))
-          qualified-name (:name var)]
+    (let [;; Resolve the namespace
+          qualified-name (:name var)
+          ;; Arglists might have a spurious (quote ...) wrapping form
+          arglists (:arglists var)
+          arglists (if (= 'quote (first arglists)) (second arglists) arglists)
+          var (if arglists (assoc var :arglists arglists) var)]
       (cond (nil? qualified-name)
-            m
+            var
             (namespace qualified-name)
             (let [ns-sym (symbol (namespace qualified-name))
                   var-sym (symbol (name qualified-name))
                   ns (find-ns comp-env ns-sym)]
-              (assoc m
+              (assoc var
                      :ns ns
                      :name var-sym))
-            :else (assoc m :name qualified-name))))
+            :else (assoc var :name qualified-name))))
   nil
   (all-ns [comp-env]
     (clojure.core/all-ns))
@@ -169,8 +172,10 @@
 
   (require '[ewen.replique.server-cljs :refer [compiler-env]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
-
+  
   (find-ns comp-env 'ewen.replique.compliment.ns-mappings-clj-test)
+
+  (:arglists (meta comp-env (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'my-fn)))
 
   (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'file->ns)
   (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'cljs/file->ns)
