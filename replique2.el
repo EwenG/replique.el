@@ -4,13 +4,14 @@
 
 ;;; Code:
 
+(require 'subr-x)
 (require 'comint)
 (require 'clojure-mode)
 (require 'replique-edn)
 (require 'replique-async)
 (require 'company)
-(require 'dashhash)
-(require 'subr-x)
+(require 'replique-hashmap)
+(require 'map)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -43,20 +44,20 @@
   (string-join
    (thread-last replique/repls
      (mapcar (lambda (repl)
-               (let* ((repl (if (-h/contains? repl :buffer)
-                                (-h/assoc repl :buffer '**)
+               (let* ((repl (if (replique/contains? repl :buffer)
+                                (replique/assoc repl :buffer '**)
                               repl))
-                      (repl (if (-h/contains? repl :proc)
-                                (-h/assoc repl :proc '**)
+                      (repl (if (replique/contains? repl :proc)
+                                (replique/assoc repl :proc '**)
                               repl))
-                      (repl (if (-h/contains? repl :network-proc)
-                                (-h/assoc repl :network-proc '**)
+                      (repl (if (replique/contains? repl :network-proc)
+                                (replique/assoc repl :network-proc '**)
                               repl))
-                      (repl (if (-h/contains? repl :chan)
-                                (-h/assoc repl :chan '**)
+                      (repl (if (replique/contains? repl :chan)
+                                (replique/assoc repl :chan '**)
                               repl))
-                      (repl (if (-h/contains? repl :eval-chan)
-                                (-h/assoc repl :eval-chan '**)
+                      (repl (if (replique/contains? repl :eval-chan)
+                                (replique/assoc repl :eval-chan '**)
                               repl)))
                  repl)))
      (mapcar 'replique-edn/pr-str))
@@ -82,8 +83,8 @@
                                 (let ((k (car arg))
                                       (v (cdr arg)))
                                   (or (equal :error-on-nil k)
-                                      (and (-h/contains? repl k)
-                                           (equal v (-h/get repl k))))))
+                                      (and (replique/contains? repl k)
+                                           (equal v (replique/get repl k))))))
                               (replique/plist->alist args))))
          (found (funcall filtering-fn pred source)))
     (if (and (null found) (plist-get args :error-on-nil))
@@ -121,10 +122,10 @@
 ;; Auto completion
 
 (defun replique/auto-complete* (prefix company-callback tooling-repl msg-type ns)
-  (let ((tooling-chan (-h/get tooling-repl :chan)))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (-h/hash-map :type msg-type
+     (replique/hash-map :type msg-type
                   :context (replique/form-with-prefix)
                   :ns ns
                   :prefix prefix))
@@ -132,23 +133,23 @@
      tooling-chan
      (lambda (resp)
        (when resp
-         (let ((err (-h/get resp :error)))
+         (let ((err (replique/get resp :error)))
            (if err
                (progn
                  (message (replique-edn/pr-str err))
                  (message "completion failed with prefix %s" prefix))
-             (let* ((candidates (-h/get resp :candidates))
-                    (candidates (mapcar (lambda (c) (-h/get c :candidate)) candidates)))
+             (let* ((candidates (replique/get resp :candidates))
+                    (candidates (mapcar (lambda (c) (replique/get c :candidate)) candidates)))
                (funcall company-callback candidates)))))))))
 
 (defun replique/auto-complete-session (prefix company-callback tooling-repl repl)
-  (let* ((repl-type (-h/get repl :repl-type))
+  (let* ((repl-type (replique/get repl :repl-type))
          (msg-type (cond ((equal :clj repl-type)
                           :clj-completion)
                          ((equal :cljs repl-type)
                           :cljs-completion)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (symbol-name (-h/get repl :ns))))
+         (ns (symbol-name (replique/get repl :ns))))
     (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
 
 (defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
@@ -177,11 +178,11 @@
 ;; response into an asynchronous one, we always return eldoc-last-message and call
 ;; eldoc-message ourselves later
 (defun replique/repliquedoc* (tooling-repl msg-type ns)
-  (let ((tooling-chan (-h/get tooling-repl :chan)))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
     (when tooling-chan
       (replique/send-tooling-msg
        tooling-repl
-       (-h/hash-map :type msg-type
+       (replique/hash-map :type msg-type
                     :context (replique/form-with-prefix)
                     :ns ns
                     :symbol (symbol-name (symbol-at-point))))
@@ -189,23 +190,23 @@
        tooling-chan
        (lambda (resp)
          (when resp
-           (let ((err (-h/get resp :error)))
+           (let ((err (replique/get resp :error)))
              (if err
                  (progn
                    (message (replique-edn/pr-str err))
                    (message "eldoc failed"))
                (with-demoted-errors "eldoc error: %s"
-                 (eldoc-message (-h/get resp :doc))))))))))
+                 (eldoc-message (replique/get resp :doc))))))))))
   eldoc-last-message)
 
 (defun replique/repliquedoc-session (tooling-repl repl)
-  (let* ((repl-type (-h/get repl :repl-type))
+  (let* ((repl-type (replique/get repl :repl-type))
          (msg-type (cond ((equal :clj repl-type)
                           :repliquedoc-clj)
                          ((equal :cljs repl-type)
                           :repliquedoc-cljs)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (symbol-name (-h/get repl :ns))))
+         (ns (symbol-name (replique/get repl :ns))))
     (replique/repliquedoc* tooling-repl msg-type ns)))
 
 (defun replique/repliquedoc-clj (tooling-repl repl)
@@ -317,7 +318,7 @@ This allows you to temporarily modify read-only buffers too."
   (interactive)
   (let* ((buff (current-buffer))
          (repl (replique/repl-by :buffer buff))
-         (eval-chan (-h/get repl :eval-chan))
+         (eval-chan (replique/get repl :eval-chan))
          (proc (get-buffer-process buff)))
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
@@ -342,18 +343,18 @@ This allows you to temporarily modify read-only buffers too."
               (t nil))))))
 
 (defun replique/format-eval-message (msg)
-  (if (-h/get msg :error)
-      (let ((value (-h/get msg :value))
-            (repl-type (-h/get msg :repl-type))
-            (ns (-h/get msg :ns)))
+  (if (replique/get msg :error)
+      (let ((value (replique/get msg :value))
+            (repl-type (replique/get msg :repl-type))
+            (ns (replique/get msg :ns)))
         (if (string-prefix-p "Error:" value)
             (format "(%s) %s=> %s"
                     (replique/keyword-to-string repl-type) ns value)
           (format "(%s) %s=> Error: %s"
                   (replique/keyword-to-string repl-type) ns value)))
-    (let ((result (-h/get msg :result))
-          (repl-type (-h/get msg :repl-type))
-          (ns (-h/get msg :ns)))
+    (let ((result (replique/get msg :result))
+          (repl-type (replique/get msg :repl-type))
+          (ns (replique/get msg :ns)))
       (format "(%s) %s=> %s"
               (replique/keyword-to-string repl-type) ns result))))
 
@@ -365,10 +366,10 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/display-eval-results (msg1 msg2 clj-buff cljs-buff)
   (let ((visible-buffers (replique/visible-buffers))
         (clj-msg (seq-find (lambda (msg)
-                             (equal :clj (-h/get msg :repl-type)))
+                             (equal :clj (replique/get msg :repl-type)))
                            (list msg1 msg2)))
         (cljs-msg (seq-find (lambda (msg)
-                            (equal :cljs (-h/get msg :repl-type)))
+                            (equal :cljs (replique/get msg :repl-type)))
                           (list msg1 msg2))))
     (cond ((and (not (seq-contains visible-buffers clj-buff))
                 (not (seq-contains visible-buffers cljs-buff)))
@@ -384,16 +385,16 @@ This allows you to temporarily modify read-only buffers too."
             (replique/format-eval-message cljs-msg))))))
 
 (defun replique/format-load-file-message (msg)
-  (if (-h/get msg :error)
-      (let ((value (-h/get msg :value))
-            (repl-type (-h/get msg :repl-type)))
+  (if (replique/get msg :error)
+      (let ((value (replique/get msg :value))
+            (repl-type (replique/get msg :repl-type)))
         (if (string-prefix-p "Error:" value)
             (format "(%s) load-file: %s"
                     (replique/keyword-to-string repl-type) value)
           (format "(%s) load-file: Error: %s"
                   (replique/keyword-to-string repl-type) value)))
-    (let ((result (-h/get msg :result))
-          (repl-type (-h/get msg :repl-type)))
+    (let ((result (replique/get msg :result))
+          (repl-type (replique/get msg :repl-type)))
       (format "(%s) load-file: %s"
               (replique/keyword-to-string repl-type) result))))
 
@@ -405,10 +406,10 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/display-load-file-results (msg1 msg2 clj-buff cljs-buff)
   (let ((visible-buffers (replique/visible-buffers))
         (clj-msg (seq-find (lambda (msg)
-                           (equal :clj (-h/get msg :repl-type)))
+                           (equal :clj (replique/get msg :repl-type)))
                          (list msg1 msg2)))
         (cljs-msg (seq-find (lambda (msg)
-                            (equal :cljs (-h/get msg :repl-type)))
+                            (equal :cljs (replique/get msg :repl-type)))
                           (list msg1 msg2))))
     (cond ((and (not (seq-contains visible-buffers clj-buff))
                 (not (seq-contains visible-buffers cljs-buff)))
@@ -425,7 +426,7 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/file-in-root-dir (tooling-repl file-name)
   (and file-name
-       (equal (-h/get tooling-repl :directory)
+       (equal (replique/get tooling-repl :directory)
               (file-name-directory file-name))))
 
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
@@ -505,8 +506,8 @@ This allows you to temporarily modify read-only buffers too."
     `(let* ((,props-sym (replique/active-repl :tooling t))
             (,clj-repl-sym (replique/active-repl :clj))
             (,cljs-repl-sym (replique/active-repl :cljs))
-            (,clj-buff-sym (-h/get ,clj-repl-sym :buffer))
-            (,cljs-buff-sym (-h/get ,cljs-repl-sym :buffer)))
+            (,clj-buff-sym (replique/get ,clj-repl-sym :buffer))
+            (,cljs-buff-sym (replique/get ,cljs-repl-sym :buffer)))
        (cond ,@dispatch-code))))
 
 (defun replique/comint-kill-input ()
@@ -531,8 +532,8 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/send-input-from-source-clj-cljs
     (input callback props repl)
-  (let ((buff (-h/get repl :buffer))
-        (eval-chan (-h/get repl :eval-chan)))
+  (let ((buff (replique/get repl :buffer))
+        (eval-chan (replique/get repl :eval-chan)))
     (with-current-buffer buff
       (replique/comint-send-input-from-source input))
     (replique-async/<!
@@ -544,10 +545,10 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/send-input-from-source-cljc
     (input-clj input-cljs display-result-fn display-results-fn
                props clj-repl cljs-repl)
-  (let ((clj-buff (-h/get clj-repl :buffer))
-        (clj-eval-chan (-h/get clj-repl :eval-chan))
-        (cljs-buff (-h/get  cljs-repl :buffer))
-        (cljs-eval-chan (-h/get cljs-repl :eval-chan)))
+  (let ((clj-buff (replique/get clj-repl :buffer))
+        (clj-eval-chan (replique/get clj-repl :eval-chan))
+        (cljs-buff (replique/get  cljs-repl :buffer))
+        (cljs-eval-chan (replique/get cljs-repl :eval-chan)))
     (when clj-buff
       (with-current-buffer clj-buff
         (replique/comint-send-input-from-source input-clj)))
@@ -651,7 +652,7 @@ This allows you to temporarily modify read-only buffers too."
    props clj-repl cljs-repl))
 
 (defun replique/restart-cljs-repls (tooling-repl)
-  (let* ((directory (-h/get tooling-repl :directory))
+  (let* ((directory (replique/get tooling-repl :directory))
          (cljs-repls (replique/repls-by :directory directory
                                         :repl-type :cljs)))
     (mapcar (lambda (cljs-repl)
@@ -670,20 +671,20 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/load-cljs-repl-env (tooling-repl &optional callback)
   (message "Loading Clojurescript REPL environement...")
-  (let* ((tooling-chan (-h/get tooling-repl :chan))
+  (let* ((tooling-chan (replique/get tooling-repl :chan))
          (cljs-env-opts (buffer-string)))
     (replique/send-tooling-msg
      tooling-repl
-     (-h/hash-map :type :set-cljs-env
+     (replique/hash-map :type :set-cljs-env
                   :cljs-env-opts cljs-env-opts))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
-       (cond ((-h/get resp :error)
-              (message (replique-edn/pr-str (-h/get resp :error)))
+       (cond ((replique/get resp :error)
+              (message (replique-edn/pr-str (replique/get resp :error)))
               (message "Loading Clojurescript REPL environement: failed"))
-             ((-h/get resp :invalid)
-              (message (s-replace-all '(("%" . "%%")) (-h/get resp :invalid))))
+             ((replique/get resp :invalid)
+              (message (s-replace-all '(("%" . "%%")) (replique/get resp :invalid))))
              (t
               (replique/restart-cljs-repls tooling-repl)
               (message "Loading Clojurescript REPL environement: done")))
@@ -707,20 +708,20 @@ This allows you to temporarily modify read-only buffers too."
   "Switch the currently active REPL"
   (interactive
    (let* ((repls (seq-filter (lambda (repl)
-                            (let ((repl-type (-h/get repl :repl-type)))
+                            (let ((repl-type (replique/get repl :repl-type)))
                               (not (equal :tooling repl-type))))
                           replique/repls))
           (repl-names (mapcar (lambda (repl)
-                                (buffer-name (-h/get repl :buffer)))
+                                (buffer-name (replique/get repl :buffer)))
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
      (list (ido-completing-read "Switch to REPL: " repl-names nil t))))
   (let* ((buffer (get-buffer repl-buff-name))
          (repl (replique/repl-by :buffer buffer))
-         (repl-type (-h/get repl :repl-type))
+         (repl-type (replique/get repl :repl-type))
          (prev-active-repl (replique/repl-by :repl-type repl-type))
-         (prev-active-buffer (-h/get prev-active-repl :buffer))
+         (prev-active-buffer (replique/get prev-active-repl :buffer))
          (prev-active-windows (get-buffer-window-list prev-active-buffer)))
     (setq replique/repls (delete repl replique/repls))
     (setq replique/repls (push repl replique/repls))
@@ -850,7 +851,7 @@ The following commands are available:
   (< -1 port-nb 65535))
 
 (defun replique/send-tooling-msg (tooling-repl msg)
-  (let ((tooling-network-proc (-h/get tooling-repl :network-proc)))
+  (let ((tooling-network-proc (replique/get tooling-repl :network-proc)))
     (process-send-string
      tooling-network-proc
      (format "(ewen.replique.server/tooling-msg-handle %s)\n"
@@ -859,19 +860,19 @@ The following commands are available:
 ;; Note: a tooling repl may not be closed when there is a pending non daemon thread
 ;; We don't want to save REPLs when closing the process, as opposed to closing a single REPL
 (defun replique/close-tooling-repl (repl &optional dont-save-repls?)
-  (let ((tooling-proc (-h/get repl :proc))
-        (tooling-chan (-h/get repl :chan)))
+  (let ((tooling-proc (replique/get repl :proc))
+        (tooling-chan (replique/get repl :chan)))
     (replique-async/close! tooling-chan)
     (when (process-live-p tooling-proc)
       (delete-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
 (defun replique/close-repl (repl-props &optional dont-save-repls?)
-  (let* ((buffer (-h/get repl-props :buffer))
-         (host (-h/get repl-props :host))
-         (port (-h/get repl-props :port))
-         (eval-chan (-h/get repl-props :eval-chan))
-         (directory (-h/get repl-props :directory))
+  (let* ((buffer (replique/get repl-props :buffer))
+         (host (replique/get repl-props :host))
+         (port (replique/get repl-props :port))
+         (eval-chan (replique/get repl-props :eval-chan))
+         (directory (replique/get repl-props :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
@@ -884,27 +885,27 @@ The following commands are available:
     ;; If the only repl left is a tooling repl, then close it
     (let ((other-repls (replique/repls-by :host host :port port)))
       (when (seq-every-p (lambda (repl)
-                           (equal :tooling (-h/get repl :repl-type)))
+                           (equal :tooling (replique/get repl :repl-type)))
                          other-repls)
         (mapcar (lambda (tooling-repl)
-                  (let ((tooling-chan (-h/get tooling-repl :chan)))
+                  (let ((tooling-chan (replique/get tooling-repl :chan)))
                     (replique/send-tooling-msg
-                     tooling-repl (-h/hash-map :type :shutdown))
+                     tooling-repl (replique/hash-map :type :shutdown))
                     (replique-async/<!
                      tooling-chan
                      (lambda (msg)
-                       (when (and msg (-h/get msg :error))
+                       (when (and msg (replique/get msg :error))
                          (error "Error while shutting down the REPL: %s"
-                                (replique-edn/pr-str (-h/get msg :error))))))))
+                                (replique-edn/pr-str (replique/get msg :error))))))))
                 other-repls)))))
 
 (defun replique/close-repls (host port &optional dont-save-repls?)
   (let* ((repls (replique/repls-by :host host :port port))
          (not-tooling-repls (seq-filter (lambda (repl)
-                                       (not (equal :tooling (-h/get repl :repl-type))))
+                                       (not (equal :tooling (replique/get repl :repl-type))))
                                      repls))
          (tooling-repls (seq-filter (lambda (repl)
-                                   (equal :tooling (-h/get repl :repl-type)))
+                                   (equal :tooling (replique/get repl :repl-type)))
                                  repls)))
     (mapcar (lambda (repl)
               (replique/close-repl repl dont-save-repls?))
@@ -998,13 +999,13 @@ The following commands are available:
     (replique-async/<!
      chan (lambda (repl-infos)
             (set-process-filter proc (lambda (proc string) nil))
-            (if (-h/get repl-infos :error)
+            (if (replique/get repl-infos :error)
                 (message "Error while starting the REPL: %s"
-                         (replique-edn/pr-str (-h/get repl-infos :error)))
-              (let* ((host (-h/get repl-infos :host))
-                     (port (-h/get repl-infos :port))
+                         (replique-edn/pr-str (replique/get repl-infos :error)))
+              (let* ((host (replique/get repl-infos :host))
+                     (port (replique/get repl-infos :port))
                      (directory (replique/normalize-directory-name
-                                 (-h/get repl-infos :directory)))
+                                 (replique/get repl-infos :directory)))
                      (network-proc (open-network-stream directory nil host port))
                      (tooling-chan (replique/process-filter-chan network-proc)))
                 (set-process-sentinel
@@ -1020,7 +1021,7 @@ The following commands are available:
                                 (let* ((tooling-chan (-> tooling-chan
                                                          (replique/read-chan network-proc)
                                                          replique/dispatch-eval-msg))
-                                       (tooling-repl (-h/hash-map
+                                       (tooling-repl (replique/hash-map
                                                       :directory directory
                                                       :repl-type :tooling
                                                       :proc proc
@@ -1059,11 +1060,11 @@ The following commands are available:
 (defun replique/close-process (directory)
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
-          (directories (mapcar (lambda (repl) (-h/get repl :directory)) tooling-repls)))
+          (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
      (list (ido-completing-read "Close process: " directories nil t))))
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
-         (host (-h/get tooling-repl :host))
-         (port (-h/get tooling-repl :port)))
+         (host (replique/get tooling-repl :host))
+         (port (replique/get tooling-repl :port)))
     (replique/close-repls host port t)))
 
 (defun replique/make-repl (buffer-name directory host port &optional repl-type)
@@ -1084,14 +1085,14 @@ The following commands are available:
          (replique-async/<!
           chan
           (lambda (resp)
-            (let ((session (-h/get resp :client))
+            (let ((session (replique/get resp :client))
                   (eval-chan (replique-async/chan)))
               ;; Reset process filter to the default one
               (set-process-filter proc 'comint-output-filter)
               (set-buffer buff)
               (replique/mode)
               (process-send-string proc repl-cmd)
-              (let ((repl (-h/hash-map :directory directory
+              (let ((repl (replique/hash-map :directory directory
                                        :host host
                                        :port port
                                        :repl-type (or repl-type :clj)
@@ -1128,21 +1129,21 @@ The following commands are available:
     (if (or
          (null repls)
          (and (equal 1 (length repls))
-              (equal :tooling (-h/get (car repls) :repl-type))))
+              (equal :tooling (replique/get (car repls) :repl-type))))
         (when (file-exists-p (concat directory ".replique-repls"))
           (delete-file (concat directory ".replique-repls")))
       (with-temp-file (concat directory ".replique-repls")
         (let* ((repls (mapcar (lambda (repl)
-                                (let ((host (-h/get repl :host))
-                                      (port (-h/get repl :port))
-                                      (repl-type (-h/get repl :repl-type))
-                                      (random-port? (-h/get repl :random-port?))
-                                      (buffer (-h/get repl :buffer)))
+                                (let ((host (replique/get repl :host))
+                                      (port (replique/get repl :port))
+                                      (repl-type (replique/get repl :repl-type))
+                                      (random-port? (replique/get repl :random-port?))
+                                      (buffer (replique/get repl :buffer)))
                                   (if (equal repl-type :tooling)
-                                      (-h/hash-map :host host :port port
+                                      (replique/hash-map :host host :port port
                                                    :random-port? random-port?
                                                    :repl-type repl-type)
-                                    (-h/hash-map :repl-type repl-type
+                                    (replique/hash-map :repl-type repl-type
                                                  :buffer-name (buffer-name buffer)))))
                               replique/repls))
                (repls-string (with-output-to-string (pp repls))))
@@ -1153,11 +1154,11 @@ The following commands are available:
       validated
     (when (hash-table-p (car saved-repls))
       (let* ((saved-repl (car saved-repls))
-             (repl-type (-h/get saved-repl :repl-type))
-             (host (-h/get saved-repl :host))
-             (port (-h/get saved-repl :port))
-             (random-port? (-h/get saved-repl :random-port?))
-             (buffer-name (-h/get saved-repl :buffer-name)))
+             (repl-type (replique/get saved-repl :repl-type))
+             (host (replique/get saved-repl :host))
+             (port (replique/get saved-repl :port))
+             (random-port? (replique/get saved-repl :random-port?))
+             (buffer-name (replique/get saved-repl :buffer-name)))
         (cond ((and (equal repl-type :tooling)
                     (not (null host)) (stringp host)
                     (replique/is-valid-port-nb? port))
@@ -1207,9 +1208,9 @@ The following commands are available:
       (if existing-repl
           (replique-async/put! tooling-repl-chan existing-repl)
         (let* ((saved-tooling-repl (replique/get-by saved-repls :repl-type :tooling))
-               (saved-host (-h/get saved-tooling-repl :host))
-               (saved-port (-h/get saved-tooling-repl :port))
-               (random-port? (-h/get saved-tooling-repl :random-port?))
+               (saved-host (replique/get saved-tooling-repl :host))
+               (saved-port (replique/get saved-tooling-repl :port))
+               (random-port? (replique/get saved-tooling-repl :random-port?))
                (host (or host saved-host "127.0.0.1"))
                (port (or port (if random-port? 0 saved-port) (read-number "Port number: " 0))))
           (if (not (replique/is-valid-port-nb? port))
@@ -1218,14 +1219,14 @@ The following commands are available:
       (replique-async/<!
        tooling-repl-chan
        (-> (lambda (saved-repls repl)
-             (let ((directory (-h/get repl :directory))
-                   (host (-h/get repl :host))
-                   (port (-h/get repl :port))
-                   (tooling-chan (-h/get repl :chan)))
+             (let ((directory (replique/get repl :directory))
+                   (host (replique/get repl :host))
+                   (port (replique/get repl :port))
+                   (tooling-chan (replique/get repl :chan)))
                (if saved-repls
                    (mapcar (lambda (repl)
-                             (let ((repl-type (-h/get repl :repl-type))
-                                   (buffer-name (-h/get repl :buffer-name)))
+                             (let ((repl-type (replique/get repl :repl-type))
+                                   (buffer-name (replique/get repl :buffer-name)))
                                (when (not (equal repl-type :tooling))
                                  ;; make-repl expects buffer-name to be the name of no already
                                  ;; existing buffer
@@ -1237,11 +1238,11 @@ The following commands are available:
            (-partial saved-repls))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
-  (let* ((directory (-h/get repl :directory))
-         (repl-type (-h/get repl :repl-type))
+  (let* ((directory (replique/get repl :directory))
+         (repl-type (replique/get repl :repl-type))
          (repl-type-s (replique/keyword-to-string repl-type))
          (new-repl-type-s (replique/keyword-to-string new-repl-type))
-         (repl-buffer (-h/get repl :buffer)))
+         (repl-buffer (replique/get repl :buffer)))
     (when (not (equal repl-type new-repl-type))
       (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
                             (buffer-name repl-buffer))
@@ -1251,7 +1252,7 @@ The following commands are available:
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
             (rename-buffer (generate-new-buffer-name new-buffer-name)))))
-      (replique/update-repl repl (-h/assoc repl :repl-type new-repl-type))
+      (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type))
       (replique/save-repls directory))))
 
 (defun replique/dispatch-eval-msg* (in-chan out-chan)
@@ -1260,21 +1261,21 @@ The following commands are available:
    (lambda (msg)
      (cond (;; Global error (uncaught exception)
             (and 
-             (-h/get msg :error)
-             (-h/get msg :thread))
+             (replique/get msg :error)
+             (replique/get msg :thread))
             (message
              (format "%s - Thread: %s - Exception: %s"
                      (propertize "Uncaught exception" 'face '(:foreground "red"))
-                     (-h/get msg :thread)
-                     (replique-edn/pr-str (-h/get msg :value))))
+                     (replique/get msg :thread)
+                     (replique-edn/pr-str (replique/get msg :value))))
             (replique/dispatch-eval-msg* in-chan out-chan))
-           ((equal :eval (-h/get msg :type))
+           ((equal :eval (replique/get msg :type))
             (let ((repl (replique/repl-by
-                         :session (-h/get (-h/get msg :session) :client))))
+                         :session (replique/get (replique/get msg :session) :client))))
               (when repl
-                (replique/on-repl-type-change repl (-h/get msg :repl-type))
-                (replique/update-repl repl (-h/assoc repl :ns (-h/get msg :ns)))
-                (replique-async/put! (-h/get repl :eval-chan) msg)))
+                (replique/on-repl-type-change repl (replique/get msg :repl-type))
+                (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
+                (replique-async/put! (replique/get repl :eval-chan) msg)))
             (replique/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
               (replique/dispatch-eval-msg* in-chan out-chan))))))

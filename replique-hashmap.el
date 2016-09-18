@@ -1,4 +1,4 @@
-;;; dashhash.el ---   -*- lexical-binding: t; -*-
+;;; replique-hashmap.el ---   -*- lexical-binding: t; -*-
 ;;; Package-Requires: ((emacs "24"))
 ;;; Commentary:
 
@@ -8,7 +8,7 @@
   "Comment out one or more s-expressions."
   nil)
 
-(defun -h/hash-map (&rest data)
+(defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))
       (user-error "Map must contain an even number of forms"))
@@ -19,41 +19,41 @@
         (setq data-rest (cddr data-rest)))
       m)))
 
-(defun -h/get (hash key &optional default)
+(defun replique/get (hash key &optional default)
   (if (null hash)
       nil
     (gethash key hash default)))
 
-(defun -h/assoc-helper (hash kvs)
+(defun replique/assoc-helper (hash kvs)
   (if (null kvs)
       hash
     (progn
       (puthash (car kvs) (cadr kvs) hash)
-      (-h/assoc-helper hash (cddr kvs)))))
+      (replique/assoc-helper hash (cddr kvs)))))
 
-(defun -h/assoc (hash &rest kvs)
+(defun replique/assoc (hash &rest kvs)
   (let ((args-length (1+ (length kvs))))
     (when (= 0 (logand 1 args-length))
       (user-error
-       "-h/assoc expects even number of arguments after hashtable, found odd number"))
-    (-h/assoc-helper (copy-hash-table (or hash (-h/hash-map))) kvs)))
+       "replique/assoc expects even number of arguments after hashtable, found odd number"))
+    (replique/assoc-helper (copy-hash-table (or hash (replique/hash-map))) kvs)))
 
-(defun -h/dissoc-helper (hash kvs)
+(defun replique/dissoc-helper (hash kvs)
   (if (null kvs)
       hash
     (progn
       (remhash (car kvs) hash)
-      (-h/dissoc-helper hash (cdr kvs)))))
+      (replique/dissoc-helper hash (cdr kvs)))))
 
-(defun -h/dissoc (hash &rest kvs)
-  (-h/dissoc-helper (copy-hash-table (or hash (-h/hash-map))) kvs))
+(defun replique/dissoc (hash &rest kvs)
+  (replique/dissoc-helper (copy-hash-table (or hash (replique/hash-map))) kvs))
 
 (defconst nothing (make-symbol "nothing"))
 
-(defun -h/contains? (hash key)
+(defun replique/contains? (hash key)
   (not (eq nothing (gethash key hash nothing))))
 
-(defun -h/all? (pred hash)
+(defun replique/all? (pred hash)
   (let ((res t))
     (maphash (lambda (k v)
                (when res
@@ -62,7 +62,7 @@
              hash)
     res))
 
-(defun -h/any? (pred hash)
+(defun replique/any? (pred hash)
   (let ((res nil))
     (maphash (lambda (k v)
                (when (not res)
@@ -71,4 +71,4 @@
              hash)
     res))
 
-(provide 'dashhash)
+(provide 'replique-hashmap)
