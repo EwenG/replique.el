@@ -14,7 +14,7 @@
   resolved for the given namespace."
   [comp-env prefix ns]
   (let [prefix (subs prefix 2)
-        ns-name (str (ns-name ns))]
+        ns-name (str ns)]
     (for [kw (keywords comp-env)
           :when (= (namespace kw) ns-name)
           :when (.startsWith (name kw) prefix)]
@@ -24,8 +24,7 @@
   "Returns a list of namespace aliases prefixed by double colon required in the
   given namespace."
   [comp-env prefix ns]
-  (let [prefix (subs prefix 2)
-        ns-name (str (ns-name ns))]
+  (let [prefix (subs prefix 2)]
     (for [[alias _] (ns-aliases comp-env ns)
           :let [aname (name alias)]
           :when (.startsWith aname prefix)]
@@ -36,7 +35,7 @@
   where alias has to be registered in the given namespace."
   [comp-env prefix ns]
   (let [[_ alias prefix] (re-matches #"::([^/]+)/(.*)" prefix)
-        alias-ns-name (-> (symbol alias) (resolve-namespace ns) ns-name str)]
+        alias-ns-name (-> (symbol alias) (resolve-namespace ns) str)]
     (for [kw (keywords comp-env)
           :when (= (namespace kw) alias-ns-name)
           :when (.startsWith (name kw) prefix)]

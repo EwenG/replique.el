@@ -1,12 +1,12 @@
 (ns ewen.replique.repliquedoc
-  (:refer-clojure :exclude [find-ns meta ns-resolve ns-name])
+  (:refer-clojure :exclude [find-ns meta ns-resolve])
   (:require [clojure.set]
             [compliment.core :as compliment]
             [compliment.context :as context]
             [compliment.sources.local-bindings
              :refer [bindings-from-context]]
             [compliment.environment :refer [->CljsCompilerEnv find-ns meta
-                                            looks-like-var? ns-resolve ns-name]]
+                                            looks-like-var? ns-resolve]]
             [compliment.context :as context]
             [compliment.utils :refer [resolve-class]]
             [compliment.sources.class-members :refer [class-member-symbol?
@@ -24,11 +24,11 @@
 (defmethod format-call :var [{:keys [var comp-env]} index]
   (let [{:keys [ns name arglists]} (meta comp-env var)]
     (cond (and name arglists)
-          {:name (format "%s/%s" (ns-name ns) name)
+          {:name (format "%s/%s" (str ns) name)
            :arglists arglists
            :index index}
           name
-          {:name (format "%s/%s" (ns-name ns) name)}
+          {:name (format "%s/%s" (str ns) name)}
           :else {})))
 
 (defn format-method [{:keys [method]} index]

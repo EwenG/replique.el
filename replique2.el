@@ -138,8 +138,8 @@
    :special-form "s"))
 
 (defun replique/make-candidate (c)
-  (map-let ((:candidate candidate) (:type type)) c
-    (propertize candidate 'meta (replique/hash-map :type type))))
+  (map-let ((:candidate candidate) (:type type) (:package package) (:ns ns)) c
+    (propertize candidate 'meta (replique/hash-map :type type :package package :ns ns))))
 
 (defun replique/auto-complete* (prefix company-callback tooling-repl msg-type ns)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
@@ -195,9 +195,20 @@
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
 
 (defun replique/auto-complete-annotation (candidate)
-  (when-let ((meta (get-text-property 0 'meta candidate))
-             (annotation (gethash (gethash :type meta) replique/annotations-map)))
-    (format "<%s>" annotation)))
+  (when-let ((meta (get-text-property 0 'meta candidate)))
+    (map-let ((:type type) (:package package) (:ns ns)) meta
+      (let ((type (gethash type replique/annotations-map)))
+        (cond ((and ns type)
+               (format "%s <%s>" ns type))
+              ((and package type)
+               (format "%s <%s>" package type))
+              (type
+               (format "<%s>" type))
+              (ns
+               (format "%s" ns))
+              (package
+               (format "%s" package))
+              (t nil))))))
 
 (defun replique/repliquedoc-format-arglist (index arglist)
   (let ((args-index 1)
@@ -1420,9 +1431,9 @@ The following commands are available:
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files 
 ;; check for nil when reading from chan because the chan can be closed
-;; make print-length and print-level customizable
 ;; Check print-length/print-level for cljs
-;; remove dash
 ;; Print eval results in *Message*
+;; Save thread bindings on REPL close, restore on REPL start
+;; Rename ewen.replique to replique
 
 ;; replique.el ends here

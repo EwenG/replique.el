@@ -46,7 +46,6 @@
   `clojure.repl` with some minor modifications."
   [m]
   (binding [*out* (StringWriter.)]
-    (println (str (when-let [ns (:ns m)] (str (ns-name ns) "/")) (:name m)))
     (cond
       (:forms m) (doseq [f (:forms m)]
                    (print "  ")
@@ -98,7 +97,7 @@
                                 arglists :function
                                 :else :var)
                     :ns (str (or (:ns var-meta) ns))}
-             (and arglists(:arglists *extra-metadata*))
+             (and arglists (:arglists *extra-metadata*))
              (assoc :arglists (apply list (map pr-str arglists)))
 
              )))))))

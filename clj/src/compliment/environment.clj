@@ -57,7 +57,10 @@
   (ns-name [ns]))
 
 (defrecord CljsNamespace [name doc excludes use-macros require-macros uses
-                          requires imports defs])
+                          requires imports defs]
+  Object
+  (toString [cljs-ns]
+    (str (:name cljs-ns))))
 
 (extend-protocol Namespace
   CljsNamespace
@@ -110,27 +113,27 @@
   (ns-map [comp-env ns]
     {:pre [(not (nil? ns))]}
     (let [ns (if (symbol? ns) (find-ns comp-env ns) ns)
-        uses (->> (select-keys ns [:uses :use-macros])
-                  vals
-                  (map (partial cljs-ns-map-resolve comp-env)))
-        defs (vals (select-keys ns [:imports :macros :defs]))
-        imports (:imports ns)]
-    (->> (concat uses defs)
-         (concat (list (ns-core-refers comp-env ns) imports))
-         (into {}))))
+          uses (->> (select-keys ns [:uses :use-macros])
+                    vals
+                    (map (partial cljs-ns-map-resolve comp-env)))
+          defs (vals (select-keys ns [:imports :macros :defs]))
+          imports (:imports ns)]
+      (->> (concat uses defs)
+           (concat (list (ns-core-refers comp-env ns) imports))
+           (into {}))))
   (ns-aliases [comp-env ns]
     (let [ns (if (symbol? ns) (find-ns comp-env ns) ns)]
       (merge (:requires ns)
              (:require-macros ns))))
   (ns-resolve [comp-env ns sym]
     (let [ns (if (symbol? ns) (find-ns comp-env ns) ns)
-        sym-ns (safe-symbol (namespace sym))
-        ns (if sym-ns
-             (resolve-namespace comp-env sym-ns ns)
-             ns)
-        sym (symbol (name sym))]
-    (when ns
-      (get (ns-map comp-env ns) sym))))
+          sym-ns (safe-symbol (namespace sym))
+          ns (if sym-ns
+               (resolve-namespace comp-env sym-ns ns)
+               ns)
+          sym (symbol (name sym))]
+      (when ns
+        (get (ns-map comp-env ns) sym))))
   (looks-like-var? [_ var]
     (map? var))
   (meta [comp-env var]
@@ -268,7 +271,7 @@
   (keywords nil)
   (keywords comp-env)
 
-  (ns-name nil (find-ns nil 'ewen.replique.compliment.ns-mappings-clj-test))
+  (str (find-ns comp-env 'cljs.user))
 
   (ns-resolve comp-env 'cljs.user 'cljs.user/prn)
   )
