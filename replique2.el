@@ -180,6 +180,10 @@
   (replique/auto-complete* prefix company-callback tooling-repl
                            :cljs-completion (clojure-find-ns)))
 
+(defun replique/auto-complete-cljc (prefix company-callback tooling-repl clj-repl cljs-repl)
+  (replique/auto-complete* prefix company-callback tooling-repl
+                           :cljc-completion (clojure-find-ns)))
+
 (defun replique/auto-complete-lein (prefix company-callback tooling-repl)
   (funcall company-callback '()))
 
@@ -192,7 +196,8 @@
    (:cljs-env . (-partial 'replique/auto-complete-cljs-env prefix company-callback))
    (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
-   (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
+   (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))
+   (clojurec-mode . (-partial 'replique/auto-complete-cljc prefix company-callback))))
 
 (defun replique/auto-complete-annotation (candidate)
   (when-let ((meta (get-text-property 0 'meta candidate)))
@@ -240,7 +245,8 @@
                    name (replique/repliquedoc-format-arglists index arglists) return))
           (arglists
            (format "%s: %s" name (replique/repliquedoc-format-arglists index arglists)))
-          (t (format "%s" name)))))
+          (name (format "%s" name))
+          (t nil))))
 
 ;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
 ;; response into an asynchronous one, we always return eldoc-last-message and call
@@ -264,9 +270,8 @@
                    (message (replique-edn/pr-str err))
                    (message "eldoc failed"))
                (with-demoted-errors "eldoc error: %s"
-                 (thread-first (replique/get resp :doc)
-                   replique/repliquedoc-format
-                   eldoc-message)))))))))
+                 (when-let ((msg (replique/repliquedoc-format (replique/get resp :doc))))
+                   (eldoc-message msg))))))))))
   eldoc-last-message)
 
 (defun replique/repliquedoc-session (tooling-repl repl)
@@ -285,13 +290,17 @@
 (defun replique/repliquedoc-cljs (tooling-repl repl)
   (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns)))
 
+(defun replique/repliquedoc-cljc (tooling-repl clj-repl cljs-repl)
+  (replique/repliquedoc* tooling-repl :repliquedoc-cljc (clojure-find-ns)))
+
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
   (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
      (replique/mode . 'replique/repliquedoc-session)
      (clojure-mode . 'replique/repliquedoc-clj)
-     (clojurescript-mode . 'replique/repliquedoc-cljs))))
+     (clojurescript-mode . 'replique/repliquedoc-cljs)
+     (clojurec-mode . 'replique/repliquedoc-cljc))))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
@@ -1419,13 +1428,12 @@ The following commands are available:
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
 ;; Interactive function for opening .replique-cljs-env.clj
-;; Auto complete, jump to definition
+;; jump to definition
 ;; Epresent
 ;; css, garden, js
 ;; sourcepath, classpath live reload
 ;; var explorer
 ;; Check reflection *warn-on-reflection*
-;; compliment documentation, metadata
 ;; compliment invalidate memoized on classpath update
 ;; compliment for cljc
 ;; compliment keywords cljs -> missing :require ... ?

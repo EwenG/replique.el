@@ -53,6 +53,14 @@
                     :compliment.sources.special-forms/literals
                     :compliment.sources.special-forms/special-forms]})}))
 
+(defmethod server/tooling-msg-handle :cljc-completion
+  [{:keys [context ns prefix] :as msg}]
+  (with-tooling-response msg
+    {:candidates (compliment/completions
+                  prefix
+                  {:ns (when ns (symbol ns))
+                   :context context})}))
+
 (comment
   (server/tooling-msg-handle {:type :cljs-completion
                               :context nil
@@ -77,6 +85,11 @@
     {:doc (repliquedoc/handle-repliquedoc
            (->CljsCompilerEnv @server-cljs/compiler-env)
            ns context symbol)}))
+
+(defmethod server/tooling-msg-handle :repliquedoc-cljc
+  [{:keys [context ns symbol] :as msg}]
+  (with-tooling-response msg
+    {:doc (repliquedoc/handle-repliquedoc nil ns context symbol)}))
 
 (comment
 
