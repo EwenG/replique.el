@@ -121,6 +121,26 @@
 
 ;; Auto completion
 
+(defconst replique/annotations-map
+  (replique/hash-map
+   :method "me"
+   :field "fi"
+   :static-method "sm"
+   :static-field "sf"
+   :keyword "k"
+   :local "l"
+   :namespace "n"
+   :class "c"
+   :macro "m"
+   :function "f"
+   :var "v"
+   :resource "r"
+   :special-form "s"))
+
+(defun replique/make-candidate (c)
+  (map-let ((:candidate candidate) (:type type)) c
+    (propertize candidate 'meta (replique/hash-map :type type))))
+
 (defun replique/auto-complete* (prefix company-callback tooling-repl msg-type ns)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique/send-tooling-msg
@@ -139,7 +159,7 @@
                  (message (replique-edn/pr-str err))
                  (message "completion failed with prefix %s" prefix))
              (let* ((candidates (replique/get resp :candidates))
-                    (candidates (mapcar (lambda (c) (replique/get c :candidate)) candidates)))
+                    (candidates (mapcar 'replique/make-candidate candidates)))
                (funcall company-callback candidates)))))))))
 
 (defun replique/auto-complete-session (prefix company-callback tooling-repl repl)
@@ -173,6 +193,11 @@
    (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))))
+
+(defun replique/auto-complete-annotation (candidate)
+  (when-let ((meta (get-text-property 0 'meta candidate))
+             (annotation (gethash (gethash :type meta) replique/annotations-map)))
+    (format "<%s>" annotation)))
 
 (defun replique/repliquedoc-format-arglist (index arglist)
   (let ((args-index 1)
@@ -341,8 +366,10 @@ This allows you to temporarily modify read-only buffers too."
    ((equal command 'prefix) (when (or (derived-mode-p 'clojure-mode)
                                       (derived-mode-p 'replique/mode))
                               (replique/symbol-backward)))
+   ((equal command 'sorted) t)
    ((equal command 'candidates)
-    `(:async . ,(-partial 'replique/auto-complete arg)))))
+    `(:async . ,(-partial 'replique/auto-complete arg)))
+   ((equal command 'annotation) (replique/auto-complete-annotation arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
   (let ((depth (car (parse-partial-sexp start limit))))
@@ -795,15 +822,16 @@ This allows you to temporarily modify read-only buffers too."
 
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
-  (setq comint-prompt-regexp replique/prompt)
-  (setq comint-prompt-read-only t)
-  (setq mode-line-process '(":%s"))
+  (setq-local comint-prompt-regexp replique/prompt)
+  (setq-local comint-prompt-read-only t)
+  (setq-local mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
   (add-to-list 'company-backends 'replique/company-backend)
   (add-function :before-until (local 'eldoc-documentation-function)
-                'replique/eldoc-documentation-function))
+                'replique/eldoc-documentation-function)
+  (setq-local company-tooltip-align-annotations t))
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
@@ -846,7 +874,8 @@ The following commands are available:
   :lighter "Replique" :keymap replique/minor-mode-map
   (add-to-list 'company-backends 'replique/company-backend)
   (add-function :before-until (local 'eldoc-documentation-function)
-                'replique/eldoc-documentation-function))
+                'replique/eldoc-documentation-function)
+  (setq-local company-tooltip-align-annotations t))
 
 (defun replique/raw-command-classpath ()
   (cond ((and (null replique/clojure-jar)
