@@ -75,7 +75,6 @@
             :or {sort-order :by-length}} options-map
            ns (ensure-ns comp-env ns)
            options-map (assoc options-map :ns ns)
-           ctx (cache-context context)
            sort-fn (if (= sort-order :by-name)
                      (partial sort-by :candidate)
                      (partial sort-by-length true))]
@@ -86,7 +85,7 @@
                                    (if sources
                                      (all-sources sources)
                                      (all-sources)))]
-           (as-> (mapcat (fn [f] (f comp-env prefix ns ctx)) candidate-fns)
+           (as-> (mapcat (fn [f] (f comp-env prefix ns context)) candidate-fns)
                candidates
 
              (if (= sort-order :by-name)

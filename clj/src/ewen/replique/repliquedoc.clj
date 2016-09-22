@@ -171,23 +171,19 @@
   )
 
 (defprotocol Repliquedoc
-  (handle-repliquedoc [comp-env ns context sym-at-point]))
+  (handle-repliquedoc* [comp-env ns context sym-at-point]))
 
 (extend-protocol Repliquedoc
   CljsCompilerEnv
-  (handle-repliquedoc [comp-env ns context sym-at-point]
-    (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-          [{:keys [form idx]} & _ :as context] (context/cache-context context)
-          sym-at-point (and sym-at-point (symbol sym-at-point))]
+  (handle-repliquedoc* [comp-env ns context sym-at-point]
+    (let [[{:keys [form idx]} & _] context]
       (when (and (list? form) (first form) (symbol? (first form)))
         (let [bindings (set (bindings-from-context context))
               fn (delay (function-call comp-env ns form bindings sym-at-point))]
           (when @fn (format-call @fn idx))))))
   nil
-  (handle-repliquedoc [comp-env ns context sym-at-point]
-    (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-          [{:keys [form idx]} & _ :as context] (context/cache-context context)
-          sym-at-point (and sym-at-point (symbol sym-at-point))]
+  (handle-repliquedoc* [comp-env ns context sym-at-point]
+    (let [[{:keys [form idx]} & _] context]
       (when (and (list? form) (first form) (symbol? (first form)))
         (let [bindings (set (bindings-from-context context))
               method (delay (method-call ns form bindings sym-at-point))
@@ -201,3 +197,18 @@
             @fn
             (format-call @fn idx)
             :else nil))))))
+
+(defn handle-repliquedoc [comp-env ns context sym-at-point]
+  (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
+        {:keys [context]} (context/cache-context context)
+        sym-at-point (and sym-at-point (symbol sym-at-point))]
+    (handle-repliquedoc* comp-env ns context sym-at-point)))
+
+(defn handle-repliquedoc-cljc [comp-env ns context sym-at-point]
+  (let [{:keys [reader-conditionals context]} (context/cache-context context)
+        sym-at-point (and sym-at-point (symbol sym-at-point))]
+    (if (= #{:cljs} reader-conditionals)
+      (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))]
+        (handle-repliquedoc* comp-env ns context sym-at-point))
+      (let [ns (compliment/ensure-ns nil (when ns (symbol ns)))]
+        (handle-repliquedoc* nil ns context sym-at-point)))))

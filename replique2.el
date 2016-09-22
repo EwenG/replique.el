@@ -1441,7 +1441,10 @@ The following commands are available:
 ;; check for nil when reading from chan because the chan can be closed
 ;; Check print-length/print-level for cljs
 ;; Print eval results in *Message*
-;; Save thread bindings on REPL close, restore on REPL start
+;; Save thread bindings on REPL close, restore on REPL start, only thread bindings, let leiningen manage root binding
 ;; Rename ewen.replique to replique
+;; Check leiningen options
+;; Browser REPL with websockets
+;; CSS / HTML autocompletion, with core.spec ?
 
 ;; replique.el ends here

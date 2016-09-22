@@ -15,10 +15,11 @@
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    {:candidates (compliment/completions
-                  prefix
-                  {:ns (when ns (symbol ns))
-                   :context context})}))
+    (let [{:keys [context]} (context/cache-context context)]
+     {:candidates (compliment/completions
+                   prefix
+                   {:ns (when ns (symbol ns))
+                    :context context})})))
 
 (comment
   (server/tooling-msg-handle {:type :clj-completion
@@ -41,25 +42,39 @@
 (defmethod server/tooling-msg-handle :cljs-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    {:candidates (compliment/completions
-                  prefix
-                  {:ns (when ns (symbol ns)) :context context
-                   :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
-                   :sources
-                   [:compliment.sources.ns-mappings/ns-mappings
-                    :compliment.sources.namespaces-and-classes/namespaces-and-classes
-                    :compliment.sources.keywords/keywords
-                    :compliment.sources.local-bindings/local-bindings
-                    :compliment.sources.special-forms/literals
-                    :compliment.sources.special-forms/special-forms]})}))
+    (let [{:keys [context]} (context/cache-context context)]
+      {:candidates (compliment/completions
+                    prefix
+                    {:ns (when ns (symbol ns)) :context context
+                     :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                     :sources
+                     [:compliment.sources.ns-mappings/ns-mappings
+                      :compliment.sources.namespaces-and-classes/namespaces-and-classes
+                      :compliment.sources.keywords/keywords
+                      :compliment.sources.local-bindings/local-bindings
+                      :compliment.sources.special-forms/literals
+                      :compliment.sources.special-forms/special-forms]})})))
 
 (defmethod server/tooling-msg-handle :cljc-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    {:candidates (compliment/completions
-                  prefix
-                  {:ns (when ns (symbol ns))
-                   :context context})}))
+    (let [{:keys [reader-conditionals context]} (context/cache-context context)]
+      (if (= #{:cljs} reader-conditionals)
+        {:candidates (compliment/completions
+                      prefix
+                      {:ns (when ns (symbol ns)) :context context
+                       :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                       :sources
+                       [:compliment.sources.ns-mappings/ns-mappings
+                        :compliment.sources.namespaces-and-classes/namespaces-and-classes
+                        :compliment.sources.keywords/keywords
+                        :compliment.sources.local-bindings/local-bindings
+                        :compliment.sources.special-forms/literals
+                        :compliment.sources.special-forms/special-forms]})}
+        {:candidates (compliment/completions
+                      prefix
+                      {:ns (when ns (symbol ns))
+                       :context context})}))))
 
 (comment
   (server/tooling-msg-handle {:type :cljs-completion
@@ -89,7 +104,9 @@
 (defmethod server/tooling-msg-handle :repliquedoc-cljc
   [{:keys [context ns symbol] :as msg}]
   (with-tooling-response msg
-    {:doc (repliquedoc/handle-repliquedoc nil ns context symbol)}))
+    {:doc (repliquedoc/handle-repliquedoc-cljc
+           (->CljsCompilerEnv @server-cljs/compiler-env)
+           ns context symbol)}))
 
 (comment
 
@@ -102,4 +119,5 @@
 __prefix__)"))
   
   )
+
 

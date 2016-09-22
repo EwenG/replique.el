@@ -1,6 +1,9 @@
 (ns compliment.context
   "Utilities for parsing and storing the current completion context."
-  (:require [clojure.walk :refer [walk]]))
+  (:require [clojure.walk :refer [walk]]
+            [clojure.set]))
+
+(def ^:dynamic *reader-conditionals* #{:cljs :clj})
 
 (defn- restore-map-literals [context]
   (clojure.walk/postwalk (fn [el]
@@ -13,12 +16,16 @@
                              el)) context))
 
 (defn- safe-read-context-string [^String context]
-  (try (-> context
-           (.replace "{" "(compliment-hashmap ")
-           (.replace "}" ")")
-           read-string
-           restore-map-literals)
-       (catch Exception ex nil)))
+  ;; Bind all tag readers to the identity
+  (with-redefs [default-data-readers {}]
+    (binding [*default-data-reader-fn* (fn [tag val] val)]
+      (let [read-fn (partial read-string {:read-cond :preserve})]
+        (try (-> context
+                 (.replace "{" "(compliment-hashmap ")
+                 (.replace "}" ")")
+                 read-fn
+                 restore-map-literals)
+             (catch Exception ex nil))))))
 
 (def ^{:doc "Stores the last completion context."
        :private true}
@@ -70,6 +77,24 @@
                    (when (>= idx 0)
                      [{:idx idx :form ctx}]))
 
+                 (and (reader-conditional? ctx) (even? (count (:form ctx))))
+                 (let [conditionals (apply array-map (:form ctx))]
+                   (if-let [parsed-clj (-> conditionals :clj parse)]
+                     parsed-clj
+                     (let [conditional-keys (keys conditionals)]
+                       (loop [[k & rest-k] conditional-keys]
+                         (cond (not (keyword? k))
+                               nil
+                               (= :clj k)
+                               (recur (rest conditional-keys))
+                               :else
+                               (if-let [parsed-form (-> conditionals k parse)]
+                                 (do (set! *reader-conditionals*
+                                           (clojure.set/intersection
+                                            *reader-conditionals* (set [k])))
+                                     parsed-form)
+                                 (recur rest-k)))))))
+
                  (= ctx prefix-placeholder) ()))
         parsed (parse context)]
     (when parsed
@@ -79,6 +104,31 @@
   "Parses the context, or returns one from cache if it was unchanged."
   [context-string]
   (let [context (safe-read-context-string context-string)]
-    (when-not (= context :same)
-      (reset! previous-context (parse-context context))))
-  @previous-context)
+    (binding [*reader-conditionals* *reader-conditionals*]
+      (when-not (= context :same)
+        (reset! previous-context (parse-context context)))
+      {:context @previous-context :reader-conditionals *reader-conditionals*})))
+
+
+(comment
+  (read-string "#uuid \"2631c308-5d32-4160-8a93-8bde06bdf64c\"")
+  (safe-read-context-string "#uuid \"2631c308-5d32-4160-8a93-8bde06bdf64c\"")
+  (parse-context (safe-read-context-string "[(__prefix__)]"))
+  (parse-context (safe-read-context-string "(__prefix__ \"ee\")"))
+  (parse-context (safe-read-context-string "(defn []
+  #uuid __prefix__)"))
+  (parse-context (safe-read-context-string "[e (__prefix__ \"ee\" [1 2])]"))
+  (parse-context (safe-read-context-string "(__prefix__)"))
+  (parse-context (safe-read-context-string "#?(:cljs (prn ) :cljg (print __prefix__))"))
+
+  (with-redefs [default-data-readers {}]
+    (binding [*default-data-reader-fn* (fn [tag val] val)]
+      (read-string "__prefix__")))
+
+  (read-string {:read-cond :preserve :features #{:clj}} "#?(:clj :3 :cljs :2 3 4)")
+
+  (safe-read-context-string "#?(:clj __prefix__)")
+
+  "#?(:cljs clo)"
+  )
+
