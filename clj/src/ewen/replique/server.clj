@@ -28,9 +28,6 @@
        (finally
          (.unlock lockee#)))))
 
-(defmulti repl-dispatch (fn [{:keys [type cljs-env]}]
-                          [type cljs-env]))
-
 (defmacro with-tooling-response [msg & resp]
   `(let [type# (:type ~msg)]
      (try (merge {:type type#} ~@resp)
@@ -53,8 +50,7 @@
                 (.getInetAddress) (.getHostAddress) normalize-ip-address)
       :port (-> (:socket server-infos) (.getLocalPort))}}))
 
-(defmethod repl-dispatch [:clj nil]
-  [{:keys [port type cljs-env directory] :as opts}]
+(defn start-repl-process [{:keys [port type cljs-env directory] :as opts}]
   (println "Starting Clojure REPL...")
   (try
     (alter-var-root #'directory (constantly directory))
@@ -128,7 +124,7 @@
   (.start (Thread. (fn [] (throw (Exception. "e")))))
   )
 
-(defmethod repl :clj [type]
+(defn repl []
   (println "Clojure" (clojure-version))
   (binding [*print-length* 20
             *print-level* 5]

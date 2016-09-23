@@ -1155,7 +1155,7 @@ The following commands are available:
          (buff (make-comint-in-buffer buffer-name buff `(,host . ,port)))
          (proc (get-buffer-process buff))
          (chan-src (replique/process-filter-chan proc))
-         (repl-cmd (format "(ewen.replique.server/repl :clj)\n")))
+         (repl-cmd (format "(ewen.replique.server/repl)\n")))
     (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
     ;; Discard the prompt
     (replique-async/<!
@@ -1443,8 +1443,8 @@ The following commands are available:
 ;; Print eval results in *Message*
 ;; Save thread bindings on REPL close, restore on REPL start, only thread bindings, let leiningen manage root binding
 ;; Rename ewen.replique to replique
-;; Check leiningen options
 ;; Browser REPL with websockets
 ;; CSS / HTML autocompletion, with core.spec ?
+;; Check leiningen options
 
 ;; replique.el ends here
