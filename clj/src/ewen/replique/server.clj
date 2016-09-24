@@ -53,9 +53,12 @@
   (println "Starting Clojure REPL...")
   (try
     (alter-var-root #'directory (constantly directory))
-    (start-server {:port port :name :replique
-                   :accept 'clojure.core.server/repl
-                   :server-daemon false})
+    ;; let leiningen :global-vars option propagate to other REPLs
+    (alter-var-root #'clojure.core.server/repl bound-fn*)
+    (with-redefs []
+      (start-server {:port port :name :replique
+                     :accept 'clojure.core.server/repl
+                     :server-daemon false}))
     (elisp/prn {:host (-> @#'clojure.core.server/servers
                           (get :replique) :socket
                           (.getInetAddress) (.getHostAddress)
@@ -125,29 +128,27 @@
 
 (defn repl []
   (println "Clojure" (clojure-version))
-  (binding [*print-length* 20
-            *print-level* 5]
-    (clojure.main/repl
-     :init clojure.core.server/repl-init
-     :caught (fn [e]
-               (binding [*out* tooling-err]
-                 (with-lock tooling-out-lock
-                   (elisp/prn {:type :eval
-                               :error true
-                               :repl-type :clj
-                               :session *session*
-                               :ns (ns-name *ns*)
-                               :value (.getMessage e)})))
-               (clojure.main/repl-caught e))
-     :print (fn [result]
-              (binding [*out* tooling-out]
-                (with-lock tooling-out-lock
-                  (elisp/prn {:type :eval
-                              :repl-type :clj
-                              :session *session*
-                              :ns (ns-name *ns*)
-                              :result (pr-str result)})))
-              (prn result)))))
+  (clojure.main/repl
+   :init clojure.core.server/repl-init
+   :caught (fn [e]
+             (binding [*out* tooling-err]
+               (with-lock tooling-out-lock
+                 (elisp/prn {:type :eval
+                             :error true
+                             :repl-type :clj
+                             :session *session*
+                             :ns (ns-name *ns*)
+                             :value (.getMessage e)})))
+             (clojure.main/repl-caught e))
+   :print (fn [result]
+            (binding [*out* tooling-out]
+              (with-lock tooling-out-lock
+                (elisp/prn {:type :eval
+                            :repl-type :clj
+                            :session *session*
+                            :ns (ns-name *ns*)
+                            :result (pr-str result)})))
+            (prn result))))
 
 (defmethod tooling-msg-handle :set-cljs-env [msg]
   (with-tooling-response msg

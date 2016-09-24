@@ -1449,4 +1449,10 @@ The following commands are available:
 ;; Improve exception printing
 ;; Check leiningen options
 
+;; Use a lein task to compute the new classpath and send it to the clojure process.
+;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
+
+;; skip-repl-starting-output -> split on \n
+;; Print threads output to the tooling out
+
 ;; replique.el ends here
