@@ -1081,7 +1081,11 @@ The following commands are available:
                   (error "Error while starting the REPL: %s" proc-out-s)))))
     (replique-async/<!
      chan (lambda (repl-infos)
-            (set-process-filter proc (lambda (proc string) nil))
+            ;; Print messages from unbound thread
+            (set-process-filter proc (lambda (proc string)
+                                       (message (format "Process %s: %s"
+                                                        (process-name proc)
+                                                        string))))
             (if (replique/get repl-infos :error)
                 (message "Error while starting the REPL: %s"
                          (replique-edn/pr-str (replique/get repl-infos :error)))
@@ -1446,11 +1450,7 @@ The following commands are available:
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Check exceptions format
 ;; Improve exception printing
-
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
-
-;; Print threads output to the tooling out
-;; skip-repl-starting-output -> split on \n
 
 ;; replique.el ends here
