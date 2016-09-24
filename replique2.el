@@ -1056,7 +1056,7 @@ The following commands are available:
                 (filtered? (progn
                              (replique-async/put! filtered-chan msg)
                              (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
-                ((equal "Starting Clojure REPL..." (string-trim msg))
+                ((string-match-p (regexp-quote "Starting Clojure REPL...") msg)
                  (replique/skip-repl-starting-output* proc-chan filtered-chan t))
                 (t (progn
                      (message msg)
@@ -1435,7 +1435,6 @@ The following commands are available:
 ;; var explorer
 ;; Check reflection *warn-on-reflection*
 ;; compliment invalidate memoized on classpath update
-;; compliment for cljc
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
@@ -1447,12 +1446,11 @@ The following commands are available:
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Check exceptions format
 ;; Improve exception printing
-;; Check leiningen options
 
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 
-;; skip-repl-starting-output -> split on \n
 ;; Print threads output to the tooling out
+;; skip-repl-starting-output -> split on \n
 
 ;; replique.el ends here
