@@ -1437,7 +1437,7 @@ The following commands are available:
 ;; compliment invalidate memoized on classpath update
 ;; compliment for cljc
 ;; compliment keywords cljs -> missing :require ... ?
-;; remove emacs auto save files 
+;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
 ;; Check print-length/print-level for cljs
 ;; Print eval results in *Message*
@@ -1445,6 +1445,8 @@ The following commands are available:
 ;; Rename ewen.replique to replique
 ;; Browser REPL with websockets
 ;; CSS / HTML autocompletion, with core.spec ?
+;; Check exceptions format
+;; Improve exception printing
 ;; Check leiningen options
 
 ;; replique.el ends here

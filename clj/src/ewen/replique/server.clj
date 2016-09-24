@@ -13,7 +13,6 @@
            [java.io File]))
 
 (defonce directory nil)
-(defonce sass-bin nil)
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
