@@ -12,7 +12,6 @@
   (:import [java.util.concurrent.locks ReentrantLock]
            [java.io File]))
 
-(defonce directory nil)
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
@@ -50,7 +49,7 @@
         (= "0:0:0:0:0:0:0:1" address) "127.0.0.1"
         :else address))
 
-(defn repl-infos []
+#_(defn repl-infos []
   (let [server-infos (:replique @#'clojure.core.server/servers)]
     {:directory directory
      :replique
@@ -58,10 +57,9 @@
                 (.getInetAddress) (.getHostAddress) normalize-ip-address)
       :port (-> (:socket server-infos) (.getLocalPort))}}))
 
-(defn start-repl-process [{:keys [port type cljs-env directory] :as opts}]
+(defn start-repl-process [{:keys [port type cljs-env] :as opts}]
   (println "Starting Clojure REPL...")
   (try
-    (alter-var-root #'directory (constantly directory))
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
@@ -98,6 +96,17 @@
     (alter-var-root #'tooling-out (constantly *out*)))
   (with-lock tooling-out-lock
     (alter-var-root #'tooling-err (constantly *err*)))
+  (Thread/setDefaultUncaughtExceptionHandler
+   (reify Thread$UncaughtExceptionHandler
+     (uncaughtException [_ thread ex]
+       (binding [*out* tooling-err]
+         (with-lock tooling-out-lock
+           (elisp/prn {:type :eval
+                       :error true
+                       :repl-type :clj
+                       :thread (.getName thread)
+                       :ns (ns-name *ns*)
+                       :value (with-out-str (print-stack-trace ex))}))))))
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
      :init init-fn
@@ -117,18 +126,6 @@
   (with-tooling-response msg
     (shutdown)
     {:shutdown true}))
-
-(Thread/setDefaultUncaughtExceptionHandler
- (reify Thread$UncaughtExceptionHandler
-   (uncaughtException [_ thread ex]
-     (binding [*out* tooling-err]
-       (with-lock tooling-out-lock
-         (elisp/prn {:type :eval
-                     :error true
-                     :repl-type :clj
-                     :thread (.getName thread)
-                     :ns (ns-name *ns*)
-                     :value (with-out-str (print-stack-trace ex))}))))))
 
 (comment
   (.start (Thread. (fn [] (throw (Exception. "e")))))
