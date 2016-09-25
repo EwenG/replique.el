@@ -34,6 +34,15 @@
             {:type type#
              :error t#}))))
 
+(defmacro with-err-str [& body]
+  `(let [s# (new java.io.StringWriter)]
+     (binding [*err* s#]
+       ~@body
+       (str s#))))
+
+(defn repl-caught-str [e]
+  (with-err-str (clojure.main/repl-caught e)))
+
 (defmulti tooling-msg-handle :type)
 
 (defn normalize-ip-address [address]
@@ -53,7 +62,7 @@
   (println "Starting Clojure REPL...")
   (try
     (alter-var-root #'directory (constantly directory))
-    ;; let leiningen :global-vars option propagate to other REPLs
+    ;; Let leiningen :global-vars option propagate to other REPLs
     (alter-var-root #'clojure.core.server/repl bound-fn*)
     (with-redefs []
       (start-server {:port port :name :replique
@@ -75,7 +84,7 @@
      :init init-fn
      :prompt #()
      :caught (fn [e]
-               (elisp/prn {:error e}))
+               (repl-caught-str e))
      :print (fn [result]
               (elisp/prn result)))))
 
@@ -95,7 +104,7 @@
      :caught (fn [e]
                (binding [*out* tooling-err]
                  (with-lock tooling-out-lock
-                   (elisp/prn {:error e}))))
+                   (repl-caught-str e))))
      :print (fn [result]
               (with-lock tooling-out-lock
                 (elisp/prn result))))))
@@ -108,8 +117,6 @@
     (shutdown)
     {:shutdown true}))
 
-(defmulti repl (fn [type] type))
-
 (Thread/setDefaultUncaughtExceptionHandler
  (reify Thread$UncaughtExceptionHandler
    (uncaughtException [_ thread ex]
@@ -119,7 +126,7 @@
                      :error true
                      :repl-type :clj
                      :thread (.getName thread)
-                     :ns (ns-name *ns*)
+                     :ns (str *ns*)
                      :value (with-out-str (print-stack-trace ex))}))))))
 
 (comment
@@ -137,8 +144,8 @@
                              :error true
                              :repl-type :clj
                              :session *session*
-                             :ns (ns-name *ns*)
-                             :value (.getMessage e)})))
+                             :ns (str *ns*)
+                             :value (repl-caught-str e)})))
              (clojure.main/repl-caught e))
    :print (fn [result]
             (binding [*out* tooling-out]
@@ -146,7 +153,7 @@
                 (elisp/prn {:type :eval
                             :repl-type :clj
                             :session *session*
-                            :ns (ns-name *ns*)
+                            :ns (str *ns*)
                             :result (pr-str result)})))
             (prn result))))
 

@@ -379,16 +379,16 @@
 (defn repl-caught [e repl-env opts]
   (binding [*out* server/tooling-err]
     (with-lock server/tooling-out-lock
-      (-> (assoc {:type :eval
-                  :error true
-                  :repl-type :cljs
-                  :session *session*
-                  :ns (str ana/*cljs-ns*)}
-                 :value (if (and (instance? IExceptionInfo e)
-                                 (#{:js-eval-error :js-eval-exception}
-                                  (:type (ex-data e))))
-                          (:value (:error (ex-data e)))
-                          (.getMessage e)))
+      (-> {:type :eval
+           :error true
+           :repl-type :cljs
+           :session *session*
+           :ns (str ana/*cljs-ns*)
+           :value (if (and (instance? IExceptionInfo e)
+                           (#{:js-eval-error :js-eval-exception}
+                            (:type (ex-data e))))
+                    (:value (:error (ex-data e)))
+                    (server/repl-caught-str e))}
           elisp/prn)))
   (cljs.repl/repl-caught e repl-env opts))
 
@@ -410,7 +410,7 @@
                          (elisp/prn {:type :eval
                                      :repl-type :cljs
                                      :session *session*
-                                     :ns ana/*cljs-ns*
+                                     :ns (str ana/*cljs-ns*)
                                      :result result})))
                      (with-lock out-lock
                        (println result)))
@@ -421,7 +421,7 @@
                         (elisp/prn {:type :eval
                                     :repl-type :cljs
                                     :session *session*
-                                    :ns ana/*cljs-ns*
+                                    :ns (str ana/*cljs-ns*)
                                     :result "nil"})))
                     (cljs.repl/evaluate-form
                      @repl-env env "<cljs repl>"

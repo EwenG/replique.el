@@ -169,7 +169,7 @@
                          ((equal :cljs repl-type)
                           :cljs-completion)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (symbol-name (replique/get repl :ns))))
+         (ns (replique/get repl :ns)))
     (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
 
 (defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
@@ -281,7 +281,7 @@
                          ((equal :cljs repl-type)
                           :repliquedoc-cljs)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (symbol-name (replique/get repl :ns))))
+         (ns (replique/get repl :ns)))
     (replique/repliquedoc* tooling-repl msg-type ns)))
 
 (defun replique/repliquedoc-clj (tooling-repl repl)
@@ -1437,20 +1437,23 @@ The following commands are available:
 ;; css, garden, js
 ;; sourcepath, classpath live reload
 ;; var explorer
+;; exceptions explorer
 ;; Check reflection *warn-on-reflection*
 ;; compliment invalidate memoized on classpath update
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
 ;; Check print-length/print-level for cljs
-;; Print eval results in *Message*
 ;; Save thread bindings on REPL close, restore on REPL start, only thread bindings, let leiningen manage root binding
 ;; Rename ewen.replique to replique
 ;; Browser REPL with websockets
 ;; CSS / HTML autocompletion, with core.spec ?
-;; Check exceptions format
-;; Improve exception printing
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
+;; Don't save load-file, in-ns in comint history
+
+;; Excpetion printing is the same than standard REPLs. We must print the full exception infos
+;; to the tooling channel in order to make an exception explorer
+
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 
 ;; replique.el ends here
