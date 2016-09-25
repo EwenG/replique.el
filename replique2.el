@@ -555,11 +555,6 @@ This allows you to temporarily modify read-only buffers too."
                         (if ,cljs-buff-sym
                             (funcall ,f ,props-sym ,cljs-repl-sym)
                           (user-error "No active Clojurescript REPL"))))
-                     ((equal 'scss-mode m)
-                      `((equal 'scss-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error "No active Clojurescript REPL"))))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f ,props-sym
@@ -605,11 +600,11 @@ This allows you to temporarily modify read-only buffers too."
       (user-error "Current buffer has no process"))
     (goto-char (point-max))
     (let ((old-input (replique/comint-kill-input)))
-         (goto-char (process-mark process))
-         (insert input)
-         (replique/comint-send-input t)
-         (goto-char (process-mark process))
-         (insert old-input))))
+      (goto-char (process-mark process))
+      (insert input)
+      (replique/comint-send-input t)
+      (goto-char (process-mark process))
+      (insert old-input))))
 
 (defun replique/send-input-from-source-clj-cljs
     (input callback props repl)
@@ -782,8 +777,7 @@ This allows you to temporarily modify read-only buffers too."
      (clojure-mode* . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path))
-     (css-mode . (-partial 'replique/load-css file-path))
-     (scss-mode . (-partial 'replique/load-scss file-path)))))
+     (css-mode . (-partial 'replique/load-css file-path)))))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL"
@@ -1444,14 +1438,13 @@ The following commands are available:
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
 ;; Check print-length/print-level for cljs
-;; Save thread bindings on REPL close, restore on REPL start, only thread bindings, let leiningen manage root binding
 ;; Rename ewen.replique to replique
-;; Browser REPL with websockets
+;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
-;; Don't save load-file, in-ns in comint history
+;; Don't save load-file, in-ns in comint history?
 
-;; Excpetion printing is the same than standard REPLs. We must print the full exception infos
+;; Exception printing is the same than standard REPLs. We must print the full exception infos
 ;; to the tooling channel in order to make an exception explorer
 
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)

@@ -64,10 +64,9 @@
     (alter-var-root #'directory (constantly directory))
     ;; Let leiningen :global-vars option propagate to other REPLs
     (alter-var-root #'clojure.core.server/repl bound-fn*)
-    (with-redefs []
-      (start-server {:port port :name :replique
-                     :accept 'clojure.core.server/repl
-                     :server-daemon false}))
+    (start-server {:port port :name :replique
+                   :accept 'clojure.core.server/repl
+                   :server-daemon false})
     (elisp/prn {:host (-> @#'clojure.core.server/servers
                           (get :replique) :socket
                           (.getInetAddress) (.getHostAddress)
