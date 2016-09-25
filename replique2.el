@@ -169,7 +169,7 @@
                          ((equal :cljs repl-type)
                           :cljs-completion)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (replique/get repl :ns)))
+         (ns (symbol-name (replique/get repl :ns))))
     (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
 
 (defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
@@ -281,7 +281,7 @@
                          ((equal :cljs repl-type)
                           :repliquedoc-cljs)
                          (t (error "Invalid REPL type: %s" repl-type))))
-         (ns (replique/get repl :ns)))
+         (ns (symbol-name (replique/get repl :ns))))
     (replique/repliquedoc* tooling-repl msg-type ns)))
 
 (defun replique/repliquedoc-clj (tooling-repl repl)

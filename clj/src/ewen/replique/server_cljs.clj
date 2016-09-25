@@ -383,7 +383,7 @@
            :error true
            :repl-type :cljs
            :session *session*
-           :ns (str ana/*cljs-ns*)
+           :ns (ns-name ana/*cljs-ns*)
            :value (if (and (instance? IExceptionInfo e)
                            (#{:js-eval-error :js-eval-exception}
                             (:type (ex-data e))))
@@ -410,7 +410,7 @@
                          (elisp/prn {:type :eval
                                      :repl-type :cljs
                                      :session *session*
-                                     :ns (str ana/*cljs-ns*)
+                                     :ns (ns-name ana/*cljs-ns*)
                                      :result result})))
                      (with-lock out-lock
                        (println result)))
@@ -421,7 +421,7 @@
                         (elisp/prn {:type :eval
                                     :repl-type :cljs
                                     :session *session*
-                                    :ns (str ana/*cljs-ns*)
+                                    :ns (ns-name ana/*cljs-ns*)
                                     :result "nil"})))
                     (cljs.repl/evaluate-form
                      @repl-env env "<cljs repl>"

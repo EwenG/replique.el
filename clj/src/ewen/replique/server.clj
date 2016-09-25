@@ -126,7 +126,7 @@
                      :error true
                      :repl-type :clj
                      :thread (.getName thread)
-                     :ns (str *ns*)
+                     :ns (ns-name *ns*)
                      :value (with-out-str (print-stack-trace ex))}))))))
 
 (comment
@@ -144,7 +144,7 @@
                              :error true
                              :repl-type :clj
                              :session *session*
-                             :ns (str *ns*)
+                             :ns (ns-name *ns*)
                              :value (repl-caught-str e)})))
              (clojure.main/repl-caught e))
    :print (fn [result]
@@ -153,7 +153,7 @@
                 (elisp/prn {:type :eval
                             :repl-type :clj
                             :session *session*
-                            :ns (str *ns*)
+                            :ns (ns-name *ns*)
                             :result (pr-str result)})))
             (prn result))))
 
