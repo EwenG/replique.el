@@ -37,6 +37,8 @@
 (defonce repl-env (ref nil))
 (defonce cljs-outs (atom #{}))
 (def ^:dynamic *stopped-eval-executor?* false)
+(defonce cljs-core-bindings #{#'*assert* #'*print-length* #'*print-meta* #'*print-level*
+                              #'*flush-on-newline* #'*print-readably* #'*print-dup*})
 
 (def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
                              [cljs.pprint :refer [pprint] :refer-macros [pp]]])
@@ -383,7 +385,7 @@
            :error true
            :repl-type :cljs
            :session *session*
-           :ns (ns-name ana/*cljs-ns*)
+           :ns ana/*cljs-ns*
            :value (if (and (instance? IExceptionInfo e)
                            (#{:js-eval-error :js-eval-exception}
                             (:type (ex-data e))))
@@ -391,6 +393,11 @@
                     (server/repl-caught-str e))}
           elisp/prn)))
   (cljs.repl/repl-caught e repl-env opts))
+
+(defn init-core-bindings []
+  `(do
+     ~@(for [v cljs-core-bindings]
+         `(~'set! ~(symbol "cljs.core" (-> v meta :name str)) ~(deref v)))))
 
 (defn cljs-repl []
   {:pre [(not (nil? (and @compiler-env @repl-env)))]}
@@ -410,7 +417,7 @@
                          (elisp/prn {:type :eval
                                      :repl-type :cljs
                                      :session *session*
-                                     :ns (ns-name ana/*cljs-ns*)
+                                     :ns ana/*cljs-ns*
                                      :result result})))
                      (with-lock out-lock
                        (println result)))
@@ -421,13 +428,18 @@
                         (elisp/prn {:type :eval
                                     :repl-type :cljs
                                     :session *session*
-                                    :ns (ns-name ana/*cljs-ns*)
+                                    :ns ana/*cljs-ns*
                                     :result "nil"})))
                     (cljs.repl/evaluate-form
                      @repl-env env "<cljs repl>"
                      (with-meta
                        `(~'ns ~'cljs.user
                          (:require ~@default-repl-requires))
+                       {:line 1 :column 1}))
+                    (cljs.repl/evaluate-form
+                     @repl-env env "<cljs repl>"
+                     (with-meta
+                       (init-core-bindings)
                        {:line 1 :column 1})))})
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))

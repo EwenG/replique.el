@@ -63,6 +63,8 @@
   (try
     (alter-var-root #'directory (constantly directory))
     ;; Let leiningen :global-vars option propagate to other REPLs
+    ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
+    ;; and it must not !!
     (alter-var-root #'clojure.core.server/repl bound-fn*)
     (start-server {:port port :name :replique
                    :accept 'clojure.core.server/repl
