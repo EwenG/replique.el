@@ -510,6 +510,11 @@ This allows you to temporarily modify read-only buffers too."
        (equal (replique/get tooling-repl :directory)
               (file-name-directory file-name))))
 
+(defun replique/file-in-replique-dir (tooling-repl file-name)
+  (and file-name
+       (equal (concat (replique/get tooling-repl :directory) ".replique/")
+              (file-name-directory file-name))))
+
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((props-sym (make-symbol "props-sym"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
@@ -568,9 +573,9 @@ This allows you to temporarily modify read-only buffers too."
                           (user-error "No active Clojure or Clojurescript REPL"))))
                      ((equal :cljs-env m)
                       `((and (equal 'clojure-mode major-mode)
-                             (equal ".replique-cljs-repl-env.clj"
+                             (equal "cljs-repl-env.clj"
                                     (file-name-nondirectory (buffer-file-name)))
-                             (replique/file-in-root-dir ,props-sym (buffer-file-name)))
+                             (replique/file-in-replique-dir ,props-sym (buffer-file-name)))
                         (if (or ,clj-buff-sym ,cljs-buff-sym)
                             (funcall ,f ,props-sym)
                           (user-error "No active Clojure or Clojurescript REPL")))))))
@@ -752,7 +757,7 @@ This allows you to temporarily modify read-only buffers too."
     (replique/send-tooling-msg
      tooling-repl
      (replique/hash-map :type :set-cljs-env
-                  :cljs-env-opts cljs-env-opts))
+                        :cljs-env-opts cljs-env-opts))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -1085,8 +1090,6 @@ The following commands are available:
                          (replique-edn/pr-str (replique/get repl-infos :error)))
               (let* ((host (replique/get repl-infos :host))
                      (port (replique/get repl-infos :port))
-                     (directory (replique/normalize-directory-name
-                                 (replique/get repl-infos :directory)))
                      (network-proc (open-network-stream directory nil host port))
                      (tooling-chan (replique/process-filter-chan network-proc)))
                 (set-process-sentinel
@@ -1113,8 +1116,9 @@ The following commands are available:
                                                       :chan tooling-chan))
                                        (cljs-env-file (concat
                                                        directory
-                                                       ".replique-cljs-repl-env.clj")))
-                                  (if (file-exists-p cljs-env-file)
+                                                       ".replique/cljs-repl-env.clj")))
+                                  (if (and (file-exists-p cljs-env-file)
+                                           (equal (file-truename directory) directory))
                                       (with-current-buffer (find-file-noselect cljs-env-file)
                                         (replique/load-cljs-repl-env
                                          tooling-repl (lambda (resp)
@@ -1174,13 +1178,13 @@ The following commands are available:
               (replique/mode)
               (process-send-string proc repl-cmd)
               (let ((repl (replique/hash-map :directory directory
-                                       :host host
-                                       :port port
-                                       :repl-type (or repl-type :clj)
-                                       :session session
-                                       :ns 'user
-                                       :buffer buff
-                                       :eval-chan eval-chan)))
+                                             :host host
+                                             :port port
+                                             :repl-type (or repl-type :clj)
+                                             :session session
+                                             :ns 'user
+                                             :buffer buff
+                                             :eval-chan eval-chan)))
                 (push repl replique/repls)
                 (replique/save-repls directory)
                 ;; Save REPL props when its name changes. The hook will run for interactive
@@ -1206,29 +1210,34 @@ The following commands are available:
              repl-type-string))))
 
 (defun replique/save-repls (directory)
-  (let ((repls (replique/repls-by :directory directory)))
-    (if (or
-         (null repls)
-         (and (equal 1 (length repls))
-              (equal :tooling (replique/get (car repls) :repl-type))))
-        (when (file-exists-p (concat directory ".replique-repls"))
-          (delete-file (concat directory ".replique-repls")))
-      (with-temp-file (concat directory ".replique-repls")
-        (let* ((repls (mapcar (lambda (repl)
-                                (let ((host (replique/get repl :host))
-                                      (port (replique/get repl :port))
-                                      (repl-type (replique/get repl :repl-type))
-                                      (random-port? (replique/get repl :random-port?))
-                                      (buffer (replique/get repl :buffer)))
-                                  (if (equal repl-type :tooling)
-                                      (replique/hash-map :host host :port port
-                                                   :random-port? random-port?
-                                                   :repl-type repl-type)
-                                    (replique/hash-map :repl-type repl-type
-                                                 :buffer-name (buffer-name buffer)))))
-                              replique/repls))
-               (repls-string (with-output-to-string (pp repls))))
-          (insert repls-string))))))
+  ;; Processes started from a symbolic link are not persisted
+  (when (equal (file-truename directory) directory)
+    (let* ((repls (replique/repls-by :directory directory))
+           (repls-directory (concat directory ".replique/"))
+           (repls-file-name (concat repls-directory "repls")))
+      (if (or
+           (null repls)
+           (and (equal 1 (length repls))
+                (equal :tooling (replique/get (car repls) :repl-type))))
+          (when (file-exists-p repls-file-name)
+            (delete-file repls-file-name))
+        (make-directory repls-directory t)
+        (with-temp-file repls-file-name
+          (let* ((repls (mapcar (lambda (repl)
+                                  (let ((host (replique/get repl :host))
+                                        (port (replique/get repl :port))
+                                        (repl-type (replique/get repl :repl-type))
+                                        (random-port? (replique/get repl :random-port?))
+                                        (buffer (replique/get repl :buffer)))
+                                    (if (equal repl-type :tooling)
+                                        (replique/hash-map :host host :port port
+                                                           :random-port? random-port?
+                                                           :repl-type repl-type)
+                                      (replique/hash-map :repl-type repl-type
+                                                         :buffer-name (buffer-name buffer)))))
+                                repls))
+                 (repls-string (with-output-to-string (pp repls))))
+            (insert repls-string)))))))
 
 (defun replique/validate-saved-repls (validated saved-repls)
   (if (null saved-repls)
@@ -1255,19 +1264,22 @@ The following commands are available:
 ;; Returns nil in case of an error
 ;; Return 0 as port number in case of a random port
 (defun replique/read-saved-repls (directory)
-  (when (file-exists-p (concat directory ".replique-repls"))
-    (let* ((saved-repls (with-temp-buffer
-                          (insert-file-contents (concat directory ".replique-repls"))
-                          (buffer-string)))
-           (saved-repls (condition-case err
-                            (read saved-repls)
-                          (error (message "Error while reading saved REPLs: %s"
-                                          (error-message-string err))
-                                 nil))))
-      (replique/validate-saved-repls nil saved-repls))))
+  ;; Processes started from a symbolic link are not persisted
+  (when (equal (file-truename directory) directory)
+    (let ((repls-file-name (concat directory ".replique/repls")))
+      (when (file-exists-p repls-file-name)
+        (let* ((saved-repls (with-temp-buffer
+                              (insert-file-contents repls-file-name)
+                              (buffer-string)))
+               (saved-repls (condition-case err
+                                (read saved-repls)
+                              (error (message "Error while reading saved REPLs: %s"
+                                              (error-message-string err))
+                                     nil))))
+          (replique/validate-saved-repls nil saved-repls))))))
 
 (defun replique/normalize-directory-name (directory)
-  (file-name-as-directory (file-truename directory)))
+  (file-name-as-directory (expand-file-name directory)))
 
 ;; Port number is ignored when a REPL process is already existing - the existing REPL port
 ;; number is used instead
@@ -1422,31 +1434,31 @@ The following commands are available:
 (provide 'replique2)
 
 ;; Choose active proc
-;; Remove tooling messages REPL history, add load-file to main mode to load current ns
+;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
 ;; Make starting a new REPl proc possible using symbolic links
-;; Interactive function for opening .replique-cljs-env.clj
+;; Interactive function for opening .cljs-repl-env.clj
 ;; jump to definition
 ;; Epresent
 ;; css, garden, js
 ;; sourcepath, classpath live reload
 ;; var explorer
-;; exceptions explorer
+;; exceptions explorer (fold/unfold?)
 ;; Check reflection *warn-on-reflection*
 ;; compliment invalidate memoized on classpath update
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
-;; Check print-length/print-level for cljs
 ;; Rename ewen.replique to replique
 ;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
-;; Don't save load-file, in-ns in comint history?
 
-;; Exception printing is the same than standard REPLs. We must print the full exception infos
-;; to the tooling channel in order to make an exception explorer
+;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
+
+;; Cljs exceptions printing
+;; Tooling messages serialization
 
 ;; replique.el ends here
