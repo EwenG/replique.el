@@ -368,7 +368,7 @@
                   (ref-set compiler-env compiler-env*)
                   (ref-set repl-env repl-env*)))
                ;; Shutdown eval-executor ?
-               (catch Throwable t
+               (catch Exception t
                  (tear-down-repl-env repl-env*)
                  (throw t))))))))))
 
@@ -382,6 +382,7 @@
   (binding [*out* server/tooling-err]
     (with-lock server/tooling-out-lock
       (-> {:type :eval
+           :directory server/directory
            :error true
            :repl-type :cljs
            :session *session*
@@ -415,6 +416,7 @@
                      (binding [*out* server/tooling-out]
                        (with-lock server/tooling-out-lock
                          (elisp/prn {:type :eval
+                                     :directory server/directory
                                      :repl-type :cljs
                                      :session *session*
                                      :ns ana/*cljs-ns*
@@ -426,6 +428,7 @@
                     (binding [*out* server/tooling-out]
                       (with-lock server/tooling-out-lock
                         (elisp/prn {:type :eval
+                                    :directory server/directory
                                     :repl-type :cljs
                                     :session *session*
                                     :ns ana/*cljs-ns*

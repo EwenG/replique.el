@@ -1,16 +1,16 @@
 (ns ewen.replique.tooling
   (:require [clojure.set]
             [ewen.replique.server :refer [with-tooling-response] :as server]
-            [ewen.replique.server-cljs :as server-cljs]
             [ewen.replique.repliquedoc :as repliquedoc]
-            [clojure.tools.reader :as reader]
-            [cljs.tagged-literals :as tags]
             [compliment.core :as compliment]
             [compliment.context :as context]
             [compliment.sources.local-bindings
              :refer [bindings-from-context]]
             [compliment.environment :refer [->CljsCompilerEnv]]
             [compliment.context :as context]))
+
+(def ^:private cljs-compiler-env
+  (delay (server/dynaload 'ewen.replique.server-cljs/compiler-env)))
 
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
@@ -46,7 +46,7 @@
       {:candidates (compliment/completions
                     prefix
                     {:ns (when ns (symbol ns)) :context context
-                     :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                     :comp-env (->CljsCompilerEnv @@cljs-compiler-env)
                      :sources
                      [:compliment.sources.ns-mappings/ns-mappings
                       :compliment.sources.namespaces-and-classes/namespaces-and-classes
@@ -63,7 +63,7 @@
         {:candidates (compliment/completions
                       prefix
                       {:ns (when ns (symbol ns)) :context context
-                       :comp-env (->CljsCompilerEnv @server-cljs/compiler-env)
+                       :comp-env (->CljsCompilerEnv @@cljs-compiler-env)
                        :sources
                        [:compliment.sources.ns-mappings/ns-mappings
                         :compliment.sources.namespaces-and-classes/namespaces-and-classes
@@ -98,14 +98,14 @@
   [{:keys [context ns symbol] :as msg}]
   (with-tooling-response msg
     {:doc (repliquedoc/handle-repliquedoc
-           (->CljsCompilerEnv @server-cljs/compiler-env)
+           (->CljsCompilerEnv @@cljs-compiler-env)
            ns context symbol)}))
 
 (defmethod server/tooling-msg-handle :repliquedoc-cljc
   [{:keys [context ns symbol] :as msg}]
   (with-tooling-response msg
     {:doc (repliquedoc/handle-repliquedoc-cljc
-           (->CljsCompilerEnv @server-cljs/compiler-env)
+           (->CljsCompilerEnv @@cljs-compiler-env)
            ns context symbol)}))
 
 (comment

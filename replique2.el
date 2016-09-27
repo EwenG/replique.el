@@ -162,8 +162,10 @@
                     (candidates (mapcar 'replique/make-candidate candidates)))
                (funcall company-callback candidates)))))))))
 
-(defun replique/auto-complete-session (prefix company-callback tooling-repl repl)
-  (let* ((repl-type (replique/get repl :repl-type))
+(defun replique/auto-complete-session (prefix company-callback repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (repl-type (replique/get repl :repl-type))
          (msg-type (cond ((equal :clj repl-type)
                           :clj-completion)
                          ((equal :cljs repl-type)
@@ -274,8 +276,10 @@
                    (eldoc-message msg))))))))))
   eldoc-last-message)
 
-(defun replique/repliquedoc-session (tooling-repl repl)
-  (let* ((repl-type (replique/get repl :repl-type))
+(defun replique/repliquedoc-session (repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (repl-type (replique/get repl :repl-type))
          (msg-type (cond ((equal :clj repl-type)
                           :repliquedoc-clj)
                          ((equal :cljs repl-type)
@@ -562,8 +566,7 @@ This allows you to temporarily modify read-only buffers too."
                           (user-error "No active Clojurescript REPL"))))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
-                        (funcall ,f ,props-sym
-                                 (replique/repl-by :buffer (current-buffer)))))
+                        (funcall ,f (replique/repl-by :buffer (current-buffer)))))
                      ((equal :leiningen m)
                       `((and (equal 'clojure-mode major-mode)
                              (equal "project.clj" (file-name-nondirectory (buffer-file-name)))
@@ -909,15 +912,17 @@ The following commands are available:
                  replique/clojure-jar replique/clojurescript-jar
                  (replique/replique-root-dir)))))
 
-(defun replique/raw-command (port)
+(defun replique/raw-command (directory port)
   `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "ewen.replique.main"
-    ,(format "{:type :clj :port %s}" (number-to-string port))))
+    ,(format "{:type :clj :port %s :directory %s}"
+             (number-to-string port) (replique-edn/pr-str directory))))
 
-(defun replique/lein-command (port)
+(defun replique/lein-command (directory port)
   `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
     ,(format "\"%sclj/src\"" (replique/replique-root-dir))
     "--" "run" "-m" "ewen.replique.main/-main"
-    ,(format "{:type :clj :port %s}" (number-to-string port))))
+    ,(format "{:type :clj :port %s :directory %s}"
+             (number-to-string port) (replique-edn/pr-str directory))))
 
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))
@@ -933,7 +938,9 @@ The following commands are available:
   (< -1 port-nb 65535))
 
 (defun replique/send-tooling-msg (tooling-repl msg)
-  (let ((tooling-network-proc (replique/get tooling-repl :network-proc)))
+  (let* ((tooling-network-proc (replique/get tooling-repl :network-proc))
+         (directory (replique/get tooling-repl :directory))
+         (msg (replique/assoc msg :directory directory)))
     (process-send-string
      tooling-network-proc
      (format "(ewen.replique.server/tooling-msg-handle %s)\n"
@@ -1008,8 +1015,8 @@ The following commands are available:
 
 (defun replique/dispatch-repl-cmd (directory port)
   (if (replique/is-lein-project directory) 
-      (replique/lein-command port)
-    (replique/raw-command port)))
+      (replique/lein-command directory port)
+    (replique/raw-command directory port)))
 
 (defun replique/is-in-exec-path (file absolute?)
   (thread-first (seq-mapcat
@@ -1364,7 +1371,8 @@ The following commands are available:
             (replique/dispatch-eval-msg* in-chan out-chan))
            ((equal :eval (replique/get msg :type))
             (let ((repl (replique/repl-by
-                         :session (replique/get (replique/get msg :session) :client))))
+                         :session (replique/get (replique/get msg :session) :client)
+                         :directory (replique/get msg :directory))))
               (when repl
                 (replique/on-repl-type-change repl (replique/get msg :repl-type))
                 (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
@@ -1436,7 +1444,7 @@ The following commands are available:
 ;; Choose active proc
 ;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
-;; Make starting a new REPl proc possible using symbolic links
+;; remote REPL
 ;; Interactive function for opening .cljs-repl-env.clj
 ;; jump to definition
 ;; Epresent
@@ -1459,6 +1467,8 @@ The following commands are available:
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 
 ;; Cljs exceptions printing
-;; Tooling messages serialization
+;; multi-process handling
+
+;; multi-process -> print directory in messages
 
 ;; replique.el ends here

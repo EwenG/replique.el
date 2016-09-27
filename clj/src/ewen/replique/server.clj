@@ -12,9 +12,20 @@
   (:import [java.util.concurrent.locks ReentrantLock]
            [java.io File]))
 
+(defonce directory nil)
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
+
+(defn dynaload
+  [s]
+  (let [ns (namespace s)]
+    (assert ns)
+    (require (symbol ns))
+    (let [v (resolve s)]
+      (if v
+        @v
+        (throw (RuntimeException. (str "Var " s " is not on the classpath")))))))
 
 (defmacro ^:private with-lock
   [lock-expr & body]
@@ -27,10 +38,12 @@
          (.unlock lockee#)))))
 
 (defmacro with-tooling-response [msg & resp]
-  `(let [type# (:type ~msg)]
-     (try (merge {:type type#} ~@resp)
-          (catch Throwable t#
-            {:type type#
+  `(let [type# (:type ~msg)
+         directory# (:directory ~msg)]
+     (try (merge {:type type# :directory directory#} ~@resp)
+          (catch Exception t#
+            {:directory directory#
+             :type type#
              :error t#}))))
 
 (defmacro with-err-str [& body]
@@ -57,9 +70,10 @@
                 (.getInetAddress) (.getHostAddress) normalize-ip-address)
       :port (-> (:socket server-infos) (.getLocalPort))}}))
 
-(defn start-repl-process [{:keys [port type cljs-env] :as opts}]
+(defn start-repl-process [{:keys [port type cljs-env directory] :as opts}]
   (println "Starting Clojure REPL...")
   (try
+    (alter-var-root #'directory (constantly directory))
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
@@ -75,7 +89,7 @@
                           (get :replique) :socket (.getLocalPort))
                 :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
-      (prn {:error t}))))
+      (elisp/prn {:error t}))))
 
 (defn tooling-repl []
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
@@ -102,6 +116,7 @@
        (binding [*out* tooling-err]
          (with-lock tooling-out-lock
            (elisp/prn {:type :eval
+                       :directory directory
                        :error true
                        :repl-type :clj
                        :thread (.getName thread)
@@ -139,6 +154,7 @@
              (binding [*out* tooling-err]
                (with-lock tooling-out-lock
                  (elisp/prn {:type :eval
+                             :directory directory
                              :error true
                              :repl-type :clj
                              :session *session*
@@ -149,6 +165,7 @@
             (binding [*out* tooling-out]
               (with-lock tooling-out-lock
                 (elisp/prn {:type :eval
+                            :directory directory
                             :repl-type :clj
                             :session *session*
                             :ns (ns-name *ns*)
