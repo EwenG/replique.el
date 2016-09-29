@@ -790,16 +790,23 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL"
   (interactive
-   (let* ((repls (seq-filter (lambda (repl)
-                            (let ((repl-type (replique/get repl :repl-type)))
-                              (not (equal :tooling repl-type))))
-                          replique/repls))
+   (let* ((active-repl (replique/active-repl :tooling t))
+          (directory (replique/get active-repl :directory))
+          (repls (seq-filter (lambda (repl)
+                               (let ((repl-type (replique/get repl :repl-type))
+                                     (d (replique/get repl :directory)))
+                                 (and
+                                  (equal d directory)
+                                  (not (equal :tooling repl-type)))))
+                             replique/repls))
           (repl-names (mapcar (lambda (repl)
                                 (buffer-name (replique/get repl :buffer)))
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
      (list (ido-completing-read "Switch to REPL: " repl-names nil t))))
+  ;; All windows displaying the previously active repl are set to display the newly active
+  ;; repl (repl with the same repl-type)
   (let* ((buffer (get-buffer repl-buff-name))
          (repl (replique/repl-by :buffer buffer))
          (repl-type (replique/get repl :repl-type))
@@ -811,6 +818,46 @@ This allows you to temporarily modify read-only buffers too."
     (mapcar (lambda (window)
               (set-window-buffer window buffer))
             prev-active-windows)))
+
+(defun replique/switch-active-process (proc-name)
+  "Switch the currently active process"
+  (interactive
+   (let* ((tooling-repls (replique/repls-by :repl-type :tooling))
+          (directories (mapcar (lambda (repl) (replique/get repl :directory))
+                               tooling-repls)))
+     (when (not (car directories))
+       (user-error "No started REPL"))
+     (list (ido-completing-read "Switch to process: " directories nil t))))
+  (let* ((new-active-repls (replique/repls-by :directory proc-name))
+         (prev-active-tooling-repl (replique/active-repl :tooling))
+         (prev-active-directory (replique/get prev-active-tooling-repl :directory))
+         (prev-active-repls (replique/repls-by :directory prev-active-directory))
+         (prev-active-repls (seq-mapn  (lambda (i repl) `(,i . ,repl))
+                                       (number-sequence 0 (length prev-active-repls))
+                                       prev-active-repls)))
+    ;; All windows displaying the previously active repls are set to display the newly active
+    ;; repls (repl with the same repl-type and same position in the replique/repls list)
+    (mapcar (lambda (repl-with-index)
+              (let* ((index (car repl-with-index))
+                     (repl (cdr repl-with-index))
+                     (repl-type (replique/get repl :repl-type)))
+                (when (not (equal :tooling repl-type))
+                  (let* ((prev-buffer (replique/get repl :buffer))
+                         (new-repls (replique/repls-by
+                                    :directory proc-name
+                                    :repl-type repl-type))
+                         (new-repl (nth index new-repls))
+                         (new-buffer (replique/get new-repl :buffer))
+                         (windows (get-buffer-window-list prev-buffer)))
+                    (when new-buffer
+                      (mapcar (lambda (window)
+                                (set-window-buffer window new-buffer))
+                              windows))))))
+            prev-active-repls)
+    (mapcar (lambda (repl)
+              (setq replique/repls (delete repl replique/repls))
+              (setq replique/repls (push repl replique/repls)))
+            new-active-repls)))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
