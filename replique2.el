@@ -821,33 +821,28 @@ This allows you to temporarily modify read-only buffers too."
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
-         (prev-active-repls (replique/repls-by :directory prev-active-directory))
-         (prev-active-repls (seq-mapn  (lambda (i repl) `(,i . ,repl))
-                                       (number-sequence 0 (length prev-active-repls))
-                                       prev-active-repls)))
+         (prev-repls (replique/repls-by :directory prev-active-directory))
+         (prev-repl-types (mapcar (lambda (repl) (replique/get repl :repl-type)) prev-repls)))
     ;; All windows displaying the previously active repls are set to display the newly active
     ;; repls (repl with the same repl-type and same position in the replique/repls list)
-    (mapcar (lambda (repl-with-index)
-              (let* ((index (car repl-with-index))
-                     (repl (cdr repl-with-index))
-                     (repl-type (replique/get repl :repl-type)))
-                (when (not (equal :tooling repl-type))
-                  (let* ((prev-buffer (replique/get repl :buffer))
-                         (new-repls (replique/repls-by
-                                    :directory proc-name
-                                    :repl-type repl-type))
-                         (new-repl (nth index new-repls))
-                         (new-buffer (replique/get new-repl :buffer))
-                         (windows (get-buffer-window-list prev-buffer)))
-                    (when new-buffer
-                      (mapcar (lambda (window)
-                                (set-window-buffer window new-buffer))
-                              windows))))))
-            prev-active-repls)
+    (mapcar (lambda (repl-type)
+              (let* ((prev-active-repl (replique/repl-by :directory prev-active-directory
+                                                         :repl-type repl-type))
+                     (prev-buffer (replique/get prev-active-repl :buffer))
+                     (new-active-repl (replique/repl-by
+                                       :directory proc-name
+                                       :repl-type repl-type))
+                     (new-buffer (replique/get new-active-repl :buffer))
+                     (windows (get-buffer-window-list prev-buffer)))
+                (when new-buffer
+                  (mapcar (lambda (window)
+                            (set-window-buffer window new-buffer))
+                          windows))))
+            prev-repl-types)
     (mapcar (lambda (repl)
               (setq replique/repls (delete repl replique/repls))
               (setq replique/repls (push repl replique/repls)))
-            new-active-repls)))
+            (seq-reverse new-active-repls))))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
