@@ -399,11 +399,9 @@ This allows you to temporarily modify read-only buffers too."
   (let ((depth (car (parse-partial-sexp start limit))))
     (if (<= depth 0) t nil)))
 
-(defun replique/comint-send-input (&optional no-read-eval-chan)
+(defun replique/comint-send-input ()
   (interactive)
   (let* ((buff (current-buffer))
-         (repl (replique/repl-by :buffer buff))
-         (eval-chan (replique/get repl :eval-chan))
          (proc (get-buffer-process buff)))
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
@@ -412,15 +410,7 @@ This allows you to temporarily modify read-only buffers too."
                ;; terminated
                (and (equal (point) (point-max))
                     (replique/comint-is-closed-sexpr pmark (point)))
-               (comint-send-input)
-               ;; when replique/comint-send-input is called programmatically, the channel is
-               ;; already handled elsewhere
-               (when (null no-read-eval-chan)
-                 (replique-async/<!
-                  eval-chan
-                  (lambda (msg)
-                    (when msg
-                      (replique/display-eval-result msg buff))))))
+               (comint-send-input))
               ;; Point is after the prompt but (before the end of line or
               ;; the sexpr is not terminated)
               ((comint-after-pmark-p) (comint-accumulate))
@@ -610,7 +600,7 @@ This allows you to temporarily modify read-only buffers too."
     (let ((old-input (replique/comint-kill-input)))
       (goto-char (process-mark process))
       (insert input)
-      (replique/comint-send-input t)
+      (replique/comint-send-input)
       (goto-char (process-mark process))
       (insert old-input))))
 
@@ -1417,13 +1407,14 @@ The following commands are available:
                      (replique-edn/pr-str (replique/get msg :value))))
             (replique/dispatch-eval-msg* in-chan out-chan))
            ((equal :eval (replique/get msg :type))
-            (let ((repl (replique/repl-by
-                         :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :directory))))
+            (let* ((repl (replique/repl-by
+                          :session (replique/get (replique/get msg :session) :client)
+                          :directory (replique/get msg :directory)))
+                   (buffer (replique/get repl :buffer)))
               (when repl
                 (replique/on-repl-type-change repl (replique/get msg :repl-type))
                 (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
-                (replique-async/put! (replique/get repl :eval-chan) msg)))
+                (replique/display-eval-result msg buffer)))
             (replique/dispatch-eval-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
               (replique/dispatch-eval-msg* in-chan out-chan))))))
