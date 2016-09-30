@@ -1474,7 +1474,6 @@ The following commands are available:
 
 (provide 'replique2)
 
-;; Choose active proc
 ;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
 ;; remote REPL
@@ -1494,6 +1493,7 @@ The following commands are available:
 ;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
+;; support for no cljs-env
 
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 
