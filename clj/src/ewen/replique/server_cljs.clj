@@ -2,8 +2,8 @@
   (:require [ewen.replique.server :refer [with-tooling-response]
              :as server]
             [ewen.replique.elisp-printer :as elisp]
-            [clojure.core.server :refer [start-server *session*]]
-            [clojure.java.io :as io :refer [file]]
+            [clojure.core.server :refer [*session*]]
+            [clojure.java.io :as io]
             [cljs.repl.browser]
             [cljs.closure :as closure]
             [cljs.env :as cljs-env]
@@ -14,21 +14,12 @@
             [cljs.repl]
             [clojure.string :as string]
             [cljs.js-deps :as deps]
-            [clojure.tools.reader :as reader]
             [cljs.closure :as cljsc]
             [ewen.replique.cljs]
-            [ewen.replique.sourcemap]
-            [compliment.context :as context]
-            [compliment.sources.local-bindings
-             :refer [bindings-from-context]]
             [clojure.data.json :as json]
-            [cljs.tagged-literals :as tags]
-            [compliment.core :as compliment]
             [clojure.spec :as s])
   (:import [java.io File BufferedReader InputStreamReader]
-           [java.net URL ServerSocket]
-           [java.util.concurrent SynchronousQueue Executors ThreadFactory
-            RejectedExecutionException]
+           [java.util.concurrent Executors ThreadFactory RejectedExecutionException]
            [java.net SocketException]
            [clojure.lang IExceptionInfo]
            [java.util.concurrent.locks ReentrantLock]))
@@ -187,8 +178,8 @@
 
 (defn init-opts* [{{output-to :output-to} :compiler-opts
                    {port :port main :main} :repl-opts}]
-  (let [output-dir (-> (file output-to) (.getAbsoluteFile) (.getParent))]
-    {:compiler-opts (merge {:output-to (-> (file output-to) (.getAbsolutePath))
+  (let [output-dir (-> (io/file output-to) (.getAbsoluteFile) (.getParent))]
+    {:compiler-opts (merge {:output-to (-> (io/file output-to) (.getAbsolutePath))
                             :output-dir output-dir
                             :optimizations :none
                             :recompile-dependents false
