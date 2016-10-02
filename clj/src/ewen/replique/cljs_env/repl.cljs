@@ -1,6 +1,7 @@
 (ns ewen.replique.cljs-env.repl
   "Xhr based repl. Uses CORS to bypass the same origin policy.
-  Adapted from https://github.com/clojure/clojurescript/blob/master/src/main/cljs/clojure/browser/repl.cljs"
+  Adapted from https://github.com/clojure/clojurescript/blob/master/src/main/cljs/clojure/browser/repl.cljs.
+  Also, replace :order by a :session id in messages sent to the server"
   (:require
    [goog.dom :as gdom]
    [goog.object :as gobj]
@@ -14,7 +15,7 @@
    [cljs.repl])
   [:import [goog.net XhrIo CorsXmlHttpFactory]])
 
-(def connection-url (atom nil))
+(def connection (atom nil))
 
 (defn xhr-connection
   "Returns an XhrIo connection"
@@ -46,14 +47,13 @@
      (.setTimeoutInterval conn 0)
      (.send conn url "POST" data nil))))
 
-(def order (atom 0))
-
-(defn wrap-message [t data]
-  (pr-str {:type t :content data :order (swap! order inc)}))
+(defn wrap-message [t data session]
+  (pr-str {:type t :content data :session session}))
 
 (defn flush-print-queue! []
-  (doseq [str print-queue]
-    (send-print @connection-url (wrap-message :print str)))
+  (let [{:keys [url session]} @connection]
+    (doseq [str print-queue]
+      (send-print url (wrap-message :print str session))))
   (garray/clear print-queue))
 
 (defn repl-print [data]
@@ -155,13 +155,14 @@
      conn "success"
      (fn [e]
        (let [js (.getResponseText (.-currentTarget e))
-             result (evaluate-javascript js)]
+             result (evaluate-javascript js)
+             {:keys [session]} @connection]
          (send-result
-          (eval-connection url) url (wrap-message :result result)))))
+          (eval-connection url) url (wrap-message :result result session)))))
     conn))
 
-(defn connect [url]
+(defn connect [url session]
   (bootstrap)
-  (reset! connection-url url)
-  (send-result (eval-connection url) url (wrap-message :ready "ready"))
+  (reset! connection {:url url :session (or session 0)})
+  (send-result (eval-connection url) url (wrap-message :ready "ready" (or session 0)))
   url)

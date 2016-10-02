@@ -17,23 +17,266 @@
             [cljs.closure :as cljsc]
             [ewen.replique.cljs]
             [clojure.data.json :as json]
-            [clojure.spec :as s])
+            [clojure.spec :as s]
+            [cljs.repl.server]
+            [cljs.stacktrace :as st]
+            [clojure.edn :as edn])
   (:import [java.io File BufferedReader InputStreamReader]
-           [java.util.concurrent Executors ThreadFactory RejectedExecutionException]
-           [java.net SocketException]
+           [java.util.concurrent ArrayBlockingQueue Executors ThreadFactory
+            RejectedExecutionException ExecutorService TimeUnit]
+           [java.net SocketException ServerSocket InetAddress]
            [clojure.lang IExceptionInfo]
            [java.util.concurrent.locks ReentrantLock]))
 
-(defonce compiler-env (ref nil))
-(defonce repl-env (ref nil))
+(defonce compiler-env (atom nil))
+(defonce repl-env (atom nil))
 (defonce cljs-outs (atom #{}))
-(def ^:dynamic *stopped-eval-executor?* false)
+(defonce cljs-server (atom {:state :stopped}))
+(def ^:dynamic *stopped-executor?* false)
 (defonce cljs-core-bindings #{#'*assert* #'*print-length* #'*print-meta* #'*print-level*
                               #'*flush-on-newline* #'*print-readably* #'*print-dup*})
 
 (def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
                              [cljs.pprint :refer [pprint] :refer-macros [pp]]])
 (def env {:context :expr :locals {}})
+
+(defmacro ^:private with-lock
+  [lock-expr & body]
+  `(let [lockee# ~(with-meta lock-expr
+                    {:tag 'java.util.concurrent.locks.ReentrantLock})]
+     (.lock lockee#)
+     (try
+       ~@body
+       (finally
+         (.unlock lockee#)))))
+
+
+
+
+(defn dispatcher [{:keys [method path content]} conn]
+  (cond (and (= :get method) (some #(.endsWith path %)
+                                   (keys cljs.repl.browser/ext->mime-type)))
+        :assets
+        (and (= :get method) (= path "/"))
+        :init
+        (and (= :post method) (not (= (:session content) (:session @cljs-server))))
+        :session-expired
+        (and (= :post method) (= :ready (:type content)))
+        :ready
+        (and (= :post method) (= :result (:type content)))
+        :result
+        (and (= :post method) (= :print (:type content)))
+        :print))
+
+(defmulti dispatch-request dispatcher)
+
+;; Same as cljs.repl/send-and-close but supports CORS
+(defn send-and-close
+  ([conn status form]
+   (send-and-close conn status form "text/html"))
+  ([conn status form content-type]
+   (send-and-close conn status form content-type "UTF-8"))
+  ([conn status form content-type encoding]
+   (let [byte-form (.getBytes form encoding)
+         content-length (count byte-form)
+         headers (map #(.getBytes (str % "\r\n"))
+                      [(#'cljs.repl.server/status-line status)
+                       "Server: ClojureScript REPL"
+                       (str "Content-Type: "
+                            content-type
+                            "; charset=" encoding)
+                       (str "Content-Length: " content-length)
+                       (str "Access-Control-Allow-Origin: *")
+                       (str "Access-Control-Allow-Methods: GET,POST")
+                       ""])]
+     (with-open [os (.getOutputStream conn)]
+       (doseq [header headers]
+         (.write os header 0 (count header)))
+       (.write os byte-form 0 content-length)
+       (.flush os)
+       (.close conn)))))
+
+(defn close-conn [conn]
+  (try (send-and-close conn 500 "ignore__")
+       (catch Exception e nil)
+       (finally (.close conn))))
+
+(defmethod dispatch-request :session-expired [request conn]
+  (close-conn conn))
+
+(defmethod dispatch-request :default [{:keys [path]} conn]
+  (cljs.repl.server/send-404 conn path))
+
+(defn- handle-connection [conn]
+  (let [rdr (BufferedReader. (InputStreamReader. (.getInputStream conn)))
+        {:keys [content] :as request} (cljs.repl.server/read-request rdr)
+        request (if content (update request :content read-string) request)]
+    (if request
+      (dispatch-request request conn)
+      (close-conn conn))))
+
+(defn start-cljs-server [port]
+  {:pre [(not (nil? @compiler-env))]}
+  (when (= :stopped (:state @cljs-server))
+    (let [ss (ServerSocket. port 0 (InetAddress/getLoopbackAddress))
+          accept-fn (bound-fn []
+                      (when-let [conn (try (.accept ss)
+                                           (catch Exception _))]
+                        (.setKeepAlive conn true)
+                        (handle-connection conn)
+                        (recur)))
+          accept-thread (Thread. accept-fn)]
+      (.start accept-thread)
+      (reset! cljs-server {:server-socket ss :port port
+                           :accept-thread accept-thread
+                           :state :starting}))))
+
+(defn shutdown-executor [executor]
+  (let [pendingTasks (.shutdownNow executor)]
+        ;; Tasks are run on this thread
+        (binding [*stopped-executor?* true]
+          (doseq [task pendingTasks]
+            (.run task)))))
+
+(defn stop-cljs-server []
+  (let [{:keys [server-socket executor conn-queue accept-thread]} @cljs-server]
+    (swap! cljs-server assoc :state :stopped)
+    (when executor
+      (shutdown-executor executor))
+    (when server-socket
+      (.close server-socket))
+    (when accept-thread
+      (.interrupt accept-thread))
+    (when-let [conn (and conn-queue (.poll conn-queue))]
+      (close-conn conn))))
+
+(defmethod dispatch-request :init [{{host :host} :headers} conn]
+  (let [{:keys [session] :or {session 0}} @cljs-server
+        url (format "http://%s" host)]
+    (swap! cljs-server assoc :session (inc session))
+    (send-and-close
+     conn 200
+     (str "<html>
+<head></head>
+<body>
+<script>var CLOSURE_UNCOMPILED_DEFINES = null;</script>
+<script src=\"goog/base.js\"></script>
+<script src=\"cljs_deps.js\"></script>
+<script>
+goog.require(\"ewen.replique.cljs_env.repl\");
+</script>
+<script>
+goog.require(\"ewen.replique.cljs_env.browser\");
+</script>
+<script>
+ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
+</script>
+</body>
+</html>")
+     "text/html")))
+
+(defmethod dispatch-request :assets [request conn]
+  (cljs.repl.browser/send-static request conn (cljs.repl/-repl-options @repl-env)))
+
+(defn make-eval-task [js]
+  (reify Callable
+    (call [this]
+      (if *stopped-executor?*
+        {:status :error
+         :value "Connection broken"}
+        (try
+          (let [{:keys [conn-queue result-queue]} @cljs-server
+                conn (try (.take conn-queue) (catch InterruptedException e nil))]
+            (if-not conn
+              {:status :error
+               :value "Connection broken"}
+              (try
+                (send-and-close conn 200 js)
+                (.take result-queue)
+                ;; If the repl-env is shutdown
+                (catch InterruptedException e
+                  {:status :error
+                   :value "Connection broken"})
+                ;; Other errors, socket closed by the client ...
+                (catch SocketException e
+                  {:status :error
+                   :value "Connection broken"})
+                (finally
+                  (.close conn))))))))))
+
+(defn init-core-bindings []
+  `(do
+     ~@(for [v cljs-core-bindings]
+         `(~'set! ~(symbol "cljs.core" (-> v meta :name str)) ~(deref v)))))
+
+(defmethod dispatch-request :ready [request conn]
+  ;; The server accepts connection on a single thread, which remove the need for handling
+  ;; synchronization for some of the operations below
+  (let [{:keys [executor conn-queue result-queue first-init?]
+         :or {session 0}} @cljs-server
+        new-executor (Executors/newSingleThreadExecutor)
+        conn-queue (ArrayBlockingQueue. 1)
+        result-queue (ArrayBlockingQueue. 1)]
+    (when executor (shutdown-executor executor))
+    (when-let [conn (and conn-queue (.poll conn-queue))]
+      (close-conn conn))
+    (swap! cljs-server assoc
+           :executor new-executor
+           :conn-queue conn-queue
+           :result-queue result-queue)
+    ;; Init stuff needs to go there and not in the :init method of the REPL, otherwise it
+    ;; get lost on browser refresh
+    (->> (cljs-env/with-compiler-env @compiler-env
+           (cljsc/-compile
+            [`(~'ns ~'cljs.user
+               (:require ~@default-repl-requires))
+             '(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)
+             '(set! *print-err-fn* ewen.replique.cljs-env.repl/repl-print)
+             '(set! *print-newline* true)
+             '(when (pos? (count ewen.replique.cljs-env.repl/print-queue))
+                (ewen.replique.cljs-env.repl/flush-print-queue!))
+             (init-core-bindings)]
+            {}))
+         make-eval-task
+         (.submit new-executor))
+    (try (.put conn-queue conn)
+         (catch InterruptedException e
+           (close-conn conn)))
+    (swap! cljs-server assoc
+           :state :ready)))
+
+(defmethod dispatch-request :result [{:keys [content]} conn]
+  (try 
+    (.put (:result-queue @cljs-server)
+          (read-string (:content content)))
+    (.put (:conn-queue @cljs-server) conn)
+    (catch InterruptedException e
+      (close-conn conn))))
+
+(defmethod dispatch-request :print [{:keys [content]} conn]
+  ;; Maybe we should print only in the currently active REPL instead of all REPLs
+  (doseq [[out out-lock] @cljs-outs]
+    (binding [*out* out]
+      (with-lock out-lock
+        (-> (:content content) read-string print)
+        (.flush *out*))))
+  (try
+    (send-and-close conn 200 "ignore__")
+    (catch SocketException e nil)
+    (catch InterruptedException e nil)
+    (finally (.close conn))))
+
+(comment
+  (def tt (.submit (:executor @cljs-server) (make-eval-task "3")))
+  (.get tt 1 TimeUnit/SECONDS)
+  )
+
+
+
+
+
+
+
 
 (defn can-write-file? [path]
   (let [f (File. path)]
@@ -68,50 +311,6 @@
                              :repl-opts2 {:port 9001}})
   (s/explain-str ::cljs-env [])
   )
-
-(defmacro ^:private with-lock
-  [lock-expr & body]
-  `(let [lockee# ~(with-meta lock-expr
-                    {:tag 'java.util.concurrent.locks.ReentrantLock})]
-     (.lock lockee#)
-     (try
-       ~@body
-       (finally
-         (.unlock lockee#)))))
-
-(defn make-eval-executor-thread-factory [repl-env]
-  (reify ThreadFactory
-    (newThread [this runnable]
-      (binding [cljs.repl.browser/browser-state (:browser-state repl-env)
-                cljs.repl.browser/ordering (:ordering repl-env)
-                cljs.repl.browser/es (:es repl-env)
-                cljs.repl.server/state (:server-state repl-env)]
-        (Thread. ((ns-resolve 'clojure.core 'binding-conveyor-fn)
-                  (fn [] (.run runnable))))))))
-
-(defn make-eval-executor [repl-env]
-  (-> (make-eval-executor-thread-factory repl-env)
-      (Executors/newSingleThreadExecutor)))
-
-(defn make-eval-task [js]
-  (reify Callable
-    (call [this]
-      (if *stopped-eval-executor?*
-        {:status :error
-         :value "Connection broken"}
-        (try
-          (cljs.repl.browser/browser-eval js)
-          ;; If the repl-env is shutdown
-          (catch InterruptedException e
-            {:status :error
-             :value "Connection broken"})
-          ;; Other errors, socket closed by the client ...
-          (catch SocketException e
-            (doseq [[out lock] @cljs-outs]
-              (binding [*out* out]
-                (prn e)))
-            {:status :error
-             :value "Connection broken"}))))))
 
 (defn f->src [f]
   (cond (util/url? f) f
@@ -193,15 +392,11 @@
   (let [opts (init-opts* opts)
         output-dir (get-in opts [:compiler-opts :output-dir])]
     (update-in opts [:repl-opts] merge
-               {:serve-static true
-                :static-dir ["." output-dir]})))
+               {:static-dir ["." output-dir]})))
 
 (defmethod init-opts :webapp [opts]
-  (-> (init-opts* opts)
-      (update-in [:repl-opts] merge {:serve-static false})))
+  (init-opts* opts))
 
-;; Bypass the cljs load-javascript function in order to use the
-;; race condition free "browser-eval" function
 (defn load-javascript
   "Accepts a REPL environment, a list of namespaces, and a URL for a
   JavaScript file which contains the implementation for the list of
@@ -211,50 +406,45 @@
   [repl-env provides url]
   (cljs.repl/-evaluate repl-env nil nil (slurp url)))
 
-(defrecord BrowserEnv [wrapped eval-executor setup-ret]
+(defn evaluate-form [js]
+  (let [{:keys [state executor port]} @cljs-server]
+    (cond
+      (= :stopped state)
+      {:status :error
+       :value "Cljs server stopped"}
+      (= :starting state)
+      {:status :error
+       :value (format "Waiting for browser to connect on port %d ..." port)}
+      :else (try (-> (.submit executor (make-eval-task js))
+                     (.get))
+                 (catch RejectedExecutionException e
+                   {:status :error
+                    :value "Connection broken"})))))
+
+;; Defrecord instead of deftype because cljs.repl uses the repl-env as a hashmap. Why ??? 
+(defrecord BrowserEnv [repl-opts]
   cljs.repl/IJavaScriptEnv
-  (-setup [this opts] setup-ret)
+  (-setup [this opts] nil)
   (-evaluate [this _ _ js]
-    (try (-> (.submit eval-executor (make-eval-task js))
-             (.get))
-         (catch RejectedExecutionException e
-           {:status :error
-            :value "Connection broken"})))
+    (evaluate-form js))
   (-load [this provides url]
     (load-javascript this provides url))
   ;; We don't want the repl-env to be closed on cljs-repl exit
   (-tear-down [this] nil)
   cljs.repl/IReplEnvOptions
-  (-repl-options [this]
-    (cljs.repl/-repl-options wrapped))
+  (-repl-options [this] repl-opts)
   cljs.repl/IParseStacktrace
   (-parse-stacktrace [this st err opts]
-    (cljs.repl/-parse-stacktrace wrapped st err opts))
+    (st/parse-stacktrace this st err opts))
   cljs.repl/IGetError
   (-get-error [this e env opts]
-    (cljs.repl/-get-error wrapped e env opts)))
-
-(defn tear-down-repl-env [repl-env]
-  (cljs.repl/-tear-down (:wrapped repl-env))
-  ;; Interrupt the currently executing task, if any
-  ;; Pending tasks are returned
-  (let [pendingTasks (.shutdownNow (:eval-executor repl-env))]
-    (binding [*stopped-eval-executor?* true]
-      (doseq [task pendingTasks]
-        (.run task)))))
-
-(defn custom-benv [benv eval-executor setup-ret]
-  (merge (BrowserEnv. benv eval-executor setup-ret) benv))
-
-;; Used instead of cljs.repl.browser to avoid compiling client.js.
-;; client.js is not needed because the browser repl uses xhr with cors
-;; instead of crosspagechannel
-(defn setup [repl-env opts]
-  (binding [cljs.repl.browser/browser-state (:browser-state repl-env)
-            cljs.repl.browser/ordering (:ordering repl-env)
-            cljs.repl.browser/es (:es repl-env)
-            cljs.repl.server/state (:server-state repl-env)]
-    (cljs.repl.server/start repl-env)))
+    (edn/read-string
+     (cljs.repl/evaluate-form this env "<cljs repl>"
+                              `(when ~e
+                                 (pr-str
+                                  {:ua-product (clojure.browser.repl/get-ua-product)
+                                   :value (str ~e)
+                                   :stacktrace (.-stack ~e)}))))))
 
 (defn compute-asset-path [asset-path output-dir rel-path]
   (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
@@ -319,54 +509,42 @@
           "})();\n"))))
 
 (defn init-browser-env
-  ([comp-opts repl-opts]
-   (init-browser-env comp-opts repl-opts true))
-  ([comp-opts repl-opts output-main-file?]
+  ([comp-opts repl-opts executor]
+   (init-browser-env comp-opts repl-opts executor true))
+  ([comp-opts repl-opts executor output-main-file?]
    (let [compiler-env* (-> comp-opts
                            closure/add-implicit-options
                            cljs-env/default-compiler-env)
-         repl-env* (apply cljs.repl.browser/repl-env (apply concat repl-opts))]
-     (when @repl-env (tear-down-repl-env @repl-env))
+         ;; Merge repl-opts in browserenv because cljs.repl expects this. This is weird
+         repl-env* (merge (BrowserEnv. repl-opts) repl-opts)]
      (cljs-env/with-compiler-env compiler-env*
        (comp/with-core-cljs nil
          (fn []
-           (let [eval-executor (make-eval-executor repl-env*)
-                 repl-env* (->> (setup repl-env* nil)
-                                (custom-benv repl-env* eval-executor))]
-             (try
-               (let [port (-> @(:server-state repl-env*)
-                              :socket
-                              (.getLocalPort))
-                     repl-src "ewen/replique/cljs_env/repl.cljs"
-                     benv-src "ewen/replique/cljs_env/browser.cljs"
-                     repl-compiled (repl-compile-cljs repl-src comp-opts false)
-                     benv-compiled (repl-compile-cljs benv-src comp-opts false)]
-                 (repl-cljs-on-disk
-                  repl-compiled (#'cljs.repl/env->opts repl-env*) comp-opts)
-                 (repl-cljs-on-disk
-                  benv-compiled (#'cljs.repl/env->opts repl-env*) comp-opts)
-                 (->> (refresh-cljs-deps comp-opts)
-                      (closure/output-deps-file
-                       (assoc comp-opts :output-to
-                              (str (util/output-directory comp-opts)
-                                   File/separator "cljs_deps.js"))))
-                 (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
-                   util/mkdirs
-                   (spit (slurp (io/resource "goog/deps.js"))))
-                 (when output-main-file?
-                   (output-main-file comp-opts port))
-                 (dosync
-                  (ref-set compiler-env compiler-env*)
-                  (ref-set repl-env repl-env*)))
-               ;; Shutdown eval-executor ?
-               (catch Exception t
-                 (tear-down-repl-env repl-env*)
-                 (throw t))))))))))
+           (let [port (:port repl-opts)
+                 repl-src "ewen/replique/cljs_env/repl.cljs"
+                 benv-src "ewen/replique/cljs_env/browser.cljs"
+                 repl-compiled (repl-compile-cljs repl-src comp-opts false)
+                 benv-compiled (repl-compile-cljs benv-src comp-opts false)]
+             (repl-cljs-on-disk
+              repl-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+             (repl-cljs-on-disk
+              benv-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+             (->> (refresh-cljs-deps comp-opts)
+                  (closure/output-deps-file
+                   (assoc comp-opts :output-to
+                          (str (util/output-directory comp-opts)
+                               File/separator "cljs_deps.js"))))
+             (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
+               util/mkdirs
+               (spit (slurp (io/resource "goog/deps.js"))))
+             (when output-main-file?
+               (output-main-file comp-opts port))))))
+     (reset! compiler-env compiler-env*)
+     (reset! repl-env repl-env*))))
 
 (defmethod server/tooling-msg-handle :shutdown [msg]
   (with-tooling-response msg
-    (when @repl-env (tear-down-repl-env @repl-env))
-    (server/shutdown)
+    (stop-cljs-server)
     {:shutdown true}))
 
 (defn repl-caught [e repl-env opts]
@@ -386,17 +564,15 @@
           elisp/prn)))
   (cljs.repl/repl-caught e repl-env opts))
 
-(defn init-core-bindings []
-  `(do
-     ~@(for [v cljs-core-bindings]
-         `(~'set! ~(symbol "cljs.core" (-> v meta :name str)) ~(deref v)))))
-
 (defn cljs-repl []
-  {:pre [(not (nil? (and @compiler-env @repl-env)))]}
-  (let [out-lock (ReentrantLock.)]
+  {:pre [(and (not (nil? @compiler-env))
+              (not (nil? @repl-env))
+              (not (= :stopped (:state @cljs-server))))]}
+  (let [out-lock (ReentrantLock.)
+        {:keys [state executor port]} @cljs-server]
     (swap! cljs-outs conj [*out* out-lock])
-    (when-not (:connection @(:server-state @repl-env))
-      (println (format "Waiting for browser to connect on port %d ..." (:port @repl-env))))
+    (when (not= :ready state)
+      (println (format "Waiting for browser to connect on port %d ..." port)))
     (apply
      (partial cljs.repl/repl @repl-env)
      (->> (merge
@@ -414,6 +590,8 @@
                                      :result result})))
                      (with-lock out-lock
                        (println result)))
+            ;; Code modifying the runtime should not be put in :init since it will be lost on
+            ;; browser refresh
             :init (fn []
                     ;; Let the client know that we are entering a cljs repl
                     (binding [*out* server/tooling-out]
@@ -423,18 +601,7 @@
                                     :repl-type :cljs
                                     :session *session*
                                     :ns ana/*cljs-ns*
-                                    :result "nil"})))
-                    (cljs.repl/evaluate-form
-                     @repl-env env "<cljs repl>"
-                     (with-meta
-                       `(~'ns ~'cljs.user
-                         (:require ~@default-repl-requires))
-                       {:line 1 :column 1}))
-                    (cljs.repl/evaluate-form
-                     @repl-env env "<cljs repl>"
-                     (with-meta
-                       (init-core-bindings)
-                       {:line 1 :column 1})))})
+                                    :result "nil"}))))})
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))
 
@@ -444,7 +611,15 @@
     (if (= ::s/invalid conformed-msg)
       {:invalid (s/explain-str ::cljs-env conformed-msg)}
       (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)]
-        (init-browser-env compiler-opts repl-opts)
+        (when @cljs-server (stop-cljs-server))
+        (try
+          (init-browser-env compiler-opts repl-opts (:executor @cljs-server))
+          (start-cljs-server (:port repl-opts))
+          (catch Exception e
+            (stop-cljs-server)
+            (reset! compiler-env nil)
+            (reset! repl-env nil)
+            (throw e)))
         msg))))
 
 (comment
@@ -453,27 +628,5 @@
     :cljs-env-type :browser
     :compiler-opts {:output-to "out/main.js"}
     :repl-opts {:port 9001}})
-
-  (tear-down-repl-env @repl-env)
-
-  @(:server-state @repl-env)
-  @(:browser-state @repl-env)
-  (:connection @(:server-state @repl-env))
-  (.isClosed (:connection @(:server-state @repl-env)))
-  (.isConnected (:connection @(:server-state @repl-env)))
   
   )
-
-(defmethod cljs.repl.browser/handle-post :print
-  [{:keys [content order]} conn _ ]
-  (cljs.repl.browser/constrain-order
-   order
-   (fn []
-     ;; Maybe we should print only in the currently active REPL instead of all REPLs
-     (doseq [[out out-lock] @cljs-outs]
-       (binding [*out* out]
-         (with-lock out-lock
-           (print (read-string content))
-           (.flush *out*))))))
-  (cljs.repl.server/send-and-close conn 200 "ignore__"))
-

@@ -12,4 +12,4 @@
 
 ::ee
 ::eee
-#?(:cljs (cljs.user/prn "e"))
+#?(:cljs (prn "e"))

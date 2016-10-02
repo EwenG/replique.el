@@ -9,37 +9,6 @@
             [cljs.analyzer :as ana])
   (:import [java.io File]))
 
-#_(defn compute-asset-path [asset-path output-dir rel-path]
-  (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
-        output-dir (if output-dir (str "\"" output-dir "\"") "null")
-        rel-path (if rel-path (str "\"" rel-path "\"") "null")]
-    (str "(function(assetPath, outputDir, relPath) {
-          if(assetPath) {
-            return assetPath;
-          }
-          var computedAssetPath = assetPath? assetPath : outputDir;
-          if(!outputDir ||  !relPath) {
-            return computedAssetpath;
-          }
-          var endsWith = function(str, suffix) {
-            return str.indexOf(suffix, str.length - suffix.length) !== -1;
-          }
-          var origin = window.location.protocol + \"//\" + window.location.hostname + (window.location.port ? ':' + window.location.port: '');
-          var scripts = document.getElementsByTagName(\"script\");
-          for(var i = 0; i < scripts.length; ++i) {
-            var src = scripts[i].src;
-            if(src && endsWith(src, relPath)) {
-              var relPathIndex = src.indexOf(relPath);
-              var originIndex = src.indexOf(origin);
-              if(originIndex === 0) {
-                return src.substring(origin.length+1, relPathIndex);
-              }
-            }
-          }
-          return computedAssetPath;
-        })(" asset-path ", " output-dir ", " rel-path ");\n")))
-
-
 ;;Patch cljs.closure/output-main-file in order to:
 ;; - Avoid the need to provide an :asset-path option. :asset-path is
 ;; computed from the :main namespaces. When using a node.js env,
@@ -121,99 +90,6 @@
       (cljsc/output-main-file opts)))))
 
 
-
-;; Patch cljs.repl.server and cljs.repl.browser in order to support
-;; CORS requests instead of crossPageChannel
-
-(alter-var-root
- #'server/send-and-close
- (constantly
-  (fn send-and-close
-    ([conn status form]
-     (send-and-close conn status form "text/html"))
-    ([conn status form content-type]
-     (send-and-close conn status form content-type "UTF-8"))
-    ([conn status form content-type encoding]
-     (let [byte-form (.getBytes form encoding)
-           content-length (count byte-form)
-           headers (map #(.getBytes (str % "\r\n"))
-                        [(#'server/status-line status)
-                         "Server: ClojureScript REPL"
-                         (str "Content-Type: "
-                              content-type
-                              "; charset=" encoding)
-                         (str "Content-Length: " content-length)
-                         (str "Access-Control-Allow-Origin: *")
-                         (str "Access-Control-Allow-Methods: GET,POST")
-                         ""])]
-       (with-open [os (.getOutputStream conn)]
-         (doseq [header headers]
-           (.write os header 0 (count header)))
-         (.write os byte-form 0 content-length)
-         (.flush os)
-         (.close conn)))))))
-
-(swap! server/handlers assoc :get [])
-
-(server/dispatch-on
- :get
- (fn [{:keys [path]} _ _]
-   (some #(.endsWith path %) (keys brepl/ext->mime-type)))
- brepl/send-static)
-
-(defn normalize-ip-address [address]
-  (cond (= "0.0.0.0" address) "127.0.0.1"
-        (= "0:0:0:0:0:0:0:1" address) "127.0.0.1"
-        :else address))
-
-(server/dispatch-on
- :get
- (fn [{:keys [path]} _ _]
-   (= path "/"))
- (fn [request conn opts]
-   (when (and cljs.repl.browser/browser-state
-              (:return-value-fn @cljs.repl.browser/browser-state))
-     ;; When the browser disconnects, it seems that writing in the socket does not always
-     ;; throw an exception. As a consequence the repl may hang for ever because it waits for
-     ;; a response from the browser. This kind of mitigates this situation (reloading the page
-     ;; should unblock the repl)
-     ((:return-value-fn @cljs.repl.browser/browser-state)
-      "{:status :error
-       :value \"Connection broken\"}"))
-   (let [url (format "http://%s" (:host (:headers request)))]
-     (server/send-and-close
-      conn 200
-      (str "<html>
-<head></head>
-<body>
-<script>var CLOSURE_UNCOMPILED_DEFINES = null;</script>
-<script src=\"goog/base.js\"></script>
-<script src=\"cljs_deps.js\"></script>
-<script>
-goog.require(\"ewen.replique.cljs_env.repl\");
-</script>
-<script>
-goog.require(\"ewen.replique.cljs_env.browser\");
-</script>
-<script>
-ewen.replique.cljs_env.repl.connect(\"" url "\");
-</script>
-</body>
-</html>")
-      "text/html"))))
-
-(defmethod brepl/handle-post :ready [_ conn _]
-  (send-via brepl/es brepl/ordering (fn [_] {:expecting nil :fns {}}))
-  (brepl/send-for-eval
-   conn
-   (cljsc/-compile
-    '[(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)
-      (set! *print-err-fn* ewen.replique.cljs-env.repl/repl-print)
-      (set! *print-newline* true)
-      (when (pos? (count ewen.replique.cljs-env.repl/print-queue))
-        (ewen.replique.cljs-env.repl/flush-print-queue!))]
-    {})
-   identity))
 
 ;; Avoid calling ana/analyze two times when evaluating a form at the repl.
 ;; This is achieved by removing wrap-js.

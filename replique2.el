@@ -55,9 +55,6 @@
                               repl))
                       (repl (if (replique/contains? repl :chan)
                                 (replique/assoc repl :chan '**)
-                              repl))
-                      (repl (if (replique/contains? repl :eval-chan)
-                                (replique/assoc repl :eval-chan '**)
                               repl)))
                  repl)))
      (mapcar 'replique-edn/pr-str))
@@ -309,21 +306,17 @@
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (replique/send-input-from-source-clj-cljs
    (format "(clojure.core/in-ns '%s)" ns-name)
-   'replique/display-eval-result
    tooling-repl clj-repl))
 
 (defun replique/in-ns-cljs (ns-name tooling-repl cljs-repl)
   (replique/send-input-from-source-clj-cljs
    (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   'replique/display-eval-result
    tooling-repl cljs-repl))
 
 (defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
   (replique/send-input-from-source-cljc
    (format "(clojure.core/in-ns '%s)" ns-name)
    (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   'replique/display-eval-result
-   'replique/display-eval-results
    tooling-repl clj-repl cljs-repl))
 
 (defun replique/in-ns (ns-name)
@@ -459,46 +452,6 @@ This allows you to temporarily modify read-only buffers too."
            (replique/message-nolog
             (replique/format-eval-message cljs-msg))))))
 
-(defun replique/format-load-file-message (msg)
-  (if (replique/get msg :error)
-      (let ((value (replique/get msg :value))
-            (repl-type (replique/get msg :repl-type)))
-        (if (string-prefix-p "Error:" value)
-            (format "(%s) load-file: %s"
-                    (replique/keyword-to-string repl-type) value)
-          (format "(%s) load-file: Error: %s"
-                  (replique/keyword-to-string repl-type) value)))
-    (let ((result (replique/get msg :result))
-          (repl-type (replique/get msg :repl-type)))
-      (format "(%s) load-file: %s"
-              (replique/keyword-to-string repl-type) result))))
-
-(defun replique/display-load-file-result (msg buff)
-  (when (not (seq-contains (replique/visible-buffers) buff))
-    (replique/message-nolog
-     (replique/format-load-file-message msg))))
-
-(defun replique/display-load-file-results (msg1 msg2 clj-buff cljs-buff)
-  (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (seq-find (lambda (msg)
-                           (equal :clj (replique/get msg :repl-type)))
-                         (list msg1 msg2)))
-        (cljs-msg (seq-find (lambda (msg)
-                            (equal :cljs (replique/get msg :repl-type)))
-                          (list msg1 msg2))))
-    (cond ((and (not (seq-contains visible-buffers clj-buff))
-                (not (seq-contains visible-buffers cljs-buff)))
-           (replique/message-nolog
-            "%s\n%s"
-            (replique/format-load-file-message clj-msg)
-            (replique/format-load-file-message cljs-msg)))
-          ((not (seq-contains visible-buffers clj-buff))
-           (replique/message-nolog
-            (replique/format-load-file-message clj-msg)))
-          ((not (seq-contains visible-buffers cljs-buff))
-           (replique/message-nolog
-            (replique/format-load-file-message cljs-msg))))))
-
 (defun replique/file-in-root-dir (tooling-repl file-name)
   (and file-name
        (equal (replique/get tooling-repl :directory)
@@ -605,79 +558,27 @@ This allows you to temporarily modify read-only buffers too."
       (insert old-input))))
 
 (defun replique/send-input-from-source-clj-cljs
-    (input callback props repl)
-  (let ((buff (replique/get repl :buffer))
-        (eval-chan (replique/get repl :eval-chan)))
+    (input props repl)
+  (let ((buff (replique/get repl :buffer)))
     (with-current-buffer buff
-      (replique/comint-send-input-from-source input))
-    (replique-async/<!
-     eval-chan
-     (lambda (msg)
-       (when msg
-         (funcall callback msg buff))))))
+      (replique/comint-send-input-from-source input))))
 
 (defun replique/send-input-from-source-cljc
-    (input-clj input-cljs display-result-fn display-results-fn
-               props clj-repl cljs-repl)
+    (input-clj input-cljs props clj-repl cljs-repl)
   (let ((clj-buff (replique/get clj-repl :buffer))
-        (clj-eval-chan (replique/get clj-repl :eval-chan))
-        (cljs-buff (replique/get  cljs-repl :buffer))
-        (cljs-eval-chan (replique/get cljs-repl :eval-chan)))
+        (cljs-buff (replique/get  cljs-repl :buffer)))
     (when clj-buff
       (with-current-buffer clj-buff
         (replique/comint-send-input-from-source input-clj)))
     (when cljs-buff
       (with-current-buffer cljs-buff
-        (replique/comint-send-input-from-source input-cljs)))
-    (cond ((and clj-buff cljs-buff)
-           (let ((chan (replique-async/chan)))
-             (replique-async/<!
-              clj-eval-chan
-              (lambda (msg)
-                (when msg
-                  (replique-async/put! chan msg))))
-             (replique-async/<!
-              cljs-eval-chan
-              (lambda (msg)
-                (when msg
-                  (replique-async/put! chan msg))))
-             (replique-async/<!
-              chan
-              (lambda (msg1)
-                (replique-async/<!
-                 chan
-                 (lambda (msg2)
-                   (funcall display-results-fn
-                            msg1 msg2 clj-buff cljs-buff))))
-              t)))
-          (clj-buff
-           (replique-async/<!
-                     clj-eval-chan
-                     (lambda (msg)
-                       (when msg
-                         (funcall display-result-fn msg clj-buff)))
-                     t))
-          (cljs-buff
-           (replique-async/<!
-                     cljs-eval-chan
-                     (lambda (msg)
-                       (when msg
-                         (funcall display-result-fn msg cljs-buff)))
-                     t)))))
+        (replique/comint-send-input-from-source input-cljs)))))
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
-   (clojure-mode . (-partial
-                    'replique/send-input-from-source-clj-cljs
-                    input 'replique/display-eval-result))
-   (clojurescript-mode . (-partial
-                          'replique/send-input-from-source-clj-cljs
-                          input 'replique/display-eval-result))
-   (clojurec-mode . (-partial
-                     'replique/send-input-from-source-cljc
-                     input input
-                     'replique/display-eval-result
-                     'replique/display-eval-results))))
+   (clojure-mode . (-partial'replique/send-input-from-source-clj-cljs input ))
+   (clojurescript-mode . (-partial'replique/send-input-from-source-clj-cljs input))
+   (clojurec-mode . (-partial'replique/send-input-from-source-cljc input input))))
 
 (defun replique/eval-region (start end)
   "Eval the currently highlighted region."
@@ -702,27 +603,20 @@ This allows you to temporarily modify read-only buffers too."
   (if clj-repl
       (replique/send-input-from-source-clj-cljs
        (format "(clojure.core/load-file \"%s\")" file-path)
-       'replique/display-load-file-result
        props clj-repl)
     (replique/send-input-from-source-clj-cljs
-     (format "(ewen.replique.cljs-env.macros/load-file :clj \"%s\")"
-             file-path)
-     'replique/display-load-file-result
+     (format "(ewen.replique.cljs-env.macros/load-file :clj \"%s\")" file-path)
      props cljs-repl)))
 
 (defun replique/load-file-cljs (file-path props cljs-repl)
   (replique/send-input-from-source-clj-cljs
-   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")"
-           file-path)
-   'replique/display-load-file-result
+   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
    props cljs-repl))
 
 (defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
   (replique/send-input-from-source-cljc
    (format "(clojure.core/load-file \"%s\")" file-path)
    (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
-   'replique/display-load-file-result
-   'replique/display-load-file-results
    props clj-repl cljs-repl))
 
 (defun replique/restart-cljs-repls (tooling-repl)
@@ -731,16 +625,9 @@ This allows you to temporarily modify read-only buffers too."
                                         :repl-type :cljs)))
     (mapcar (lambda (cljs-repl)
               (replique/send-input-from-source-clj-cljs
-               ":cljs/quit"
-               (lambda (msg buff)
-                 (replique/send-input-from-source-clj-cljs
-                  "(ewen.replique.server-cljs/cljs-repl)"
-                  (lambda (msg buff)
-                    nil)
-                  tooling-repl
-                  cljs-repl))
-               tooling-repl
-               cljs-repl))
+               ":cljs/quit" tooling-repl cljs-repl)
+              (replique/send-input-from-source-clj-cljs
+               "(ewen.replique.server-cljs/cljs-repl)" tooling-repl cljs-repl))
             cljs-repls)))
 
 (defun replique/load-cljs-repl-env (tooling-repl &optional callback)
@@ -992,14 +879,12 @@ The following commands are available:
   (let* ((buffer (replique/get repl-props :buffer))
          (host (replique/get repl-props :host))
          (port (replique/get repl-props :port))
-         (eval-chan (replique/get repl-props :eval-chan))
          (directory (replique/get repl-props :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
       (delete-process proc))
     (kill-buffer buffer)
-    (replique-async/close! eval-chan)
     (setq replique/repls (delete repl-props replique/repls))
     (when (not dont-save-repls?)
       (replique/save-repls directory))
@@ -1209,8 +1094,7 @@ The following commands are available:
          (replique-async/<!
           chan
           (lambda (resp)
-            (let ((session (replique/get resp :client))
-                  (eval-chan (replique-async/chan)))
+            (let ((session (replique/get resp :client)))
               ;; Reset process filter to the default one
               (set-process-filter proc 'comint-output-filter)
               (set-buffer buff)
@@ -1222,8 +1106,7 @@ The following commands are available:
                                              :repl-type (or repl-type :clj)
                                              :session session
                                              :ns 'user
-                                             :buffer buff
-                                             :eval-chan eval-chan)))
+                                             :buffer buff)))
                 (push repl replique/repls)
                 (replique/save-repls directory)
                 ;; Save REPL props when its name changes. The hook will run for interactive
@@ -1238,7 +1121,7 @@ The following commands are available:
                   ;; Third parameter is nil because the function does not use the tooling repl
                   ;; anyway
                   (replique/send-input-from-source-clj-cljs
-                   "(ewen.replique.server/cljs-repl)" (lambda (msg buff) nil) nil repl))
+                   "(ewen.replique.server/cljs-repl)" nil repl))
                 (display-buffer buff))))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1494,14 +1377,11 @@ The following commands are available:
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; support for no cljs-env
-
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
-
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
-
-;; Cljs exceptions printing
-;; multi-process handling
-
 ;; multi-process -> print directory in messages
+
+;; Handle all usefull repl options
+;; Cljs exceptions printing
 
 ;; replique.el ends here
