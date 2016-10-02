@@ -283,7 +283,9 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 
 (defn can-write-file? [path]
   (let [f (File. path)]
-    (and (.canWrite f) (not (.isDirectory f)))))
+    (or (not (.exists f))
+        (and (.canWrite f)
+             (not (.isDirectory f))))))
 
 (defn port-number? [port-nb]
   (< -1 port-nb 65535))
@@ -613,7 +615,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
   (let [cljs-env-opts (read-string cljs-env-opts)
         conformed-msg (s/conform ::cljs-env cljs-env-opts)]
     (if (= ::s/invalid conformed-msg)
-      {:invalid (s/explain-str ::cljs-env conformed-msg)}
+      {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
       (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)]
         (when @cljs-server (stop-cljs-server))
         (try
@@ -629,6 +631,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 (comment
   (server/tooling-msg-handle
    {:type :set-cljs-env
+    :directory server/directory
     :cljs-env-opts "{:cljs-env-type :browser
                     :compiler-opts {:output-to \"out/main.js\"}
                     :repl-opts {:port 9001}}"})

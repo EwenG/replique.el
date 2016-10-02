@@ -630,7 +630,7 @@ This allows you to temporarily modify read-only buffers too."
               (message (replique-edn/pr-str (replique/get resp :error)))
               (message "Loading Clojurescript REPL environement: failed"))
              ((replique/get resp :invalid)
-              (message (s-replace-all '(("%" . "%%")) (replique/get resp :invalid))))
+              (message (replace-regexp-in-string "%" "%%" (replique/get resp :invalid))))
              (t
               (replique/restart-cljs-repls tooling-repl)
               (message "Loading Clojurescript REPL environement: done")))
