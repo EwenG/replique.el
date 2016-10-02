@@ -47,8 +47,11 @@
      (.setTimeoutInterval conn 0)
      (.send conn url "POST" data nil))))
 
-(defn wrap-message [t data session]
-  (pr-str {:type t :content data :session session}))
+(defn wrap-message
+  ([t data]
+   (pr-str {:type t :content data}))
+  ([t data session]
+   (pr-str {:type t :content data :session session})))
 
 (defn flush-print-queue! []
   (let [{:keys [url session]} @connection]
@@ -161,8 +164,8 @@
           (eval-connection url) url (wrap-message :result result session)))))
     conn))
 
-(defn connect [url session]
+(defn connect [url]
   (bootstrap)
-  (reset! connection {:url url :session (or session 0)})
-  (send-result (eval-connection url) url (wrap-message :ready "ready" (or session 0)))
+  (reset! connection {:url url})
+  (send-result (eval-connection url) url (wrap-message :ready "ready"))
   url)

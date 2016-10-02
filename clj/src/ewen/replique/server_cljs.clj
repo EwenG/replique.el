@@ -59,10 +59,12 @@
         :assets
         (and (= :get method) (= path "/"))
         :init
-        (and (= :post method) (not (= (:session content) (:session @cljs-server))))
-        :session-expired
         (and (= :post method) (= :ready (:type content)))
         :ready
+        (and (= :post method)
+             (not= :ready (:type content))
+             (not= (:session content) (:session @cljs-server)))
+        :session-expired
         (and (= :post method) (= :result (:type content)))
         :result
         (and (= :post method) (= :print (:type content)))
@@ -152,9 +154,7 @@
       (close-conn conn))))
 
 (defmethod dispatch-request :init [{{host :host} :headers} conn]
-  (let [{:keys [session] :or {session 0}} @cljs-server
-        url (format "http://%s" host)]
-    (swap! cljs-server assoc :session (inc session))
+  (let [url (format "http://%s" host)]
     (send-and-close
      conn 200
      (str "<html>
@@ -170,7 +170,7 @@ goog.require(\"ewen.replique.cljs_env.repl\");
 goog.require(\"ewen.replique.cljs_env.browser\");
 </script>
 <script>
-ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
+ewen.replique.cljs_env.repl.connect(\"" url "\");
 </script>
 </body>
 </html>")
@@ -213,7 +213,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
 (defmethod dispatch-request :ready [request conn]
   ;; The server accepts connection on a single thread, which remove the need for handling
   ;; synchronization for some of the operations below
-  (let [{:keys [executor conn-queue result-queue first-init?]
+  (let [{:keys [executor conn-queue result-queue session]
          :or {session 0}} @cljs-server
         new-executor (Executors/newSingleThreadExecutor)
         conn-queue (ArrayBlockingQueue. 1)
@@ -224,13 +224,15 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
     (swap! cljs-server assoc
            :executor new-executor
            :conn-queue conn-queue
-           :result-queue result-queue)
+           :result-queue result-queue
+           :session (inc session))
     ;; Init stuff needs to go there and not in the :init method of the REPL, otherwise it
     ;; get lost on browser refresh
     (->> (cljs-env/with-compiler-env @compiler-env
            (cljsc/-compile
             [`(~'ns ~'cljs.user
                (:require ~@default-repl-requires))
+             `(~'swap! ewen.replique.cljs-env.repl/connection ~'assoc :session ~(inc session))
              '(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)
              '(set! *print-err-fn* ewen.replique.cljs-env.repl/repl-print)
              '(set! *print-newline* true)
@@ -627,8 +629,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
 (comment
   (server/tooling-msg-handle
    {:type :set-cljs-env
-    :cljs-env-type :browser
-    :compiler-opts {:output-to "out/main.js"}
-    :repl-opts {:port 9001}})
+    :cljs-env-opts "{:cljs-env-type :browser
+                    :compiler-opts {:output-to \"out/main.js\"}
+                    :repl-opts {:port 9001}}"})
   
   )

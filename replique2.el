@@ -1353,20 +1353,20 @@ The following commands are available:
 ;; var explorer
 ;; exceptions explorer (fold/unfold?)
 ;; Check reflection *warn-on-reflection*
-;; compliment invalidate memoized on classpath update
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
 ;; Rename ewen.replique to replique
 ;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
-;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; support for no cljs-env
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
+;; Set the asset path in repl-env on :ready because it is used elswhere (parsestacktrace ...), browser-env specific
 
+;; compliment invalidate memoized on classpath update
+;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; Handle all usefull repl options
-;; Cljs exceptions printing
 
 ;; replique.el ends here
