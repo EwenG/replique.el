@@ -115,10 +115,11 @@
       (dispatch-request request conn)
       (close-conn conn))))
 
-(defn start-cljs-server [port]
+(defn start-cljs-server [host port]
   {:pre [(not (nil? @compiler-env))]}
   (when (= :stopped (:state @cljs-server))
-    (let [ss (ServerSocket. port 0 (InetAddress/getLoopbackAddress))
+    ;; host=nil returns loopback
+    (let [ss (ServerSocket. port 0 (InetAddress/getByName host)) 
           accept-fn (bound-fn []
                       (when-let [conn (try (.accept ss)
                                            (catch Exception _))]
@@ -386,6 +387,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
                                        'ewen.replique.cljs_env.browser]}
                            (when main {:main main}))
      :repl-opts {:analyze-path []
+                 :host "127.0.0.1"
                  :port port}}))
 
 (defmethod init-opts :browser [{{output-to :output-to} :compiler-opts :as opts}]
@@ -515,7 +517,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
    (let [compiler-env* (-> comp-opts
                            closure/add-implicit-options
                            cljs-env/default-compiler-env)
-         ;; Merge repl-opts in browserenv because cljs.repl expects this. This is weird
+         ;; Merge repl-opts in browserenv because clojurescript expects this. This is weird
          repl-env* (merge (BrowserEnv. repl-opts) repl-opts)]
      (cljs-env/with-compiler-env compiler-env*
        (comp/with-core-cljs nil
@@ -614,7 +616,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\", " (inc session) ");
         (when @cljs-server (stop-cljs-server))
         (try
           (init-browser-env compiler-opts repl-opts (:executor @cljs-server))
-          (start-cljs-server (:port repl-opts))
+          (start-cljs-server (:host repl-opts) (:port repl-opts))
           (catch Exception e
             (stop-cljs-server)
             (reset! compiler-env nil)
