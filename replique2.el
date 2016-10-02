@@ -427,30 +427,15 @@ This allows you to temporarily modify read-only buffers too."
               (replique/keyword-to-string repl-type) ns result))))
 
 (defun replique/display-eval-result (msg buff)
+  ;; Concat to the current message in order to handle displaying results from cljc files
+  ;; Note that (current-message) is cleared on any user action
   (when (not (seq-contains (replique/visible-buffers) buff))
-    (replique/message-nolog
-     (replique/format-eval-message msg))))
-
-(defun replique/display-eval-results (msg1 msg2 clj-buff cljs-buff)
-  (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (seq-find (lambda (msg)
-                             (equal :clj (replique/get msg :repl-type)))
-                           (list msg1 msg2)))
-        (cljs-msg (seq-find (lambda (msg)
-                            (equal :cljs (replique/get msg :repl-type)))
-                          (list msg1 msg2))))
-    (cond ((and (not (seq-contains visible-buffers clj-buff))
-                (not (seq-contains visible-buffers cljs-buff)))
-           (replique/message-nolog
-            "%s\n%s"
-            (replique/format-eval-message clj-msg)
-            (replique/format-eval-message cljs-msg)))
-          ((not (seq-contains visible-buffers clj-buff))
-           (replique/message-nolog
-            (replique/format-eval-message clj-msg)))
-          ((not (seq-contains visible-buffers cljs-buff))
-           (replique/message-nolog
-            (replique/format-eval-message cljs-msg))))))
+    (let ((current-message (if (current-message)
+                               (concat (current-message) "\n")
+                             (current-message))))
+      (->> (replique/format-eval-message msg)
+           (concat current-message)
+           replique/message-nolog))))
 
 (defun replique/file-in-root-dir (tooling-repl file-name)
   (and file-name
