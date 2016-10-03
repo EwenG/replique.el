@@ -514,39 +514,36 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
                    "document.write('<script>if (typeof goog != \"undefined\") {ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");} else { console.warn(\"ClojureScript could not load :main, did you forget to specify :asset-path?\"); };</script>');")))
           "})();\n"))))
 
-(defn init-browser-env
-  ([comp-opts repl-opts executor]
-   (init-browser-env comp-opts repl-opts executor true))
-  ([comp-opts repl-opts executor output-main-file?]
-   (let [compiler-env* (-> comp-opts
-                           closure/add-implicit-options
-                           cljs-env/default-compiler-env)
-         ;; Merge repl-opts in browserenv because clojurescript expects this. This is weird
-         repl-env* (merge (BrowserEnv. repl-opts) repl-opts)]
-     (cljs-env/with-compiler-env compiler-env*
-       (comp/with-core-cljs nil
-         (fn []
-           (let [port (:port repl-opts)
-                 repl-src "ewen/replique/cljs_env/repl.cljs"
-                 benv-src "ewen/replique/cljs_env/browser.cljs"
-                 ;; Compiling cljs.pprint because it is part of default-repl-requires
-                 pprint-src "cljs/pprint.cljs"
-                 repl-compiled (repl-compile-cljs repl-src comp-opts false)
-                 benv-compiled (repl-compile-cljs benv-src comp-opts false)
-                 pprint-compiled (repl-compile-cljs pprint-src comp-opts false)]
-             (repl-cljs-on-disk repl-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
-             (repl-cljs-on-disk benv-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
-             (repl-cljs-on-disk pprint-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
-             (->> (refresh-cljs-deps comp-opts)
-                  (closure/output-deps-file
-                   (assoc comp-opts :output-to
-                          (str (util/output-directory comp-opts)
-                               File/separator "cljs_deps.js"))))
-             (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
-               util/mkdirs (spit (slurp (io/resource "goog/deps.js"))))
-             (when output-main-file? (output-main-file comp-opts port))))))
-     (reset! compiler-env compiler-env*)
-     (reset! repl-env repl-env*))))
+(defn init-browser-env [comp-opts repl-opts executor]
+  (let [compiler-env* (-> comp-opts
+                          closure/add-implicit-options
+                          cljs-env/default-compiler-env)
+        ;; Merge repl-opts in browserenv because clojurescript expects this. This is weird
+        repl-env* (merge (BrowserEnv. repl-opts) repl-opts)]
+    (cljs-env/with-compiler-env compiler-env*
+      (comp/with-core-cljs nil
+        (fn []
+          (let [port (:port repl-opts)
+                repl-src "ewen/replique/cljs_env/repl.cljs"
+                benv-src "ewen/replique/cljs_env/browser.cljs"
+                ;; Compiling cljs.pprint because it is part of default-repl-requires
+                pprint-src "cljs/pprint.cljs"
+                repl-compiled (repl-compile-cljs repl-src comp-opts false)
+                benv-compiled (repl-compile-cljs benv-src comp-opts false)
+                pprint-compiled (repl-compile-cljs pprint-src comp-opts false)]
+            (repl-cljs-on-disk repl-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+            (repl-cljs-on-disk benv-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+            (repl-cljs-on-disk pprint-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+            (->> (refresh-cljs-deps comp-opts)
+                 (closure/output-deps-file
+                  (assoc comp-opts :output-to
+                         (str (util/output-directory comp-opts)
+                              File/separator "cljs_deps.js"))))
+            (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
+              util/mkdirs (spit (slurp (io/resource "goog/deps.js"))))
+            (output-main-file comp-opts port)))))
+    (reset! compiler-env compiler-env*)
+    (reset! repl-env repl-env*)))
 
 (defmethod server/tooling-msg-handle :shutdown [msg]
   (with-tooling-response msg
@@ -616,11 +613,12 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
         conformed-msg (s/conform ::cljs-env cljs-env-opts)]
     (if (= ::s/invalid conformed-msg)
       {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
-      (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)]
+      (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)
+            {:keys [host port]} repl-opts]
         (when @cljs-server (stop-cljs-server))
         (try
           (init-browser-env compiler-opts repl-opts (:executor @cljs-server))
-          (start-cljs-server (:host repl-opts) (:port repl-opts))
+          (start-cljs-server host port)
           (catch Exception e
             (stop-cljs-server)
             (reset! compiler-env nil)

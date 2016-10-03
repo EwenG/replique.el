@@ -1363,7 +1363,8 @@ The following commands are available:
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
-;; Set the asset path in repl-env on :ready because it is used elswhere (parsestacktrace ...), browser-env specific
+;; Set the asset path in repl-env on :ready because it is used elswhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
+;; The cljs-env makes no use of :repl-require
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
