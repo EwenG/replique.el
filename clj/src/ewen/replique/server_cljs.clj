@@ -22,6 +22,7 @@
             [cljs.stacktrace :as st]
             [clojure.edn :as edn])
   (:import [java.io File BufferedReader InputStreamReader]
+           [java.nio.file Files LinkOption]
            [java.util.concurrent ArrayBlockingQueue Executors ThreadFactory
             RejectedExecutionException ExecutorService TimeUnit]
            [java.net SocketException ServerSocket InetAddress]
@@ -279,19 +280,21 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 
 
 
+(defn is-main-file? [path]
+  (with-open [r (io/reader path)]
+    (.contains (.readLine r) "** Replique main file **")))
 
-
-(defn can-write-file? [path]
-  (let [f (File. path)]
-    (or (not (.exists f))
-        (and (.canWrite f)
-             (not (.isDirectory f))))))
+(defn can-write-main-file? [path]
+  (let [p (.toPath (File. path))]
+    (and (not (Files/isDirectory ^Path p (make-array LinkOption 0)))
+         (Files/isReadable ^Path p)
+         (is-main-file? path))))
 
 (defn port-number? [port-nb]
   (< -1 port-nb 65535))
 
 (s/def ::cljs-env-type #{:browser :webapp})
-(s/def ::output-to can-write-file?)
+(s/def ::output-to can-write-main-file?)
 (s/def ::main string?)
 (s/def ::compiler-opts (s/keys :req-un [::output-to] :opt-un [::main]))
 (s/def ::port port-number?)
@@ -456,7 +459,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
   (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
         output-dir (if output-dir (str "\"" output-dir "\"") "null")
         rel-path (if rel-path (str "\"" rel-path "\"") "null")]
-    (str "(function(assetPath, outputDir, relPath) {
+    (str "
+          (function(assetPath, outputDir, relPath) {
           if(assetPath) {
             return assetPath;
           }
@@ -502,7 +506,11 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
                    nil)]
     (cljsc/output-one-file
      opts
-     (str "(function() {\n"
+     ;; The first line is used to recognize replique main files. While loading a cljs-env,
+     ;; replique will refuse to override non-replique-main-files
+     (str "
+          // ** Replique main file **
+          (function() {\n"
           "var assetPath = " (compute-asset-path (:asset-path opts) (util/output-directory opts) rel-path)
           "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
           "if(typeof goog == \"undefined\") document.write('<script src=\"'+ assetPath +'/goog/base.js\"></script>');\n"
