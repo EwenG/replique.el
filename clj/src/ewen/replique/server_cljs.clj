@@ -242,11 +242,11 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
             {}))
          make-eval-task
          (.submit new-executor))
+    (swap! cljs-server assoc
+           :state :ready)
     (try (.put conn-queue conn)
          (catch InterruptedException e
-           (close-conn conn)))
-    (swap! cljs-server assoc
-           :state :ready)))
+           (close-conn conn)))))
 
 (defmethod dispatch-request :result [{:keys [content]} conn]
   (try 
@@ -529,22 +529,22 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
            (let [port (:port repl-opts)
                  repl-src "ewen/replique/cljs_env/repl.cljs"
                  benv-src "ewen/replique/cljs_env/browser.cljs"
+                 ;; Compiling cljs.pprint because it is part of default-repl-requires
+                 pprint-src "cljs/pprint.cljs"
                  repl-compiled (repl-compile-cljs repl-src comp-opts false)
-                 benv-compiled (repl-compile-cljs benv-src comp-opts false)]
-             (repl-cljs-on-disk
-              repl-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
-             (repl-cljs-on-disk
-              benv-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+                 benv-compiled (repl-compile-cljs benv-src comp-opts false)
+                 pprint-compiled (repl-compile-cljs pprint-src comp-opts false)]
+             (repl-cljs-on-disk repl-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+             (repl-cljs-on-disk benv-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
+             (repl-cljs-on-disk pprint-compiled (cljs.repl/-repl-options repl-env*) comp-opts)
              (->> (refresh-cljs-deps comp-opts)
                   (closure/output-deps-file
                    (assoc comp-opts :output-to
                           (str (util/output-directory comp-opts)
                                File/separator "cljs_deps.js"))))
              (doto (io/file (util/output-directory comp-opts) "goog" "deps.js")
-               util/mkdirs
-               (spit (slurp (io/resource "goog/deps.js"))))
-             (when output-main-file?
-               (output-main-file comp-opts port))))))
+               util/mkdirs (spit (slurp (io/resource "goog/deps.js"))))
+             (when output-main-file? (output-main-file comp-opts port))))))
      (reset! compiler-env compiler-env*)
      (reset! repl-env repl-env*))))
 
