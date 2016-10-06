@@ -1,6 +1,5 @@
 (ns ewen.replique.server-cljs
-  (:require [ewen.replique.server :refer [with-tooling-response]
-             :as server]
+  (:require [ewen.replique.server :refer [with-tooling-response] :as server]
             [ewen.replique.elisp-printer :as elisp]
             [clojure.core.server :refer [*session*]]
             [clojure.java.io :as io]
@@ -15,14 +14,12 @@
             [clojure.string :as string]
             [cljs.js-deps :as deps]
             [cljs.closure :as cljsc]
-            [ewen.replique.cljs]
             [clojure.data.json :as json]
             [clojure.spec :as s]
             [cljs.repl.server]
             [cljs.stacktrace :as st]
             [clojure.edn :as edn])
   (:import [java.io File BufferedReader InputStreamReader]
-           [java.nio.file Files LinkOption]
            [java.util.concurrent ArrayBlockingQueue Executors ThreadFactory
             RejectedExecutionException ExecutorService TimeUnit]
            [java.net SocketException ServerSocket InetAddress]
@@ -278,48 +275,6 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 
 
 
-
-
-(defn is-main-file? [path]
-  (with-open [r (io/reader path)]
-    (.contains (.readLine r) "** Replique main file **")))
-
-(defn can-write-main-file? [path]
-  (let [p (.toPath (File. path))]
-    (and (not (Files/isDirectory ^Path p (make-array LinkOption 0)))
-         (Files/isReadable ^Path p)
-         (is-main-file? path))))
-
-(defn port-number? [port-nb]
-  (< -1 port-nb 65535))
-
-(s/def ::cljs-env-type #{:browser :webapp})
-(s/def ::output-to can-write-main-file?)
-(s/def ::main string?)
-(s/def ::compiler-opts (s/keys :req-un [::output-to] :opt-un [::main]))
-(s/def ::port port-number?)
-(s/def ::repl-opts (s/keys :req-un [::port]))
-(defmulti cljs-env-type :cljs-env-type)
-(defmethod cljs-env-type :browser [_]
-  (s/keys :req-un [::cljs-env-type ::compiler-opts ::repl-opts]))
-(defmethod cljs-env-type :webapp [_]
-  (s/and (s/keys :req-un [::cljs-env-type ::compiler-opts ::repl-opts])
-         #(contains? (:compiler-opts %) :main)))
-(s/def ::cljs-env (s/multi-spec cljs-env-type :cljs-env-type))
-
-(comment
-  (s/conform ::cljs-env {:cljs-env-type :browser
-                         :compiler-opts {:output-to "out/main.js"}
-                         :repl-opts {:port 9001}})
-  (s/explain ::cljs-env {:cljs-env-type :browser
-                         :compiler-opts {:output-to "out/main.js"}
-                         :repl-opts {:port 9001}})
-  (s/explain-str ::cljs-env {:cljs-env-type :browser
-                             :compiler-opts {:output-to "out/main.js"}
-                             :repl-opts2 {:port 9001}})
-  (s/explain-str ::cljs-env [])
-  )
-
 (defn f->src [f]
   (cond (util/url? f) f
         (.exists (io/file f)) (io/file f)
@@ -381,31 +336,6 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (doseq [source sources]
       (closure/source-on-disk opts source))))
 
-(defmulti init-opts :cljs-env-type)
-
-(defn init-opts* [{{output-to :output-to} :compiler-opts
-                   {port :port main :main} :repl-opts}]
-  (let [output-dir (-> (io/file output-to) (.getAbsoluteFile) (.getParent))]
-    {:compiler-opts (merge {:output-to (-> (io/file output-to) (.getAbsolutePath))
-                            :output-dir output-dir
-                            :optimizations :none
-                            :recompile-dependents false
-                            :preloads ['ewen.replique.cljs_env.repl
-                                       'ewen.replique.cljs_env.browser]}
-                           (when main {:main main}))
-     :repl-opts {:analyze-path []
-                 :host "127.0.0.1"
-                 :port port}}))
-
-(defmethod init-opts :browser [{{output-to :output-to} :compiler-opts :as opts}]
-  (let [opts (init-opts* opts)
-        output-dir (get-in opts [:compiler-opts :output-dir])]
-    (update-in opts [:repl-opts] merge
-               {:static-dir ["." output-dir]})))
-
-(defmethod init-opts :webapp [opts]
-  (init-opts* opts))
-
 (defn load-javascript
   "Accepts a REPL environment, a list of namespaces, and a URL for a
   JavaScript file which contains the implementation for the list of
@@ -459,8 +389,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
   (let [asset-path (if asset-path (str "\"" asset-path "\"") "null")
         output-dir (if output-dir (str "\"" output-dir "\"") "null")
         rel-path (if rel-path (str "\"" rel-path "\"") "null")]
-    (str "
-          (function(assetPath, outputDir, relPath) {
+    (str "(function(assetPath, outputDir, relPath) {
           if(assetPath) {
             return assetPath;
           }
@@ -508,8 +437,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
      opts
      ;; The first line is used to recognize replique main files. While loading a cljs-env,
      ;; replique will refuse to override non-replique-main-files
-     (str "
-          // ** Replique main file **
+     (str "// ** Replique main file **
           (function() {\n"
           "var assetPath = " (compute-asset-path (:asset-path opts) (util/output-directory opts) rel-path)
           "var CLOSURE_UNCOMPILED_DEFINES = " closure-defines ";\n"
@@ -615,31 +543,3 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
                                     :result "nil"}))))})
           (apply concat)))
     (swap! cljs-outs disj [*out* out-lock])))
-
-(defn set-cljs-env [{:keys [type cljs-env-opts] :as msg}]
-  (let [cljs-env-opts (read-string cljs-env-opts)
-        conformed-msg (s/conform ::cljs-env cljs-env-opts)]
-    (if (= ::s/invalid conformed-msg)
-      {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
-      (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)
-            {:keys [host port]} repl-opts]
-        (when @cljs-server (stop-cljs-server))
-        (try
-          (init-browser-env compiler-opts repl-opts (:executor @cljs-server))
-          (start-cljs-server host port)
-          (catch Exception e
-            (stop-cljs-server)
-            (reset! compiler-env nil)
-            (reset! repl-env nil)
-            (throw e)))
-        msg))))
-
-(comment
-  (server/tooling-msg-handle
-   {:type :set-cljs-env
-    :directory server/directory
-    :cljs-env-opts "{:cljs-env-type :browser
-                    :compiler-opts {:output-to \"out/main.js\"}
-                    :repl-opts {:port 9001}}"})
-  
-  )

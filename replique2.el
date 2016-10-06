@@ -1106,7 +1106,7 @@ The following commands are available:
                   ;; Third parameter is nil because the function does not use the tooling repl
                   ;; anyway
                   (replique/send-input-from-source-clj-cljs
-                   "(ewen.replique.server/cljs-repl)" nil repl))
+                   "(ewen.replique.server-cljs/cljs-repl)" nil repl))
                 (display-buffer buff))))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1345,7 +1345,7 @@ The following commands are available:
 ;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
 ;; remote REPL
-;; Interactive function for opening .cljs-repl-env.clj
+;; Interactive function for opening .replique/replique.clj
 ;; jump to definition
 ;; Epresent
 ;; css, garden, js
@@ -1365,9 +1365,15 @@ The following commands are available:
 ;; multi-process -> print directory in messages
 ;; Set the asset path in repl-env on :ready because it is used elswhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
 ;; The cljs-env makes no use of :repl-require
+;; autocomplete interactive command
+;; rename cljs-repl-env
+;; load replique config file on startup and diff it on load
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 ;; Handle all usefull repl options
+
+;; server -> core
+;; server-cljs -> cljs-env
 
 ;; replique.el ends here

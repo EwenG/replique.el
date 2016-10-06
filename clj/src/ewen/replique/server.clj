@@ -172,15 +172,6 @@
                             :result (pr-str result)})))
             (prn result))))
 
-(defmethod tooling-msg-handle :set-cljs-env [msg]
-  (with-tooling-response msg
-    (require 'ewen.replique.server-cljs)
-    ((ns-resolve 'ewen.replique.server-cljs 'set-cljs-env) msg)))
-
-(defn cljs-repl []
-  (require 'ewen.replique.server-cljs)
-  ((ns-resolve 'ewen.replique.server-cljs 'cljs-repl)))
-
 (defn format-meta [{:keys [file] :as meta} keys]
   (let [f (and file (File. file))]
     (if (and f (.exists f))
