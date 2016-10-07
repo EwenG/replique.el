@@ -35,6 +35,7 @@
   where alias has to be registered in the given namespace."
   [comp-env prefix ns]
   (let [[_ alias prefix] (re-matches #"::([^/]+)/(.*)" prefix)
+        resolve-namespace (partial resolve-namespace comp-env)
         alias-ns-name (-> (symbol alias) (resolve-namespace ns) str)]
     (for [kw (keywords comp-env)
           :when (= (namespace kw) alias-ns-name)
