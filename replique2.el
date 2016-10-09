@@ -616,7 +616,7 @@ This allows you to temporarily modify read-only buffers too."
             cljs-repls)))
 
 (defun replique/load-cljs-repl-env (tooling-repl &optional callback)
-  (message "Loading Clojurescript REPL environement...")
+  (message "Loading Clojurescript REPL environment...")
   (let* ((tooling-chan (replique/get tooling-repl :chan))
          (cljs-env-opts (buffer-string)))
     (replique/send-tooling-msg
@@ -628,12 +628,12 @@ This allows you to temporarily modify read-only buffers too."
      (lambda (resp)
        (cond ((replique/get resp :error)
               (message (replique-edn/pr-str (replique/get resp :error)))
-              (message "Loading Clojurescript REPL environement: failed"))
+              (message "Loading Clojurescript REPL environment: failed"))
              ((replique/get resp :invalid)
               (message (replace-regexp-in-string "%" "%%" (replique/get resp :invalid))))
              (t
               (replique/restart-cljs-repls tooling-repl)
-              (message "Loading Clojurescript REPL environement: done")))
+              (message "Loading Clojurescript REPL environment: done")))
        (when callback
          (funcall callback resp))))))
 
