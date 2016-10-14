@@ -19,14 +19,20 @@
     @v))
 
 (extend-protocol Complete
+  clojure.spec.Spec
+  (candidates* [spec context prefix]
+    (candidates (-> spec s/form form->spec) context prefix)))
+
+(extend-protocol Complete
   clojure.lang.Keyword
   (candidates* [k context prefix]
-    (candidates (form->spec (s/get-spec k)) context prefix)))
+    (when-let [spec (s/get-spec k)]
+      (candidates (-> spec s/form form->spec) context prefix))))
 
 (defn set-candidates [s context prefix]
-  (c/and (c/nil? context)
-           (->> (filter #(.startsWith (str %) prefix) s)
-                (into #{}))))
+  (when (c/nil? context)
+    (->> (filter #(.startsWith (str %) prefix) s)
+         (into #{}))))
 
 (extend-protocol Complete
   clojure.lang.IFn
@@ -138,9 +144,6 @@
         (deriv re context prefix)
         nil))))
 
-'({:idx 1, :form [33 __prefix__]})
-'{:clojure.spec/op :clojure.spec/pcat, :ps [#{1111 2}], :ret {}, :ks [:e], :forms [#{1111 2}], :rep+ nil}
-
 (defn spec-impl
   ([pred]
    (cond
@@ -210,6 +213,12 @@
               "eee")
 
   (candidates (-> (s/cat :a ::ss)
+                  s/form
+                  form->spec)
+              '({:idx 0, :form [__prefix__]})
+              "111")
+
+  (candidates (-> (s/cat :a (s/spec #{11111}))
                   s/form
                   form->spec)
               '({:idx 0, :form [__prefix__]})
