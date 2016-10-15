@@ -1,6 +1,7 @@
 (ns compliment.context
   "Utilities for parsing and storing the current completion context."
-  (:require [clojure.walk :refer [walk]]
+  (:require [compliment.core :refer [ensure-ns]]
+            [clojure.walk :refer [walk]]
             [clojure.set]))
 
 (def ^:dynamic *reader-conditionals* #{:cljs :clj})
@@ -55,55 +56,54 @@
   [context]
   (let [parse (fn parse [ctx]
                 (cond
-                 (sequential? ctx)
-                 (when-let [res (first (keep-indexed (fn [idx el]
-                                                       (when-let [p (parse el)]
-                                                         [idx p]))
-                                                     ctx))]
-                   (cons {:idx (first res) :form ctx} (second res)))
+                  (sequential? ctx)
+                  (when-let [res (first (keep-indexed (fn [idx el]
+                                                        (when-let [p (parse el)]
+                                                          [idx p]))
+                                                      ctx))]
+                    (cons {:idx (first res) :form ctx} (second res)))
 
-                 (map? ctx)
-                 (when-let [res (first (keep (fn [[k v]]
-                                               (if-let [p (parse v)]
-                                                 [k :value p]
-                                                 (when-let [p (parse k)]
-                                                   [v :key p])))
-                                             ctx))]
-                   (cons {:idx (first res) :map-role (second res) :form ctx}
-                         (nth res 2)))
+                  (map? ctx)
+                  (when-let [res (first (keep (fn [[k v]]
+                                                (if-let [p (parse v)]
+                                                  [k :value p]
+                                                  (when-let [p (parse k)]
+                                                    [v :key p])))
+                                              ctx))]
+                    (cons {:idx (first res) :map-role (second res) :form ctx}
+                          (nth res 2)))
 
-                 (string? ctx)
-                 (let [idx (.indexOf ^String ctx (name prefix-placeholder))]
-                   (when (>= idx 0)
-                     [{:idx idx :form ctx}]))
+                  (string? ctx)
+                  (let [idx (.indexOf ^String ctx (name prefix-placeholder))]
+                    (when (>= idx 0)
+                      [{:idx idx :form ctx}]))
 
-                 (and (reader-conditional? ctx) (even? (count (:form ctx))))
-                 (let [conditionals (apply array-map (:form ctx))]
-                   (if-let [parsed-clj (-> conditionals :clj parse)]
-                     parsed-clj
-                     (let [conditional-keys (keys conditionals)]
-                       (loop [[k & rest-k] conditional-keys]
-                         (cond (not (keyword? k))
-                               nil
-                               (= :clj k)
-                               (recur (rest conditional-keys))
-                               :else
-                               (if-let [parsed-form (-> conditionals k parse)]
-                                 (do (set! *reader-conditionals*
-                                           (clojure.set/intersection
-                                            *reader-conditionals* (set [k])))
-                                     parsed-form)
-                                 (recur rest-k)))))))
+                  (and (reader-conditional? ctx) (even? (count (:form ctx))))
+                  (let [conditionals (apply array-map (:form ctx))]
+                    (if-let [parsed-clj (-> conditionals :clj parse)]
+                      parsed-clj
+                      (let [conditional-keys (keys conditionals)]
+                        (loop [[k & rest-k] conditional-keys]
+                          (cond (not (keyword? k))
+                                nil
+                                (= :clj k)
+                                (recur (rest conditional-keys))
+                                :else
+                                (if-let [parsed-form (-> conditionals k parse)]
+                                  (do (set! *reader-conditionals*
+                                            (clojure.set/intersection
+                                             *reader-conditionals* (set [k])))
+                                      parsed-form)
+                                  (recur rest-k)))))))
 
-                 (= ctx prefix-placeholder) ()))
-        parsed (parse context)]
-    (when parsed
-      (reverse parsed))))
+                  (= ctx prefix-placeholder) ()))]
+    (parse context)))
 
 (defn cache-context
   "Parses the context, or returns one from cache if it was unchanged."
-  [context-string]
-  (let [context (safe-read-context-string context-string)]
+  [comp-env ns context-string]
+  (let [ns (ensure-ns comp-env ns)
+        context (binding [*ns* ns] (safe-read-context-string context-string))]
     (binding [*reader-conditionals* *reader-conditionals*]
       (when-not (= context :same)
         (reset! previous-context (parse-context context)))
@@ -129,6 +129,9 @@
 
   (safe-read-context-string "#?(:clj __prefix__)")
 
-  "#?(:cljs clo)"
-  )
+  (parse-context '{:e __prefix__ :f 3})
+  (parse-context '{__prefix__ nil})
 
+  (safe-read-context-string "[__prefix__]")
+  (parse-context '[__prefix__])
+  )

@@ -15,7 +15,8 @@
 (defmethod server/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    (let [{:keys [context]} (context/cache-context context)]
+    (let [{:keys [context]} (context/cache-context nil (when ns (symbol ns)) context)
+          context (reverse context)]
      {:candidates (compliment/completions
                    prefix
                    {:ns (when ns (symbol ns))
@@ -42,7 +43,10 @@
 (defmethod server/tooling-msg-handle :cljs-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    (let [{:keys [context]} (context/cache-context context)]
+    (let [{:keys [context]} (context/cache-context
+                             (->CljsCompilerEnv @@cljs-compiler-env)
+                             (when ns (symbol ns)) context)
+          context (reverse context)]
       {:candidates (compliment/completions
                     prefix
                     {:ns (when ns (symbol ns)) :context context
@@ -58,7 +62,10 @@
 (defmethod server/tooling-msg-handle :cljc-completion
   [{:keys [context ns prefix] :as msg}]
   (with-tooling-response msg
-    (let [{:keys [reader-conditionals context]} (context/cache-context context)]
+    (let [{:keys [reader-conditionals context]} (context/cache-context
+                                                 (->CljsCompilerEnv @@cljs-compiler-env)
+                                                 (when ns (symbol ns)) context)
+          context (reverse context)]
       (if (= #{:cljs} reader-conditionals)
         {:candidates (compliment/completions
                       prefix
@@ -118,6 +125,16 @@
    (context/cache-context "(let [e nil]
 __prefix__)"))
   
+  )
+
+(defmethod server/tooling-msg-handle :spec-completion
+  [{:keys [context prefix spec] :as msg}]
+  (with-tooling-response msg
+    (let [{:keys [context]} (context/cache-context nil nil context)]
+     {:candidates nil})))
+
+(defmethod server/tooling-msg-handle :repliquedoc-spec
+  [{:keys [context ns symbol] :as msg}]
   )
 
 

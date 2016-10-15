@@ -59,6 +59,12 @@
 "
                                             :ns "ewen.replique.repliquedoc"
                                             :symbol "ee"})
+
+  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+                                            :context "(prn __prefix__)
+"
+                                            :ns "ewen.replique.repliquedoc"
+                                            :symbol "ee"})
   )
 (comment
   (def ee1 Class)
@@ -199,13 +205,16 @@
             :else nil))))))
 
 (defn handle-repliquedoc [comp-env ns context sym-at-point]
-  (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
-        {:keys [context]} (context/cache-context context)
+  (let [{:keys [context]} (context/cache-context comp-env (when ns (symbol ns)) context)
+        context (reverse context)
+        ns (compliment/ensure-ns comp-env (when ns (symbol ns)))
         sym-at-point (and sym-at-point (symbol sym-at-point))]
     (handle-repliquedoc* comp-env ns context sym-at-point)))
 
 (defn handle-repliquedoc-cljc [comp-env ns context sym-at-point]
-  (let [{:keys [reader-conditionals context]} (context/cache-context context)
+  (let [{:keys [reader-conditionals context]} (context/cache-context
+                                               comp-env (when ns (symbol ns)) context)
+        context (reverse context)
         sym-at-point (and sym-at-point (symbol sym-at-point))]
     (if (= #{:cljs} reader-conditionals)
       (let [ns (compliment/ensure-ns comp-env (when ns (symbol ns)))]
