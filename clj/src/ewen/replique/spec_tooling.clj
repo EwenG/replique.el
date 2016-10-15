@@ -8,8 +8,9 @@
 (alias 'c 'clojure.core)
 
 (declare candidates)
-(declare form->spec)
+(declare from-spec)
 (declare map-spec-impl)
+(declare multi-spec-impl)
 
 (defprotocol Complete
   (candidates* [spec context prefix]))
@@ -22,13 +23,13 @@
 (extend-protocol Complete
   clojure.spec.Spec
   (candidates* [spec context prefix]
-    (candidates (-> spec s/form form->spec) context prefix)))
+    (candidates (from-spec spec) context prefix)))
 
 (extend-protocol Complete
   clojure.lang.Keyword
   (candidates* [k context prefix]
     (when-let [spec (s/get-spec k)]
-      (candidates (-> spec s/form form->spec) context prefix))))
+      (candidates (from-spec spec) context prefix))))
 
 (defn set-candidates [s context prefix]
   (when (c/nil? context)
@@ -45,56 +46,54 @@
 (defn complete? [x]
   (when (instance? ewen.replique.spec_tooling.Complete x) x))
 
-(defn cat-form->spec [key-pred-forms]
-  (let [pairs (partition 2 key-pred-forms)
-        keys (mapv first pairs)
-        ps (mapv (comp form->spec second) pairs)]
-    {::s/op ::s/pcat :ps ps}))
+(defn from-cat [preds]
+  {::s/op ::s/pcat :ps (mapv from-spec preds)})
 
-(defn alt-form->spec [key-pred-forms]
-  (let [pairs (partition 2 key-pred-forms)
-        keys (mapv first pairs)
-        ps (mapv (comp form->spec second) pairs)]
-    {::s/op ::s/alt :ps ps}))
+(defn from-alt [preds]
+  {::s/op ::s/alt :ps (mapv from-spec preds)})
 
-(defn rep-form->spec [pred]
-  {::s/op ::s/rep :p1 (form->spec pred)})
+(defn from-rep [pred]
+  {::s/op ::s/alt :p1 (from-spec pred)})
 
-(defn amp-form->spec [pred preds]
-  {::s/op ::s/amp :p1 (form->spec pred) :ps (mapv form->spec preds)})
+(defn from-amp [pred preds]
+  {::s/op ::s/alt :p1 (from-spec pred) :ps (mapv from-spec preds)})
 
-(defn keys-form->spec [keys-seq]
+(defn from-keys [keys-seq]
   (-> (apply hash-map keys-seq)
       map-spec-impl))
 
-(defn multi-form->spec [mm]
+(defn from-multi [mm]
   (multi-spec-impl (resolve mm)))
+
+(defn from-every [pred]
+  )
 
 ;; Form is a spec OR form is a qualified symbol and can be resolved to a var OR form is something
 ;; that get evaled in order to get the values than the ones from core.spec spec impls.
 ;; Qualified symbols are not evaled in order to customize the candidates* behavior for vars
 ;; It is resolved to a var and not kept as a symbol, otherwise reg-resolve would try to resolve
 ;; it to a spec
-(defn form->spec [form]
-  (when form
-    (cond (seq? form)
-          (let [[spec-sym & spec-rest] form]
-            (cond (= 'clojure.spec/cat spec-sym)
-                  (cat-form->spec spec-rest)
-                  (= 'clojure.spec/alt spec-sym)
-                  (alt-form->spec spec-rest)
-                  (= 'clojure.spec/* spec-sym)
-                  (rep-form->spec (first spec-rest))
-                  (= 'clojure.spec/& spec-sym)
-                  (amp-form->spec (first spec-rest) (drop 1 spec-rest))
-                  (= 'clojure.spec/keys spec-sym)
-                  (keys-form->spec spec-rest)
-                  (= 'clojure.spec/multi-spec spec-sym)
-                  (multi-form->spec (first spec-rest))
-                  :else (eval form)))
-          (c/and (symbol? form) (namespace form) (var? (resolve form)))
-          (resolve form)
-          :else (eval form))))
+(defn from-spec [spec]
+  (when spec
+    (cond
+      (s/regex? spec) (case (::s/op spec)
+                        ::s/pcat (from-cat (:forms spec))
+                        ::s/alt (from-alt (:forms spec))
+                        ::s/rep (from-rep (:forms spec))
+                        ::s/amp (from-amp (:p1 spec) (:forms spec)))
+      (s/spec? spec)
+      (let [form (s/form spec)
+            [spec-sym & spec-rest] form]
+        (cond (= 'clojure.spec/keys spec-sym)
+              (from-keys spec-rest)
+              (= 'clojure.spec/multi-spec spec-sym)
+              (from-multi (first spec-rest))
+              (= 'clojure.spec/every spec-sym)
+              (from-every (first spec-rest))
+              :else (eval form)))
+      (c/and (symbol? spec) (namespace spec) (var? (resolve spec)))
+      (resolve spec)
+      :else (eval spec))))
 
 (defprotocol Specize
   (specize* [_] [_ form]))
@@ -107,8 +106,8 @@
           spec (get reg k)]
       (when spec
         (if-not (ident? spec)
-          (-> spec s/form form->spec)
-          (-> (#'s/deep-resolve reg spec) s/form form->spec))))
+          (from-spec spec)
+          (-> (#'s/deep-resolve reg spec) from-spec))))
     k))
 
 (defn- reg-resolve! [k]
@@ -180,13 +179,16 @@
     (specize* [s] s)
     Complete
     (candidates* [_ [{:keys [form]} & cs :as context] prefix]
-      (let [spec (try ((mm form) nil)
+      (let [spec (try (mm form)
                       (catch IllegalArgumentException e nil))
             specs (if spec #{spec} (->> (vals (methods @mm))
                                         (map (fn [spec-fn] (spec-fn nil)) )
                                         (into #{})))]
         (->> (map #(candidates % context prefix) specs)
              (apply clojure.set/union))))))
+
+(defn every-impl []
+  )
 
 (extend-protocol Specize
   clojure.lang.Keyword
@@ -199,7 +201,7 @@
   (specize* [ifn] (spec-impl ifn))
 
   clojure.spec.Spec
-  (specize* [spec] (-> (s/form spec) form->spec)))
+  (specize* [spec] (from-spec spec)))
 
 (defn candidates [spec context prefix]
   (when (satisfies? Specize spec)
@@ -222,60 +224,42 @@
   (s/def ::rr string?)
   (s/def ::ss #{11111 222222})
   
-  (candidates (-> (s/cat :e (s/cat :f #{1111 2}))
-                  s/form
-                  form->spec)
+  (candidates (s/cat :e (s/cat :f #{1111 2}))
               '({:idx 0, :form [__prefix__ 33]})
               "11")
 
-  (candidates (-> (s/cat :a (s/alt :b #{1111 2} :c #{3333 4444}) :d #{"eeeeee"})
-                  s/form
-                  form->spec)
+  (candidates (s/cat :a (s/alt :b #{1111 2} :c #{3333 4444}) :d #{"eeeeee"})
               '({:idx 1, :form [nil __prefix__]})
               "eee")
 
-  (candidates (-> (s/cat :a ::ss)
-                  s/form
-                  form->spec)
+  (candidates (s/cat :a ::ss)
               '({:idx 0, :form [__prefix__]})
               "111")
 
-  (candidates (-> (s/cat :a (s/spec #{11111}))
-                  s/form
-                  form->spec)
+  (candidates (s/cat :a (s/spec #{11111}))
               '({:idx 2, :form [nil nil __prefix__]})
               "111")
 
-  (candidates (-> (s/* (s/cat :a (s/alt :b string? :c #{1111})))
-                  s/form
-                  form->spec)
+  (candidates (s/* (s/cat :a (s/alt :b string? :c #{1111})))
               '({:idx 0, :form [__prefix__ 33]})
               "11")
 
-  (candidates (-> (s/* #{1111})
-                  s/form
-                  form->spec)
+  (candidates (s/* #{1111})
               '({:idx 0, :form [[__prefix__]]} {:idx 0, :form [__prefix__]})
               "11")
 
-  (candidates (-> (s/& (s/cat :e #{11111 "eeeeeeee"}) string? string?)
-                  s/form
-                  form->spec)
+  (candidates (s/& (s/cat :e #{11111 "eeeeeeee"}) string? string?)
               '({:idx 0, :form [__prefix__]})
-              "eee")
+              "eeee")
 
 
 
   
-  (candidates (-> (s/keys :req [::ss])
-                  s/form
-                  form->spec)
+  (candidates (s/keys :req [::ss])
               '({:idx ::ss :map-role :value :form {::ss __prefix__}})
               "11")
 
-  (candidates (-> (s/keys :req [::ss])
-                  s/form
-                  form->spec)
+  (candidates (s/keys :req [::ss])
               '({:idx nil :map-role :key :form {__prefix__ nil}})
               ":ewen")
 
@@ -303,4 +287,8 @@
                                                   :ss __prefix__}})
               "11")
 
+
+  ;; every
+
+  (s/form (s/& string? number?))
   )
