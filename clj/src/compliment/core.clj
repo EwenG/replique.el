@@ -15,7 +15,6 @@
                                 local-bindings
                                 resources)
             [compliment.sources :refer [all-sources]]
-            [compliment.context :refer [cache-context]]
             [compliment.utils :refer [*extra-metadata*]]
             [compliment.environment :refer [find-ns default-ns ns-var]]
             [clojure.string :refer [join]])
