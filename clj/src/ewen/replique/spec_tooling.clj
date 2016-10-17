@@ -71,7 +71,7 @@
 
 ;; Transforms specs into a spec that can be understand by spec-tooling. Functions are transformed
 ;; into their original var, in order to let antone override the candidates returned by a var.
-;; Specs are removed the :keys, :forms, ... things since it is not needed to compute candidates
+;; Specs are removed their :keys, :forms, ... since it is not needed to compute candidates
 (defn from-spec [spec]
   (when spec
     (cond
@@ -355,6 +355,8 @@
               "11")
 
   ;; every
+
+  (s/every )
 
   )
 
