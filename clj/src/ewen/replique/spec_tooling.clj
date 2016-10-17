@@ -69,11 +69,9 @@
 (defn from-every [pred]
   )
 
-;; Form is a spec OR form is a qualified symbol and can be resolved to a var OR form is something
-;; that get evaled in order to get the values than the ones from core.spec spec impls.
-;; Qualified symbols are not evaled in order to customize the candidates* behavior for vars
-;; It is resolved to a var and not kept as a symbol, otherwise reg-resolve would try to resolve
-;; it to a spec
+;; Transforms specs into a spec that can be understand by spec-tooling. Functions are transformed
+;; into their original var, in order to let antone override the candidates returned by a var.
+;; Specs are removed the :keys, :forms, ... things since it is not needed to compute candidates
 (defn from-spec [spec]
   (when spec
     (cond
@@ -150,7 +148,10 @@
   (= ::s/accept op))
 
 (defn- pcat* [{[p1 & pr :as ps] :ps ret :ret}]
+  ;; (not (every? identity)) - for example, when a predicate was ::s/invalid
+  ;;                           (and thus returned nil)
   (when (every? identity ps)
+    ;; if accept and not pr, the result is flatten, in any cases, (:ret p1) is bubbled up
     (if (accept? p1)
       (if pr
         {::s/op ::s/pcat :ps pr :ret (:ret p1)}
@@ -161,6 +162,8 @@
   (apply clojure.set/union (map :ret ps)))
 
 (defn- alt* [ps]
+  ;; (not (identity ps)) - for example, when a predicate was ::s/invalid
+  ;;                       (and thus returned nil)
   (let [[p1 & pr :as ps] (filter identity ps)]
     (when ps
       (let [ret {::s/op ::s/alt :ps ps}]
@@ -190,6 +193,8 @@
               {::s/op ::s/accept :ret #{p}}
               (let [ret (dt p x)]
                 (when-not (s/invalid? ret) ret)))
+        ;; amp are ignored because it may remove useful candidates results, which also means
+        ;; candidates are not totally accurates
         ::s/amp (deriv p1 x at-point?)
         ::s/pcat (alt2
                   (pcat* {:ps (cons (deriv p0 x at-point?) pr)})
@@ -204,6 +209,10 @@
     (->> (:ret p)
          (map #(candidates % cs prefix))
          (apply clojure.set/union))
+    ;; dp is nil if a predicate was ::s/invalid, which means that if the beginning of the regex
+    ;; is invalid (amp are not checked), we don't try to get candidates at all
+    ;; This is probably a valid behavior since collections matched by regex are often typed by
+    ;; humans in order, contrary to maps
     (if-let [dp (deriv p (nth form deriv-idx) (= idx deriv-idx))]
       (recur dp context prefix (inc deriv-idx))
       nil)))
@@ -309,12 +318,9 @@
               '({:idx 3, :form [6 1111 1111 __prefix__]})
               "22")
 
-  (candidates (s/& (s/cat :e #{11111 "eeeeeeee"}) string? string?)
-              '({:idx 0, :form [__prefix__]})
-              "eeee")
 
 
-
+  ;; keys
   
   (candidates (s/keys :req [::ss])
               '({:idx ::ss :map-role :value :form {::ss __prefix__}})
@@ -348,13 +354,7 @@
                                                   :ss __prefix__}})
               "11")
 
-  (s/conform (s/and (s/* string?) #(even? (count %))) ["e"])
+  ;; every
 
-  (s/conform (s/cat :a (s/& (s/alt :b #{"1" "2"} :c #{3 4}) (fn [x] (string? (second x))))) ["2"])
-
-  (candidates (s/cat :a (s/cat :b #{11111 22222} :c #{33333 44444})
-                     :d (s/cat :e #{55555 66666} :f #{77777 88888}))
-              '({:idx 1, :form [nil __prefix__]})
-              "7777")
   )
 
