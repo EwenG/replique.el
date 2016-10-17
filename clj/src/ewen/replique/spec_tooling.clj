@@ -53,10 +53,11 @@
   {::s/op ::s/alt :ps (mapv from-spec preds)})
 
 (defn from-rep [pred]
-  {::s/op ::s/alt :p1 (from-spec pred)})
+  (let [p1 (from-spec pred)]
+    {::s/op ::s/rep :p1 p1 :p2 p1}))
 
 (defn from-amp [pred preds]
-  {::s/op ::s/alt :p1 (from-spec pred) :ps (mapv from-spec preds)})
+  {::s/op ::s/amp :p1 (from-spec pred)})
 
 (defn from-keys [keys-seq]
   (-> (apply hash-map keys-seq)
@@ -93,6 +94,8 @@
               :else (eval form)))
       (c/and (symbol? spec) (namespace spec) (var? (resolve spec)))
       (resolve spec)
+      (seq? spec)
+      (recur (eval spec))
       :else (eval spec))))
 
 (defprotocol Specize
@@ -122,19 +125,88 @@
           (p x) (recur ps)
           :else false)))
 
-(defn- deriv [p [{:keys [idx form] :as c0} & cs :as context] prefix]
-  (let [{ps :ps :keys [::s/op p1] :as p} (reg-resolve! p)]
+(defn- accept-nil? [p]
+  (let [{:keys [::s/op ps p1 p2] :as p} (reg-resolve! p)]
+    (case op
+      nil nil
+      ::s/accept true
+      ::s/amp (accept-nil? p1)
+      ::s/rep (c/or (identical? p1 p2) (accept-nil? p1))
+      ::s/pcat (every? accept-nil? ps)
+      ::s/alt (c/some accept-nil? ps))))
+
+(defn- dt [pred x]
+  (if pred
+    (if-let [spec (#'s/the-spec pred)]
+      (if (s/valid? spec x)
+        {::s/op ::s/accept}
+        ::s/invalid)
+      (if (ifn? pred)
+        (if (pred x) {::s/op ::s/accept} ::s/invalid)
+        ::s/invalid))
+    {::s/op ::s/accept}))
+
+(defn- accept? [{:keys [::s/op]}]
+  (= ::s/accept op))
+
+(defn- pcat* [{[p1 & pr :as ps] :ps ret :ret}]
+  (when (every? identity ps)
+    (if (accept? p1)
+      (if pr
+        {::s/op ::s/pcat :ps pr :ret (:ret p1)}
+        {::s/op ::s/accept :ret (:ret p1)})
+      {::s/op ::s/pcat :ps ps :ret (:ret p1)})))
+
+(defn ret-union [ps]
+  (apply clojure.set/union (map :ret ps)))
+
+(defn- alt* [ps]
+  (let [[p1 & pr :as ps] (filter identity ps)]
+    (when ps
+      (let [ret {::s/op ::s/alt :ps ps}]
+        (if (nil? pr)
+          (if (accept? p1)
+            {::s/op ::s/accept :ret (:ret p1)}
+            ret)
+          (assoc ret :ret (ret-union ps)))))))
+
+(defn- alt2 [p1 p2]
+  (if (c/and p1 p2)
+    {::s/op ::s/alt :ps [p1 p2] :ret (clojure.set/union (:ret p1) (:ret p2))}
+    (c/or p1 p2)))
+
+(defn- rep* [p1 p2]
+  (when p1
+    (let [r {::s/op ::s/rep :p2 p2}]
+      (if (accept? p1)
+        (assoc r :p1 p2 :ret (:ret p1))
+        (assoc r :p1 p1 :ret (:ret p1))))))
+
+(defn- deriv [p x at-point?]
+  (let [{[p0 & pr :as ps] :ps :keys [::s/op p1 p2] :as p} (reg-resolve! p)]
     (when p
       (case op
-        ::s/accept nil
-        nil (let [candidates (candidates* p cs prefix)]
-              (when (set? candidates)
-                candidates))
-        ::s/amp (let [candidates (deriv p1 context prefix)]
-                  (into #{} (filter #(and-all ps %) candidates)))
-        ::s/pcat (deriv (get ps idx) context prefix)
-        ::s/alt (apply clojure.set/union (doall (map #(deriv % context prefix) ps)))
-        ::s/rep (deriv p1 context prefix)))))
+        nil (if at-point?
+              {::s/op ::s/accept :ret #{p}}
+              (let [ret (dt p x)]
+                (when-not (s/invalid? ret) ret)))
+        ::s/amp (deriv p1 x at-point?)
+        ::s/pcat (alt2
+                  (pcat* {:ps (cons (deriv p0 x at-point?) pr)})
+                  (when (accept-nil? p0) (deriv (pcat* {:ps pr}) x at-point?)))
+        ::s/alt (alt* (map #(deriv % x at-point?) ps))
+        ::s/rep (alt2 (rep* (deriv p1 x at-point?) p2)
+                      (when (accept-nil? p1)
+                        (deriv (rep* p2 p2) x at-point?)))))))
+
+(defn- re-candidates [p [{:keys [idx form]} & cs :as context] prefix deriv-idx]
+  (if (> deriv-idx idx)
+    (->> (:ret p)
+         (map #(candidates % cs prefix))
+         (apply clojure.set/union))
+    (if-let [dp (deriv p (nth form deriv-idx) (= idx deriv-idx))]
+      (recur dp context prefix (inc deriv-idx))
+      nil)))
 
 (defn regex-spec-impl [re]
   (reify
@@ -143,7 +215,7 @@
     Complete
     (candidates* [_ [{:keys [idx form]} & _ :as context] prefix]
       (when (coll? form)
-        (deriv re context prefix)))))
+        (re-candidates re context prefix 0)))))
 
 (defn spec-impl [pred]
   (cond
@@ -198,10 +270,11 @@
   (specize* [s] (specize* (reg-resolve! s)))
 
   clojure.lang.IFn
-  (specize* [ifn] (spec-impl ifn))
+  (specize* [ifn] (spec-impl (from-spec ifn)))
 
   clojure.spec.Spec
-  (specize* [spec] (from-spec spec)))
+  (specize* [spec] (from-spec spec))
+  )
 
 (defn candidates [spec context prefix]
   (when (satisfies? Specize spec)
@@ -224,29 +297,17 @@
   (s/def ::rr string?)
   (s/def ::ss #{11111 222222})
   
-  (candidates (s/cat :e (s/cat :f #{1111 2}))
-              '({:idx 0, :form [__prefix__ 33]})
+  (candidates (s/cat :a (s/cat :b #{22} :c #{1111 2})
+                     :d (s/cat :e #{33} :f #{44}))
+              '({:idx 1 :form [22 __prefix__ __prefix__]})
               "11")
 
-  (candidates (s/cat :a (s/alt :b #{1111 2} :c #{3333 4444}) :d #{"eeeeee"})
-              '({:idx 1, :form [nil __prefix__]})
-              "eee")
-
-  (candidates (s/cat :a ::ss)
-              '({:idx 0, :form [__prefix__]})
-              "111")
-
-  (candidates (s/cat :a (s/spec #{11111}))
-              '({:idx 2, :form [nil nil __prefix__]})
-              "111")
-
-  (candidates (s/* (s/cat :a (s/alt :b string? :c #{1111})))
-              '({:idx 0, :form [__prefix__ 33]})
-              "11")
-
-  (candidates (s/* #{1111})
-              '({:idx 0, :form [[__prefix__]]} {:idx 0, :form [__prefix__]})
-              "11")
+  (candidates (s/cat :a (s/alt :b (s/cat :c #{1 2} :d #{3 4}) :e #{5 6})
+                     :f (s/* #{1111})
+                     :g (s/& #{2222} string?)
+                     :h #{11})
+              '({:idx 3, :form [6 1111 1111 __prefix__]})
+              "22")
 
   (candidates (s/& (s/cat :e #{11111 "eeeeeeee"}) string? string?)
               '({:idx 0, :form [__prefix__]})
@@ -287,8 +348,13 @@
                                                   :ss __prefix__}})
               "11")
 
+  (s/conform (s/and (s/* string?) #(even? (count %))) ["e"])
 
-  ;; every
+  (s/conform (s/cat :a (s/& (s/alt :b #{"1" "2"} :c #{3 4}) (fn [x] (string? (second x))))) ["2"])
 
-  (s/form (s/& string? number?))
+  (candidates (s/cat :a (s/cat :b #{11111 22222} :c #{33333 44444})
+                     :d (s/cat :e #{55555 66666} :f #{77777 88888}))
+              '({:idx 1, :form [nil __prefix__]})
+              "7777")
   )
+
