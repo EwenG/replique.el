@@ -11,6 +11,8 @@
 (declare from-spec)
 (declare map-spec-impl)
 (declare multi-spec-impl)
+(declare tuple-impl)
+(declare every-impl)
 
 (defprotocol Complete
   (candidates* [spec context prefix]))
@@ -66,8 +68,11 @@
 (defn from-multi [mm]
   (multi-spec-impl (resolve mm)))
 
-(defn from-every [pred]
-  )
+(defn from-tuple [preds]
+  (tuple-impl (vec preds)))
+
+(defn from-every [pred {:keys [kind] :as opts}]
+  (every-impl pred opts))
 
 ;; Transforms specs into a spec that can be understand by spec-tooling. Functions are transformed
 ;; into their original var, in order to let antone override the candidates returned by a var.
@@ -87,8 +92,10 @@
               (from-keys spec-rest)
               (= 'clojure.spec/multi-spec spec-sym)
               (from-multi (first spec-rest))
+              (= 'clojure.spec/tuple spec-sym)
+              (from-tuple spec-rest)
               (= 'clojure.spec/every spec-sym)
-              (from-every (first spec-rest))
+              (from-every (first spec-rest) (drop 1 spec-rest))
               :else (eval form)))
       (c/and (symbol? spec) (namespace spec) (var? (resolve spec)))
       (resolve spec)
@@ -268,7 +275,17 @@
         (->> (map #(candidates % context prefix) specs)
              (apply clojure.set/union))))))
 
-(defn every-impl []
+(defn tuple-impl [preds]
+  (reify
+    Specize
+    (specize* [s] s)
+    Complete
+    (candidates* [_ [{:keys [idx form]} & cs :as context] prefix]
+      (when (vector? form)
+        (when-let [pred (get preds idx)]
+          (candidates pred cs prefix))))))
+
+(defn every-impl [pred {:keys [kind] :as opts}]
   )
 
 (extend-protocol Specize
@@ -356,7 +373,8 @@
 
   ;; every
 
-  (s/every )
+  (candidates (s/tuple #{1111 22} #{3333})
+              '({:idx 1 :form [nil __prefix__]})
+              "33")
 
   )
-
