@@ -13,6 +13,9 @@
 (declare multi-spec-impl)
 (declare tuple-impl)
 (declare every-impl)
+(declare merge-impl)
+(declare or-spec-impl)
+(declare and-spec-impl)
 
 (defprotocol Complete
   (candidates* [spec context prefix]))
@@ -34,7 +37,7 @@
       (candidates (from-spec spec) context prefix))))
 
 (defn set-candidates [s context prefix]
-  (when (c/nil? context)
+  (when (c/empty? context)
     (->> (filter #(.startsWith (str %) prefix) s)
          (into #{}))))
 
@@ -69,10 +72,22 @@
   (multi-spec-impl (resolve mm)))
 
 (defn from-tuple [preds]
-  (tuple-impl (vec preds)))
+  (tuple-impl (mapv from-spec preds)))
 
-(defn from-every [pred {:keys [kind] :as opts}]
-  (every-impl pred opts))
+(defn from-merge [key-specs]
+  (merge-impl (mapv from-spec key-specs)))
+
+(defn from-or [key-preds]
+  (->> (drop 1 key-preds)
+       (take-nth 2)
+       (mapv from-spec)
+       or-spec-impl))
+
+(defn from-and [key-preds]
+  (->> (drop 1 key-preds)
+       (take-nth 2)
+       (mapv from-spec)
+       and-spec-impl))
 
 ;; Transforms specs into a spec that can be understand by spec-tooling. Functions are transformed
 ;; into their original var, in order to let antone override the candidates returned by a var.
@@ -96,6 +111,12 @@
               (from-tuple spec-rest)
               (= 'clojure.spec/every spec-sym)
               (from-every (first spec-rest) (drop 1 spec-rest))
+              (= 'clojure.spec/merge spec-sym)
+              (from-merge spec-rest)
+              (= 'clojure.spec/or spec-sym)
+              (from-or spec-rest)
+              (= 'clojure.spec/and spec-sym)
+              (from-and spec-rest)
               :else (eval form)))
       (c/and (symbol? spec) (namespace spec) (var? (resolve spec)))
       (resolve spec)
@@ -285,8 +306,37 @@
         (when-let [pred (get preds idx)]
           (candidates pred cs prefix))))))
 
+(defn map-form->seq-form [{:keys [idx map-role form] :as context-item}]
+  (case map-role
+    :key {:idx 0 :form ['__prefix__ (get form '__prefix__)]}
+    :value {:idx 1 :form [idx (get form idx)]}))
+
 (defn every-impl [pred {:keys [kind] :as opts}]
-  )
+  (reify
+    Specize
+    (specize* [s] s)
+    Complete
+    (candidates* [_ [{:keys [idx form] :as c0} & cs :as context] prefix]
+      (let [kind-pred (c/or kind coll?)]
+        (when (kind-pred form)
+          (let [cs (if (map? form) (cons (map-form->seq-form c0) cs) cs)]
+            (candidates pred cs prefix)))))))
+
+(defn merge-impl [key-specs]
+  (reify
+    Specize
+    (specize* [s] s)
+    Complete
+    (candidates* [_ context prefix]
+      (apply clojure.set/union (map #(candidates % context prefix) key-specs)))))
+
+(defn or-spec-impl [preds]
+  (reify
+    Specize
+    (specize* [s] s)
+    Complete
+    (candidates* [_ context prefix]
+      (apply clojure.set/union (map #(candidates % context prefix) preds)))))
 
 (extend-protocol Specize
   clojure.lang.Keyword
@@ -335,6 +385,18 @@
               '({:idx 3, :form [6 1111 1111 __prefix__]})
               "22")
 
+  (candidates (s/cat :a (s/alt :b (s/cat :c #{1 2} :d #{3 4}) :e #{5 6})
+                     :f (s/* #{1111})
+                     :g (s/& #{2222} string?)
+                     :h #{11})
+              '({:idx 3, :form [6 1111 1111 __prefix__]})
+              "22")
+
+  ;; Does not work !! (s/form (s/keys* :req [::ss])) does not return the right thing !
+  (candidates (s/keys* :req [::ss])
+              '({:idx 1, :form [::ss __prefix__]})
+              "11")
+
 
 
   ;; keys
@@ -371,10 +433,42 @@
                                                   :ss __prefix__}})
               "11")
 
-  ;; every
+  ;; tuple
 
   (candidates (s/tuple #{1111 22} #{3333})
               '({:idx 1 :form [nil __prefix__]})
               "33")
 
+  ;; every
+
+  (candidates (s/every #{33333})
+              '({:idx 1 :form [nil __prefix__]})
+              "33")
+  (candidates (s/every-kv #{1111 2222} #{3333 4444})
+              '({:idx 1111 :map-role :value :form {:mm 33
+                                                   1111 __prefix__}})
+              "333")
+  (candidates (s/every-kv #{1111 2222} #{3333 4444})
+              '({:idx 1, :form [[:mm 33] [1111 __prefix__]]}
+                {:idx 1, :form [1111 __prefix__]})
+              "333")
+
+  ;; merge
+
+  (candidates (s/merge (s/keys :req [::ss]) (s/keys :req [::ee]))
+              '({:idx ::ss :map-role :value :form {::ee 3 ::ss __prefix__}})
+              "111")
+
+  ;; or
+  (candidates (s/or :a #{1111 2222} :b #{333 44 11112})
+              '()
+              "111")
+
   )
+(s/form (s/double-in :min 0 :max 3))
+(s/form (s/conformer string?))
+(s/form (s/spec string?))
+(s/form (s/nilable string?))
+(s/form (s/int-in 0 3))
+
+(s/conform (s/conformer (fn [x] nil)) "e")
