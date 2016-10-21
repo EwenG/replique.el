@@ -484,6 +484,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 (defmethod server/tooling-msg-handle :shutdown [msg]
   (with-tooling-response msg
     (stop-cljs-server)
+    (server/shutdown)
     {:shutdown true}))
 
 (defn repl-caught [e repl-env opts]
