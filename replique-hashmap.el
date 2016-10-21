@@ -24,6 +24,11 @@
       nil
     (gethash key hash default)))
 
+(defun replique/copy-hash-table (hash)
+  (if (hash-table-p hash)
+      (copy-hash-table hash)
+    (replique/hash-map)))
+
 (defun replique/assoc-helper (hash kvs)
   (if (null kvs)
       hash
@@ -36,7 +41,24 @@
     (when (= 0 (logand 1 args-length))
       (user-error
        "replique/assoc expects even number of arguments after hashtable, found odd number"))
-    (replique/assoc-helper (copy-hash-table (or hash (replique/hash-map))) kvs)))
+    (replique/assoc-helper (replique/copy-hash-table hash) kvs)))
+
+(defun replique/assoc-in-helper (hash ks v ks-length-dec ks-index)
+  (let ((copy (replique/copy-hash-table hash)))
+    (if (equal ks-index ks-length-dec)
+        (progn (puthash (elt ks ks-index) v copy)
+               copy)
+      (progn (puthash (elt ks ks-index)
+                      (replique/assoc-in-helper
+                       (gethash (elt ks ks-index) copy) ks v ks-length-dec (+ 1 ks-index)) 
+                      copy)
+               copy))))
+
+(defun replique/assoc-in (hash ks v)
+  (let ((ks-length (length ks)))
+    (if (equal 0 ks-length)
+        (replique/copy-hash-table hash)
+      (replique/assoc-in-helper hash ks v (- ks-length 1) 0))))
 
 (defun replique/dissoc-helper (hash kvs)
   (if (null kvs)
@@ -46,7 +68,7 @@
       (replique/dissoc-helper hash (cdr kvs)))))
 
 (defun replique/dissoc (hash &rest kvs)
-  (replique/dissoc-helper (copy-hash-table (or hash (replique/hash-map))) kvs))
+  (replique/dissoc-helper (replique/copy-hash-table hash) kvs))
 
 (defconst nothing (make-symbol "nothing"))
 

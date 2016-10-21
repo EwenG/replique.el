@@ -16,6 +16,14 @@
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
+(defonce watched-bindings
+  [#'clojure.core/*data-readers* #'clojure.core/*print-namespace-maps*
+   #'clojure.spec/*explain-out*  #'clojure.core/*print-level*
+   #'clojure.core/*default-data-reader-fn* #'clojure.core/*print-length*
+   #'clojure.core/*read-eval* #'clojure.core/*print-meta* #'clojure.core/*assert*
+   #'clojure.core/*unchecked-math* #'clojure.core/*warn-on-reflection*
+   #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
+   #'clojure.core/*math-context*])
 
 (defn dynaload
   [s]
@@ -146,10 +154,32 @@
   (.start (Thread. (fn [] (throw (Exception. "e")))))
   )
 
+(defn repl-eval
+  "Enhanced :eval hook for saving bindings"
+  [form]
+  (let [prev-bindings (mapv deref watched-bindings)
+        evaled (eval form)
+        next-bindings (mapv deref watched-bindings)]
+    (doseq [[prev-b next-b v] (map vector prev-bindings next-bindings watched-bindings)
+            :when (not (identical? prev-b next-b))]
+      (let [{v-name :name v-ns :ns} (meta v)]
+        (when (and v-name v-ns)
+          (binding [*out* tooling-err]
+            (with-lock tooling-out-lock
+              (elisp/prn {:type :binding
+                          :directory directory
+                          :repl-type :clj
+                          :session *session*
+                          :ns (ns-name *ns*)
+                          :var (symbol (str v-ns) (str v-name))
+                          :value (pr-str @v)}))))))
+    evaled))
+
 (defn repl []
   (println "Clojure" (clojure-version))
   (clojure.main/repl
    :init clojure.core.server/repl-init
+   :eval repl-eval
    :caught (fn [e]
              (binding [*out* tooling-err]
                (with-lock tooling-out-lock

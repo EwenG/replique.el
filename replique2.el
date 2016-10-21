@@ -1135,13 +1135,15 @@ The following commands are available:
                                         (port (replique/get repl :port))
                                         (repl-type (replique/get repl :repl-type))
                                         (random-port? (replique/get repl :random-port?))
-                                        (buffer (replique/get repl :buffer)))
+                                        (buffer (replique/get repl :buffer))
+                                        (bindings (replique/get repl :bindings)))
                                     (if (equal repl-type :tooling)
                                         (replique/hash-map :host host :port port
                                                            :random-port? random-port?
                                                            :repl-type repl-type)
                                       (replique/hash-map :repl-type repl-type
-                                                         :buffer-name (buffer-name buffer)))))
+                                                         :buffer-name (buffer-name buffer)
+                                                         :bindings bindings))))
                                 repls))
                  (repls-string (with-output-to-string (pp repls))))
             (insert repls-string)))))))
@@ -1269,6 +1271,19 @@ The following commands are available:
                      (replique/get msg :thread)
                      (replique-edn/pr-str (replique/get msg :value))))
             (replique/dispatch-eval-msg* in-chan out-chan))
+           ((equal :binding (replique/get msg :type))
+            (let* ((repl (replique/repl-by
+                          :session (replique/get (replique/get msg :session) :client)
+                          :directory (replique/get msg :directory)))
+                   (buffer (replique/get repl :buffer))
+                   (var (replique/get msg :var)))
+              (when repl
+                (thread-last
+                    (replique/get msg :value)
+                  (replique/assoc-in repl `[:bindings ,var])
+                  (replique/update-repl repl))
+                (replique/save-repls (replique/get msg :directory))))
+            (replique/dispatch-eval-msg* in-chan out-chan))
            ((equal :eval (replique/get msg :type))
             (let* ((repl (replique/repl-by
                           :session (replique/get (replique/get msg :session) :client)
@@ -1371,9 +1386,9 @@ The following commands are available:
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
-;; Handle all usefull repl options
 
 ;; server -> core
 ;; server-cljs -> cljs-env
+;; autocomplete using the spec first, compliment next if no candidates
 
 ;; replique.el ends here
