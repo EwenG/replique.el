@@ -4,7 +4,7 @@
             [clojure.spec :as s]
             [clojure.spec.gen :as gen])
   (:import [java.io File]
-           [java.nio.file Files LinkOption]))
+           [java.nio.file Path Files LinkOption]))
 
 (def ^:private cljs-server
   (delay (server/dynaload 'ewen.replique.server-cljs/cljs-server)))

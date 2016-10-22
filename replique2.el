@@ -736,6 +736,13 @@ This allows you to temporarily modify read-only buffers too."
   :type 'file
   :group 'replique)
 
+;; TODO check the hashmap type
+(defcustom replique/files-specs
+  (replique/hash-map "./.replique/cljs-repl-env.clj" :ewen.replique.replique-conf/cljs-env)
+  ""
+  :type 'hash-map-p
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -979,9 +986,7 @@ The following commands are available:
   (let* ((default-directory directory)
          (random-port? (equal port 0))
          (repl-cmd (replique/dispatch-repl-cmd directory port))
-         (proc (apply 'start-process directory
-                      nil
-                      (car repl-cmd) (cdr repl-cmd)))
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
          (chan (replique/read-chan
                 proc-chan proc
@@ -989,7 +994,7 @@ The following commands are available:
                   (error "Error while starting the REPL: %s" proc-out-s)))))
     (replique-async/<!
      chan (lambda (repl-infos)
-            ;; Print messages from unbound thread
+            ;; Print messages from unbound threads
             (set-process-filter proc (lambda (proc string)
                                        (message (format "Process %s: %s"
                                                         (process-name proc)
@@ -1011,6 +1016,8 @@ The following commands are available:
                                 (process-send-string
                                  network-proc
                                  "(ewen.replique.server/shared-tooling-repl)\n")
+                                ;; Init replique vars
+                                (process-send-string network-proc (format "(ewen.replique.server/init-var #'ewen.replique.server/*files-specs* %s)\n" (replique-edn/pr-str replique/files-specs)))
                                 (let* ((tooling-chan (-> tooling-chan
                                                          (replique/read-chan network-proc)
                                                          replique/dispatch-eval-msg))
@@ -1059,6 +1066,8 @@ The following commands are available:
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port)))
+    ;; When closing the process, we don't override REPLs saved on disk, by contrast with
+    ;; closing a single REPL
     (replique/close-repls host port t)))
 
 (defun replique/make-repl (buffer-name directory host port repl-type bindings)

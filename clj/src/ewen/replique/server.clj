@@ -16,14 +16,16 @@
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
-(defonce watched-bindings
+
+(defonce ^:dynamic *files-specs* {})
+(def watched-bindings
   [#'clojure.core/*data-readers* #'clojure.core/*print-namespace-maps*
    #'clojure.spec/*explain-out*  #'clojure.core/*print-level*
    #'clojure.core/*default-data-reader-fn* #'clojure.core/*print-length*
    #'clojure.core/*read-eval* #'clojure.core/*print-meta* #'clojure.core/*assert*
    #'clojure.core/*unchecked-math* #'clojure.core/*warn-on-reflection*
    #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
-   #'clojure.core/*math-context*])
+   #'clojure.core/*math-context* #'*files-specs*])
 
 (defn dynaload
   [s]
@@ -153,6 +155,19 @@
 (comment
   (.start (Thread. (fn [] (throw (Exception. "e")))))
   )
+
+(defn init-var [v val]
+  (alter-var-root v (constantly val)))
+
+(defn add-file-spec [file-path spec]
+  {:pre [(string? file-path) (keyword? spec) (namespace spec)]}
+  (let [rel-path (.relativize (.toPath (file ".")) (.toPath (file file-path)))]
+    (set! *files-specs* (assoc *files-specs* rel-path spec))))
+
+(defn remove-custom-tooling-file [file-path spec]
+  {:pre [(string? file-path) (keyword? spec) (namespace spec)]}
+  (let [rel-path (.relativize (.toPath (file ".")) (.toPath (file file-path)))]
+    (set! *files-specs* (dissoc *files-specs* rel-path spec))))
 
 (defn restore-bindings [bindings]
   (doseq [[v-name v-val] bindings]
