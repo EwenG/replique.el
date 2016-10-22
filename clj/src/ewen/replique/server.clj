@@ -154,6 +154,13 @@
   (.start (Thread. (fn [] (throw (Exception. "e")))))
   )
 
+(defn restore-bindings [bindings]
+  (doseq [[v-name v-val] bindings]
+    (try
+      (var-set (resolve (symbol v-name)) (read-string v-val))
+      ;; Don't try to restore the binding in case of exception
+      (catch Exception e nil))))
+
 (defn repl-eval
   "Enhanced :eval hook for saving bindings"
   [form]
@@ -171,7 +178,7 @@
                           :repl-type :clj
                           :session *session*
                           :ns (ns-name *ns*)
-                          :var (symbol (str v-ns) (str v-name))
+                          :var (str (symbol (str v-ns) (str v-name)))
                           :value (pr-str @v)}))))))
     evaled))
 

@@ -1061,7 +1061,7 @@ The following commands are available:
          (port (replique/get tooling-repl :port)))
     (replique/close-repls host port t)))
 
-(defun replique/make-repl (buffer-name directory host port &optional repl-type)
+(defun replique/make-repl (buffer-name directory host port repl-type bindings)
   (let* ((buff (get-buffer-create buffer-name))
          (buff (make-comint-in-buffer buffer-name buff `(,host . ,port)))
          (proc (get-buffer-process buff))
@@ -1074,8 +1074,14 @@ The following commands are available:
      (lambda (x)
        (let ((chan (replique/read-chan chan-src proc)))
          (process-send-string proc "(ewen.replique.server/tooling-repl)\n")
-         ;; Get the session number
-         (process-send-string proc "clojure.core.server/*session*\n")
+         ;; Restore bindings and get the session number
+         ;; The forms are wrapped in a do to avoid the need to read the result
+         ;; of restore-bindings
+         (process-send-string proc
+                              (format
+                               "(do
+(ewen.replique.server/restore-bindings %s)
+clojure.core.server/*session*)\n"(replique-edn/pr-str bindings)))
          (replique-async/<!
           chan
           (lambda (resp)
@@ -1088,10 +1094,11 @@ The following commands are available:
               (let ((repl (replique/hash-map :directory directory
                                              :host host
                                              :port port
-                                             :repl-type (or repl-type :clj)
+                                             :repl-type repl-type
                                              :session session
                                              :ns 'user
-                                             :buffer buff)))
+                                             :buffer buff
+                                             :bindings bindings)))
                 (push repl replique/repls)
                 (replique/save-repls directory)
                 ;; Save REPL props when its name changes. The hook will run for interactive
@@ -1157,14 +1164,16 @@ The following commands are available:
              (host (replique/get saved-repl :host))
              (port (replique/get saved-repl :port))
              (random-port? (replique/get saved-repl :random-port?))
-             (buffer-name (replique/get saved-repl :buffer-name)))
+             (buffer-name (replique/get saved-repl :buffer-name))
+             (bindings (replique/get saved-repl :bindings)))
         (cond ((and (equal repl-type :tooling)
                     (not (null host)) (stringp host)
                     (replique/is-valid-port-nb? port))
                (replique/validate-saved-repls
                 (cons saved-repl validated) (cdr saved-repls)))
               ((and (or (equal :clj repl-type) (equal :cljs repl-type))
-                    (not (null buffer-name)) (stringp buffer-name))
+                    (not (null buffer-name)) (stringp buffer-name)
+                    (or (null bindings) (hash-table-p bindings)))
                (replique/validate-saved-repls
                 (cons saved-repl validated) (cdr saved-repls)))
               ;; This is an error, return nil
@@ -1228,15 +1237,17 @@ The following commands are available:
                (if saved-repls
                    (mapcar (lambda (repl)
                              (let ((repl-type (replique/get repl :repl-type))
-                                   (buffer-name (replique/get repl :buffer-name)))
+                                   (buffer-name (replique/get repl :buffer-name))
+                                   (bindings (replique/get repl :bindings)))
                                (when (not (equal repl-type :tooling))
                                  ;; make-repl expects buffer-name to be the name of no already
                                  ;; existing buffer
                                  (replique/make-repl (generate-new-buffer-name buffer-name)
-                                                     directory host port repl-type))))
+                                                     directory host port repl-type
+                                                     bindings))))
                            saved-repls)
                  (let* ((buff-name (replique/clj-buff-name directory :clj)))
-                   (replique/make-repl buff-name directory host port)))))
+                   (replique/make-repl buff-name directory host port :clj nil)))))
            (-partial saved-repls))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
