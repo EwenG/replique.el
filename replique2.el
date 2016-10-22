@@ -1010,40 +1010,42 @@ The following commands are available:
                  network-proc (-partial 'replique/on-tooling-repl-close chan host port))
                 ;; Discard the prompt
                 (replique-async/<!
-                 tooling-chan (lambda (x)
-                                ;; No need to wait for the return value of shared-tooling-repl
-                                ;; since it does not print anything
-                                (process-send-string
-                                 network-proc
-                                 "(ewen.replique.server/shared-tooling-repl)\n")
-                                ;; Init replique vars
-                                (process-send-string network-proc (format "(ewen.replique.server/init-var #'ewen.replique.server/*files-specs* %s)\n" (replique-edn/pr-str replique/files-specs)))
-                                (let* ((tooling-chan (-> tooling-chan
-                                                         (replique/read-chan network-proc)
-                                                         replique/dispatch-eval-msg))
-                                       (tooling-repl (replique/hash-map
-                                                      :directory directory
-                                                      :repl-type :tooling
-                                                      :proc proc
-                                                      :network-proc network-proc
-                                                      :host host
-                                                      :port port
-                                                      :random-port? random-port?
-                                                      :chan tooling-chan))
-                                       (cljs-env-file (concat
-                                                       directory
-                                                       ".replique/cljs-repl-env.clj")))
-                                  (if (and (file-exists-p cljs-env-file)
-                                           (equal (file-truename directory) directory))
-                                      (with-current-buffer (find-file-noselect cljs-env-file)
-                                        (replique/load-cljs-repl-env
-                                         tooling-repl (lambda (resp)
-                                                        (push tooling-repl replique/repls)
-                                                        (replique-async/put!
-                                                         out-chan tooling-repl))))
-                                    (progn (push tooling-repl replique/repls)
+                 tooling-chan
+                 (lambda (x)
+                   ;; Init replique vars and start the shared tooling repl.
+                   ;; No need to wait for the return value of shared-tooling-repl
+                   ;; since it does not print anything
+                   (process-send-string
+                    network-proc
+                    (format "(do 
+(ewen.replique.server/init-var #'ewen.replique.server/*files-specs* %s)
+(ewen.replique.server/shared-tooling-repl))\n" (replique-edn/pr-str replique/files-specs)))       
+                   (let* ((tooling-chan (-> tooling-chan
+                                            (replique/read-chan network-proc)
+                                            replique/dispatch-eval-msg))
+                          (tooling-repl (replique/hash-map
+                                         :directory directory
+                                         :repl-type :tooling
+                                         :proc proc
+                                         :network-proc network-proc
+                                         :host host
+                                         :port port
+                                         :random-port? random-port?
+                                         :chan tooling-chan))
+                          (cljs-env-file (concat
+                                          directory
+                                          ".replique/cljs-repl-env.clj")))
+                     (if (and (file-exists-p cljs-env-file)
+                              (equal (file-truename directory) directory))
+                         (with-current-buffer (find-file-noselect cljs-env-file)
+                           (replique/load-cljs-repl-env
+                            tooling-repl (lambda (resp)
+                                           (push tooling-repl replique/repls)
                                            (replique-async/put!
-                                            out-chan tooling-repl))))))))))))
+                                            out-chan tooling-repl))))
+                       (progn (push tooling-repl replique/repls)
+                              (replique-async/put!
+                               out-chan tooling-repl))))))))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
