@@ -23,18 +23,18 @@
 (extend-protocol Complete
   clojure.lang.Var
   (candidates* [v context prefix]
-    @v))
+    (candidates* @v context prefix)))
 
 (extend-protocol Complete
   clojure.spec.Spec
   (candidates* [spec context prefix]
-    (candidates (from-spec spec) context prefix)))
+    (candidates* (from-spec spec) context prefix)))
 
 (extend-protocol Complete
   clojure.lang.Keyword
   (candidates* [k context prefix]
     (when-let [spec (s/get-spec k)]
-      (candidates (from-spec spec) context prefix))))
+      (candidates* (from-spec spec) context prefix))))
 
 (defn set-candidates [s context prefix]
   (when (c/empty? context)
@@ -74,6 +74,9 @@
 (defn from-tuple [preds]
   (tuple-impl (mapv from-spec preds)))
 
+(defn from-every [pred opts]
+  (every-impl (from-spec pred) opts))
+
 (defn from-merge [key-specs]
   (merge-impl (mapv from-spec key-specs)))
 
@@ -83,11 +86,8 @@
        (mapv from-spec)
        or-spec-impl))
 
-(defn from-and [key-preds]
-  (->> (drop 1 key-preds)
-       (take-nth 2)
-       (mapv from-spec)
-       and-spec-impl))
+(defn from-and [preds]
+  (and-spec-impl (mapv from-spec preds)))
 
 ;; Transforms specs into a spec that can be understand by spec-tooling. Functions are transformed
 ;; into their original var, in order to let antone override the candidates returned by a var.
@@ -145,12 +145,6 @@
           (throw (Exception. (str "Unable to resolve spec: " k))))
     k))
 
-(defn- and-all [preds x]
-  (loop [[p & ps] preds]
-    (cond (nil? p) true
-          (p x) (recur ps)
-          :else false)))
-
 (defn- accept-nil? [p]
   (let [{:keys [::s/op ps p1 p2] :as p} (reg-resolve! p)]
     (case op
@@ -187,7 +181,8 @@
       {::s/op ::s/pcat :ps ps :ret (:ret p1)})))
 
 (defn ret-union [ps]
-  (apply clojure.set/union (map :ret ps)))
+  (->> (map :ret ps)
+       (apply clojure.set/union)))
 
 (defn- alt* [ps]
   ;; (not (identity ps)) - for example, when a predicate was ::s/invalid
@@ -234,16 +229,17 @@
 
 (defn- re-candidates [p [{:keys [idx form]} & cs :as context] prefix deriv-idx]
   (if (> deriv-idx idx)
-    (->> (:ret p)
-         (map #(candidates % cs prefix))
-         (apply clojure.set/union))
+    (let [candidates-res (->> (:ret p)
+                              (map #(candidates* % cs prefix))
+                              (filter set?)
+                              (apply clojure.set/union))]
+      (with-meta candidates-res {::not-contrainable true}))
     ;; dp is nil if a predicate was ::s/invalid, which means that if the beginning of the regex
     ;; is invalid (amp are not checked), we don't try to get candidates at all
     ;; This is probably a valid behavior since collections matched by regex are often typed by
     ;; humans in order, contrary to maps
-    (if-let [dp (deriv p (nth form deriv-idx) (= idx deriv-idx))]
-      (recur dp context prefix (inc deriv-idx))
-      nil)))
+    (when-let [dp (deriv p (nth form deriv-idx) (= idx deriv-idx))]
+      (recur dp context prefix (inc deriv-idx)))))
 
 (defn regex-spec-impl [re]
   (reify
@@ -278,9 +274,12 @@
         (when (map? form)
           (case map-role
             :value (when-let [spec (s/get-spec (c/or (get unqualified->qualified idx) idx))]
-                     (candidates spec cs prefix))
-            :key (candidates* (into #{} (concat (c/keys unqualified->qualified) req opt))
-                              nil prefix)))))))
+                     (-> (candidates* spec cs prefix)
+                         (with-meta {::not-contrainable true})))
+            :key (let [candidates-res (->> (concat (c/keys unqualified->qualified) req opt)
+                                           (into #{}))]
+                   (-> (candidates* candidates-res nil prefix)
+                       (with-meta {::not-contrainable true})))))))))
 
 (defn multi-spec-impl [mm]
   (reify
@@ -293,8 +292,12 @@
             specs (if spec #{spec} (->> (vals (methods @mm))
                                         (map (fn [spec-fn] (spec-fn nil)) )
                                         (into #{})))]
-        (->> (map #(candidates % context prefix) specs)
-             (apply clojure.set/union))))))
+        (let [candidates-res (->> (map #(candidates* % context prefix) specs)
+                                  (filter set?))]
+          (if (some #(::not-contrainable (meta %)) candidates-res)
+            (-> (apply clojure.set/union candidates-res)
+                (with-meta {::not-contrainable true}))
+            (apply clojure.set/union candidates-res)))))))
 
 (defn tuple-impl [preds]
   (reify
@@ -304,7 +307,8 @@
     (candidates* [_ [{:keys [idx form]} & cs :as context] prefix]
       (when (vector? form)
         (when-let [pred (get preds idx)]
-          (candidates pred cs prefix))))))
+          (-> (candidates* pred cs prefix)
+              (with-meta {::not-contrainable true})))))))
 
 (defn map-form->seq-form [{:keys [idx map-role form] :as context-item}]
   (case map-role
@@ -320,7 +324,8 @@
       (let [kind-pred (c/or kind coll?)]
         (when (kind-pred form)
           (let [cs (if (map? form) (cons (map-form->seq-form c0) cs) cs)]
-            (candidates pred cs prefix)))))))
+            (-> (candidates* pred cs prefix)
+                (with-meta {::not-contrainable true}))))))))
 
 (defn merge-impl [key-specs]
   (reify
@@ -328,7 +333,10 @@
     (specize* [s] s)
     Complete
     (candidates* [_ context prefix]
-      (apply clojure.set/union (map #(candidates % context prefix) key-specs)))))
+      (let [candidates-res (->> (map #(candidates* % context prefix) key-specs)
+                                (filter set?)
+                                (apply clojure.set/union))]
+        (with-meta candidates-res {::not-contrainable true})))))
 
 (defn or-spec-impl [preds]
   (reify
@@ -336,7 +344,20 @@
     (specize* [s] s)
     Complete
     (candidates* [_ context prefix]
-      (apply clojure.set/union (map #(candidates % context prefix) preds)))))
+      (let [candidates-res (->> (map #(candidates* % context prefix) preds)
+                                (filter set?))]
+        (if (some #(::not-contrainable (meta %)) candidates-res)
+          (-> (apply clojure.set/union candidates-res)
+              (with-meta {::not-contrainable true}))
+          (apply clojure.set/union candidates-res))))))
+
+(defn and-spec-impl [preds]
+  (reify
+    Specize
+    (specize* [s] s)
+    Complete
+    (candidates* [_ context prefix]
+      )))
 
 (extend-protocol Specize
   clojure.lang.Keyword
@@ -354,7 +375,9 @@
 
 (defn candidates [spec context prefix]
   (when (satisfies? Specize spec)
-    (candidates* (specize* spec) context prefix)))
+    (let [candidates-result (candidates* (specize* spec) context prefix)]
+      (when (set? candidates-result)
+        candidates-result))))
 
 
 
@@ -375,8 +398,8 @@
   
   (candidates (s/cat :a (s/cat :b #{22} :c #{1111 2})
                      :d (s/cat :e #{33} :f #{44}))
-              '({:idx 1 :form [22 __prefix__ __prefix__]})
-              "11")
+              '({:idx 2 :form [22 2 __prefix__]})
+              "3")
 
   (candidates (s/cat :a (s/alt :b (s/cat :c #{1 2} :d #{3 4}) :e #{5 6})
                      :f (s/* #{1111})
@@ -384,7 +407,6 @@
                      :h #{11})
               '({:idx 3, :form [6 1111 1111 __prefix__]})
               "22")
-
   (candidates (s/cat :a (s/alt :b (s/cat :c #{1 2} :d #{3 4}) :e #{5 6})
                      :f (s/* #{1111})
                      :g (s/& #{2222} string?)
@@ -440,7 +462,7 @@
               "33")
 
   ;; every
-
+  
   (candidates (s/every #{33333})
               '({:idx 1 :form [nil __prefix__]})
               "33")
@@ -464,7 +486,15 @@
               '()
               "111")
 
+  ;;and
+  (candidates (s/and :a #{1111 2222} :b #{333 44 11112})
+              '()
+              "111")
+
   )
+
+(meta (clojure.set/union #{1 2} (with-meta #{4 5} {:f "f"})))
+
 (s/form (s/double-in :min 0 :max 3))
 (s/form (s/conformer string?))
 (s/form (s/spec string?))
@@ -472,3 +502,4 @@
 (s/form (s/int-in 0 3))
 
 (s/conform (s/conformer (fn [x] nil)) "e")
+
