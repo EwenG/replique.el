@@ -351,13 +351,29 @@
               (with-meta {::not-contrainable true}))
           (apply clojure.set/union candidates-res))))))
 
+(defn every-valid [preds x]
+  (loop [[p & ps] preds]
+    (if (nil? p) true
+        (let [pred-res (p x)]
+          (if (c/and pred-res (not (s/invalid? pred-res)))
+            (recur ps)
+            false)))))
+
 (defn and-spec-impl [preds]
   (reify
     Specize
     (specize* [s] s)
     Complete
     (candidates* [_ context prefix]
-      )))
+      (let [preds-ands (map #(candidates* % context prefix) preds)
+            and-candidates (filter set? preds-ands)
+            constrainable? (not (some #(::not-contrainable (meta %)) and-candidates))
+            and-candidates (apply clojure.set/intersection and-candidates)]
+        (if constrainable?
+          (let [ands (filter #(c/and (not (set? %)) (ifn? %)) preds-ands)]
+            (->> (filter (partial every-valid ands) and-candidates)
+                 (into #{})))
+          and-candidates)))))
 
 (extend-protocol Specize
   clojure.lang.Keyword
@@ -487,13 +503,16 @@
               "111")
 
   ;;and
-  (candidates (s/and :a #{1111 2222} :b #{333 44 11112})
+  (candidates (s/and #{1111 2222} #{333 44 1111} #_string?)
               '()
-              "111")
+              "1111")
+
+  (candidates (s/and (s/every #{33333}) string?)
+              '({:idx 1 :form [nil __prefix__]})
+              "33")
+  
 
   )
-
-(meta (clojure.set/union #{1 2} (with-meta #{4 5} {:f "f"})))
 
 (s/form (s/double-in :min 0 :max 3))
 (s/form (s/conformer string?))
