@@ -1,6 +1,7 @@
 (ns ewen.replique.repliquedoc
   (:refer-clojure :exclude [find-ns meta ns-resolve])
-  (:require [clojure.set]
+  (:require [ewen.replique.tooling-msg :as tooling-msg]
+            [clojure.set]
             [compliment.core :as compliment]
             [compliment.context :as context]
             [compliment.sources.local-bindings
@@ -48,19 +49,19 @@
   (format-method call index))
 
 (comment
-  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+  (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(__prefix__)
 "
                                             :ns "ewen.replique.repliquedoc"
                                             :symbol "."})
 
-  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+  (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(clojure.core __prefix__)
 "
                                             :ns "ewen.replique.repliquedoc"
                                             :symbol "ee"})
 
-  (ewen.replique.server/tooling-msg-handle {:type :repliquedoc-clj
+  (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(prn __prefix__)
 "
                                             :ns "ewen.replique.repliquedoc"
@@ -162,13 +163,13 @@
               {:type :static-method :method (first members)})))))))
 
 (comment
-  (server/tooling-msg-handle {:type :repliquedoc-clj
+  (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                               :context "(__prefix__)
 "
                               :ns "ewen.replique.tooling"
                               :symbol "Integer/compare"})
 
-  (ewen.replique.server/tooling-msg-handle
+  (tooling-msg/tooling-msg-handle
    {:type :repliquedoc-cljs
     :context "(__prefix__)
 "

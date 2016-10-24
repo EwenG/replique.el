@@ -1,5 +1,6 @@
 (ns ewen.replique.replique-conf
-  (:require [ewen.replique.server :refer [with-tooling-response] :as server]
+  (:require [ewen.replique.tooling-msg :as tooling-msg]
+            [ewen.replique.utils :as utils]
             [clojure.java.io :as io]
             [clojure.spec :as s]
             [clojure.spec.gen :as gen])
@@ -7,17 +8,17 @@
            [java.nio.file Path Files LinkOption]))
 
 (def ^:private cljs-server
-  (delay (server/dynaload 'ewen.replique.server-cljs/cljs-server)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/cljs-server)))
 (def ^:private start-cljs-server
-  (delay (server/dynaload 'ewen.replique.server-cljs/start-cljs-server)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/start-cljs-server)))
 (def ^:private stop-cljs-server
-  (delay (server/dynaload 'ewen.replique.server-cljs/stop-cljs-server)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/stop-cljs-server)))
 (def ^:private init-browser-env
-  (delay (server/dynaload 'ewen.replique.server-cljs/init-browser-env)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/init-browser-env)))
 (def ^:private compiler-env
-  (delay (server/dynaload 'ewen.replique.server-cljs/compiler-env)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/compiler-env)))
 (def ^:private repl-env
-  (delay (server/dynaload 'ewen.replique.server-cljs/compiler-env)))
+  (delay (utils/dynaload 'ewen.replique.server-cljs/compiler-env)))
 
 (def ^:dynamic *autocomplete* false)
 
@@ -162,8 +163,8 @@
 (defmethod init-opts :webapp [opts]
   (init-opts* opts))
 
-(defmethod server/tooling-msg-handle :set-cljs-env [{:keys [type cljs-env-opts] :as msg}]
-  (server/with-tooling-response msg
+(defmethod tooling-msg/tooling-msg-handle :set-cljs-env [{:keys [type cljs-env-opts] :as msg}]
+  (tooling-msg/with-tooling-response msg
     (let [cljs-env-opts (read-string cljs-env-opts)
           conformed-msg (s/conform ::cljs-env cljs-env-opts)]
       (if (= ::s/invalid conformed-msg)
@@ -180,13 +181,3 @@
               (reset! @repl-env nil)
               (throw e)))
           msg)))))
-
-(comment
-  (server/tooling-msg-handle
-   {:type :set-cljs-env
-    :directory server/directory
-    :cljs-env-opts "{:cljs-env-type :browser
-                    :compiler-opts {:output-to \"out/main.js\"}
-                    :repl-opts {:port 9001}}"})
-  
-  )

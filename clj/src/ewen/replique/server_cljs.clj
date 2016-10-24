@@ -1,6 +1,8 @@
 (ns ewen.replique.server-cljs
-  (:require [ewen.replique.server :refer [with-tooling-response] :as server]
-            [ewen.replique.elisp-printer :as elisp]
+  (:require [ewen.replique.elisp-printer :as elisp]
+            [ewen.replique.utils :as utils]
+            [ewen.replique.tooling-msg :as tooling-msg]
+            [ewen.replique.server :as server]
             [clojure.core.server :refer [*session*]]
             [clojure.java.io :as io]
             [cljs.repl.browser]
@@ -37,16 +39,6 @@
 (def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
                              [cljs.pprint :refer [pprint] :refer-macros [pp]]])
 (def env {:context :expr :locals {}})
-
-(defmacro ^:private with-lock
-  [lock-expr & body]
-  `(let [lockee# ~(with-meta lock-expr
-                    {:tag 'java.util.concurrent.locks.ReentrantLock})]
-     (.lock lockee#)
-     (try
-       ~@body
-       (finally
-         (.unlock lockee#)))))
 
 
 
@@ -258,7 +250,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
   ;; Maybe we should print only in the currently active REPL instead of all REPLs
   (doseq [[out out-lock] @cljs-outs]
     (binding [*out* out]
-      (with-lock out-lock
+      (utils/with-lock out-lock
         (-> (:content content) read-string print)
         (.flush *out*))))
   (try
@@ -481,15 +473,15 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (reset! compiler-env compiler-env*)
     (reset! repl-env repl-env*)))
 
-(defmethod server/tooling-msg-handle :shutdown [msg]
-  (with-tooling-response msg
+(defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
+  (tooling-msg/with-tooling-response msg
     (stop-cljs-server)
     (server/shutdown)
     {:shutdown true}))
 
 (defn repl-caught [e repl-env opts]
   (binding [*out* server/tooling-err]
-    (with-lock server/tooling-out-lock
+    (utils/with-lock server/tooling-out-lock
       (-> {:type :eval
            :directory server/directory
            :error true
@@ -521,21 +513,21 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
             :caught repl-caught
             :print (fn [result]
                      (binding [*out* server/tooling-out]
-                       (with-lock server/tooling-out-lock
+                       (utils/with-lock server/tooling-out-lock
                          (elisp/prn {:type :eval
                                      :directory server/directory
                                      :repl-type :cljs
                                      :session *session*
                                      :ns ana/*cljs-ns*
                                      :result result})))
-                     (with-lock out-lock
+                     (utils/with-lock out-lock
                        (println result)))
             ;; Code modifying the runtime should not be put in :init since it will be lost on
             ;; browser refresh
             :init (fn []
                     ;; Let the client know that we are entering a cljs repl
                     (binding [*out* server/tooling-out]
-                      (with-lock server/tooling-out-lock
+                      (utils/with-lock server/tooling-out-lock
                         (elisp/prn {:type :eval
                                     :directory server/directory
                                     :repl-type :cljs

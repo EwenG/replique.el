@@ -3,12 +3,13 @@
             [clojure.core.server :refer [start-server *session*]]
             [clojure.java.io :refer [file]]
             [compliment.context :as context]
-            [compliment.sources.local-bindings
-             :refer [bindings-from-context]]
+            [compliment.sources.local-bindings :refer [bindings-from-context]]
             [compliment.core :as compliment]
             [compliment.sources :as compliment-sources]
             [clojure.stacktrace :refer [print-stack-trace]]
-            [ewen.replique.elisp-printer :as elisp])
+            [ewen.replique.elisp-printer :as elisp]
+            [ewen.replique.utils :as utils]
+            [ewen.replique.tooling-msg :as tooling-msg])
   (:import [java.util.concurrent.locks ReentrantLock]
            [java.io File]))
 
@@ -27,35 +28,6 @@
    #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
    #'clojure.core/*math-context* #'*files-specs*])
 
-(defn dynaload
-  [s]
-  (let [ns (namespace s)]
-    (assert ns)
-    (require (symbol ns))
-    (let [v (resolve s)]
-      (if v
-        @v
-        (throw (RuntimeException. (str "Var " s " is not on the classpath")))))))
-
-(defmacro ^:private with-lock
-  [lock-expr & body]
-  `(let [lockee# ~(with-meta lock-expr
-                    {:tag 'java.util.concurrent.locks.ReentrantLock})]
-     (.lock lockee#)
-     (try
-       ~@body
-       (finally
-         (.unlock lockee#)))))
-
-(defmacro with-tooling-response [msg & resp]
-  `(let [type# (:type ~msg)
-         directory# (:directory ~msg)]
-     (try (merge {:type type# :directory directory#} ~@resp)
-          (catch Exception t#
-            {:directory directory#
-             :type type#
-             :error t#}))))
-
 (defmacro with-err-str [& body]
   `(let [s# (new java.io.StringWriter)]
      (binding [*err* s#]
@@ -64,8 +36,6 @@
 
 (defn repl-caught-str [e]
   (with-err-str (clojure.main/repl-caught e)))
-
-(defmulti tooling-msg-handle :type)
 
 (defn normalize-ip-address [address]
   (cond (= "0.0.0.0" address) "127.0.0.1"
@@ -115,16 +85,23 @@
   (clojure.main/repl :prompt #())
   )
 
+#_(defn init-cljs-env []
+  (when-let [f (some (fn [[f spec]]
+                       (when (= spec :ewen.replique.replique-conf/cljs-env)
+                         f))
+                     *files-specs*)]
+    ))
+
 (defn shared-tooling-repl []
-  (with-lock tooling-out-lock
+  (utils/with-lock tooling-out-lock
     (alter-var-root #'tooling-out (constantly *out*)))
-  (with-lock tooling-out-lock
+  (utils/with-lock tooling-out-lock
     (alter-var-root #'tooling-err (constantly *err*)))
   (Thread/setDefaultUncaughtExceptionHandler
    (reify Thread$UncaughtExceptionHandler
      (uncaughtException [_ thread ex]
        (binding [*out* tooling-err]
-         (with-lock tooling-out-lock
+         (utils/with-lock tooling-out-lock
            (elisp/prn {:type :eval
                        :directory directory
                        :error true
@@ -138,17 +115,17 @@
      :prompt #()
      :caught (fn [e]
                (binding [*out* tooling-err]
-                 (with-lock tooling-out-lock
+                 (utils/with-lock tooling-out-lock
                    (repl-caught-str e))))
      :print (fn [result]
-              (with-lock tooling-out-lock
+              (utils/with-lock tooling-out-lock
                 (elisp/prn result))))))
 
 (defn shutdown []
   (clojure.core.server/stop-servers))
 
-(defmethod tooling-msg-handle :shutdown [msg]
-  (with-tooling-response msg
+(defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
+  (tooling-msg/with-tooling-response msg
     (shutdown)
     {:shutdown true}))
 
@@ -187,7 +164,7 @@
       (let [{v-name :name v-ns :ns} (meta v)]
         (when (and v-name v-ns)
           (binding [*out* tooling-err]
-            (with-lock tooling-out-lock
+            (utils/with-lock tooling-out-lock
               (elisp/prn {:type :binding
                           :directory directory
                           :repl-type :clj
@@ -204,7 +181,7 @@
    :eval repl-eval
    :caught (fn [e]
              (binding [*out* tooling-err]
-               (with-lock tooling-out-lock
+               (utils/with-lock tooling-out-lock
                  (elisp/prn {:type :eval
                              :directory directory
                              :error true
@@ -215,7 +192,7 @@
              (clojure.main/repl-caught e))
    :print (fn [result]
             (binding [*out* tooling-out]
-              (with-lock tooling-out-lock
+              (utils/with-lock tooling-out-lock
                 (elisp/prn {:type :eval
                             :directory directory
                             :repl-type :clj
@@ -233,9 +210,9 @@
                    keys)
       (select-keys meta (disj keys :file :line :column)))))
 
-(defmethod tooling-msg-handle :clj-var-meta
+(defmethod tooling-msg/tooling-msg-handle :clj-var-meta
   [{:keys [context ns symbol keys] :as msg}]
-  (with-tooling-response msg
+  (tooling-msg/with-tooling-response msg
     (let [ctx (when context (read-string context))
           ctx (context/parse-context ctx)
           bindings (bindings-from-context ctx)
@@ -257,26 +234,22 @@
             {:meta meta}))))))
 
 (comment
-  (let [tooling-msg-handle "e"]
-    tooling-msg-handle))
+  (tooling-msg/tooling-msg-handle {:type :clj-var-meta
+                                   :context nil
+                                   :ns 'ewen.replique.server
+                                   :symbol 'tooling-msg-handle
+                                   :keys '(:column :line :file)})
 
-(comment
-  (tooling-msg-handle {:type :clj-var-meta
-                       :context nil
-                       :ns 'ewen.replique.server
-                       :symbol 'tooling-msg-handle
-                       :keys '(:column :line :file)})
+  (tooling-msg/tooling-msg-handle {:type :clj-var-meta
+                                   :context nil
+                                   :ns 'compliment.core
+                                   :symbol 'all-sources
+                                   :keys '(:column :line :file)})
 
-  (tooling-msg-handle {:type :clj-var-meta
-                       :context nil
-                       :ns 'compliment.core
-                       :symbol 'all-sources
-                       :keys '(:column :line :file)})
-
-  (tooling-msg-handle {:type :clj-var-meta
-                       :context nil
-                       :ns 'ewen.foo
-                       :symbol 'foo-bar
-                       :keys '(:column :line :file)})
+  (tooling-msg/tooling-msg-handle {:type :clj-var-meta
+                                   :context nil
+                                   :ns 'ewen.foo
+                                   :symbol 'foo-bar
+                                   :keys '(:column :line :file)})
 
   )

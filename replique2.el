@@ -183,16 +183,8 @@
   (replique/auto-complete* prefix company-callback tooling-repl
                            :cljc-completion (clojure-find-ns)))
 
-(defun replique/auto-complete-lein (prefix company-callback tooling-repl)
-  (funcall company-callback '()))
-
-(defun replique/auto-complete-cljs-env (prefix company-callback tooling-repl)
-  (funcall company-callback '()))
-
 (defun replique/auto-complete (prefix company-callback)
   (replique/with-modes-dispatch
-   (:leiningen . (-partial 'replique/auto-complete-lein prefix company-callback))
-   (:cljs-env . (-partial 'replique/auto-complete-cljs-env prefix company-callback))
    (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
    (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
    (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))
@@ -437,16 +429,6 @@ This allows you to temporarily modify read-only buffers too."
            (concat current-message)
            replique/message-nolog))))
 
-(defun replique/file-in-root-dir (tooling-repl file-name)
-  (and file-name
-       (equal (replique/get tooling-repl :directory)
-              (file-name-directory file-name))))
-
-(defun replique/file-in-replique-dir (tooling-repl file-name)
-  (and file-name
-       (equal (concat (replique/get tooling-repl :directory) ".replique/")
-              (file-name-directory file-name))))
-
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((props-sym (make-symbol "props-sym"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
@@ -494,22 +476,7 @@ This allows you to temporarily modify read-only buffers too."
                           (user-error "No active Clojurescript REPL"))))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
-                        (funcall ,f (replique/repl-by :buffer (current-buffer)))))
-                     ((equal :leiningen m)
-                      `((and (equal 'clojure-mode major-mode)
-                             (equal "project.clj" (file-name-nondirectory (buffer-file-name)))
-                             (replique/file-in-root-dir ,props-sym (buffer-file-name)))
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f ,props-sym)
-                          (user-error "No active Clojure or Clojurescript REPL"))))
-                     ((equal :cljs-env m)
-                      `((and (equal 'clojure-mode major-mode)
-                             (equal "cljs-repl-env.clj"
-                                    (file-name-nondirectory (buffer-file-name)))
-                             (replique/file-in-replique-dir ,props-sym (buffer-file-name)))
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f ,props-sym)
-                          (user-error "No active Clojure or Clojurescript REPL")))))))
+                        (funcall ,f (replique/repl-by :buffer (current-buffer))))))))
            modes-alist))
          (dispatch-code (append dispatch-code
                                 '((t (user-error
@@ -643,11 +610,9 @@ This allows you to temporarily modify read-only buffers too."
   (let ((file-path (buffer-file-name)))
     (comint-check-source file-path)
     (replique/with-modes-dispatch
-     (:cljs-env . 'replique/load-cljs-repl-env)
      (clojure-mode* . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
-     (clojurec-mode . (-partial 'replique/load-file-cljc file-path))
-     (css-mode . (-partial 'replique/load-css file-path)))))
+     (clojurec-mode . (-partial 'replique/load-file-cljc file-path)))))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL"
@@ -854,7 +819,7 @@ The following commands are available:
          (msg (replique/assoc msg :directory directory)))
     (process-send-string
      tooling-network-proc
-     (format "(ewen.replique.server/tooling-msg-handle %s)\n"
+     (format "(ewen.replique.tooling-msg/tooling-msg-handle %s)\n"
              (replique-edn/pr-str msg)))))
 
 ;; Note: a tooling repl may not be closed when there is a pending non daemon thread
