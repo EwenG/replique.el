@@ -768,17 +768,21 @@ The following commands are available:
 
 (defun replique/raw-command (directory port)
   `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "ewen.replique.main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s}}"
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
              (number-to-string port) (replique-edn/pr-str directory)
-             (replique-edn/pr-str replique/files-specs))))
+             (replique-edn/pr-str replique/files-specs)
+             ;; Process started from a symbolic link must skip init (clj-env setup ...)
+             (replique-edn/pr-str (not (equal (file-truename directory) directory))))))
 
 (defun replique/lein-command (directory port)
   `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
     ,(format "\"%sclj/src\"" (replique/replique-root-dir))
     "--" "run" "-m" "ewen.replique.main/-main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s}}"
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
              (number-to-string port) (replique-edn/pr-str directory)
-             (replique-edn/pr-str replique/files-specs))))
+             (replique-edn/pr-str replique/files-specs)
+             ;; Process started from a symbolic link must skip init (clj-env setup ...)
+             (replique-edn/pr-str (not (equal (file-truename directory) directory))))))
 
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))
@@ -1027,7 +1031,7 @@ The following commands are available:
                               (format
                                "(do
 (ewen.replique.server/restore-bindings %s)
-clojure.core.server/*session*)\n"(replique-edn/pr-str bindings)))
+clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
          (replique-async/<!
           chan
           (lambda (resp)
@@ -1347,7 +1351,5 @@ clojure.core.server/*session*)\n"(replique-edn/pr-str bindings)))
 ;; server -> core
 ;; server-cljs -> cljs-env
 ;; autocomplete using the spec first, compliment next if no candidates
-
-;;repl-caught does not print ??
 
 ;; replique.el ends here

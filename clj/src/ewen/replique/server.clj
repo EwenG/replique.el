@@ -57,12 +57,13 @@
         (prn e)
         (println "Loading Clojurescript REPL environment: failed")))))
 
-(defn start-repl-process [{:keys [port directory replique-vars] :as opts}]
+(defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
   (try
     (alter-var-root #'directory (constantly directory))
     (let [{:keys [files-specs]} replique-vars]
       (alter-var-root #'*files-specs* (constantly files-specs)))
-    (maybe-init-cljs-env)
+    (when (not skip-init)
+      (maybe-init-cljs-env))
     (println "Starting Clojure REPL...")
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
