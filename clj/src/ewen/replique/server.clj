@@ -54,7 +54,7 @@
         (replique-conf/load-cljs-env conf)
         (println "Loading Clojurescript REPL environment: done"))
       (catch Exception e
-        (println (repl-caught-str e))
+        (prn e)
         (println "Loading Clojurescript REPL environment: failed")))))
 
 (defn start-repl-process [{:keys [port directory replique-vars] :as opts}]
@@ -81,15 +81,24 @@
     (catch Throwable t
       (elisp/prn {:error t}))))
 
+(defn uncaught-exception [thread ex]
+  (binding [*out* tooling-err]
+    (utils/with-lock tooling-out-lock
+      (elisp/prn {:type :eval
+                  :directory directory
+                  :error true
+                  :repl-type :clj
+                  :thread (.getName thread)
+                  :ns (ns-name *ns*)
+                  :value (with-out-str (print-stack-trace ex))}))))
+
 (defn tooling-repl []
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
      :init init-fn
      :prompt #()
-     :caught (fn [e]
-               (repl-caught-str e))
-     :print (fn [result]
-              (elisp/prn result)))))
+     :caught (fn [e] (fn [e] (uncaught-exception (Thread/currentThread) e)))
+     :print (fn [result] (elisp/prn result)))))
 
 (comment
   (clojure.main/repl :prompt #())
@@ -103,23 +112,12 @@
   (Thread/setDefaultUncaughtExceptionHandler
    (reify Thread$UncaughtExceptionHandler
      (uncaughtException [_ thread ex]
-       (binding [*out* tooling-err]
-         (utils/with-lock tooling-out-lock
-           (elisp/prn {:type :eval
-                       :directory directory
-                       :error true
-                       :repl-type :clj
-                       :thread (.getName thread)
-                       :ns (ns-name *ns*)
-                       :value (with-out-str (print-stack-trace ex))}))))))
+       (uncaught-exception thread ex))))
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
      :init init-fn
      :prompt #()
-     :caught (fn [e]
-               (binding [*out* tooling-err]
-                 (utils/with-lock tooling-out-lock
-                   (repl-caught-str e))))
+     :caught (fn [e] (uncaught-exception (Thread/currentThread) e))
      :print (fn [result]
               (utils/with-lock tooling-out-lock
                 (elisp/prn result))))))

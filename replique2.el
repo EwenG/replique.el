@@ -582,28 +582,6 @@ This allows you to temporarily modify read-only buffers too."
                "(ewen.replique.server-cljs/cljs-repl)" tooling-repl cljs-repl))
             cljs-repls)))
 
-(defun replique/load-cljs-repl-env (tooling-repl &optional callback)
-  (message "Loading Clojurescript REPL environment...")
-  (let* ((tooling-chan (replique/get tooling-repl :chan))
-         (cljs-env-opts (buffer-string)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :set-cljs-env
-                        :cljs-env-opts cljs-env-opts))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (cond ((replique/get resp :error)
-              (message (replique-edn/pr-str (replique/get resp :error)))
-              (message "Loading Clojurescript REPL environment: failed"))
-             ((replique/get resp :invalid)
-              (message (replace-regexp-in-string "%" "%%" (replique/get resp :invalid))))
-             (t
-              (replique/restart-cljs-repls tooling-repl)
-              (message "Loading Clojurescript REPL environment: done")))
-       (when callback
-         (funcall callback resp))))))
-
 (defun replique/load-file ()
   "Load a file in a replique REPL"
   (interactive)
@@ -1000,10 +978,7 @@ The following commands are available:
                                          :host host
                                          :port port
                                          :random-port? random-port?
-                                         :chan tooling-chan))
-                          (cljs-env-file (concat
-                                          directory
-                                          ".replique/cljs-repl-env.clj")))
+                                         :chan tooling-chan)))
                      (push tooling-repl replique/repls)
                      (replique-async/put! out-chan tooling-repl))))))))))
 
