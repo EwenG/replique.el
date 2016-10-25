@@ -163,21 +163,20 @@
 (defmethod init-opts :webapp [opts]
   (init-opts* opts))
 
-(defmethod tooling-msg/tooling-msg-handle :set-cljs-env [{:keys [type cljs-env-opts] :as msg}]
-  (tooling-msg/with-tooling-response msg
-    (let [cljs-env-opts (read-string cljs-env-opts)
-          conformed-msg (s/conform ::cljs-env cljs-env-opts)]
-      (if (= ::s/invalid conformed-msg)
-        {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
-        (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)
-              {:keys [host port]} repl-opts]
-          (when @@cljs-server (@stop-cljs-server))
-          (try
-            (@init-browser-env compiler-opts repl-opts (:executor @@cljs-server))
-            (@start-cljs-server host port)
-            (catch Exception e
-              (@stop-cljs-server)
-              (reset! @compiler-env nil)
-              (reset! @repl-env nil)
-              (throw e)))
-          msg)))))
+(defn load-cljs-env [conf]
+  (let [cljs-env-opts (read-string conf)
+        conformed-msg (s/conform ::cljs-env cljs-env-opts)]
+    (if (= ::s/invalid conformed-msg)
+      {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
+      (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)
+            {:keys [host port]} repl-opts]
+        (when @@cljs-server (@stop-cljs-server))
+        (try
+          (@init-browser-env compiler-opts repl-opts (:executor @@cljs-server))
+          (@start-cljs-server host port)
+          (catch Exception e
+            (@stop-cljs-server)
+            (reset! @compiler-env nil)
+            (reset! @repl-env nil)
+            (throw e)))))
+    cljs-env-opts))

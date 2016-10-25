@@ -9,9 +9,11 @@
             [clojure.stacktrace :refer [print-stack-trace]]
             [ewen.replique.elisp-printer :as elisp]
             [ewen.replique.utils :as utils]
-            [ewen.replique.tooling-msg :as tooling-msg])
+            [ewen.replique.tooling-msg :as tooling-msg]
+            [ewen.replique.replique-conf :as replique-conf]
+            [ewen.replique.tooling])
   (:import [java.util.concurrent.locks ReentrantLock]
-           [java.io File]))
+           [java.io File FileNotFoundException]))
 
 (defonce directory nil)
 (defonce tooling-out nil)
@@ -42,18 +44,26 @@
         (= "0:0:0:0:0:0:0:1" address) "127.0.0.1"
         :else address))
 
-#_(defn repl-infos []
-  (let [server-infos (:replique @#'clojure.core.server/servers)]
-    {:directory directory
-     :replique
-     {:host (-> (:socket server-infos)
-                (.getInetAddress) (.getHostAddress) normalize-ip-address)
-      :port (-> (:socket server-infos) (.getLocalPort))}}))
+(defn maybe-init-cljs-env []
+  (when-let [f (some (fn [[f spec]]
+                       (when (= spec :ewen.replique.replique-conf/cljs-env) f))
+                     *files-specs*)]
+    (try
+      (when-let [conf (try (slurp f) (catch FileNotFoundException e nil))]
+        (println "Loading Clojurescript REPL environment...")
+        (replique-conf/load-cljs-env conf)
+        (println "Loading Clojurescript REPL environment: done"))
+      (catch Exception e
+        (println (repl-caught-str e))
+        (println "Loading Clojurescript REPL environment: failed")))))
 
-(defn start-repl-process [{:keys [port type cljs-env directory] :as opts}]
-  (println "Starting Clojure REPL...")
+(defn start-repl-process [{:keys [port directory replique-vars] :as opts}]
   (try
     (alter-var-root #'directory (constantly directory))
+    (let [{:keys [files-specs]} replique-vars]
+      (alter-var-root #'*files-specs* (constantly files-specs)))
+    (maybe-init-cljs-env)
+    (println "Starting Clojure REPL...")
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
@@ -84,13 +94,6 @@
 (comment
   (clojure.main/repl :prompt #())
   )
-
-#_(defn init-cljs-env []
-  (when-let [f (some (fn [[f spec]]
-                       (when (= spec :ewen.replique.replique-conf/cljs-env)
-                         f))
-                     *files-specs*)]
-    ))
 
 (defn shared-tooling-repl []
   (utils/with-lock tooling-out-lock
@@ -132,9 +135,6 @@
 (comment
   (.start (Thread. (fn [] (throw (Exception. "e")))))
   )
-
-(defn init-var [v val]
-  (alter-var-root v (constantly val)))
 
 (defn add-file-spec [file-path spec]
   {:pre [(string? file-path) (keyword? spec) (namespace spec)]}

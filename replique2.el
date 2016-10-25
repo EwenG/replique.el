@@ -790,15 +790,17 @@ The following commands are available:
 
 (defun replique/raw-command (directory port)
   `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "ewen.replique.main"
-    ,(format "{:type :clj :port %s :directory %s}"
-             (number-to-string port) (replique-edn/pr-str directory))))
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s}}"
+             (number-to-string port) (replique-edn/pr-str directory)
+             (replique-edn/pr-str replique/files-specs))))
 
 (defun replique/lein-command (directory port)
   `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
     ,(format "\"%sclj/src\"" (replique/replique-root-dir))
     "--" "run" "-m" "ewen.replique.main/-main"
-    ,(format "{:type :clj :port %s :directory %s}"
-             (number-to-string port) (replique-edn/pr-str directory))))
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s}}"
+             (number-to-string port) (replique-edn/pr-str directory)
+             (replique-edn/pr-str replique/files-specs))))
 
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))
@@ -932,15 +934,21 @@ The following commands are available:
 (defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
   (replique-async/<!
    proc-chan (lambda (msg)
-               (cond
-                (filtered? (progn
-                             (replique-async/put! filtered-chan msg)
-                             (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
-                ((string-match-p (regexp-quote "Starting Clojure REPL...") msg)
-                 (replique/skip-repl-starting-output* proc-chan filtered-chan t))
-                (t (progn
-                     (message msg)
-                     (replique/skip-repl-starting-output* proc-chan filtered-chan)))))))
+               ;; REPL has already been started
+               (cond (filtered?
+                      (replique-async/put! filtered-chan msg)
+                      (replique/skip-repl-starting-output* proc-chan filtered-chan t))
+                     ;; Check if the REPL is starting, or, otherwise, if the process is still
+                     ;; printing init messages
+                     ((string-match-p (regexp-quote "Starting Clojure REPL...") msg)
+                      (let ((splitted-msg (split-string msg "Starting Clojure REPL...")))
+                        (message (car splitted-msg))
+                        (replique-async/put! filtered-chan (cadr splitted-msg))
+                        (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
+                     ;; Print all the init messages
+                     (t
+                      (message msg)
+                      (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
 
 (defun replique/skip-repl-starting-output (proc-chan)
   (let ((filtered-chan (replique-async/chan)))
@@ -977,14 +985,10 @@ The following commands are available:
                 (replique-async/<!
                  tooling-chan
                  (lambda (x)
-                   ;; Init replique vars and start the shared tooling repl.
                    ;; No need to wait for the return value of shared-tooling-repl
                    ;; since it does not print anything
                    (process-send-string
-                    network-proc
-                    (format "(do 
-(ewen.replique.server/init-var #'ewen.replique.server/*files-specs* %s)
-(ewen.replique.server/shared-tooling-repl))\n" (replique-edn/pr-str replique/files-specs)))       
+                    network-proc "(ewen.replique.server/shared-tooling-repl)\n")       
                    (let* ((tooling-chan (-> tooling-chan
                                             (replique/read-chan network-proc)
                                             replique/dispatch-eval-msg))
@@ -1000,17 +1004,8 @@ The following commands are available:
                           (cljs-env-file (concat
                                           directory
                                           ".replique/cljs-repl-env.clj")))
-                     (if (and (file-exists-p cljs-env-file)
-                              (equal (file-truename directory) directory))
-                         (with-current-buffer (find-file-noselect cljs-env-file)
-                           (replique/load-cljs-repl-env
-                            tooling-repl (lambda (resp)
-                                           (push tooling-repl replique/repls)
-                                           (replique-async/put!
-                                            out-chan tooling-repl))))
-                       (progn (push tooling-repl replique/repls)
-                              (replique-async/put!
-                               out-chan tooling-repl))))))))))))
+                     (push tooling-repl replique/repls)
+                     (replique-async/put! out-chan tooling-repl))))))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
@@ -1377,5 +1372,7 @@ clojure.core.server/*session*)\n"(replique-edn/pr-str bindings)))
 ;; server -> core
 ;; server-cljs -> cljs-env
 ;; autocomplete using the spec first, compliment next if no candidates
+
+;;repl-caught does not print ??
 
 ;; replique.el ends here
