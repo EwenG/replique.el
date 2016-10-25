@@ -97,7 +97,7 @@
     (clojure.main/repl
      :init init-fn
      :prompt #()
-     :caught (fn [e] (fn [e] (uncaught-exception (Thread/currentThread) e)))
+     :caught (fn [e] (uncaught-exception (Thread/currentThread) e))
      :print (fn [result] (elisp/prn result)))))
 
 (comment
