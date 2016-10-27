@@ -34,12 +34,14 @@
 
 (defn can-write-main-file? [path]
   (and string?
-       (let [p (.toPath (File. path))]
-         (and (not (directory? p))
-              (Files/isReadable ^Path p)
-              (js-path? path)
-              (with-open [r (io/reader path)]
-                (.contains (.readLine r) "** Replique main file **"))))))
+       (let [f (File. path)
+             p (.toPath f)]
+         (or (not (.exists f))
+             (and (not (directory? p))
+                  (Files/isReadable ^Path p)
+                  (js-path? path)
+                  (with-open [r (io/reader path)]
+                    (.contains (.readLine r) "** Replique main file **")))))))
 
 (defn cljs-namespace? [path-or-sym]
   (if *autocomplete*
@@ -167,7 +169,7 @@
   (let [cljs-env-opts (read-string conf)
         conformed-msg (s/conform ::cljs-env cljs-env-opts)]
     (if (= ::s/invalid conformed-msg)
-      {:invalid (s/explain-str ::cljs-env cljs-env-opts)}
+      (throw (IllegalArgumentException. (s/explain-str ::cljs-env cljs-env-opts)))
       (let [{:keys [compiler-opts repl-opts]} (init-opts conformed-msg)
             {:keys [host port]} repl-opts]
         (when @@cljs-server (@stop-cljs-server))
