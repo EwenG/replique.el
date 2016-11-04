@@ -174,7 +174,7 @@
             {:keys [host port]} repl-opts]
         (when @@cljs-server (@stop-cljs-server))
         (try
-          (@init-browser-env compiler-opts repl-opts (:executor @@cljs-server))
+          (@init-browser-env compiler-opts repl-opts)
           (@start-cljs-server host port)
           (catch Exception e
             (@stop-cljs-server)

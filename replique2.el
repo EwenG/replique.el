@@ -20,9 +20,9 @@
 (defun replique/keyword-to-string (k)
   (substring (symbol-name k) 1))
 
-(defun replique/message-nolog (format-string &rest args)
+(defun replique/message-nolog (format-string)
   (let ((message-log-max nil))
-    (apply 'message format-string args)))
+    (message "%s" format-string)))
 
 (defun replique/visible-buffers ()
   (let ((buffers '()))
@@ -153,7 +153,7 @@
          (let ((err (replique/get resp :error)))
            (if err
                (progn
-                 (message (replique-edn/pr-str err))
+                 (message "%s" (replique-edn/pr-str err))
                  (message "completion failed with prefix %s" prefix))
              (let* ((candidates (replique/get resp :candidates))
                     (candidates (mapcar 'replique/make-candidate candidates)))
@@ -258,7 +258,7 @@
            (let ((err (replique/get resp :error)))
              (if err
                  (progn
-                   (message (replique-edn/pr-str err))
+                   (message "%s" (replique-edn/pr-str err))
                    (message "eldoc failed"))
                (with-demoted-errors "eldoc error: %s"
                  (when-let ((msg (replique/repliquedoc-format (replique/get resp :doc))))
@@ -571,17 +571,6 @@ This allows you to temporarily modify read-only buffers too."
    (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
    props clj-repl cljs-repl))
 
-(defun replique/restart-cljs-repls (tooling-repl)
-  (let* ((directory (replique/get tooling-repl :directory))
-         (cljs-repls (replique/repls-by :directory directory
-                                        :repl-type :cljs)))
-    (mapcar (lambda (cljs-repl)
-              (replique/send-input-from-source-clj-cljs
-               ":cljs/quit" tooling-repl cljs-repl)
-              (replique/send-input-from-source-clj-cljs
-               "(ewen.replique.server-cljs/cljs-repl)" tooling-repl cljs-repl))
-            cljs-repls)))
-
 (defun replique/load-file ()
   "Load a file in a replique REPL"
   (interactive)
@@ -681,7 +670,7 @@ This allows you to temporarily modify read-only buffers too."
 
 ;; TODO check the hashmap type
 (defcustom replique/files-specs
-  (replique/hash-map "./.replique/cljs-repl-env.clj" :ewen.replique.replique-conf/cljs-env)
+  (replique/hash-map)
   ""
   :type 'hash-map-p
   :group 'replique)
@@ -813,7 +802,7 @@ The following commands are available:
         (tooling-chan (replique/get repl :chan)))
     (replique-async/close! tooling-chan)
     (when (process-live-p tooling-proc)
-      (delete-process tooling-proc))
+      (interrupt-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
 (defun replique/close-repl (repl-props &optional dont-save-repls?)
@@ -836,14 +825,15 @@ The following commands are available:
                          other-repls)
         (mapcar (lambda (tooling-repl)
                   (let ((tooling-chan (replique/get tooling-repl :chan)))
-                    (replique/send-tooling-msg
-                     tooling-repl (replique/hash-map :type :shutdown))
-                    (replique-async/<!
-                     tooling-chan
-                     (lambda (msg)
-                       (when (and msg (replique/get msg :error))
-                         (error "Error while shutting down the REPL: %s"
-                                (replique-edn/pr-str (replique/get msg :error))))))))
+                    (when (process-live-p (replique/get tooling-repl :network-proc))
+                        (replique/send-tooling-msg
+                         tooling-repl (replique/hash-map :type :shutdown))
+                      (replique-async/<!
+                       tooling-chan
+                       (lambda (msg)
+                         (when (and msg (replique/get msg :error))
+                           (error "Error while shutting down the REPL: %s"
+                                  (replique-edn/pr-str (replique/get msg :error)))))))))
                 other-repls)))))
 
 (defun replique/close-repls (host port &optional dont-save-repls?)
@@ -888,8 +878,7 @@ The following commands are available:
     (cond ((and is-lein-project
                 replique/lein-script
                 (not (replique/is-in-exec-path replique/lein-script t)))
-           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script"
-                    replique/lein-script)
+           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script)
            nil)
           ((and is-lein-project
                 (not replique/lein-script)
@@ -924,12 +913,12 @@ The following commands are available:
                      ;; printing init messages
                      ((string-match-p (regexp-quote "Starting Clojure REPL...") msg)
                       (let ((splitted-msg (split-string msg "Starting Clojure REPL...")))
-                        (message (car splitted-msg))
+                        (message "%s" (car splitted-msg))
                         (replique-async/put! filtered-chan (cadr splitted-msg))
                         (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
                      ;; Print all the init messages
                      (t
-                      (message msg)
+                      (message "%s" msg)
                       (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
 
 (defun replique/skip-repl-starting-output (proc-chan)
@@ -963,28 +952,27 @@ The following commands are available:
                      (tooling-chan (replique/process-filter-chan network-proc)))
                 (set-process-sentinel
                  network-proc (-partial 'replique/on-tooling-repl-close chan host port))
-                ;; Discard the prompt
-                (replique-async/<!
-                 tooling-chan
-                 (lambda (x)
-                   ;; No need to wait for the return value of shared-tooling-repl
-                   ;; since it does not print anything
-                   (process-send-string
-                    network-proc "(ewen.replique.server/shared-tooling-repl)\n")       
-                   (let* ((tooling-chan (-> tooling-chan
-                                            (replique/read-chan network-proc)
-                                            replique/dispatch-eval-msg))
-                          (tooling-repl (replique/hash-map
-                                         :directory directory
-                                         :repl-type :tooling
-                                         :proc proc
-                                         :network-proc network-proc
-                                         :host host
-                                         :port port
-                                         :random-port? random-port?
-                                         :chan tooling-chan)))
-                     (push tooling-repl replique/repls)
-                     (replique-async/put! out-chan tooling-repl))))))))))
+                ;; The REPL accept fn will read a char in order to check whether the request
+                ;; is an HTTP one or not
+                (process-send-string network-proc "R")
+                ;; No need to wait for the return value of shared-tooling-repl
+                ;; since it does not print anything
+                (process-send-string
+                 network-proc "(ewen.replique.server/shared-tooling-repl)\n")       
+                (let* ((tooling-chan (-> tooling-chan
+                                         (replique/read-chan network-proc)
+                                         replique/dispatch-tooling-msg))
+                       (tooling-repl (replique/hash-map
+                                      :directory directory
+                                      :repl-type :tooling
+                                      :proc proc
+                                      :network-proc network-proc
+                                      :host host
+                                      :port port
+                                      :random-port? random-port?
+                                      :chan tooling-chan)))
+                  (push tooling-repl replique/repls)
+                  (replique-async/put! out-chan tooling-repl))))))))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
@@ -1016,22 +1004,17 @@ The following commands are available:
          (buff (make-comint-in-buffer buffer-name buff `(,host . ,port)))
          (proc (get-buffer-process buff))
          (chan-src (replique/process-filter-chan proc))
-         (repl-cmd (format "(ewen.replique.server/repl)\n")))
+         (repl-cmd (format "(ewen.replique.server/repl %s)\n" repl-type)))
     (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
-    ;; Discard the prompt
-    (replique-async/<!
-     chan-src
-     (lambda (x)
-       (let ((chan (replique/read-chan chan-src proc)))
-         (process-send-string proc "(ewen.replique.server/tooling-repl)\n")
-         ;; Restore bindings and get the session number
-         ;; The forms are wrapped in a do to avoid the need to read the result
-         ;; of restore-bindings
-         (process-send-string proc
-                              (format
-                               "(do
-(ewen.replique.server/restore-bindings %s)
-clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
+    ;; The REPL accept fn will read a char in order to check whether the request
+    ;; is an HTTP one or not
+    (process-send-string proc "R")
+    (let ((chan (replique/read-chan chan-src proc)))
+      ;; Restore bindings and get the session number
+      ;; The forms are wrapped in a do to avoid the need to read the result
+      ;; of restore-bindings
+      (process-send-string proc (format "(ewen.replique.server/init-and-print-session %s)\n"
+                                        (replique-edn/pr-str bindings)))
          (replique-async/<!
           chan
           (lambda (resp)
@@ -1059,12 +1042,14 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
                               (when (equal 'rename-buffer this-command)
                                 (replique/save-repls directory)))
                             t t))
-                (when (equal repl-type :cljs)
-                  ;; Third parameter is nil because the function does not use the tooling repl
-                  ;; anyway
-                  (replique/send-input-from-source-clj-cljs
-                   "(ewen.replique.server-cljs/cljs-repl)" nil repl))
-                (display-buffer buff))))))))))
+                (comment (when (equal repl-type :cljs)
+                           ;; Wait for the prompt to print before trying to enter the cljs repl
+                           
+                           ;; Third parameter is nil because the function does not use the tooling repl
+                           ;; anyway
+                           (replique/send-input-from-source-clj-cljs
+                            "(ewen.replique.server-cljs/cljs-repl)" nil repl)))
+                (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
   (let ((repl-type-string (replique/keyword-to-string repl-type)))
@@ -1218,7 +1203,7 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
       (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type))
       (replique/save-repls directory))))
 
-(defun replique/dispatch-eval-msg* (in-chan out-chan)
+(defun replique/dispatch-tooling-msg* (in-chan out-chan)
   (replique-async/<!
    in-chan
    (lambda (msg)
@@ -1226,12 +1211,11 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
             (and 
              (replique/get msg :error)
              (replique/get msg :thread))
-            (message
-             (format "%s - Thread: %s - Exception: %s"
+            (message "%s - Thread: %s - Exception: %s"
                      (propertize "Uncaught exception" 'face '(:foreground "red"))
                      (replique/get msg :thread)
-                     (replique-edn/pr-str (replique/get msg :value))))
-            (replique/dispatch-eval-msg* in-chan out-chan))
+                     (replique-edn/pr-str (replique/get msg :value)))
+            (replique/dispatch-tooling-msg* in-chan out-chan))
            ((equal :binding (replique/get msg :type))
             (let* ((repl (replique/repl-by
                           :session (replique/get (replique/get msg :session) :client)
@@ -1244,7 +1228,7 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
                   (replique/assoc-in repl `[:bindings ,var])
                   (replique/update-repl repl))
                 (replique/save-repls (replique/get msg :directory))))
-            (replique/dispatch-eval-msg* in-chan out-chan))
+            (replique/dispatch-tooling-msg* in-chan out-chan))
            ((equal :eval (replique/get msg :type))
             (let* ((repl (replique/repl-by
                           :session (replique/get (replique/get msg :session) :client)
@@ -1254,13 +1238,13 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
                 (replique/on-repl-type-change repl (replique/get msg :repl-type))
                 (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
                 (replique/display-eval-result msg buffer)))
-            (replique/dispatch-eval-msg* in-chan out-chan))
+            (replique/dispatch-tooling-msg* in-chan out-chan))
            (t (replique-async/put! out-chan msg)
-              (replique/dispatch-eval-msg* in-chan out-chan))))))
+              (replique/dispatch-tooling-msg* in-chan out-chan))))))
 
-(defun replique/dispatch-eval-msg (in-chan)
+(defun replique/dispatch-tooling-msg (in-chan)
   (let ((out-chan (replique-async/chan)))
-    (replique/dispatch-eval-msg* in-chan out-chan)
+    (replique/dispatch-tooling-msg* in-chan out-chan)
     out-chan))
 
 (defun replique/read-chan*
@@ -1351,5 +1335,10 @@ clojure.core.server/*session*)\n" (replique-edn/pr-str bindings)))
 ;; server -> core
 ;; server-cljs -> cljs-env
 ;; autocomplete using the spec first, compliment next if no candidates
+
+;; Normalize file path for *files-specs*
+;; Check that temp files are deleted on repl startup exception
+;; autocomplet in .clj with cljs repl only
+;; favicon -> 404
 
 ;; replique.el ends here

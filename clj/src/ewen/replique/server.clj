@@ -1,24 +1,17 @@
 (ns ewen.replique.server
   (:require [clojure.main]
-            [clojure.core.server :refer [start-server *session*]]
             [clojure.java.io :refer [file]]
             [compliment.context :as context]
             [compliment.sources.local-bindings :refer [bindings-from-context]]
             [compliment.core :as compliment]
             [compliment.sources :as compliment-sources]
-            [clojure.stacktrace :refer [print-stack-trace]]
             [ewen.replique.elisp-printer :as elisp]
             [ewen.replique.utils :as utils]
             [ewen.replique.tooling-msg :as tooling-msg]
             [ewen.replique.replique-conf :as replique-conf]
-            [ewen.replique.tooling])
-  (:import [java.util.concurrent.locks ReentrantLock]
-           [java.io File FileNotFoundException]))
-
-(defonce directory nil)
-(defonce tooling-out nil)
-(defonce tooling-out-lock (ReentrantLock.))
-(defonce tooling-err nil)
+            [ewen.replique.tooling]
+            [ewen.replique.server2 :refer [start-server *session*] :as server2])
+  (:import [java.io File FileNotFoundException]))
 
 (defonce ^:dynamic *files-specs* {})
 (def watched-bindings
@@ -29,15 +22,6 @@
    #'clojure.core/*unchecked-math* #'clojure.core/*warn-on-reflection*
    #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
    #'clojure.core/*math-context* #'*files-specs*])
-
-(defmacro with-err-str [& body]
-  `(let [s# (new java.io.StringWriter)]
-     (binding [*err* s#]
-       ~@body
-       (str s#))))
-
-(defn repl-caught-str [e]
-  (with-err-str (clojure.main/repl-caught e)))
 
 (defn normalize-ip-address [address]
   (cond (= "0.0.0.0" address) "127.0.0.1"
@@ -57,82 +41,95 @@
         (prn e)
         (println "Loading Clojurescript REPL environment: failed")))))
 
+(def ^:private dispatch-request
+  (utils/dynaload2 'ewen.replique.server-cljs/dispatch-request))
+
+(defn accept-http [request callback]
+  (try (@dispatch-request request callback)
+       (catch Exception e
+         (tooling-msg/uncaught-exception (Thread/currentThread) e)
+         {:status 500 :body (.getMessage e)})))
+
+(comment
+  (server2/server-port)
+  )
+
+(defn tooling-repl []
+  (clojure.main/repl
+   :init (fn [] (in-ns 'user))
+   :prompt #()
+   :print (fn [result] (elisp/prn result))))
+
+(defn restore-bindings [bindings]
+  (doseq [[v-name v-val] bindings]
+    (try
+      (var-set (resolve (symbol v-name)) (read-string v-val))
+      ;; Don't try to restore the binding in case of exception
+      (catch Exception e nil))))
+
+(defn init-and-print-session [bindings]
+  (ewen.replique.server/restore-bindings bindings)
+  ewen.replique.server2/*session*)
+
 (defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
   (try
-    (alter-var-root #'directory (constantly directory))
+    (alter-var-root #'tooling-msg/directory (constantly directory))
     (let [{:keys [files-specs]} replique-vars]
       (alter-var-root #'*files-specs* (constantly files-specs)))
-    (when (not skip-init)
-      (maybe-init-cljs-env))
     (println "Starting Clojure REPL...")
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
-    (alter-var-root #'clojure.core.server/repl bound-fn*)
+    (alter-var-root #'tooling-repl bound-fn*)
     (start-server {:port port :name :replique
-                   :accept 'clojure.core.server/repl
+                   :accept `tooling-repl
+                   :accept-http `accept-http
                    :server-daemon false})
-    (elisp/prn {:host (-> @#'clojure.core.server/servers
+    (elisp/prn {:host (-> @#'server2/servers
                           (get :replique) :socket
                           (.getInetAddress) (.getHostAddress)
                           normalize-ip-address)
-                :port (-> @#'clojure.core.server/servers
-                          (get :replique) :socket (.getLocalPort))
+                :port (server2/server-port)
                 :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
       (elisp/prn {:error t}))))
 
-(defn uncaught-exception [thread ex]
-  (binding [*out* tooling-err]
-    (utils/with-lock tooling-out-lock
-      (elisp/prn {:type :eval
-                  :directory directory
-                  :error true
-                  :repl-type :clj
-                  :thread (.getName thread)
-                  :ns (ns-name *ns*)
-                  :value (with-out-str (print-stack-trace ex))}))))
-
-(defn tooling-repl []
-  (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
-    (clojure.main/repl
-     :init init-fn
-     :prompt #()
-     :caught (fn [e] (uncaught-exception (Thread/currentThread) e))
-     :print (fn [result] (elisp/prn result)))))
-
 (comment
   (clojure.main/repl :prompt #())
+
+  (let [o *out*]
+    (Thread/setDefaultUncaughtExceptionHandler
+     (reify Thread$UncaughtExceptionHandler
+       (uncaughtException [_ thread ex]
+         (binding [*out* o]
+           (prn "e"))))))
   )
 
 (defn shared-tooling-repl []
-  (utils/with-lock tooling-out-lock
-    (alter-var-root #'tooling-out (constantly *out*)))
-  (utils/with-lock tooling-out-lock
-    (alter-var-root #'tooling-err (constantly *err*)))
+  (utils/with-lock tooling-msg/tooling-out-lock
+    (alter-var-root #'tooling-msg/tooling-out (constantly *out*)))
+  (utils/with-lock tooling-msg/tooling-out-lock
+    (alter-var-root #'tooling-msg/tooling-err (constantly *err*)))
   (Thread/setDefaultUncaughtExceptionHandler
    (reify Thread$UncaughtExceptionHandler
      (uncaughtException [_ thread ex]
-       (uncaught-exception thread ex))))
+       (tooling-msg/uncaught-exception thread ex))))
   (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
     (clojure.main/repl
      :init init-fn
      :prompt #()
-     :caught (fn [e] (uncaught-exception (Thread/currentThread) e))
+     :caught (fn [e] (tooling-msg/uncaught-exception (Thread/currentThread) e))
      :print (fn [result]
-              (utils/with-lock tooling-out-lock
+              (utils/with-lock tooling-msg/tooling-out-lock
                 (elisp/prn result))))))
-
-(defn shutdown []
-  (clojure.core.server/stop-servers))
 
 (defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
   (tooling-msg/with-tooling-response msg
-    (shutdown)
+    (server2/stop-server)
     {:shutdown true}))
 
 (comment
-  (.start (Thread. (fn [] (throw (Exception. "e")))))
+  (.start (Thread. (fn [] (throw (Exception. "f")))))
   )
 
 (defn add-file-spec [file-path spec]
@@ -145,13 +142,6 @@
   (let [rel-path (.relativize (.toPath (file ".")) (.toPath (file file-path)))]
     (set! *files-specs* (dissoc *files-specs* rel-path spec))))
 
-(defn restore-bindings [bindings]
-  (doseq [[v-name v-val] bindings]
-    (try
-      (var-set (resolve (symbol v-name)) (read-string v-val))
-      ;; Don't try to restore the binding in case of exception
-      (catch Exception e nil))))
-
 (defn repl-eval
   "Enhanced :eval hook for saving bindings"
   [form]
@@ -162,10 +152,10 @@
             :when (not (identical? prev-b next-b))]
       (let [{v-name :name v-ns :ns} (meta v)]
         (when (and v-name v-ns)
-          (binding [*out* tooling-err]
-            (utils/with-lock tooling-out-lock
+          (binding [*out* tooling-msg/tooling-err]
+            (utils/with-lock tooling-msg/tooling-out-lock
               (elisp/prn {:type :binding
-                          :directory directory
+                          :directory tooling-msg/directory
                           :repl-type :clj
                           :session *session*
                           :ns (ns-name *ns*)
@@ -173,27 +163,33 @@
                           :value (pr-str @v)}))))))
     evaled))
 
-(defn repl []
+(defn repl [repl-type]
   (println "Clojure" (clojure-version))
   (clojure.main/repl
-   :init clojure.core.server/repl-init
+   :init (if (= :cljs repl-type)
+           (fn []
+             (try
+               (require 'ewen.replique.server-cljs)
+               (@(resolve 'ewen.replique.server-cljs/cljs-repl))
+               (catch Exception e nil)))
+           (fn []))
    :eval repl-eval
    :caught (fn [e]
-             (binding [*out* tooling-err]
-               (utils/with-lock tooling-out-lock
+             (binding [*out* tooling-msg/tooling-err]
+               (utils/with-lock tooling-msg/tooling-out-lock
                  (elisp/prn {:type :eval
-                             :directory directory
+                             :directory tooling-msg/directory
                              :error true
                              :repl-type :clj
                              :session *session*
                              :ns (ns-name *ns*)
-                             :value (repl-caught-str e)})))
+                             :value (utils/repl-caught-str e)})))
              (clojure.main/repl-caught e))
    :print (fn [result]
-            (binding [*out* tooling-out]
-              (utils/with-lock tooling-out-lock
+            (binding [*out* tooling-msg/tooling-out]
+              (utils/with-lock tooling-msg/tooling-out-lock
                 (elisp/prn {:type :eval
-                            :directory directory
+                            :directory tooling-msg/directory
                             :repl-type :clj
                             :session *session*
                             :ns (ns-name *ns*)
@@ -252,3 +248,17 @@
                                    :keys '(:column :line :file)})
 
   )
+
+;; Behavior of the socket REPL on repl closing
+;; The read fn returns (end of stream), the parent REPL prints the result of the repl command.
+;; At this point the socket is closed, writing to the socket may (or not) throw a socket
+;; exception. If no exception is thrown, the REPL terminates and the same thing happens again
+;; on the parent REPLs until their is no more REPL.
+;; If a socket exception is thrown, the caugh function is triggered and may itself throw a
+;; socket exception. The same thing happens on parent threads.
+;; The socket server (at the top level) catches the socket exception and closes the session.
+
+;; Behavior of the :init option of clojure repl
+;; It seems (requireing) namespaces in the init fn sometimes throws an exception. I am not sure
+;; why, maybe we just cannot dynamically (require) a namespace and immediately use its vars
+;; without the use of (resolve)
