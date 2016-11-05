@@ -2,16 +2,6 @@
   (:refer-clojure :exclude [delay])
   (:import [java.util.concurrent.locks ReentrantLock]))
 
-(defn dynaload
-  [s]
-  (let [ns (namespace s)]
-    (assert ns)
-    (require (symbol ns))
-    (let [v (resolve s)]
-      (if v
-        @v
-        (throw (RuntimeException. (str "Var " s " is not on the classpath")))))))
-
 ;; Same as Delay but don't realize the Delay on exception.
 ;; This would not be possible with clojure Delay because it makes its function ^:once because
 ;; of local clearings. Replique Delay is not expected to be used in situations where local
@@ -41,7 +31,7 @@
 (defmacro delay [& body]
   (list 'new 'ewen.replique.utils.Dynaload `(~'fn [] ~@body) nil nil))
 
-(defn dynaload2 [s]
+(defn dynaload [s]
   (Dynaload. (fn []
                (let [ns (namespace s)]
                  (assert ns)

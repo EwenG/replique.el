@@ -2,7 +2,8 @@
   "Unify Clojure platforms (Clojure, Clojurescript, ...) environments"
   (:refer-clojure :exclude [ns-name find-ns ns-publics ns-map
                             ns-aliases ns-resolve all-ns meta])
-  (:require [compliment.utils :refer [defmemoized all-files-on-classpath]]
+  (:require [ewen.replique.utils :as utils]
+            [compliment.utils :refer [defmemoized all-files-on-classpath]]
             [clojure.set])
   (:import [java.io File]
            [java.lang.reflect Field]))
@@ -16,32 +17,22 @@
   ICljsCompilerEnv
   (get-wrapped [this] wrapped))
 
-(defn- dynaload
-  [s]
-  (let [ns (namespace s)]
-    (assert ns)
-    (require (symbol ns))
-    (let [v (resolve s)]
-      (if v
-        @v
-        (throw (RuntimeException. (str "Var " s " is not on the classpath")))))))
-
 (def ^:private cljs-all-ns
-  (delay (dynaload 'cljs.analyzer.api/all-ns)))
+  (utils/dynaload 'cljs.analyzer.api/all-ns))
 
 (def ^:private cljs-find-ns
-  (delay (dynaload 'cljs.analyzer.api/find-ns)))
+  (utils/dynaload 'cljs.analyzer.api/find-ns))
 
 ;; We don't use the function from the analyzer API because ns-publics can be used with
 ;; symbols or namespaces
 #_(def ^:private cljs-ns-publics
-    (delay (dynaload 'cljs.analyzer.api/ns-publics)))
+    (utils/dynaload 'cljs.analyzer.api/ns-publics))
 
 (def ^:private cljs-ns-var
-  (delay (dynaload 'cljs.analyzer/*cljs-ns*)))
+  (utils/dynaload 'cljs.analyzer/*cljs-ns*))
 
 (def ^:private cljs-get-js-index
-  (delay (dynaload 'cljs.analyzer.api/get-js-index)))
+  (utils/dynaload 'cljs.analyzer.api/get-js-index))
 
 (defprotocol NamespaceEnv
   (all-ns [comp-env])

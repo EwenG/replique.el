@@ -1340,5 +1340,6 @@ The following commands are available:
 ;; Check that temp files are deleted on repl startup exception
 ;; autocomplet in .clj with cljs repl only
 ;; favicon -> 404
+;; exception when starting cljs repl
 
 ;; replique.el ends here

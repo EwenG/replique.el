@@ -86,7 +86,6 @@
                                      (all-sources)))]
            (as-> (mapcat (fn [f] (f comp-env prefix ns context)) candidate-fns)
                candidates
-
              (if (= sort-order :by-name)
                (sort-by :candidate candidates)
                (sort-by :candidate by-length-comparator candidates))

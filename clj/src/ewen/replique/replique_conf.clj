@@ -8,17 +8,17 @@
            [java.nio.file Path Files LinkOption]))
 
 (def ^:private cljs-server
-  (delay (utils/dynaload 'ewen.replique.server-cljs/cljs-server)))
+  (utils/dynaload 'ewen.replique.server-cljs/cljs-server))
 (def ^:private start-cljs-server
-  (delay (utils/dynaload 'ewen.replique.server-cljs/start-cljs-server)))
+  (utils/dynaload 'ewen.replique.server-cljs/start-cljs-server))
 (def ^:private stop-cljs-server
-  (delay (utils/dynaload 'ewen.replique.server-cljs/stop-cljs-server)))
+  (utils/dynaload 'ewen.replique.server-cljs/stop-cljs-server))
 (def ^:private init-browser-env
-  (delay (utils/dynaload 'ewen.replique.server-cljs/init-browser-env)))
+  (utils/dynaload 'ewen.replique.server-cljs/init-browser-env))
 (def ^:private compiler-env
-  (delay (utils/dynaload 'ewen.replique.server-cljs/compiler-env)))
+  (utils/dynaload 'ewen.replique.server-cljs/compiler-env))
 (def ^:private repl-env
-  (delay (utils/dynaload 'ewen.replique.server-cljs/compiler-env)))
+  (utils/dynaload 'ewen.replique.server-cljs/compiler-env))
 
 (def ^:dynamic *autocomplete* false)
 

@@ -43,8 +43,6 @@
 (defonce cljs-core-bindings #{#'*assert* #'*print-length* #'*print-meta* #'*print-level*
                               #'*flush-on-newline* #'*print-readably* #'*print-dup*})
 
-(def default-repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
-                             [cljs.pprint :refer [pprint] :refer-macros [pp]]])
 (def env {:context :expr :locals {}})
 
 (defn dispatcher [{:keys [method path content]} callback]
@@ -282,14 +280,10 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
         (fn []
           (let [repl-src "ewen/replique/cljs_env/repl.cljs"
                 benv-src "ewen/replique/cljs_env/browser.cljs"
-                ;; Compiling cljs.pprint because it is part of default-repl-requires
-                pprint-src "cljs/pprint.cljs"
                 repl-compiled (repl-compile-cljs repl-src comp-opts false)
-                benv-compiled (repl-compile-cljs benv-src comp-opts false)
-                pprint-compiled (repl-compile-cljs pprint-src comp-opts false)]
+                benv-compiled (repl-compile-cljs benv-src comp-opts false)]
             (repl-cljs-on-disk repl-compiled (cljs.repl/-repl-options repl-env) comp-opts)
             (repl-cljs-on-disk benv-compiled (cljs.repl/-repl-options repl-env) comp-opts)
-            (repl-cljs-on-disk pprint-compiled (cljs.repl/-repl-options repl-env) comp-opts)
             (->> (refresh-cljs-deps comp-opts)
                  (closure/output-deps-file
                   (assoc comp-opts :output-to
@@ -316,8 +310,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     ;; get lost on browser refresh
     (let [js (cljs-env/with-compiler-env compiler-env
                (cljsc/-compile
-                [`(~'ns ~'cljs.user
-                   (:require ~@default-repl-requires))
+                [`(~'ns ~'cljs.user)
                  `(~'swap! ewen.replique.cljs-env.repl/connection
                    ~'assoc :session ~(inc session))
                  '(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)

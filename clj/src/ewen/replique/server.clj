@@ -42,7 +42,7 @@
         (println "Loading Clojurescript REPL environment: failed")))))
 
 (def ^:private dispatch-request
-  (utils/dynaload2 'ewen.replique.server-cljs/dispatch-request))
+  (utils/dynaload 'ewen.replique.server-cljs/dispatch-request))
 
 (defn accept-http [request callback]
   (try (@dispatch-request request callback)

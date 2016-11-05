@@ -11,7 +11,7 @@
             [compliment.context :as context]))
 
 (def ^:private cljs-compiler-env
-  (delay (utils/dynaload 'ewen.replique.server-cljs/compiler-env)))
+  (utils/dynaload 'ewen.replique.server-cljs/compiler-env))
 
 (defmethod tooling-msg/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
