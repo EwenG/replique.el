@@ -172,16 +172,19 @@
     (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
 
 (defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
-  (replique/auto-complete* prefix company-callback tooling-repl
-                           :clj-completion (clojure-find-ns)))
+  (when clj-repl
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :clj-completion (clojure-find-ns))))
 
 (defun replique/auto-complete-cljs (prefix company-callback tooling-repl cljs-repl)
-  (replique/auto-complete* prefix company-callback tooling-repl
-                           :cljs-completion (clojure-find-ns)))
+  (when cljs-repl
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :cljs-completion (clojure-find-ns))))
 
 (defun replique/auto-complete-cljc (prefix company-callback tooling-repl clj-repl cljs-repl)
-  (replique/auto-complete* prefix company-callback tooling-repl
-                           :cljc-completion (clojure-find-ns)))
+  (when (and clj-repl cljs-repl)
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :cljc-completion (clojure-find-ns))))
 
 (defun replique/auto-complete (prefix company-callback)
   (replique/with-modes-dispatch
@@ -248,9 +251,9 @@
       (replique/send-tooling-msg
        tooling-repl
        (replique/hash-map :type msg-type
-                    :context (replique/form-with-prefix)
-                    :ns ns
-                    :symbol (symbol-name (symbol-at-point))))
+                          :context (replique/form-with-prefix)
+                          :ns ns
+                          :symbol (symbol-name (symbol-at-point))))
       (replique-async/<!
        tooling-chan
        (lambda (resp)
@@ -277,14 +280,17 @@
          (ns (symbol-name (replique/get repl :ns))))
     (replique/repliquedoc* tooling-repl msg-type ns)))
 
-(defun replique/repliquedoc-clj (tooling-repl repl)
-  (replique/repliquedoc* tooling-repl :repliquedoc-clj (clojure-find-ns)))
+(defun replique/repliquedoc-clj (tooling-repl clj-repl)
+  (when clj-repl
+    (replique/repliquedoc* tooling-repl :repliquedoc-clj (clojure-find-ns))))
 
-(defun replique/repliquedoc-cljs (tooling-repl repl)
-  (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns)))
+(defun replique/repliquedoc-cljs (tooling-repl cljs-repl)
+  (when cljs-repl
+    (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns))))
 
 (defun replique/repliquedoc-cljc (tooling-repl clj-repl cljs-repl)
-  (replique/repliquedoc* tooling-repl :repliquedoc-cljc (clojure-find-ns)))
+  (when (and clj-repl cljs-repl)
+    (replique/repliquedoc* tooling-repl :repliquedoc-cljc (clojure-find-ns))))
 
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
@@ -296,20 +302,25 @@
      (clojurec-mode . 'replique/repliquedoc-cljc))))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(clojure.core/in-ns '%s)" ns-name)
-   tooling-repl clj-repl))
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/send-input-from-source-clj
+     (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl)))
 
 (defun replique/in-ns-cljs (ns-name tooling-repl cljs-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   tooling-repl cljs-repl))
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/send-input-from-source-cljs
+     (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+     tooling-repl cljs-repl)))
 
 (defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
-  (replique/send-input-from-source-cljc
-   (format "(clojure.core/in-ns '%s)" ns-name)
-   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   tooling-repl clj-repl cljs-repl))
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (replique/send-input-from-source-cljc
+     (format "(clojure.core/in-ns '%s)" ns-name)
+     (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+     tooling-repl clj-repl cljs-repl)))
 
 (defun replique/in-ns (ns-name)
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
@@ -442,22 +453,9 @@ This allows you to temporarily modify read-only buffers too."
                    (f (cdr item)))
                ;; The order of priority is the order of the modes as defined during
                ;; the use of the macro
-               (cond ((equal 'clojure-mode m)
+               (cond ((equal 'clojure-mode m) 
                       `((equal 'clojure-mode major-mode)
-                        (if ,clj-buff-sym
-                            (funcall ,f ,props-sym ,clj-repl-sym)
-                          (user-error "No active Clojure REPL"))))
-                     ;; No active clojure REPL is required
-                     ;; For example, it is possible to load a clojure file
-                     ;; when only a clojurescript REPL is active because of
-                     ;; macro reloading
-                     ((equal 'clojure-mode* m)
-                      `((equal 'clojure-mode major-mode)
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f
-                                     ,props-sym
-                                     ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error "No active Clojure or Clojurescript REPL"))))
+                        (funcall ,f ,props-sym ,clj-repl-sym)))
                      ((equal 'clojurescript-mode m)
                       `((equal 'clojurescript-mode major-mode)
                         (if ,cljs-buff-sym
@@ -509,27 +507,37 @@ This allows you to temporarily modify read-only buffers too."
       (goto-char (process-mark process))
       (insert old-input))))
 
-(defun replique/send-input-from-source-clj-cljs
-    (input props repl)
-  (let ((buff (replique/get repl :buffer)))
-    (with-current-buffer buff
-      (replique/comint-send-input-from-source input))))
+(defun replique/send-input-from-source-clj (input tooling-repl clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (let ((buff (replique/get clj-repl :buffer)))
+      (with-current-buffer buff
+        (replique/comint-send-input-from-source input)))))
+
+(defun replique/send-input-from-source-cljs (input tooling-repl cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (let ((buff (replique/get cljs-repl :buffer)))
+      (with-current-buffer buff
+        (replique/comint-send-input-from-source input)))))
 
 (defun replique/send-input-from-source-cljc
-    (input-clj input-cljs props clj-repl cljs-repl)
-  (let ((clj-buff (replique/get clj-repl :buffer))
-        (cljs-buff (replique/get  cljs-repl :buffer)))
-    (when clj-buff
-      (with-current-buffer clj-buff
-        (replique/comint-send-input-from-source input-clj)))
-    (when cljs-buff
-      (with-current-buffer cljs-buff
-        (replique/comint-send-input-from-source input-cljs)))))
+    (input-clj input-cljs tooling-repl clj-repl cljs-repl)
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (let ((clj-buff (replique/get clj-repl :buffer))
+          (cljs-buff (replique/get  cljs-repl :buffer)))
+      (when clj-buff
+        (with-current-buffer clj-buff
+          (replique/comint-send-input-from-source input-clj)))
+      (when cljs-buff
+        (with-current-buffer cljs-buff
+          (replique/comint-send-input-from-source input-cljs))))))
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
-   (clojure-mode . (-partial'replique/send-input-from-source-clj-cljs input ))
-   (clojurescript-mode . (-partial'replique/send-input-from-source-clj-cljs input))
+   (clojure-mode . (-partial 'replique/send-input-from-source-clj input))
+   (clojurescript-mode . (-partial'replique/send-input-from-source-cljs input))
    (clojurec-mode . (-partial'replique/send-input-from-source-cljc input input))))
 
 (defun replique/eval-region (start end)
@@ -551,25 +559,27 @@ This allows you to temporarily modify read-only buffers too."
   (interactive)
   (replique/send-input-from-source-dispatch (thing-at-point 'defun)))
 
-(defun replique/load-file-clj (file-path props clj-repl cljs-repl)
-  (if clj-repl
-      (replique/send-input-from-source-clj-cljs
-       (format "(clojure.core/load-file \"%s\")" file-path)
-       props clj-repl)
-    (replique/send-input-from-source-clj-cljs
-     (format "(ewen.replique.cljs-env.macros/load-file :clj \"%s\")" file-path)
-     props cljs-repl)))
+(defun replique/load-file-clj (file-path props clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/send-input-from-source-clj
+     (format "(clojure.core/load-file \"%s\")" file-path)
+     props clj-repl)))
 
 (defun replique/load-file-cljs (file-path props cljs-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
-   props cljs-repl))
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/send-input-from-source-cljs
+     (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
+     props cljs-repl)))
 
 (defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
-  (replique/send-input-from-source-cljc
-   (format "(clojure.core/load-file \"%s\")" file-path)
-   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
-   props clj-repl cljs-repl))
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (replique/send-input-from-source-cljc
+     (format "(clojure.core/load-file \"%s\")" file-path)
+     (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
+     props clj-repl cljs-repl)))
 
 (defun replique/load-file ()
   "Load a file in a replique REPL"
@@ -577,7 +587,7 @@ This allows you to temporarily modify read-only buffers too."
   (let ((file-path (buffer-file-name)))
     (comint-check-source file-path)
     (replique/with-modes-dispatch
-     (clojure-mode* . (-partial 'replique/load-file-clj file-path))
+     (clojure-mode . (-partial 'replique/load-file-clj file-path))
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path)))))
 
@@ -1004,7 +1014,7 @@ The following commands are available:
          (buff (make-comint-in-buffer buffer-name buff `(,host . ,port)))
          (proc (get-buffer-process buff))
          (chan-src (replique/process-filter-chan proc))
-         (repl-cmd (format "(ewen.replique.server/repl %s)\n" repl-type)))
+         (repl-cmd (format "(ewen.replique.server/repl)\n")))
     (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
@@ -1042,13 +1052,11 @@ The following commands are available:
                               (when (equal 'rename-buffer this-command)
                                 (replique/save-repls directory)))
                             t t))
-                (comment (when (equal repl-type :cljs)
-                           ;; Wait for the prompt to print before trying to enter the cljs repl
-                           
-                           ;; Third parameter is nil because the function does not use the tooling repl
-                           ;; anyway
-                           (replique/send-input-from-source-clj-cljs
-                            "(ewen.replique.server-cljs/cljs-repl)" nil repl)))
+                (when (equal repl-type :cljs)
+                  ;; Second parameter is nil because the function does not use the
+                  ;; tooling repl anyway
+                  (replique/send-input-from-source-clj
+                   "(@ewen.replique.server/cljs-repl)" nil repl))
                 (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1323,7 +1331,7 @@ The following commands are available:
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
-;; Set the asset path in repl-env on :ready because it is used elswhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
+;; Set the asset path in repl-env on :ready because it is used elsewhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
 ;; The cljs-env makes no use of :repl-require
 ;; autocomplete interactive command
 ;; rename cljs-repl-env
@@ -1338,8 +1346,8 @@ The following commands are available:
 
 ;; Normalize file path for *files-specs*
 ;; Check that temp files are deleted on repl startup exception
-;; autocomplet in .clj with cljs repl only
 ;; favicon -> 404
-;; exception when starting cljs repl
+;; autocomplete / repliquedoc in .cljc with only a cljs repl (when the cljc namespace is loaded in the cljs runtime but not the clj runtime)
+;; check initial load of main namespace for webapp env
 
 ;; replique.el ends here

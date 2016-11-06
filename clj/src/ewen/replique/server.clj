@@ -43,6 +43,8 @@
 
 (def ^:private dispatch-request
   (utils/dynaload 'ewen.replique.server-cljs/dispatch-request))
+(def cljs-repl
+  (utils/dynaload 'ewen.replique.server-cljs/cljs-repl))
 
 (defn accept-http [request callback]
   (try (@dispatch-request request callback)
@@ -56,7 +58,7 @@
 
 (defn tooling-repl []
   (clojure.main/repl
-   :init (fn [] (in-ns 'user))
+   :init (fn [] (in-ns 'ewen.replique.server))
    :prompt #()
    :print (fn [result] (elisp/prn result))))
 
@@ -163,16 +165,10 @@
                           :value (pr-str @v)}))))))
     evaled))
 
-(defn repl [repl-type]
+(defn repl []
   (println "Clojure" (clojure-version))
   (clojure.main/repl
-   :init (if (= :cljs repl-type)
-           (fn []
-             (try
-               (require 'ewen.replique.server-cljs)
-               (@(resolve 'ewen.replique.server-cljs/cljs-repl))
-               (catch Exception e nil)))
-           (fn []))
+   :init (fn [] (in-ns 'user))
    :eval repl-eval
    :caught (fn [e]
              (binding [*out* tooling-msg/tooling-err]

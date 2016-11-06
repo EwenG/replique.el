@@ -26,26 +26,18 @@
      (closure/src-file->goog-require
       src {:wrap true :reload true :macros-ns (:macros-ns compiled)}))))
 
-(defn load-file*
-  ([file-path]
-   (load-file* :cljs file-path))
-  ([type file-path]
-   (case type
-     :cljs (cljs-env/with-compiler-env @compiler-env
-             (let [opts (:options @@compiler-env)
-                   compiled (repl-compile-cljs file-path opts)]
-               (repl-cljs-on-disk
-                compiled (#'cljs.repl/env->opts @repl-env) opts)
-               (->> (refresh-cljs-deps opts)
-                    (closure/output-deps-file
-                     (assoc opts :output-to
-                            (str (util/output-directory opts)
-                                 File/separator "cljs_deps.js"))))
-               (:value (repl-eval-compiled compiled @repl-env file-path opts))))
-     :clj (str (clojure.core/load-file file-path)))))
-
-(defmacro load-file [& args]
-  (apply load-file* args))
+(defmacro load-file [file-path]
+  (cljs-env/with-compiler-env @compiler-env
+    (let [opts (:options @@compiler-env)
+          compiled (repl-compile-cljs file-path opts)]
+      (repl-cljs-on-disk
+       compiled (#'cljs.repl/env->opts @repl-env) opts)
+      (->> (refresh-cljs-deps opts)
+           (closure/output-deps-file
+            (assoc opts :output-to
+                   (str (util/output-directory opts)
+                        File/separator "cljs_deps.js"))))
+      (:value (repl-eval-compiled compiled @repl-env file-path opts)))))
 
 ;; It seems that naming this macro "in-ns" make the cljs compiler
 ;; to crash
