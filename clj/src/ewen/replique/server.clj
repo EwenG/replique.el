@@ -44,8 +44,6 @@
 
 (def ^:private dispatch-request
   (utils/dynaload 'ewen.replique.server-cljs/dispatch-request))
-(def cljs-repl
-  (utils/dynaload 'ewen.replique.server-cljs/cljs-repl))
 
 (defn accept-http [request callback]
   (try (@dispatch-request request callback)

@@ -1054,7 +1054,7 @@ The following commands are available:
                   ;; Second parameter is nil because the function does not use the
                   ;; tooling repl anyway
                   (replique/send-input-from-source-clj
-                   "(@ewen.replique.server/cljs-repl)" nil repl))
+                   "(@ewen.replique.interactive/cljs-repl)" nil repl))
                 (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)

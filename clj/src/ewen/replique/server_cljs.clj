@@ -284,7 +284,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
                    :optimizations :none
                    :recompile-dependents false
                    :preloads ['ewen.replique.cljs_env.repl
-                              'ewen.replique.cljs_env.browser]}
+                              'ewen.replique.cljs_env.browser]
+                   :cache-analysis false}
         compiler-env (-> comp-opts
                          closure/add-implicit-options
                          cljs-env/default-compiler-env)]
@@ -470,3 +471,6 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
        @repl-env "<cljs repl>" 1
        (str "goog.provide('" (comp/munge ns-name) "');")))
     (set! ana/*cljs-ns* ns-name)))
+
+(defn set-repl-verbose [b]
+  (set! cljs.repl/*cljs-verbose* b))
