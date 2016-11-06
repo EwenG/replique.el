@@ -1347,7 +1347,6 @@ The following commands are available:
 ;; Normalize file path for *files-specs*
 ;; Check that temp files are deleted on repl startup exception
 ;; favicon -> 404
-;; autocomplete / repliquedoc in .cljc with only a cljs repl (when the cljc namespace is loaded in the cljs runtime but not the clj runtime)
 ;; check initial load of main namespace for webapp env
 
 ;; replique.el ends here
