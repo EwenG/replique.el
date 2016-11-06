@@ -3,7 +3,7 @@
             [goog.cssom]
             [goog.date :as date]
             [goog.Uri])
-  (:require-macros [ewen.replique.cljs-env.macros]))
+  (:require-macros [ewen.replique.interactive]))
 
 (defn remove-query-string [uri]
   (-> (goog.Uri.parse uri)

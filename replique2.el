@@ -311,7 +311,7 @@
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+     (format "(ewen.replique.interactive/cljs-in-ns '%s)" ns-name)
      tooling-repl cljs-repl)))
 
 (defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
@@ -319,7 +319,7 @@
       (user-error "No active Clojure AND Clojurescript REPL")
     (replique/send-input-from-source-cljc
      (format "(clojure.core/in-ns '%s)" ns-name)
-     (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
+     (format "(ewen.replique.interactive/cljs-in-ns '%s)" ns-name)
      tooling-repl clj-repl cljs-repl)))
 
 (defun replique/in-ns (ns-name)
@@ -563,22 +563,22 @@ This allows you to temporarily modify read-only buffers too."
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
-     (format "(clojure.core/load-file \"%s\")" file-path)
+     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
      props clj-repl)))
 
 (defun replique/load-file-cljs (file-path props cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
+     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
      props cljs-repl)))
 
 (defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
   (if (not (and clj-repl cljs-repl))
       (user-error "No active Clojure AND Clojurescript REPL")
     (replique/send-input-from-source-cljc
-     (format "(clojure.core/load-file \"%s\")" file-path)
-     (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
+     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
+     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
      props clj-repl cljs-repl)))
 
 (defun replique/load-file ()
@@ -1340,10 +1340,10 @@ The following commands are available:
 
 ;; server -> core
 ;; server-cljs -> cljs-env
+;; macros -> interactive
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; Normalize file path for *files-specs*
-;; favicon -> 404
-;; check initial load of main namespace for webapp env
+;; output-main-file with main ns selection
 
 ;; replique.el ends here

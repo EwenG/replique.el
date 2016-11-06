@@ -35,9 +35,9 @@
                               :prefix "all-s"})
 
   (tooling-msg/tooling-msg-handle {:type :clj-completion
-                              :context nil
-                              :ns 'ewen.foo
-                              :prefix "foo"})
+                                   :context nil
+                                   :ns 'ewen.foo
+                                   :prefix "foo"})
 
   )
 

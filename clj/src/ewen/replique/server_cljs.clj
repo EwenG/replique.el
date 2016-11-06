@@ -1,5 +1,5 @@
 (ns ewen.replique.server-cljs
-  (:refer-clojure :exclude [delay])
+  (:refer-clojure :exclude [load-file in-ns])
   (:require [ewen.replique.elisp-printer :as elisp]
             [ewen.replique.utils :as utils]
             [ewen.replique.tooling-msg :as tooling-msg]
@@ -206,6 +206,19 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (doseq [source sources]
       (closure/source-on-disk opts source))))
 
+(defn repl-eval-compiled [compiled repl-env f opts]
+  (let [src (f->src f)]
+    (cljs.repl/-evaluate
+     repl-env "<cljs repl>" 1
+     (slurp (str (cljs.util/output-directory opts)
+                 File/separator "cljs_deps.js")))
+    (cljs.repl/-evaluate
+     repl-env f 1 (closure/add-dep-string opts compiled))
+    (cljs.repl/-evaluate
+     repl-env f 1
+     (closure/src-file->goog-require
+      src {:wrap true :reload true :macros-ns (:macros-ns compiled)}))))
+
 (defn load-javascript
   "Accepts a REPL environment, a list of namespaces, and a URL for a
   JavaScript file which contains the implementation for the list of
@@ -311,8 +324,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (let [js (cljs-env/with-compiler-env compiler-env
                (cljsc/-compile
                 [`(~'ns ~'cljs.user)
-                 `(~'swap! ewen.replique.cljs-env.repl/connection
-                   ~'assoc :session ~(inc session))
+                 `(swap! ewen.replique.cljs-env.repl/connection
+                         assoc :session ~(inc session))
                  '(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)
                  '(set! *print-err-fn* ewen.replique.cljs-env.repl/repl-print)
                  '(set! *print-newline* true)
@@ -431,3 +444,29 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (stop-cljs-server)
     (server2/stop-server)
     {:shutdown true}))
+
+(defn load-file [file-path]
+  (cljs-env/with-compiler-env @compiler-env
+    (let [opts (:options @@compiler-env)
+          compiled (repl-compile-cljs file-path opts)]
+      (repl-cljs-on-disk
+       compiled (#'cljs.repl/env->opts @repl-env) opts)
+      (->> (refresh-cljs-deps opts)
+           (closure/output-deps-file
+            (assoc opts :output-to
+                   (str (cljs.util/output-directory opts)
+                        File/separator "cljs_deps.js"))))
+      (:value (repl-eval-compiled compiled @repl-env file-path opts)))))
+
+(defn in-ns [ns-quote]
+  (let [[quote ns-name] (vec ns-quote)]
+    (when-not (and (= 'quote quote) (symbol? ns-name))
+      (throw (IllegalArgumentException. "Argument to in-ns must be a symbol.")))
+    (when-not (ana/get-namespace ns-name)
+      (swap! cljs-env/*compiler*
+             assoc-in [::ana/namespaces ns-name]
+             {:name ns-name})
+      (cljs.repl/-evaluate
+       @repl-env "<cljs repl>" 1
+       (str "goog.provide('" (comp/munge ns-name) "');")))
+    (set! ana/*cljs-ns* ns-name)))

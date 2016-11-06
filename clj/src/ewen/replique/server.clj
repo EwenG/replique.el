@@ -10,6 +10,7 @@
             [ewen.replique.tooling-msg :as tooling-msg]
             [ewen.replique.replique-conf :as replique-conf]
             [ewen.replique.tooling]
+            [ewen.replique.interactive]
             [ewen.replique.server2 :refer [start-server *session*] :as server2])
   (:import [java.io File FileNotFoundException]))
 
