@@ -950,9 +950,7 @@ The following commands are available:
      chan (lambda (repl-infos)
             ;; Print messages from unbound threads
             (set-process-filter proc (lambda (proc string)
-                                       (message (format "Process %s: %s"
-                                                        (process-name proc)
-                                                        string))))
+                                       (message "Process %s: %s" (process-name proc) string)))
             (if (replique/get repl-infos :error)
                 (message "Error while starting the REPL: %s"
                          (replique-edn/pr-str (replique/get repl-infos :error)))
@@ -1345,7 +1343,6 @@ The following commands are available:
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; Normalize file path for *files-specs*
-;; Check that temp files are deleted on repl startup exception
 ;; favicon -> 404
 ;; check initial load of main namespace for webapp env
 

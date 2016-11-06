@@ -8,6 +8,9 @@
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
+(defonce process-out nil)
+(defonce process-out-lock (ReentrantLock.))
+(defonce process-err nil)
 
 (defmulti tooling-msg-handle :type)
 

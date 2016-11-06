@@ -97,6 +97,7 @@
    ".jpg" "image/jpeg"
    ".png" "image/png"
    ".gif" "image/gif"
+   ".ico" "image/x-icon"
 
    ".js" "text/javascript"
    ".json" "application/json"
@@ -112,6 +113,7 @@
    "image/jpeg" "ISO-8859-1"
    "image/png" "ISO-8859-1"
    "image/gif" "ISO-8859-1"
+   "image/x-icon" "ISO-8859-1"
    "text/javascript" "UTF-8"
    "text/x-clojure" "UTF-8"
    "application/json" "UTF-8"})

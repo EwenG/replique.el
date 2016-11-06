@@ -75,6 +75,8 @@
 
 (defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
   (try
+    (alter-var-root #'tooling-msg/process-out (constantly *out*))
+    (alter-var-root #'tooling-msg/process-err (constantly *err*))
     (alter-var-root #'tooling-msg/directory (constantly directory))
     (let [{:keys [files-specs]} replique-vars]
       (alter-var-root #'*files-specs* (constantly files-specs)))
