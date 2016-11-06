@@ -65,9 +65,7 @@
 (defn send-response [out {:keys [status body content-type encoding]}]
   (http/send-and-close out status body content-type encoding))
 
-;; TODO resolve accept-http before this method
-(defn accept-connection-http [in out accept-http]
-  (require (symbol (namespace accept-http)))
+(defn accept-connection-http [in out accept-http-fn]
   (when-let [request (try (http/read-request in)
                           (catch Exception e
                             (try
@@ -77,8 +75,7 @@
                               (catch Exception e
                                 (tooling-msg/uncaught-exception (Thread/currentThread) e)))
                             nil))]
-    (let [accept-http-fn (resolve accept-http)
-          callback (partial send-response out)]
+    (let [callback (partial send-response out)]
       (let [response (accept-http-fn request callback)]
         (if (instance? java.util.concurrent.Future response)
           ;; Response is sent asynchronously
@@ -116,8 +113,10 @@
          :or {bind-err true
               server-daemon true
               client-daemon true}} opts
-         address (InetAddress/getByName address)  ;; nil returns loopback
-         socket (ServerSocket. port 0 address)]
+        address (InetAddress/getByName address)  ;; nil returns loopback
+        socket (ServerSocket. port 0 address)
+        _ (require (symbol (namespace accept-http)))
+        accept-http-fn (resolve accept-http)]
     (utils/with-lock lock
       (alter-var-root #'servers assoc name {:name name, :socket socket, :sessions {}}))
     (thread
@@ -139,11 +138,11 @@
                     ;; \G
                     71 (let [;; unread the char because it is part of the HTTP request
                              in (make-http-reader first-char in)]
-                         (accept-connection-http in out accept-http))
+                         (accept-connection-http in out accept-http-fn))
                     ;; \P
                     80 (let [;; unread the char because it is part of the HTTP request
                              in (make-http-reader first-char in)]
-                         (accept-connection-http in out accept-http))
+                         (accept-connection-http in out accept-http-fn))
                     (let [in (clojure.lang.LineNumberingPushbackReader.
                               (java.io.InputStreamReader. in))
                           out (java.io.BufferedWriter.
