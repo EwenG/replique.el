@@ -1,5 +1,4 @@
 (ns ewen.replique.compliment.ns-mappings-cljs-test
-  (:require [cljs.js :as cljs :refer [file->ns]])
   (:import [goog.events EventType])
   (:require-macros [ewen.replique.compliment.ns-mappings-clj-test
                     :as cljs-ns-m :refer [my-macro]]))
