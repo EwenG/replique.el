@@ -8,7 +8,6 @@
             [ewen.replique.elisp-printer :as elisp]
             [ewen.replique.utils :as utils]
             [ewen.replique.tooling-msg :as tooling-msg]
-            [ewen.replique.replique-conf :as replique-conf]
             [ewen.replique.tooling]
             [ewen.replique.interactive]
             [ewen.replique.server2 :refer [start-server *session*] :as server2])
@@ -28,19 +27,6 @@
   (cond (= "0.0.0.0" address) "127.0.0.1"
         (= "0:0:0:0:0:0:0:1" address) "127.0.0.1"
         :else address))
-
-(defn maybe-init-cljs-env []
-  (when-let [f (some (fn [[f spec]]
-                       (when (= spec :ewen.replique.replique-conf/cljs-env) f))
-                     *files-specs*)]
-    (try
-      (when-let [conf (try (slurp f) (catch FileNotFoundException e nil))]
-        (println "Loading Clojurescript REPL environment...")
-        (replique-conf/load-cljs-env conf)
-        (println "Loading Clojurescript REPL environment: done"))
-      (catch Exception e
-        (prn e)
-        (println "Loading Clojurescript REPL environment: failed")))))
 
 (def ^:private dispatch-request
   (utils/dynaload 'ewen.replique.server-cljs/dispatch-request))

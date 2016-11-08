@@ -1,7 +1,6 @@
 (ns ewen.replique.spec-tooling
   (:refer-clojure :exclude [+ * and assert or cat def keys merge])
   (:require [clojure.spec :as s]
-            [ewen.replique.replique-conf :as conf]
             [clojure.pprint :refer [pprint pp]]
             [clojure.walk :as walk]))
 
@@ -400,10 +399,7 @@
 
 
 (comment
-  (require '[ewen.replique.replique-conf :as conf])
-
   (candidates "" '({:idx nil, :map-role :key, :form {__prefix__ nil}}) "eee")
-  
   )
 
 (comment
@@ -454,10 +450,6 @@
 
 
   ;; multi spec
-
-  #_(candidates ::conf/cljs-env
-              '({:idx nil :map-role :key :form {__prefix__ nil}})
-              ":ewen")
 
   (defmulti test-mm :mm)
   (defmethod test-mm 33 [_]

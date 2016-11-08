@@ -14,7 +14,7 @@
   [env]
   (boolean (:ns env)))
 
-;; t the moment, load file does not intern macros in the cljs-env, making dynamically loaded
+;; At the moment, load file does not intern macros in the cljs-env, making dynamically loaded
 ;; macros unavailable to autocompletion/repliquedoc.
 (defmacro load-file [file-path]
   (if (cljs-env? &env)
@@ -36,5 +36,4 @@
   {:pre [(contains? compiler-opts opt-key)]}
   (swap! @@cljs-compiler-env assoc-in [:options opt-key] opt-val)
   opt-val)
-
 
