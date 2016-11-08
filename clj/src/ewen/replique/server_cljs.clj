@@ -474,3 +474,16 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 
 (defn set-repl-verbose [b]
   (set! cljs.repl/*cljs-verbose* b))
+
+(defmethod tooling-msg/tooling-msg-handle :output-main-file
+  [{:keys [output-to main-ns] :as msg}]
+  (tooling-msg/with-tooling-response msg
+    (let [port (server2/server-port)]
+      (spit output-to
+            (str "var CLOSURE_UNCOMPILED_DEFINES = null;
+document.write('<script src=\"http://localhost:" port "/goog/base.js\"></script>');
+document.write('<script src=\"http://localhost:" port "/cljs_deps.js\"></script>');
+document.write('<script>goog.require(\"ewen.replique.cljs_env.repl\");</script>');"
+                 (when main-ns "document.write('<script>goog.require(\"webapp.test\");</script>');")    
+                 "document.write('<script>ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
+    msg))

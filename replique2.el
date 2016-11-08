@@ -487,6 +487,13 @@ This allows you to temporarily modify read-only buffers too."
             (,cljs-buff-sym (replique/get ,cljs-repl-sym :buffer)))
        (cond ,@dispatch-code))))
 
+(defmacro replique/return-nil-on-quit (&rest body)
+  (let ((ret-sym (make-symbol "ret-sym")))
+    `(let ((inhibit-quit t))
+       (let ((,ret-sym (with-local-quit ,@body)))
+         (setq quit-flag nil)
+         ,ret-sym))))
+
 (defun replique/comint-kill-input ()
   (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
     (if (> (point) (marker-position pmark))
@@ -657,6 +664,51 @@ This allows you to temporarily modify read-only buffers too."
               (setq replique/repls (delete repl replique/repls))
               (setq replique/repls (push repl replique/repls)))
             (seq-reverse new-active-repls))))
+
+(comment
+ (defun replique/get-cljs-namespaces ()
+   (let* ((tooling-repl (replique/active-repl :tooling t))
+          (tooling-chan (replique/get tooling-repl :chan))
+          (res nil)
+          (tooling-network-proc (replique/get tooling-repl :network-proc))
+          (proc (start-process-shell-command "mm" nil "while read input; do echo $input; done;")))
+     (replique/send-tooling-msg
+      tooling-repl
+      (replique/hash-map :type :get-cljs-namespaces))
+     (replique-async/<!
+      tooling-chan
+      (lambda (resp)
+        (when resp
+          (setq res resp))
+        (print "rr")
+        (print (get-process "pp"))
+        (process-send-string replique/sync-process "\n")
+        ;;(delete-process proc)
+        ))
+     ;;(accept-process-output tooling-network-proc nil nil)
+     (print (get-process "pp"))
+     (accept-process-output replique/sync-process)
+     res))
+
+ (defun replique/output-main-cljs-file (output-to)
+   (interactive
+    (let ((cljs-repl (replique/active-repl :cljs)))
+      (when (not cljs-repl)
+        (user-error "No active Clojurescript REPL"))
+      (let ((cljs-namespaces-resp (replique/get-cljs-namespaces)))
+        (if-let ((err (replique/get cljs-namespaces-resp :error)))
+            ;;(message "%s" (replique-edn/pr-str err))
+            (list "ee")
+          (list (replique/return-nil-on-quit
+                 (ido-read-file-name "Output main cljs file to: "
+                                     (replique/get cljs-repl :directory) nil nil nil
+                                     (lambda (candidate)
+                                       (if (not (file-directory-p candidate))
+                                           (not (file-exists-p candidate))
+                                         t)))))))))
+   (when (and output-to (file-exists-p output-to))
+     (user-error "%s already exists" output-to))
+   (print output-to)))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
