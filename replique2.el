@@ -665,38 +665,63 @@ This allows you to temporarily modify read-only buffers too."
               (setq replique/repls (push repl replique/repls)))
             (seq-reverse new-active-repls))))
 
-(defun replique/get-cljs-namespaces ()
-  (let* ((tooling-repl (replique/active-repl :tooling t))
-         (tooling-chan (replique/get tooling-repl :chan))
-         (res nil))
+(defun replique/list-cljs-namespaces (tooling-repl)
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (out-chan (replique-async/chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type :get-cljs-namespaces))
+     (replique/hash-map :type :list-cljs-namespaces))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
-       (print resp)
-       ))))
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "list-cljs-namespaces failed"))
+             (replique-async/put! out-chan resp))))))
+    out-chan))
 
-(defun replique/output-main-cljs-file (output-to)
-  (interactive
-   (let ((cljs-repl (replique/active-repl :cljs)))
-     (when (not cljs-repl)
-       (user-error "No active Clojurescript REPL"))
-     (let ((cljs-namespaces-resp (replique/get-cljs-namespaces)))
-       (if-let ((err (replique/get cljs-namespaces-resp :error)))
-           ;;(message "%s" (replique-edn/pr-str err))
-           (list "ee")
-         (list (replique/return-nil-on-quit
-                (ido-read-file-name "Output main cljs file to: "
-                                    (replique/get cljs-repl :directory) nil nil nil
-                                    (lambda (candidate)
-                                      (if (not (file-directory-p candidate))
-                                          (not (file-exists-p candidate))
-                                        t)))))))))
-  (when (and output-to (file-exists-p output-to))
-    (user-error "%s already exists" output-to))
-  (print output-to))
+(defun replique/output-main-cljs-file (output-to &optional main-ns)
+  (interactive (list nil nil))
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan))
+         (cljs-repl (replique/active-repl :cljs)))
+    (when (not cljs-repl)
+      (user-error "No active Clojurescript REPL"))
+    (when-let ((output-to (or
+                           output-to
+                           (read-file-name "Output main cljs file to: "
+                                           (replique/get cljs-repl :directory)))))
+      (when (or (not (file-exists-p output-to))
+                (yes-or-no-p (format "Override %s?" output-to))) 
+        (replique-async/<!
+         (if main-ns
+             (replique-async/default-chan (replique/hash-map :namespaces nil))
+           (replique/list-cljs-namespaces tooling-repl))
+         (lambda (resp)
+           (let* ((namespaces (replique/get resp :namespaces))
+                  (main-ns (or main-ns
+                               (replique/return-nil-on-quit
+                                (completing-read "Main Clojurescript namespace: "
+                                                 namespaces nil t nil nil '(nil))))))
+             (replique/send-tooling-msg
+              tooling-repl
+              (replique/hash-map :type :output-main-cljs-file
+                                 :output-to (file-truename output-to)
+                                 :main-ns main-ns))
+             (replique-async/<!
+              tooling-chan
+              (lambda (resp)
+                (when resp
+                  (let ((err (replique/get resp :error)))
+                    (if err
+                        (progn
+                          (message "%s" (replique-edn/pr-str err))
+                          (message "output-main-cljs-file failed"))
+                      (message "Main Clojurescript file written to: %s"
+                               (replique/get resp :main-cljs-file-path))))))))))))))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
@@ -960,8 +985,8 @@ The following commands are available:
                       (replique/skip-repl-starting-output* proc-chan filtered-chan t))
                      ;; Check if the REPL is starting, or, otherwise, if the process is still
                      ;; printing init messages
-                     ((string-match-p (regexp-quote "Starting Clojure REPL...") msg)
-                      (let ((splitted-msg (split-string msg "Starting Clojure REPL...")))
+                     ((string-match-p (regexp-quote "Starting Clojure REPL...\n") msg)
+                      (let ((splitted-msg (split-string msg "Starting Clojure REPL...\n")))
                         (message "%s" (car splitted-msg))
                         (replique-async/put! filtered-chan (cadr splitted-msg))
                         (replique/skip-repl-starting-output* proc-chan filtered-chan t)))

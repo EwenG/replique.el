@@ -20,7 +20,8 @@
             [clojure.spec :as s]
             [cljs.repl.server]
             [cljs.stacktrace :as st]
-            [clojure.edn :as edn])
+            [clojure.edn :as edn]
+            [compliment.environment :refer [->CljsCompilerEnv]])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -475,7 +476,13 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 (defn set-repl-verbose [b]
   (set! cljs.repl/*cljs-verbose* b))
 
-(defmethod tooling-msg/tooling-msg-handle :output-main-file
+(defmethod tooling-msg/tooling-msg-handle :list-cljs-namespaces [msg]
+  (tooling-msg/with-tooling-response msg
+    (->> (->CljsCompilerEnv @compiler-env)
+         compliment.environment/all-ns
+         (assoc msg :namespaces))))
+
+(defmethod tooling-msg/tooling-msg-handle :output-main-cljs-file
   [{:keys [output-to main-ns] :as msg}]
   (tooling-msg/with-tooling-response msg
     (let [port (server2/server-port)]
@@ -483,7 +490,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
             (str "var CLOSURE_UNCOMPILED_DEFINES = null;
 document.write('<script src=\"http://localhost:" port "/goog/base.js\"></script>');
 document.write('<script src=\"http://localhost:" port "/cljs_deps.js\"></script>');
-document.write('<script>goog.require(\"ewen.replique.cljs_env.repl\");</script>');"
-                 (when main-ns "document.write('<script>goog.require(\"webapp.test\");</script>');")    
-                 "document.write('<script>ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
-    msg))
+document.write('<script>goog.require(\"ewen.replique.cljs_env.repl\");</script>');
+" (when main-ns (str "document.write('<script>goog.require(\"" main-ns "\");</script>');
+"))    
+"document.write('<script>ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
+    (assoc msg :main-cljs-file-path (.getAbsolutePath (File. output-to)))))

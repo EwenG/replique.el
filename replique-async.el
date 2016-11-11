@@ -93,6 +93,11 @@
                         (oset ch :providers))
                       nil))))))
 
+(defun replique-async/default-chan (default-val)
+  (let ((out-chan (replique-async/chan)))
+    (replique-async/put! out-chan default-val)
+    out-chan))
+
 
 (comment
  (let ((ch (replique-async/chan-impl
