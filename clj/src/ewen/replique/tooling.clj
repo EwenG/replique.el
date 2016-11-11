@@ -18,10 +18,10 @@
   (tooling-msg/with-tooling-response msg
     (let [{:keys [context]} (context/cache-context nil (when ns (symbol ns)) context)
           context (reverse context)]
-     {:candidates (compliment/completions
-                   prefix
-                   {:ns (when ns (symbol ns))
-                    :context context})})))
+      {:candidates (compliment/completions
+                    prefix
+                    {:ns (when ns (symbol ns))
+                     :context context})})))
 
 (comment
   (tooling-msg/tooling-msg-handle {:type :clj-completion
