@@ -31,13 +31,11 @@
            [java.util.regex Pattern]
            [java.util.concurrent.locks ReentrantLock]))
 
-(declare init-temp-dir)
 (declare init-repl-env)
 (declare init-compiler-env)
 
-(defonce temp-dir (utils/delay (init-temp-dir)))
-(defonce repl-env (utils/delay (init-repl-env @temp-dir)))
-(defonce compiler-env (utils/delay (init-compiler-env @temp-dir @repl-env)))
+(defonce repl-env (utils/delay (init-repl-env)))
+(defonce compiler-env (utils/delay (init-compiler-env @repl-env)))
 
 (defonce cljs-outs (atom #{}))
 (def ^:dynamic *stopped-eval-executor?* false)
@@ -102,7 +100,7 @@ replique.cljs_env.repl.connect(\"" url "\");
   (if (not= "/favicon.ico" path)
     (let [path (if (= "/" path) "/index.html" path)
           local-path (cond->
-                         (seq (for [x [(.toString @temp-dir)]
+                         (seq (for [x [utils/cljs-compile-path]
                                     :when (.exists (io/file (str x path)))]
                                 (str x path)))
                        (complement nil?)
@@ -267,21 +265,15 @@ replique.cljs_env.repl.connect(\"" url "\");
                                    :value (str ~e)
                                    :stacktrace (.-stack ~e)}))))))
 
-(defn init-temp-dir []
-  (let [temp-dir (Files/createTempDirectory "replique_cljs" (make-array FileAttribute 0))
-        delete-temp-dir (fn [] (utils/delete-recursively (.toString temp-dir)))]
-    (.addShutdownHook (Runtime/getRuntime) (Thread. delete-temp-dir))
-    temp-dir))
-
-(defn init-repl-env [temp-dir]
+(defn init-repl-env []
   ;; Merge repl-opts in browserenv because clojurescript expects this. This is weird
   (let [repl-opts {:analyze-path []
-                   :static-dir [(.toString temp-dir)]}]
+                   :static-dir [utils/cljs-compile-path]}]
     (merge (BrowserEnv. repl-opts) repl-opts)))
 
-(defn init-compiler-env [temp-dir repl-env]
-  (let [comp-opts {:output-to (.toString (.resolve temp-dir "main.js"))
-                   :output-dir (.toString temp-dir)
+(defn init-compiler-env [repl-env]
+  (let [comp-opts {:output-to (str (File. utils/cljs-compile-path "main.js"))
+                   :output-dir utils/cljs-compile-path
                    :optimizations :none
                    :recompile-dependents false
                    :preloads ['replique.cljs_env.repl

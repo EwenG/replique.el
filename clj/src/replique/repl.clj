@@ -54,22 +54,23 @@
   (restore-bindings bindings)
   server/*session*)
 
-(defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
+(defn start-repl-process [{:keys [port directory replique-vars] :as opts}]
   (try
     (alter-var-root #'tooling-msg/process-out (constantly *out*))
     (alter-var-root #'tooling-msg/process-err (constantly *err*))
     (alter-var-root #'tooling-msg/directory (constantly directory))
     (let [{:keys [files-specs]} replique-vars]
-      (alter-var-root #'*files-specs* (constantly files-specs)))
+      (alter-var-root #'*files-specs* (constantly files-specs))
+      (alter-var-root #'utils/cljs-compile-path (constantly (:cljs-compile-path replique-vars))))
     (println "Starting Clojure REPL...")
     ;; Let leiningen :global-vars option propagate to other REPLs
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
     (alter-var-root #'tooling-repl bound-fn*)
     (server/start-server {:port port :name :replique
-                   :accept `tooling-repl
-                   :accept-http `accept-http
-                   :server-daemon false})
+                          :accept `tooling-repl
+                          :accept-http `accept-http
+                          :server-daemon false})
     (elisp/prn {:host (-> @#'server/servers
                           (get :replique) :socket
                           (.getInetAddress) (.getHostAddress)

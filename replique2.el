@@ -747,7 +747,12 @@ This allows you to temporarily modify read-only buffers too."
 (defcustom replique/files-specs
   (replique/hash-map)
   ""
-  :type 'hash-map-p
+  :type '(restricted-sexp :match-alternatives (hash-table-p 'nil))
+  :group 'replique)
+
+(defcustom replique/cljs-compile-path "target-cljs"
+  ""
+  :type 'string
   :group 'replique)
 
 (defvar replique/mode-hook '()
@@ -832,21 +837,19 @@ The following commands are available:
 
 (defun replique/raw-command (directory port)
   `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "replique.main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
              (number-to-string port) (replique-edn/pr-str directory)
              (replique-edn/pr-str replique/files-specs)
-             ;; Process started from a symbolic link must skip init (clj-env setup ...)
-             (replique-edn/pr-str (not (equal (file-truename directory) directory))))))
+             (replique-edn/pr-str replique/cljs-compile-path))))
 
 (defun replique/lein-command (directory port)
   `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
     ,(format "\"%sclj/src\"" (replique/replique-root-dir))
     "--" "run" "-m" "replique.main/-main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
+    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
              (number-to-string port) (replique-edn/pr-str directory)
              (replique-edn/pr-str replique/files-specs)
-             ;; Process started from a symbolic link must skip init (clj-env setup ...)
-             (replique-edn/pr-str (not (equal (file-truename directory) directory))))))
+             (replique-edn/pr-str replique/cljs-compile-path))))
 
 (defun replique/is-lein-project (directory)
   (file-exists-p (expand-file-name "project.clj" directory)))

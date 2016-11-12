@@ -2,6 +2,8 @@
   (:refer-clojure :exclude [delay])
   (:import [java.util.concurrent.locks ReentrantLock]))
 
+(defonce cljs-compile-path nil)
+
 ;; Same as Delay but don't realize the Delay on exception.
 ;; This would not be possible with clojure Delay because it makes its function ^:once because
 ;; of local clearings. Replique Delay is not expected to be used in situations where local
