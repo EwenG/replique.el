@@ -1014,6 +1014,7 @@ The following commands are available:
                 proc-chan proc
                 (lambda (proc-out-s)
                   (error "Error while starting the REPL: %s" proc-out-s)))))
+    (set-process-sentinel proc (lambda (proc string) (replique/kill-process-buffer proc)))
     (replique-async/<!
      chan (lambda (repl-infos)
             (replique/kill-process-buffer proc)
@@ -1420,7 +1421,5 @@ The following commands are available:
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; Normalize file path for *files-specs*
-;; Add cljs-repl to interactive
-;; compile cljs to "target-cljs"
 
 ;; replique.el ends here
