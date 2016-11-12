@@ -1,4 +1,4 @@
-(ns replique.server2
+(ns replique.server
   (:require [clojure.main :as m]
             [replique.utils :as utils]
             [replique.http :as http]

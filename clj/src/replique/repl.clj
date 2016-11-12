@@ -6,7 +6,7 @@
             [replique.tooling-msg :as tooling-msg]
             [replique.tooling]
             [replique.interactive]
-            [replique.server2 :as server2])
+            [replique.server :as server])
   (:import [java.io File FileNotFoundException]))
 
 (defonce ^:dynamic *files-specs* {})
@@ -34,7 +34,7 @@
          {:status 500 :body (.getMessage e)})))
 
 (comment
-  (server2/server-port)
+  (server/server-port)
   )
 
 (defn tooling-repl []
@@ -52,7 +52,7 @@
 
 (defn init-and-print-session [bindings]
   (restore-bindings bindings)
-  server2/*session*)
+  server/*session*)
 
 (defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
   (try
@@ -66,15 +66,15 @@
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
     (alter-var-root #'tooling-repl bound-fn*)
-    (server2/start-server {:port port :name :replique
+    (server/start-server {:port port :name :replique
                    :accept `tooling-repl
                    :accept-http `accept-http
                    :server-daemon false})
-    (elisp/prn {:host (-> @#'server2/servers
+    (elisp/prn {:host (-> @#'server/servers
                           (get :replique) :socket
                           (.getInetAddress) (.getHostAddress)
                           normalize-ip-address)
-                :port (server2/server-port)
+                :port (server/server-port)
                 :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
       (elisp/prn {:error t}))))
@@ -110,7 +110,7 @@
 
 (defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
   (tooling-msg/with-tooling-response msg
-    (server2/stop-server)
+    (server/stop-server)
     {:shutdown true}))
 
 (comment
@@ -142,7 +142,7 @@
               (elisp/prn {:type :binding
                           :directory tooling-msg/directory
                           :repl-type :clj
-                          :session server2/*session*
+                          :session server/*session*
                           :ns (ns-name *ns*)
                           :var (str (symbol (str v-ns) (str v-name)))
                           :value (pr-str @v)}))))))
@@ -160,7 +160,7 @@
                              :directory tooling-msg/directory
                              :error true
                              :repl-type :clj
-                             :session server2/*session*
+                             :session server/*session*
                              :ns (ns-name *ns*)
                              :value (utils/repl-caught-str e)})))
              (clojure.main/repl-caught e))
@@ -170,7 +170,7 @@
                 (elisp/prn {:type :eval
                             :directory tooling-msg/directory
                             :repl-type :clj
-                            :session server2/*session*
+                            :session server/*session*
                             :ns (ns-name *ns*)
                             :result (pr-str result)})))
             (prn result))))

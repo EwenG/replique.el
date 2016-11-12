@@ -4,7 +4,7 @@
             [replique.utils :as utils]
             [replique.tooling-msg :as tooling-msg]
             [replique.http :as http]
-            [replique.server2 :refer [*session*] :as server2]
+            [replique.server :refer [*session*] :as server]
             [clojure.java.io :as io]
             [cljs.closure :as closure]
             [cljs.env :as cljs-env]
@@ -55,7 +55,7 @@
         :ready
         (and (= :post method)
              (not= :ready (:type content))
-             (not= (:session content) (:session @server2/cljs-server)))
+             (not= (:session content) (:session @server/cljs-server)))
         :session-expired
         (and (= :post method) (= :result (:type content)))
         :result
@@ -133,7 +133,7 @@ replique.cljs_env.repl.connect(\"" url "\");
     (call [this]
       (if *stopped-eval-executor?*
         {:status :error :value "Connection broken"}
-        (let[{:keys [js-queue result-queue]} @server2/cljs-server]
+        (let[{:keys [js-queue result-queue]} @server/cljs-server]
           (try
             (.put js-queue js)
             (.take result-queue)
@@ -230,8 +230,8 @@ replique.cljs_env.repl.connect(\"" url "\");
   (cljs.repl/-evaluate repl-env nil nil (slurp url)))
 
 (defn evaluate-form [js]
-  (let [port (server2/server-port)
-        {:keys [state eval-executor]} @server2/cljs-server]
+  (let [port (server/server-port)
+        {:keys [state eval-executor]} @server/cljs-server]
     (cond
       (= :stopped state)
       {:status :error
@@ -312,9 +312,9 @@ replique.cljs_env.repl.connect(\"" url "\");
 ;; This must be executed on a single thread (the server thread for example)
 (defmethod dispatch-request :ready [request callback]
   (let [compiler-env @compiler-env
-        _ (swap! server2/cljs-server assoc :state :stopped)
+        _ (swap! server/cljs-server assoc :state :stopped)
         {:keys [result-executor eval-executor js-queue result-queue session]
-         :or {session 0}} @server2/cljs-server
+         :or {session 0}} @server/cljs-server
         new-eval-executor (Executors/newSingleThreadExecutor)
         new-result-executor (Executors/newSingleThreadExecutor)
         new-js-queue (SynchronousQueue.)
@@ -339,7 +339,7 @@ replique.cljs_env.repl.connect(\"" url "\");
                (reify Callable
                  (call [this]
                    (.take new-result-queue))))
-      (swap! server2/cljs-server assoc
+      (swap! server/cljs-server assoc
              :eval-executor new-eval-executor
              :result-executor new-result-executor
              :js-queue new-js-queue
@@ -349,7 +349,7 @@ replique.cljs_env.repl.connect(\"" url "\");
       {:status 200 :body js})))
 
 (defmethod dispatch-request :result [{:keys [content]} callback]
-  (let [{:keys [result-queue js-queue result-executor]} @server2/cljs-server
+  (let [{:keys [result-queue js-queue result-executor]} @server/cljs-server
         result-task (reify Callable
                       (call [this]
                         (try
@@ -399,10 +399,10 @@ replique.cljs_env.repl.connect(\"" url "\");
   (let [repl-env @repl-env
         compiler-env @compiler-env
         out-lock (ReentrantLock.)
-        {:keys [state]} @server2/cljs-server]
+        {:keys [state]} @server/cljs-server]
     (swap! cljs-outs conj [*out* out-lock])
     (when (not= :started state)
-      (println (format "Waiting for browser to connect on port %d ..." (server2/server-port))))
+      (println (format "Waiting for browser to connect on port %d ..." (server/server-port))))
     (apply
      (partial cljs.repl/repl repl-env)
      (->> (merge
@@ -436,15 +436,15 @@ replique.cljs_env.repl.connect(\"" url "\");
     (swap! cljs-outs disj [*out* out-lock])))
 
 (defn stop-cljs-server []
-  (let [{:keys [eval-executor result-executor]} @server2/cljs-server]
-    (swap! server2/cljs-server assoc :state :stopped)
+  (let [{:keys [eval-executor result-executor]} @server/cljs-server]
+    (swap! server/cljs-server assoc :state :stopped)
     (when eval-executor (shutdown-eval-executor eval-executor))
     (when result-executor (.shutdownNow result-executor))))
 
 (defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
   (tooling-msg/with-tooling-response msg
     (stop-cljs-server)
-    (server2/stop-server)
+    (server/stop-server)
     {:shutdown true}))
 
 (defn load-file [file-path]
@@ -485,7 +485,7 @@ replique.cljs_env.repl.connect(\"" url "\");
 (defmethod tooling-msg/tooling-msg-handle :output-main-cljs-file
   [{:keys [output-to main-ns] :as msg}]
   (tooling-msg/with-tooling-response msg
-    (let [port (server2/server-port)]
+    (let [port (server/server-port)]
       (spit output-to
             (str "var CLOSURE_UNCOMPILED_DEFINES = null;
 document.write('<script src=\"http://localhost:" port "/goog/base.js\"></script>');
