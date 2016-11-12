@@ -1,4 +1,4 @@
-(ns ewen.replique.elisp-printer
+(ns replique.elisp-printer
   "Print to a format that can be read by the elisp reader. Not everything is made printable, 
   only the most common Clojure datastructures. This is because elisp reader is not extensible,
   and thus cannot read everything."

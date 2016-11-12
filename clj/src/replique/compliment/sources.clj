@@ -1,4 +1,4 @@
-(ns compliment.sources
+(ns replique.compliment.sources
   "Tools for defining sources for the completion.")
 
 (def ^{:doc "Stores defined sources."

@@ -1,23 +1,23 @@
-(ns ewen.replique.repliquedoc
+(ns replique.repliquedoc
   (:refer-clojure :exclude [find-ns meta ns-resolve])
-  (:require [ewen.replique.tooling-msg :as tooling-msg]
+  (:require [replique.tooling-msg :as tooling-msg]
             [clojure.set]
-            [compliment.core :as compliment]
-            [compliment.context :as context]
-            [compliment.sources.local-bindings
+            [replique.compliment.core :as compliment]
+            [replique.compliment.context :as context]
+            [replique.compliment.sources.local-bindings
              :refer [bindings-from-context]]
-            [compliment.environment :refer [->CljsCompilerEnv find-ns meta
-                                            looks-like-var? ns-resolve]]
-            [compliment.context :as context]
-            [compliment.utils :refer [resolve-class]]
-            [compliment.sources.class-members :refer [class-member-symbol?
+            [replique.environment :refer [->CljsCompilerEnv find-ns meta
+                                          looks-like-var? ns-resolve]]
+            [replique.compliment.context :as context]
+            [replique.compliment.utils :refer [resolve-class]]
+            [replique.compliment.sources.class-members :refer [class-member-symbol?
                                                       static-member-symbol?
                                                       try-get-object-class
                                                       get-all-members
                                                       static-members]]
-            [compliment.sources.local-bindings :refer [bindings-from-context]]
-            [compliment.sources.ns-mappings :refer [var-symbol?]])
-  (:import [compliment.environment CljsCompilerEnv]
+            [replique.compliment.sources.local-bindings :refer [bindings-from-context]]
+            [replique.compliment.sources.ns-mappings :refer [var-symbol?]])
+  (:import [replique.environment CljsCompilerEnv]
            [java.lang.reflect Method Member Modifier]))
 
 (defmulti format-call (fn [{:keys [type]} index] type))
@@ -52,19 +52,19 @@
   (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(__prefix__)
 "
-                                            :ns "ewen.replique.repliquedoc"
+                                            :ns "replique.repliquedoc"
                                             :symbol "."})
 
   (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(clojure.core __prefix__)
 "
-                                            :ns "ewen.replique.repliquedoc"
+                                            :ns "replique.repliquedoc"
                                             :symbol "ee"})
 
   (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                                             :context "(prn __prefix__)
 "
-                                            :ns "ewen.replique.repliquedoc"
+                                            :ns "replique.repliquedoc"
                                             :symbol "ee"})
   )
 (comment
@@ -166,14 +166,14 @@
   (tooling-msg/tooling-msg-handle {:type :repliquedoc-clj
                               :context "(__prefix__)
 "
-                              :ns "ewen.replique.tooling"
+                              :ns "replique.tooling"
                               :symbol "Integer/compare"})
 
   (tooling-msg/tooling-msg-handle
    {:type :repliquedoc-cljs
     :context "(__prefix__)
 "
-    :ns "ewen.replique.compliment.ns-mappings-cljs-test"
+    :ns "replique.compliment.ns-mappings-cljs-test"
     :symbol "my-macro"})
   )
 

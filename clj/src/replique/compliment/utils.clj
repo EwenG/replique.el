@@ -1,4 +1,4 @@
-(ns compliment.utils
+(ns replique.compliment.utils
   "Functions and utilities for source implementations."
   (:import java.io.File
            [java.util.jar JarFile JarEntry]))

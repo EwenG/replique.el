@@ -1,9 +1,9 @@
-(ns compliment.sources.special-forms
+(ns replique.compliment.sources.special-forms
   "Completion for Clojure's special forms."
   (:require [clojure.repl :as repl]
-            [compliment.sources :refer [defsource]]
-            [compliment.sources.ns-mappings :as vars]
-            [compliment.environment :refer [special-forms]]))
+            [replique.compliment.sources :refer [defsource]]
+            [replique.compliment.sources.ns-mappings :as vars]
+            [replique.environment :refer [special-forms]]))
 
 (defn first-item-in-list?
   "If context is not nil, check if prefix is the first item in a list form."

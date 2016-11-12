@@ -1,17 +1,17 @@
-(ns ewen.replique.tooling
+(ns replique.tooling
   (:require [clojure.set]
-            [ewen.replique.utils :as utils]
-            [ewen.replique.tooling-msg :as tooling-msg]
-            [ewen.replique.repliquedoc :as repliquedoc]
-            [compliment.core :as compliment]
-            [compliment.context :as context]
-            [compliment.sources.local-bindings
+            [replique.utils :as utils]
+            [replique.tooling-msg :as tooling-msg]
+            [replique.repliquedoc :as repliquedoc]
+            [replique.compliment.core :as compliment]
+            [replique.compliment.context :as context]
+            [replique.compliment.sources.local-bindings
              :refer [bindings-from-context]]
-            [compliment.environment :refer [->CljsCompilerEnv]]
-            [compliment.context :as context]))
+            [replique.environment :refer [->CljsCompilerEnv]]
+            [replique.compliment.context :as context]))
 
 (def ^:private cljs-compiler-env
-  (utils/dynaload 'ewen.replique.server-cljs/compiler-env))
+  (utils/dynaload 'replique.repl-cljs/compiler-env))
 
 (defmethod tooling-msg/tooling-msg-handle :clj-completion
   [{:keys [context ns prefix] :as msg}]
@@ -26,17 +26,17 @@
 (comment
   (tooling-msg/tooling-msg-handle {:type :clj-completion
                               :context nil
-                              :ns 'ewen.replique.server
+                              :ns 'replique.repl
                               :prefix "tooli"})
 
   (tooling-msg/tooling-msg-handle {:type :clj-completion
                               :context nil
-                              :ns 'compliment.sources
+                              :ns 'replique.compliment.sources
                               :prefix "all-s"})
 
   (tooling-msg/tooling-msg-handle {:type :clj-completion
                                    :context nil
-                                   :ns 'ewen.foo
+                                   :ns 'replique.foo
                                    :prefix "foo"})
 
   )
@@ -53,12 +53,12 @@
                     {:ns (when ns (symbol ns)) :context context
                      :comp-env (->CljsCompilerEnv @@cljs-compiler-env)
                      :sources
-                     [:compliment.sources.ns-mappings/ns-mappings
-                      :compliment.sources.namespaces-and-classes/namespaces-and-classes
-                      :compliment.sources.keywords/keywords
-                      :compliment.sources.local-bindings/local-bindings
-                      :compliment.sources.special-forms/literals
-                      :compliment.sources.special-forms/special-forms]})})))
+                     [:replique.compliment.sources.ns-mappings/ns-mappings
+                      :replique.compliment.sources.namespaces-and-classes/namespaces-and-classes
+                      :replique.compliment.sources.keywords/keywords
+                      :replique.compliment.sources.local-bindings/local-bindings
+                      :replique.compliment.sources.special-forms/literals
+                      :replique.compliment.sources.special-forms/special-forms]})})))
 
 (defmethod tooling-msg/tooling-msg-handle :cljc-completion
   [{:keys [context ns prefix] :as msg}]
@@ -73,12 +73,12 @@
                       {:ns (when ns (symbol ns)) :context context
                        :comp-env (->CljsCompilerEnv @@cljs-compiler-env)
                        :sources
-                       [:compliment.sources.ns-mappings/ns-mappings
-                        :compliment.sources.namespaces-and-classes/namespaces-and-classes
-                        :compliment.sources.keywords/keywords
-                        :compliment.sources.local-bindings/local-bindings
-                        :compliment.sources.special-forms/literals
-                        :compliment.sources.special-forms/special-forms]})}
+                       [:replique.compliment.sources.ns-mappings/ns-mappings
+                        :replique.compliment.sources.namespaces-and-classes/namespaces-and-classes
+                        :replique.compliment.sources.keywords/keywords
+                        :replique.compliment.sources.local-bindings/local-bindings
+                        :replique.compliment.sources.special-forms/literals
+                        :replique.compliment.sources.special-forms/special-forms]})}
         {:candidates (compliment/completions
                       prefix
                       {:ns (when ns (symbol ns))
@@ -87,12 +87,12 @@
 (comment
   (tooling-msg/tooling-msg-handle {:type :cljs-completion
                               :context nil
-                              :ns "ewen.replique.compliment.ns-mappings-cljs-test"
+                              :ns "replique.compliment.ns-mappings-cljs-test"
                               :prefix ":cljs.c"})
   
   (tooling-msg/tooling-msg-handle {:type :cljs-completion
                               :context nil
-                              :ns "ewen.replique.compliment.ns-mappings-cljs-test"
+                              :ns "replique.compliment.ns-mappings-cljs-test"
                               :prefix "::eee"})
   
   )

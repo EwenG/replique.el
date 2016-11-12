@@ -1,7 +1,7 @@
-(ns compliment.sources.class-members
+(ns replique.compliment.sources.class-members
   "Completion for both static and non-static class members."
-  (:require [compliment.sources :refer [defsource]]
-            [compliment.utils :refer [fuzzy-matches-no-skip? resolve-class]]
+  (:require [replique.compliment.sources :refer [defsource]]
+            [replique.compliment.utils :refer [fuzzy-matches-no-skip? resolve-class]]
             [clojure.string :refer [join]])
   (:import [java.lang.reflect Method Field Member Modifier]))
 

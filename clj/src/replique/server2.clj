@@ -1,8 +1,8 @@
-(ns ewen.replique.server2
+(ns replique.server2
   (:require [clojure.main :as m]
-            [ewen.replique.utils :as utils]
-            [ewen.replique.http :as http]
-            [ewen.replique.tooling-msg :as tooling-msg])
+            [replique.utils :as utils]
+            [replique.http :as http]
+            [replique.tooling-msg :as tooling-msg])
   (:import [java.net InetAddress Socket ServerSocket SocketException]
            [java.util.concurrent.locks ReentrantLock]
            [java.util.concurrent Executors]))

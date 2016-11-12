@@ -1,9 +1,9 @@
-(ns ewen.replique.cljs-env.browser
+(ns replique.cljs-env.browser
   (:require [cljs.reader :as reader]
             [goog.cssom]
             [goog.date :as date]
             [goog.Uri])
-  (:require-macros [ewen.replique.interactive]))
+  (:require-macros [replique.interactive]))
 
 (defn remove-query-string [uri]
   (-> (goog.Uri.parse uri)

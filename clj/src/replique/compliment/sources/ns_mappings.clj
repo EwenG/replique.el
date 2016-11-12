@@ -1,9 +1,9 @@
-(ns compliment.sources.ns-mappings
+(ns replique.compliment.sources.ns-mappings
   "Completion for vars and classes in the current namespace."
   (:refer-clojure :exclude [ns-publics ns-map meta find-ns])
-  (:require [compliment.sources :refer [defsource]]
-            [compliment.utils :refer [fuzzy-matches? *extra-metadata*]]
-            [compliment.environment :refer [ns-publics ns-map meta resolve-namespace find-ns]])
+  (:require [replique.compliment.sources :refer [defsource]]
+            [replique.compliment.utils :refer [fuzzy-matches? *extra-metadata*]]
+            [replique.environment :refer [ns-publics ns-map meta resolve-namespace find-ns]])
   (:import java.io.StringWriter))
 
 (defn var-symbol?
@@ -116,28 +116,28 @@
 
 (comment
 
-  (require '[ewen.replique.server-cljs :refer [compiler-env]])
-  (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  (require '[replique.repl-cljs :refer [compiler-env]])
+  (require '[replique.environment :refer [->CljsCompilerEnv]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (type (compliment.environment/find-ns comp-env 'cljs.core))
-  (count (compliment.environment/ns-publics comp-env 'cljs.core))
-  (count (compliment.environment/ns-core-refers comp-env 'cljs.core))
-  (count (compliment.environment/ns-map comp-env 'cljs.core))
+  (type (replique.environment/find-ns comp-env 'cljs.core))
+  (count (replique.environment/ns-publics comp-env 'cljs.core))
+  (count (replique.environment/ns-core-refers comp-env 'cljs.core))
+  (count (replique.environment/ns-map comp-env 'cljs.core))
 
   (get (:cljs.analyzer/namespaces @@compiler-env) 'cljs.user)
 
   {:rename-macros {}, :renames {}, :use-macros {doc cljs.repl, find-doc cljs.repl, dir cljs.repl, pst cljs.repl, pp cljs.pprint, source cljs.repl, apropos cljs.repl}, :excludes #{}, :name cljs.user, :imports nil, :requires {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :uses {pprint cljs.pprint}, :require-macros {cljs.repl cljs.repl, cljs.pprint cljs.pprint}, :doc nil}
 
-  (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-cljs-test @compiler-env)
-  (replique-ns/ns-publics 'ewen.replique.compliment.ns-mappings-clj-test nil)
+  (replique-ns/ns-publics 'replique.compliment.ns-mappings-cljs-test @compiler-env)
+  (replique-ns/ns-publics 'replique.compliment.ns-mappings-clj-test nil)
 
-  (get (compliment.environment/ns-publics nil 'ewen.replique.compliment.ns-mappings-clj-test)
+  (get (replique.environment/ns-publics nil 'replique.compliment.ns-mappings-clj-test)
        'my-fn)
-  (get (compliment.environment/ns-publics comp-env 'ewen.replique.compliment.ns-mappings-cljs-test)
+  (get (replique.environment/ns-publics comp-env 'replique.compliment.ns-mappings-cljs-test)
        'my-fn)
 
-  (candidates comp-env "clj" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
-  (candidates "cloj" (find-ns nil 'ewen.replique.compliment.ns-mappings-clj-test) nil)
+  (candidates comp-env "clj" (find-ns comp-env 'replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates "cloj" (find-ns nil 'replique.compliment.ns-mappings-clj-test) nil)
 
   )

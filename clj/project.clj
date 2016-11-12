@@ -1,4 +1,4 @@
-(defproject ewen.replique/replique "0.0.1-SNAPSHOT"
+(defproject replique/replique "0.0.1-SNAPSHOT"
   :dependencies [[org.clojure/clojure "1.9.0-alpha14"]
                  [org.clojure/clojurescript "1.9.229"]]
   :profiles {:dev {:dependencies [[org.clojure/test.check "0.9.0"]]}}

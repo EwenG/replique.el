@@ -1,4 +1,4 @@
-(ns ewen.replique.cljs-env.repl
+(ns replique.cljs-env.repl
   "Xhr based repl. Uses CORS to bypass the same origin policy.
   Adapted from https://github.com/clojure/clojurescript/blob/master/src/main/cljs/clojure/browser/repl.cljs.
   Also, replace :order by a :session id in messages sent to the server"

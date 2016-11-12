@@ -1,5 +1,5 @@
-(ns ewen.replique.main
-  (:require [ewen.replique.server :refer [start-repl-process]]))
+(ns replique.main
+  (:require [replique.repl :refer [start-repl-process]]))
 
 (defn -main [opts]
   (start-repl-process (read-string opts)))

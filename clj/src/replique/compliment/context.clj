@@ -1,6 +1,6 @@
-(ns compliment.context
+(ns replique.compliment.context
   "Utilities for parsing and storing the current completion context."
-  (:require [compliment.core :refer [ensure-ns]]
+  (:require [replique.compliment.core :refer [ensure-ns]]
             [clojure.walk :refer [walk]]
             [clojure.set]))
 

@@ -1,16 +1,12 @@
-(ns ewen.replique.server
+(ns replique.repl
   (:require [clojure.main]
             [clojure.java.io :refer [file]]
-            [compliment.context :as context]
-            [compliment.sources.local-bindings :refer [bindings-from-context]]
-            [compliment.core :as compliment]
-            [compliment.sources :as compliment-sources]
-            [ewen.replique.elisp-printer :as elisp]
-            [ewen.replique.utils :as utils]
-            [ewen.replique.tooling-msg :as tooling-msg]
-            [ewen.replique.tooling]
-            [ewen.replique.interactive]
-            [ewen.replique.server2 :refer [start-server *session*] :as server2])
+            [replique.elisp-printer :as elisp]
+            [replique.utils :as utils]
+            [replique.tooling-msg :as tooling-msg]
+            [replique.tooling]
+            [replique.interactive]
+            [replique.server2 :as server2])
   (:import [java.io File FileNotFoundException]))
 
 (defonce ^:dynamic *files-specs* {})
@@ -29,7 +25,7 @@
         :else address))
 
 (def ^:private dispatch-request
-  (utils/dynaload 'ewen.replique.server-cljs/dispatch-request))
+  (utils/dynaload 'replique.repl-cljs/dispatch-request))
 
 (defn accept-http [request callback]
   (try (@dispatch-request request callback)
@@ -43,7 +39,7 @@
 
 (defn tooling-repl []
   (clojure.main/repl
-   :init (fn [] (in-ns 'ewen.replique.server))
+   :init (fn [] (in-ns 'replique.repl))
    :prompt #()
    :print (fn [result] (elisp/prn result))))
 
@@ -55,8 +51,8 @@
       (catch Exception e nil))))
 
 (defn init-and-print-session [bindings]
-  (ewen.replique.server/restore-bindings bindings)
-  ewen.replique.server2/*session*)
+  (restore-bindings bindings)
+  server2/*session*)
 
 (defn start-repl-process [{:keys [port directory replique-vars skip-init] :as opts}]
   (try
@@ -70,7 +66,7 @@
     ;; The tooling REPL printing is a custom one and thus is not affected by those bindings,
     ;; and it must not !!
     (alter-var-root #'tooling-repl bound-fn*)
-    (start-server {:port port :name :replique
+    (server2/start-server {:port port :name :replique
                    :accept `tooling-repl
                    :accept-http `accept-http
                    :server-daemon false})
@@ -103,7 +99,7 @@
    (reify Thread$UncaughtExceptionHandler
      (uncaughtException [_ thread ex]
        (tooling-msg/uncaught-exception thread ex))))
-  (let [init-fn (fn [] (in-ns 'ewen.replique.server))]
+  (let [init-fn (fn [] (in-ns 'replique.repl))]
     (clojure.main/repl
      :init init-fn
      :prompt #()
@@ -146,7 +142,7 @@
               (elisp/prn {:type :binding
                           :directory tooling-msg/directory
                           :repl-type :clj
-                          :session *session*
+                          :session server2/*session*
                           :ns (ns-name *ns*)
                           :var (str (symbol (str v-ns) (str v-name)))
                           :value (pr-str @v)}))))))
@@ -164,7 +160,7 @@
                              :directory tooling-msg/directory
                              :error true
                              :repl-type :clj
-                             :session *session*
+                             :session server2/*session*
                              :ns (ns-name *ns*)
                              :value (utils/repl-caught-str e)})))
              (clojure.main/repl-caught e))
@@ -174,7 +170,7 @@
                 (elisp/prn {:type :eval
                             :directory tooling-msg/directory
                             :repl-type :clj
-                            :session *session*
+                            :session server2/*session*
                             :ns (ns-name *ns*)
                             :result (pr-str result)})))
             (prn result))))
@@ -188,11 +184,11 @@
                    keys)
       (select-keys meta (disj keys :file :line :column)))))
 
-(defmethod tooling-msg/tooling-msg-handle :clj-var-meta
+#_(defmethod tooling-msg/tooling-msg-handle :clj-var-meta
   [{:keys [context ns symbol keys] :as msg}]
   (tooling-msg/with-tooling-response msg
     (let [ctx (when context (read-string context))
-          ctx (context/parse-context ctx)
+          ctx (compliment.context/parse-context ctx)
           bindings (bindings-from-context ctx)
           keys (into #{} keys)]
       (cond
@@ -214,19 +210,19 @@
 (comment
   (tooling-msg/tooling-msg-handle {:type :clj-var-meta
                                    :context nil
-                                   :ns 'ewen.replique.server
+                                   :ns 'replique.repl
                                    :symbol 'tooling-msg-handle
                                    :keys '(:column :line :file)})
 
   (tooling-msg/tooling-msg-handle {:type :clj-var-meta
                                    :context nil
-                                   :ns 'compliment.core
+                                   :ns 'replique.compliment.core
                                    :symbol 'all-sources
                                    :keys '(:column :line :file)})
 
   (tooling-msg/tooling-msg-handle {:type :clj-var-meta
                                    :context nil
-                                   :ns 'ewen.foo
+                                   :ns 'replique.foo
                                    :symbol 'foo-bar
                                    :keys '(:column :line :file)})
 

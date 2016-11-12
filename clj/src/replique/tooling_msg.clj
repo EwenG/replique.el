@@ -1,6 +1,6 @@
-(ns ewen.replique.tooling-msg
-  (:require [ewen.replique.utils :as utils]
-            [ewen.replique.elisp-printer :as elisp]
+(ns replique.tooling-msg
+  (:require [replique.utils :as utils]
+            [replique.elisp-printer :as elisp]
             [clojure.stacktrace :refer [print-stack-trace]])
   (:import [java.util.concurrent.locks ReentrantLock]))
 

@@ -1,4 +1,4 @@
-(ns ewen.replique.spec-tooling
+(ns replique.spec-tooling
   (:refer-clojure :exclude [+ * and assert or cat def keys merge])
   (:require [clojure.spec :as s]
             [clojure.pprint :refer [pprint pp]]
@@ -48,7 +48,7 @@
       f)))
 
 (defn complete? [x]
-  (when (instance? ewen.replique.spec_tooling.Complete x) x))
+  (when (instance? replique.spec_tooling.Complete x) x))
 
 (defn from-cat [preds]
   {::s/op ::s/pcat :ps (mapv from-spec preds)})
@@ -441,7 +441,7 @@
 
   (candidates (s/keys :req [::ss])
               '({:idx nil :map-role :key :form {__prefix__ nil}})
-              ":ewen")
+              ":replique")
 
   (candidates (s/keys :req-un [::ss])
               '({:idx nil :map-role :key :form {__prefix__ nil}})

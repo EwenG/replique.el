@@ -1,9 +1,9 @@
-(ns compliment.sources.keywords
+(ns replique.compliment.sources.keywords
   "Completion for keywords interned globally across the application"
   (:refer-clojure :exclude [ns-name ns-aliases find-ns])
-  (:require [compliment.sources :refer [defsource]]
-            [compliment.utils :refer [defmemoized]]
-            [compliment.environment :refer [ns-name resolve-namespace ns-aliases
+  (:require [replique.compliment.sources :refer [defsource]]
+            [replique.compliment.utils :refer [defmemoized]]
+            [replique.environment :refer [ns-name resolve-namespace ns-aliases
                                             keywords find-ns]]))
 
 (defn- tagged-candidate [c]
@@ -61,10 +61,10 @@
   :doc (constantly nil))
 
 (comment
-  (require '[ewen.replique.server-cljs :refer [compiler-env]])
-  (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  (require '[replique.repl-cljs :refer [compiler-env]])
+  (require '[replique.environment :refer [->CljsCompilerEnv]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (candidates comp-env ":cljs.c" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
-  (candidates comp-env "::eee" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates comp-env ":cljs.c" (find-ns comp-env 'replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates comp-env "::eee" (find-ns comp-env 'replique.compliment.ns-mappings-cljs-test) nil)
   )

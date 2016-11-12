@@ -1,10 +1,10 @@
-(ns ewen.replique.server-cljs
+(ns replique.repl-cljs
   (:refer-clojure :exclude [load-file in-ns])
-  (:require [ewen.replique.elisp-printer :as elisp]
-            [ewen.replique.utils :as utils]
-            [ewen.replique.tooling-msg :as tooling-msg]
-            [ewen.replique.http :as http]
-            [ewen.replique.server2 :refer [*session*] :as server2]
+  (:require [replique.elisp-printer :as elisp]
+            [replique.utils :as utils]
+            [replique.tooling-msg :as tooling-msg]
+            [replique.http :as http]
+            [replique.server2 :refer [*session*] :as server2]
             [clojure.java.io :as io]
             [cljs.closure :as closure]
             [cljs.env :as cljs-env]
@@ -21,7 +21,7 @@
             [cljs.repl.server]
             [cljs.stacktrace :as st]
             [clojure.edn :as edn]
-            [compliment.environment :refer [->CljsCompilerEnv]])
+            [replique.environment :refer [->CljsCompilerEnv]])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -87,13 +87,13 @@
 <script src=\"goog/base.js\"></script>
 <script src=\"cljs_deps.js\"></script>
 <script>
-goog.require(\"ewen.replique.cljs_env.repl\");
+goog.require(\"replique.cljs_env.repl\");
 </script>
 <script>
-goog.require(\"ewen.replique.cljs_env.browser\");
+goog.require(\"replique.cljs_env.browser\");
 </script>
 <script>
-ewen.replique.cljs_env.repl.connect(\"" url "\");
+replique.cljs_env.repl.connect(\"" url "\");
 </script>
 </body>
 </html>")}))
@@ -284,8 +284,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
                    :output-dir (.toString temp-dir)
                    :optimizations :none
                    :recompile-dependents false
-                   :preloads ['ewen.replique.cljs_env.repl
-                              'ewen.replique.cljs_env.browser]
+                   :preloads ['replique.cljs_env.repl
+                              'replique.cljs_env.browser]
                    :cache-analysis false}
         compiler-env (-> comp-opts
                          closure/add-implicit-options
@@ -293,8 +293,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (cljs-env/with-compiler-env compiler-env
       (comp/with-core-cljs nil
         (fn []
-          (let [repl-src "ewen/replique/cljs_env/repl.cljs"
-                benv-src "ewen/replique/cljs_env/browser.cljs"
+          (let [repl-src "replique/cljs_env/repl.cljs"
+                benv-src "replique/cljs_env/browser.cljs"
                 repl-compiled (repl-compile-cljs repl-src comp-opts false)
                 benv-compiled (repl-compile-cljs benv-src comp-opts false)]
             (repl-cljs-on-disk repl-compiled (cljs.repl/-repl-options repl-env) comp-opts)
@@ -326,13 +326,13 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
     (let [js (cljs-env/with-compiler-env compiler-env
                (cljsc/-compile
                 [`(~'ns ~'cljs.user)
-                 `(swap! ewen.replique.cljs-env.repl/connection
+                 `(swap! replique.cljs-env.repl/connection
                          assoc :session ~(inc session))
-                 '(set! *print-fn* ewen.replique.cljs-env.repl/repl-print)
-                 '(set! *print-err-fn* ewen.replique.cljs-env.repl/repl-print)
+                 '(set! *print-fn* replique.cljs-env.repl/repl-print)
+                 '(set! *print-err-fn* replique.cljs-env.repl/repl-print)
                  '(set! *print-newline* true)
-                 '(when (pos? (count ewen.replique.cljs-env.repl/print-queue))
-                    (ewen.replique.cljs-env.repl/flush-print-queue!))
+                 '(when (pos? (count replique.cljs-env.repl/print-queue))
+                    (replique.cljs-env.repl/flush-print-queue!))
                  (init-core-bindings)]
                 {}))]
       (.submit new-eval-executor
@@ -479,7 +479,7 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
 (defmethod tooling-msg/tooling-msg-handle :list-cljs-namespaces [msg]
   (tooling-msg/with-tooling-response msg
     (->> (->CljsCompilerEnv @compiler-env)
-         compliment.environment/all-ns
+         replique.environment/all-ns
          (assoc msg :namespaces))))
 
 (defmethod tooling-msg/tooling-msg-handle :output-main-cljs-file
@@ -490,8 +490,8 @@ ewen.replique.cljs_env.repl.connect(\"" url "\");
             (str "var CLOSURE_UNCOMPILED_DEFINES = null;
 document.write('<script src=\"http://localhost:" port "/goog/base.js\"></script>');
 document.write('<script src=\"http://localhost:" port "/cljs_deps.js\"></script>');
-document.write('<script>goog.require(\"ewen.replique.cljs_env.repl\");</script>');
+document.write('<script>goog.require(\"replique.cljs_env.repl\");</script>');
 " (when main-ns (str "document.write('<script>goog.require(\"" main-ns "\");</script>');
 "))    
-"document.write('<script>ewen.replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
+"document.write('<script>replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
     (assoc msg :main-cljs-file-path (.getAbsolutePath (File. output-to)))))

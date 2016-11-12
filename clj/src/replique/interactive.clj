@@ -1,13 +1,13 @@
-(ns ewen.replique.interactive
+(ns replique.interactive
   (:refer-clojure :exclude [load-file])
-  (:require [ewen.replique.utils :as utils]))
+  (:require [replique.utils :as utils]))
 
-(def cljs-repl (utils/dynaload 'ewen.replique.server-cljs/cljs-repl))
-(def ^:private cljs-load-file (utils/dynaload 'ewen.replique.server-cljs/load-file))
-(def ^:private cljs-in-ns (utils/dynaload 'ewen.replique.server-cljs/in-ns))
-(def ^:private cljs-compiler-env (utils/dynaload 'ewen.replique.server-cljs/compiler-env))
+(def cljs-repl (utils/dynaload 'replique.repl-cljs/cljs-repl))
+(def ^:private cljs-load-file (utils/dynaload 'replique.repl-cljs/load-file))
+(def ^:private cljs-in-ns (utils/dynaload 'replique.repl-cljs/in-ns))
+(def ^:private cljs-compiler-env (utils/dynaload 'replique.repl-cljs/compiler-env))
 (def ^:private cljs-set-repl-verbose
-  (utils/dynaload 'ewen.replique.server-cljs/set-cljs-repl-verbose))
+  (utils/dynaload 'replique.repl-cljs/set-cljs-repl-verbose))
 
 (defn cljs-env?
   "Take the &env from a macro, and tell whether we are expanding into cljs."

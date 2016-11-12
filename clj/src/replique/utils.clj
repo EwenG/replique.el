@@ -1,4 +1,4 @@
-(ns ewen.replique.utils
+(ns replique.utils
   (:refer-clojure :exclude [delay])
   (:import [java.util.concurrent.locks ReentrantLock]))
 
@@ -29,7 +29,7 @@
   (isRealized [this] (nil? f)))
 
 (defmacro delay [& body]
-  (list 'new 'ewen.replique.utils.Dynaload `(~'fn [] ~@body) nil nil))
+  (list 'new 'replique.utils.Dynaload `(~'fn [] ~@body) nil nil))
 
 (defn dynaload [s]
   (Dynaload. (fn []

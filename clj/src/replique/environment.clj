@@ -1,9 +1,9 @@
-(ns compliment.environment
+(ns replique.environment
   "Unify Clojure platforms (Clojure, Clojurescript, ...) environments"
   (:refer-clojure :exclude [ns-name find-ns ns-publics ns-map
                             ns-aliases ns-resolve all-ns meta])
-  (:require [ewen.replique.utils :as utils]
-            [compliment.utils :refer [defmemoized all-files-on-classpath]]
+  (:require [replique.utils :as utils]
+            [replique.compliment.utils :refer [defmemoized all-files-on-classpath]]
             [clojure.set])
   (:import [java.io File]
            [java.lang.reflect Field]))
@@ -164,22 +164,22 @@
 
 (comment
 
-  (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  (require '[replique.repl-cljs :refer [compiler-env]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (find-ns comp-env 'ewen.replique.compliment.ns-mappings-clj-test)
+  (find-ns comp-env 'replique.compliment.ns-mappings-clj-test)
 
-  (:arglists (meta comp-env (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'my-fn)))
+  (:arglists (meta comp-env (ns-resolve comp-env 'replique.compliment.ns-mappings-cljs-test 'my-fn)))
 
-  (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'file->ns)
-  (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'cljs/file->ns)
-  (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'cljs-ns-m/my-macro)
-  (ns-resolve comp-env 'ewen.replique.compliment.ns-mappings-cljs-test 'defn)
+  (ns-resolve comp-env 'replique.compliment.ns-mappings-cljs-test 'file->ns)
+  (ns-resolve comp-env 'replique.compliment.ns-mappings-cljs-test 'cljs/file->ns)
+  (ns-resolve comp-env 'replique.compliment.ns-mappings-cljs-test 'cljs-ns-m/my-macro)
+  (ns-resolve comp-env 'replique.compliment.ns-mappings-cljs-test 'defn)
 
-  (keys (ns-core-refers comp-env 'ewen.replique.compliment.ns-mappings-cljs-test))
+  (keys (ns-core-refers comp-env 'replique.compliment.ns-mappings-cljs-test))
 
   (get (:cljs.analyzer/namespaces @@compiler-env )
-       'ewen.replique.compliment.ns-mappings-cljs-test)
+       'replique.compliment.ns-mappings-cljs-test)
   
   )
 
@@ -247,7 +247,7 @@
                      monitor-enter monitor-exit new set!]))))
 
 (comment
-  (require '[ewen.replique.server-cljs :refer [compiler-env]])
+  (require '[replique.repl-cljs :refer [compiler-env]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
 
   (file-extension comp-env)
@@ -257,7 +257,7 @@
   (count (provides-from-js-dependency-index comp-env))
 
   (:cljs.analyzer/constant-table @@compiler-env)
-  (:cljs.analyzer/constants (get (:cljs.analyzer/namespaces @@compiler-env) 'ewen.replique.compliment.ns-mappings-cljs-test))
+  (:cljs.analyzer/constants (get (:cljs.analyzer/namespaces @@compiler-env) 'replique.compliment.ns-mappings-cljs-test))
 
   (keywords nil)
   (keywords comp-env)

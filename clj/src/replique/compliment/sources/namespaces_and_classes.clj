@@ -1,12 +1,12 @@
-(ns compliment.sources.namespaces-and-classes
+(ns replique.compliment.sources.namespaces-and-classes
   "Completion for namespace and class names."
   (:refer-clojure :exclude [all-ns ns-aliases find-ns])
-  (:require [compliment.sources :refer [defsource]]
-            [compliment.utils :refer [fuzzy-matches? defmemoized] :as utils]
-            [compliment.sources.class-members :refer [classname-doc]]
-            [compliment.environment :refer [all-ns ns-aliases namespaces-on-classpath
-                                            provides-from-js-dependency-index find-ns]])
-  (:import java.io.File compliment.environment.CljsCompilerEnv))
+  (:require [replique.compliment.sources :refer [defsource]]
+            [replique.compliment.utils :refer [fuzzy-matches? defmemoized] :as utils]
+            [replique.compliment.sources.class-members :refer [classname-doc]]
+            [replique.environment :refer [all-ns ns-aliases namespaces-on-classpath
+                                          provides-from-js-dependency-index find-ns]])
+  (:import java.io.File replique.environment.CljsCompilerEnv))
 
 (defn nscl-symbol?
   "Tests if prefix looks like a namespace or classname."
@@ -135,11 +135,11 @@
   :doc (constantly nil))
 
 (comment
-  (require '[ewen.replique.server-cljs :refer [compiler-env]])
-  (require '[compliment.environment :refer [->CljsCompilerEnv]])
+  (require '[replique.repl-cljs :refer [compiler-env]])
+  (require '[replique.environment :refer [->CljsCompilerEnv]])
   (def comp-env (->CljsCompilerEnv @compiler-env))
   
-  (candidates comp-env "cljs.c" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
-  (candidates "cljs.c" (find-ns nil 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
-  (candidates comp-env "goog.ed" (find-ns comp-env 'ewen.replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates comp-env "cljs.c" (find-ns comp-env 'replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates "cljs.c" (find-ns nil 'replique.compliment.ns-mappings-cljs-test) nil)
+  (candidates comp-env "goog.ed" (find-ns comp-env 'replique.compliment.ns-mappings-cljs-test) nil)
   )

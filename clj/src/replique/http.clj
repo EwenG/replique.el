@@ -1,4 +1,4 @@
-(ns ewen.replique.http
+(ns replique.http
   (:require [clojure.string :as str]))
 
 ;;; assumes first line already consumed

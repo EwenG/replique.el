@@ -1,4 +1,4 @@
-(ns ewen.replique.sourcemap
+(ns replique.sourcemap
   (:require [clojure.data.json :as json]
             [clojure.java.io :refer [as-file]])
   (:import [java.util Base64]

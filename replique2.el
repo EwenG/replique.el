@@ -311,7 +311,7 @@
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format "(ewen.replique.interactive/cljs-in-ns '%s)" ns-name)
+     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
      tooling-repl cljs-repl)))
 
 (defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
@@ -319,7 +319,7 @@
       (user-error "No active Clojure AND Clojurescript REPL")
     (replique/send-input-from-source-cljc
      (format "(clojure.core/in-ns '%s)" ns-name)
-     (format "(ewen.replique.interactive/cljs-in-ns '%s)" ns-name)
+     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
      tooling-repl clj-repl cljs-repl)))
 
 (defun replique/in-ns (ns-name)
@@ -570,22 +570,22 @@ This allows you to temporarily modify read-only buffers too."
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
-     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
+     (format "(replique.interactive/load-file \"%s\")" file-path)
      props clj-repl)))
 
 (defun replique/load-file-cljs (file-path props cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
+     (format "(replique.interactive/load-file \"%s\")" file-path)
      props cljs-repl)))
 
 (defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
   (if (not (and clj-repl cljs-repl))
       (user-error "No active Clojure AND Clojurescript REPL")
     (replique/send-input-from-source-cljc
-     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
-     (format "(ewen.replique.interactive/load-file \"%s\")" file-path)
+     (format "(replique.interactive/load-file \"%s\")" file-path)
+     (format "(replique.interactive/load-file \"%s\")" file-path)
      props clj-repl cljs-repl)))
 
 (defun replique/load-file ()
@@ -831,7 +831,7 @@ The following commands are available:
                  (replique/replique-root-dir)))))
 
 (defun replique/raw-command (directory port)
-  `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "ewen.replique.main"
+  `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "replique.main"
     ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
              (number-to-string port) (replique-edn/pr-str directory)
              (replique-edn/pr-str replique/files-specs)
@@ -841,7 +841,7 @@ The following commands are available:
 (defun replique/lein-command (directory port)
   `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
     ,(format "\"%sclj/src\"" (replique/replique-root-dir))
-    "--" "run" "-m" "ewen.replique.main/-main"
+    "--" "run" "-m" "replique.main/-main"
     ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s} :skip-init %s}"
              (number-to-string port) (replique-edn/pr-str directory)
              (replique-edn/pr-str replique/files-specs)
@@ -867,7 +867,7 @@ The following commands are available:
          (msg (replique/assoc msg :directory directory)))
     (process-send-string
      tooling-network-proc
-     (format "(ewen.replique.tooling-msg/tooling-msg-handle %s)\n"
+     (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
              (replique-edn/pr-str msg)))))
 
 ;; Note: a tooling repl may not be closed when there is a pending non daemon thread
@@ -933,7 +933,7 @@ The following commands are available:
          (replique/close-repls host port))
         (t nil)))
 
-;; java -cp "/Users/egr/bin/clojure-1.8.0.jar:/Users/egr/bin/cljs-1.9.216.jar:/Users/egr/replique.el/clj/src" clojure.main -m ewen.replique.main "{:type :clj :port 0}"
+;; java -cp "/Users/egr/bin/clojure-1.8.0.jar:/Users/egr/bin/cljs-1.9.216.jar:/Users/egr/replique.el/clj/src" clojure.main -m replique.main "{:type :clj :port 0}"
 
 (defun replique/dispatch-repl-cmd (directory port)
   (if (replique/is-lein-project directory)
@@ -1033,7 +1033,7 @@ The following commands are available:
                 ;; No need to wait for the return value of shared-tooling-repl
                 ;; since it does not print anything
                 (process-send-string
-                 network-proc "(ewen.replique.server/shared-tooling-repl)\n")
+                 network-proc "(replique.repl/shared-tooling-repl)\n")
                 (let* ((tooling-chan (-> tooling-chan
                                          (replique/read-chan network-proc)
                                          replique/dispatch-tooling-msg))
@@ -1090,7 +1090,7 @@ The following commands are available:
   (let* ((buff (get-buffer-create buffer-name))
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
-         (repl-cmd (format "(ewen.replique.server/repl)\n")))
+         (repl-cmd (format "(replique.repl/repl)\n")))
     (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
@@ -1099,7 +1099,7 @@ The following commands are available:
       ;; Restore bindings and get the session number
       ;; The forms are wrapped in a do to avoid the need to read the result
       ;; of restore-bindings
-      (process-send-string proc (format "(ewen.replique.server/init-and-print-session %s)\n"
+      (process-send-string proc (format "(replique.repl/init-and-print-session %s)\n"
                                         (replique-edn/pr-str bindings)))
          (replique-async/<!
           chan
@@ -1132,7 +1132,7 @@ The following commands are available:
                   ;; Second parameter is nil because the function does not use the
                   ;; tooling repl anyway
                   (replique/send-input-from-source-clj
-                   "(@ewen.replique.interactive/cljs-repl)" nil repl))
+                   "(@replique.interactive/cljs-repl)" nil repl))
                 (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1391,7 +1391,6 @@ The following commands are available:
 ;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
 ;; remote REPL
-;; Interactive function for opening .replique/replique.clj
 ;; jump to definition
 ;; Epresent
 ;; css, garden, js
@@ -1402,7 +1401,6 @@ The following commands are available:
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
-;; Rename ewen.replique to replique
 ;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; support for no cljs-env
@@ -1412,18 +1410,14 @@ The following commands are available:
 ;; Set the asset path in repl-env on :ready because it is used elsewhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
 ;; The cljs-env makes no use of :repl-require
 ;; autocomplete interactive command
-;; rename cljs-repl-env
-;; load replique config file on startup and diff it on load
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 
-;; server -> core
-;; server-cljs -> cljs-env
-;; macros -> interactive
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; Normalize file path for *files-specs*
-;; output-main-file with main ns selection
+;; Add cljs-repl to interactive
+;; compile cljs to "target-cljs"
 
 ;; replique.el ends here

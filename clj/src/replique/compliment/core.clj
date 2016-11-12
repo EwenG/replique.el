@@ -3,32 +3,22 @@
 ;; editor. It is intended to be maximally editor-agnostic where
 ;; possible, to avoid duplicating implementation in different clients.
 
-(ns compliment.core
+(ns replique.compliment.core
   "Core namespace. Most interactions with Compliment should happen
   through functions defined here."
   (:refer-clojure :exclude [find-ns])
-  (:require (compliment.sources ns-mappings
+  (:require (replique.compliment.sources ns-mappings
                                 namespaces-and-classes
                                 class-members
                                 keywords
                                 special-forms
                                 local-bindings
                                 resources)
-            [compliment.sources :refer [all-sources]]
-            [compliment.utils :refer [*extra-metadata*]]
-            [compliment.environment :refer [find-ns default-ns ns-var]]
+            [replique.compliment.sources :refer [all-sources]]
+            [replique.compliment.utils :refer [*extra-metadata*]]
+            [replique.environment :refer [find-ns default-ns ns-var]]
             [clojure.string :refer [join]])
   (:import java.util.Comparator))
-
-(def all-files
-  "List of all Compliment files in an order they should be loaded. This is
-  required by REPLy."
-  (map (partial format "compliment/%s.clj")
-       ["utils" "environment" "context" "sources" "sources/class_members"
-        "sources/ns_mappings" "sources/namespaces_and_classes"
-        "sources/keywords" "sources/special_forms" "sources/local_bindings"
-        "sources/resources"
-        "core"]))
 
 (def ^:private by-length-comparator
   (reify Comparator
