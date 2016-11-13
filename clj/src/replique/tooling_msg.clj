@@ -38,6 +38,6 @@
                     :directory directory
                     :error true
                     :repl-type :clj
-                    :thread (.getName thread)
+                    :thread (.getName ^Thread thread)
                     :ns (ns-name *ns*)
                     :value (with-out-str (print-stack-trace ex))})))))

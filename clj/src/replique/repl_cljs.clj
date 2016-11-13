@@ -9,24 +9,20 @@
             [cljs.closure :as closure]
             [cljs.env :as cljs-env]
             [cljs.analyzer :as ana]
-            [cljs.analyzer.api :as ana-api]
             [cljs.compiler :as comp]
             [cljs.util]
             [cljs.repl]
             [clojure.string :as string]
             [cljs.js-deps :as deps]
             [cljs.closure :as cljsc]
-            [clojure.data.json :as json]
-            [clojure.spec :as s]
-            [cljs.repl.server]
             [cljs.stacktrace :as st]
             [clojure.edn :as edn]
             [replique.environment :refer [->CljsCompilerEnv]])
   (:import [java.io File BufferedReader InputStreamReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent Executors ThreadFactory SynchronousQueue
-            RejectedExecutionException ExecutorService TimeUnit]
+           [java.util.concurrent Executors SynchronousQueue
+            RejectedExecutionException ExecutorService]
            [clojure.lang IExceptionInfo]
            [java.util.regex Pattern]
            [java.util.concurrent.locks ReentrantLock]))
@@ -45,7 +41,7 @@
 (def env {:context :expr :locals {}})
 
 (defn dispatcher [{:keys [method path content]} callback]
-  (cond (and (= :get method) (some #(.endsWith path %) (keys http/ext->mime-type)))
+  (cond (and (= :get method) (some #(.endsWith ^String path %) (keys http/ext->mime-type)))
         :assets
         (and (= :get method) (= path "/"))
         :init
@@ -70,11 +66,11 @@
    :content-type "text/plain"})
 
 (defn shutdown-eval-executor [executor]
-  (let [pendingTasks (.shutdownNow executor)]
+  (let [pendingTasks (.shutdownNow ^ExecutorService executor)]
         ;; Tasks are run on this thread
         (binding [*stopped-eval-executor?* true]
           (doseq [task pendingTasks]
-            (.run task)))))
+            (.run ^Runnable task)))))
 
 (defmethod dispatch-request :init [{{host :host} :headers} callback]
   (let [url (format "http://%s" host)]
@@ -115,7 +111,7 @@ replique.cljs_env.repl.connect(\"" url "\");
                          :else nil)
                        local-path)]
       (if local-path
-        (if-let [ext (some #(if (.endsWith path %) %) (keys http/ext->mime-type))]
+        (if-let [ext (some #(if (.endsWith ^String path %) %) (keys http/ext->mime-type))]
           (let [mime-type (http/ext->mime-type ext "text/plain")
                 encoding (http/mime-type->encoding mime-type "UTF-8")]
             {:status 200
@@ -133,8 +129,8 @@ replique.cljs_env.repl.connect(\"" url "\");
         {:status :error :value "Connection broken"}
         (let[{:keys [js-queue result-queue]} @server/cljs-server]
           (try
-            (.put js-queue js)
-            (.take result-queue)
+            (.put ^SynchronousQueue js-queue js)
+            (.take ^SynchronousQueue result-queue)
             ;; If the repl-env is shutdown
             (catch InterruptedException e
               {:status :error :value "Connection broken"})))))))
@@ -184,7 +180,7 @@ replique.cljs_env.repl.connect(\"" url "\");
                           deps/parse-js-ns
                           (assoc :file js-file)))
         is-goog (fn [js-file]
-                  (some #(.startsWith % "goog.")
+                  (some #(.startsWith ^String % "goog.")
                         (:provides js-file)))
         ups-foreign-libs (:ups-foreign-libs opts)
         js-files (deps/find-js-fs (:output-dir opts))
@@ -234,8 +230,8 @@ replique.cljs_env.repl.connect(\"" url "\");
       (= :stopped state)
       {:status :error
        :value (format "Waiting for browser to connect on port %d ..." port)}
-      :else (try (-> (.submit eval-executor (make-eval-task js))
-                     (.get))
+      :else (try (.get (.submit ^ExecutorService eval-executor
+                                ^Callable (make-eval-task js)))
                  (catch RejectedExecutionException e
                    {:status :error
                     :value "Connection broken"})))))
@@ -272,7 +268,7 @@ replique.cljs_env.repl.connect(\"" url "\");
     (merge (BrowserEnv. repl-opts) repl-opts)))
 
 (defn init-compiler-env [repl-env]
-  (let [comp-opts {:output-to (str (File. utils/cljs-compile-path "main.js"))
+  (let [comp-opts {:output-to (str (File. ^String utils/cljs-compile-path "main.js"))
                    :output-dir utils/cljs-compile-path
                    :optimizations :none
                    :recompile-dependents false
@@ -312,7 +308,7 @@ replique.cljs_env.repl.connect(\"" url "\");
         new-js-queue (SynchronousQueue.)
         new-result-queue (SynchronousQueue.)]
     (when eval-executor (shutdown-eval-executor eval-executor))
-    (when result-executor (.shutdownNow result-executor))
+    (when result-executor (.shutdownNow ^ExecutorService result-executor))
     ;; Init stuff needs to go there and not in the :init method of the REPL, otherwise it
     ;; get lost on browser refresh
     (let [js (cljs-env/with-compiler-env compiler-env
@@ -327,10 +323,10 @@ replique.cljs_env.repl.connect(\"" url "\");
                     (replique.cljs-env.repl/flush-print-queue!))
                  (init-core-bindings)]
                 {}))]
-      (.submit new-eval-executor
+      (.submit ^ExecutorService new-eval-executor
                (reify Callable
                  (call [this]
-                   (.take new-result-queue))))
+                   (.take ^SynchronousQueue new-result-queue))))
       (swap! server/cljs-server assoc
              :eval-executor new-eval-executor
              :result-executor new-result-executor
@@ -345,19 +341,20 @@ replique.cljs_env.repl.connect(\"" url "\");
         result-task (reify Callable
                       (call [this]
                         (try
-                          (.put result-queue (read-string (:content content)))
+                          (.put ^SynchronousQueue result-queue (read-string (:content content)))
                           (try
-                            (callback {:status 200 :body (.take js-queue)})
+                            (callback {:status 200 :body (.take ^SynchronousQueue js-queue)})
                             (catch InterruptedException e (throw e))
                             ;; Socket closed ...
                             (catch Exception e
-                              (.put result-queue {:status :error :value "Connection broken"})))
+                              (.put ^SynchronousQueue result-queue
+                                    {:status :error :value "Connection broken"})))
                           (catch InterruptedException e
                             (try (callback
                                   {:status 500 :body "Connection closed"
                                    :content-type "text/plain"})
                                  (catch Exception e nil))))))]
-    (try (.submit result-executor result-task)
+    (try (.submit ^ExecutorService result-executor result-task)
          (catch RejectedExecutionException e
            {:status 500 :body "Connection closed" :content-type "text/plain"}))))
 
@@ -431,7 +428,7 @@ replique.cljs_env.repl.connect(\"" url "\");
   (let [{:keys [eval-executor result-executor]} @server/cljs-server]
     (swap! server/cljs-server assoc :state :stopped)
     (when eval-executor (shutdown-eval-executor eval-executor))
-    (when result-executor (.shutdownNow result-executor))))
+    (when result-executor (.shutdownNow ^ExecutorService result-executor))))
 
 (defmethod tooling-msg/tooling-msg-handle :shutdown [msg]
   (tooling-msg/with-tooling-response msg
@@ -486,4 +483,4 @@ document.write('<script>goog.require(\"replique.cljs_env.repl\");</script>');
 " (when main-ns (str "document.write('<script>goog.require(\"" main-ns "\");</script>');
 "))    
 "document.write('<script>replique.cljs_env.repl.connect(\"http://localhost:" port "\");</script>');")))
-    (assoc msg :main-cljs-file-path (.getAbsolutePath (File. output-to)))))
+    (assoc msg :main-cljs-file-path (.getAbsolutePath (File. ^String output-to)))))

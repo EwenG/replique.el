@@ -174,4 +174,6 @@
          true)))))
 
 (defn server-port []
-  (-> servers (get :replique) :socket (.getLocalPort)))
+  (let [ss (-> servers (get :replique) :socket)]
+    (.getLocalPort ^ServerSocket ss)))
+

@@ -13,11 +13,11 @@
       header-lines)))
 
 (defn read-headers [rdr]
-  (loop [next-line (.readLine rdr) header-lines []]
+  (loop [next-line (.readLine ^java.io.BufferedReader rdr) header-lines []]
     (if (= "" next-line)
       header-lines ;; we're done reading headers
       (recur
-        (.readLine rdr)
+        (.readLine ^java.io.BufferedReader rdr)
         (conj header-lines next-line)))))
 
 (defn read-post [line rdr]
@@ -27,7 +27,7 @@
         content-length (Integer/parseInt (:content-length headers))
         content (char-array content-length)]
     (io!
-     (.read rdr content 0 content-length)
+     (.read ^java.io.BufferedReader rdr content 0 content-length)
      {:method :post
       :path path
       :headers headers
@@ -41,14 +41,14 @@
      :headers headers}))
 
 (defn read-request [rdr]
-  (if-let [line (.readLine rdr)]
+  (if-let [line (.readLine ^java.io.BufferedReader rdr)]
     (cond
-      (.startsWith line "POST") (read-post line rdr)
-      (.startsWith line "GET") (read-get line rdr)
+      (.startsWith ^String line "POST") (read-post line rdr)
+      (.startsWith ^String line "GET") (read-get line rdr)
       :else {:method :unknown :content line})
     {:method :unknown :content nil}))
 
-(defn- status-line [status]
+(defn- status-line [^long status]
   (case status
     200 "HTTP/1.1 200 OK"
     404 "HTTP/1.1 404 Not Found"
@@ -59,7 +59,7 @@
 (defn send-and-close
   "Use the passed connection to send a form to the browser. Send a
   proper HTTP response."
-  [out status form content-type encoding]
+  [out status ^String form content-type ^String encoding]
   (let [content-type (or content-type "text/html")
         encoding (or encoding "UTF-8")
         byte-form (.getBytes form encoding)
@@ -76,10 +76,10 @@
                       ""])]
     (try
       (doseq [header headers]
-        (.write out header 0 (count header)))
-      (.write out byte-form 0 content-length)
-      (.flush out)
-      (finally (.close out)))))
+        (.write ^java.io.OutputStream out header 0 (count header)))
+      (.write ^java.io.OutputStream out byte-form 0 content-length)
+      (.flush ^java.io.OutputStream out)
+      (finally (.close ^java.io.OutputStream out)))))
 
 (defn make-404 [path]
   {:status 404

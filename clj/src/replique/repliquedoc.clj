@@ -32,12 +32,12 @@
           {:name (format "%s/%s" (str ns) name)}
           :else {})))
 
-(defn format-method [{:keys [method]} index]
-  (let [klass (.getName (.getDeclaringClass method))
+(defn format-method [{:keys [^Method method]} index]
+  (let [klass (.getName ^Class (.getDeclaringClass method))
         parameter-types (->> (.getParameterTypes method)
-                             (mapv #(-> % (.getName) symbol)))
-        return-type (-> (.getReturnType method) (.getName) symbol)]
-    {:name (format "%s.%s" klass (.getName method))
+                             (mapv #(-> (.getName ^Class %) symbol)))
+        return-type (-> (.getName ^Class (.getReturnType method)) symbol)]
+    {:name (format "%s.%s" klass (.getName ^Member method))
      :arglists (list parameter-types)
      :index index
      :return return-type}))

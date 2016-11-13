@@ -6,7 +6,8 @@
             [replique.compliment.utils :refer [defmemoized all-files-on-classpath]]
             [clojure.set])
   (:import [java.io File]
-           [java.lang.reflect Field]))
+           [java.lang.reflect Field]
+           [java.util.concurrent ConcurrentHashMap]))
 
 (defn safe-symbol [x]
   (when x (symbol x)))
@@ -241,7 +242,7 @@
   (keywords [_]
     (let [^Field field (.getDeclaredField clojure.lang.Keyword "table")]
       (.setAccessible field true)
-      (.keySet (.get field nil))))
+      (.keySet ^ConcurrentHashMap (.get field nil))))
   (special-forms [_]
     (set (map name '[def if do quote var recur throw try catch
                      monitor-enter monitor-exit new set!]))))

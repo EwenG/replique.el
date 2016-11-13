@@ -71,10 +71,10 @@
                           :accept `tooling-repl
                           :accept-http `accept-http
                           :server-daemon false})
-    (elisp/prn {:host (-> @#'server/servers
-                          (get :replique) :socket
-                          (.getInetAddress) (.getHostAddress)
-                          normalize-ip-address)
+    (elisp/prn {:host (let [ss  (-> @#'server/servers (get :replique) :socket)
+                            inet (.getInetAddress ^java.net.ServerSocket ss)
+                            ip (.getHostAddress ^java.net.InetAddress inet)]
+                        (normalize-ip-address ip))
                 :port (server/server-port)
                 :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
@@ -176,7 +176,7 @@
                             :result (pr-str result)})))
             (prn result))))
 
-(defn format-meta [{:keys [file] :as meta} keys]
+#_ (defn format-meta [{:keys [file] :as meta} keys]
   (let [f (and file (File. file))]
     (if (and f (.exists f))
       (select-keys (assoc
