@@ -24,6 +24,18 @@
       nil
     (gethash key hash default)))
 
+(defun replique/get-in-helper (hash ks default-val)
+  (let ((k (car ks))
+        (ks-rest (cdr ks)))
+    (if (or (null ks-rest) (null hash))
+        (replique/get hash k default-val)
+      (replique/get-in-helper (replique/get hash k) ks-rest default-val))))
+
+(defun replique/get-in (hash ks &optional default-val)
+  (if (equal 0 (length ks))
+      hash
+    (replique/get-in-helper data (append ks '()) default-val)))
+
 (defun replique/copy-hash-table (hash)
   (if (hash-table-p hash)
       (copy-hash-table hash)
@@ -70,10 +82,20 @@
 (defun replique/dissoc (hash &rest kvs)
   (replique/dissoc-helper (replique/copy-hash-table hash) kvs))
 
-(defconst nothing (make-symbol "nothing"))
+(defun replique/update-in-helper (hash ks f args)
+  (let ((k (car ks))
+        (k-rest (cdr ks)))
+    (if (null k-rest)
+        (replique/assoc hash k (apply f (replique/get hash k) args))
+      (replique/assoc
+       hash k
+       (replique/update-in-helper (replique/get hash k) k-rest f args)))))
 
-(defun replique/contains? (hash key)
-  (not (eq nothing (gethash key hash nothing))))
+(defun replique/update-in (hash ks f &rest args)
+  (let ((ks (append ks '())))
+    (if (equal 0 (length ks))
+        (replique/copy-hash-table hash)
+      (replique/update-in-helper hash ks f args))))
 
 (defun replique/all? (pred hash)
   (let ((res t))
