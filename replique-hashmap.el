@@ -11,7 +11,7 @@
 (defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))
-      (user-error "Map must contain an even number of forms"))
+      (error "Map must contain an even number of forms"))
     (let ((m (make-hash-table :test 'equal))
           (data-rest data))
       (while data-rest
@@ -51,7 +51,7 @@
 (defun replique/assoc (hash &rest kvs)
   (let ((args-length (1+ (length kvs))))
     (when (= 0 (logand 1 args-length))
-      (user-error
+      (error
        "replique/assoc expects even number of arguments after hashtable, found odd number"))
     (replique/assoc-helper (replique/copy-hash-table hash) kvs)))
 
@@ -97,6 +97,11 @@
         (replique/copy-hash-table hash)
       (replique/update-in-helper hash ks f args))))
 
+(defconst replique/nothing (make-symbol "nothing"))
+
+(defun replique/contains? (hash key)
+  (not (eq replique/nothing (gethash key hash replique/nothing))))
+
 (defun replique/all? (pred hash)
   (let ((res t))
     (maphash (lambda (k v)
@@ -114,5 +119,14 @@
                    (setq res t))))
              hash)
     res))
+
+;; Not really hash-map specific ...
+(defun replique/conj (coll x &rest xs)
+  (cond ((listp coll) (if (null xs)
+                          (cons x coll)
+                        (apply 'replique/conj (cons x coll) (car xs) (cdr xs))))
+        ((arrayp coll) (vconcat coll `[,x] xs))
+        ;; conj to hash-tables not yet implemented
+        (t (error "cannot conj to %s" coll))))
 
 (provide 'replique-hashmap)
