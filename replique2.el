@@ -187,11 +187,12 @@
                              :cljc-completion (clojure-find-ns))))
 
 (defun replique/auto-complete (prefix company-callback)
-  (replique/with-modes-dispatch
-   (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
-   (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
-   (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))
-   (clojurec-mode . (-partial 'replique/auto-complete-cljc prefix company-callback))))
+  (when (not (null (replique/active-repl :tooling)))
+    (replique/with-modes-dispatch
+     (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
+     (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
+     (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))
+     (clojurec-mode . (-partial 'replique/auto-complete-cljc prefix company-callback)))))
 
 (defun replique/auto-complete-annotation (candidate)
   (when-let ((meta (get-text-property 0 'meta candidate)))
@@ -1467,6 +1468,5 @@ The following commands are available:
 
 ;; Normalize file path for *files-specs*
 ;; dynamic var for process standard output
-;; projectile find file in replique comint buffer
 
 ;; replique.el ends here
