@@ -901,7 +901,7 @@ The following commands are available:
     (setq replique/repls (delete repl-props replique/repls))
     (when (not dont-save-repls?)
       (replique/save-repls directory))
-    ;; If the only repl left is a tooling repl, then close it
+    ;; If the only repl left is a tooling repl, thus let's close it
     (let ((other-repls (replique/repls-by :host host :port port)))
       (when (seq-every-p (lambda (repl)
                            (equal :tooling (replique/get repl :repl-type)))
@@ -1441,7 +1441,6 @@ The following commands are available:
 
 ;; Add load-file to main mode to load current ns
 ;; API namespace for public functions
-;; remote REPL
 ;; jump to definition
 ;; Epresent
 ;; css, garden, js
@@ -1451,7 +1450,6 @@ The following commands are available:
 ;; compliment keywords cljs -> missing :require ... ?
 ;; remove emacs auto save files
 ;; check for nil when reading from chan because the chan can be closed
-;; Browser REPL with websockets?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; support for no cljs-env
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
@@ -1467,6 +1465,6 @@ The following commands are available:
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; Normalize file path for *files-specs*
-;; dynamic var for process standard output
+;; new cljs tagged reader
 
 ;; replique.el ends here

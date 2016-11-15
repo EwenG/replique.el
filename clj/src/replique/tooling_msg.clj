@@ -8,9 +8,6 @@
 (defonce tooling-out nil)
 (defonce tooling-out-lock (ReentrantLock.))
 (defonce tooling-err nil)
-(defonce process-out nil)
-(defonce process-out-lock (ReentrantLock.))
-(defonce process-err nil)
 
 (defmacro with-tooling-response [msg & resp]
   `(let [type# (:type ~msg)

@@ -4,10 +4,6 @@
 
 ;;; Code:
 
-(defmacro comment (&rest body)
-  "Comment out one or more s-expressions."
-  nil)
-
 (defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))

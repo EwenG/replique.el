@@ -2,6 +2,9 @@
   (:refer-clojure :exclude [load-file])
   (:require [replique.utils :as utils]))
 
+(defonce process-out nil)
+(defonce process-err nil)
+
 (def cljs-repl (utils/dynaload 'replique.repl-cljs/cljs-repl))
 (def ^:private cljs-load-file (utils/dynaload 'replique.repl-cljs/load-file))
 (def ^:private cljs-in-ns (utils/dynaload 'replique.repl-cljs/in-ns))
@@ -36,4 +39,44 @@
   {:pre [(contains? compiler-opts opt-key)]}
   (swap! @@cljs-compiler-env assoc-in [:options opt-key] opt-val)
   opt-val)
+
+(defn remote-repl [host port]
+  {:pre [(string? host) (number? port)]}
+  (let [s (java.net.Socket. host port)
+        s-in (.getInputStream s)
+        s-out (java.io.BufferedWriter. (java.io.OutputStreamWriter. (.getOutputStream s)))]
+    (future
+      (try
+        (loop []
+          (let [input (.read s-in)]
+            (when (not (= -1 input))
+              (.write *out* input)
+              (.flush *out*)
+              (recur))))
+        (catch Exception _ nil)
+        (finally (.close s))))
+    (try
+      (loop []
+        (let [input (read {:read-cond :allow} *in*)]
+          (binding [*out* s-out] (prn input))
+          (recur)))
+      (finally (.close s)))))
+
+(comment
+  (require '[clojure.core.server :as core-s])
+
+  (defn remote-repl-accept []
+    (clojure.main/repl :prompt (fn [] (printf "<remote> %s=> " (ns-name *ns*)))
+                       :read clojure.core.server/repl-read))
+
+  
+
+  (core-s/start-server {:port 9000 :name :test
+                        :accept `remote-repl-accept
+                        :server-daemon false})
+
+  (core-s/stop-server :test)
+
+  (remote-repl "127.0.0.1" 9000)
+  )
 
