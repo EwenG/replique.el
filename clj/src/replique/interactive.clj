@@ -5,7 +5,7 @@
 (defonce process-out nil)
 (defonce process-err nil)
 
-(def cljs-repl (utils/dynaload 'replique.repl-cljs/cljs-repl))
+(def ^:private cljs-repl* (utils/dynaload 'replique.repl-cljs/cljs-repl))
 (def ^:private cljs-load-file (utils/dynaload 'replique.repl-cljs/load-file))
 (def ^:private cljs-in-ns (utils/dynaload 'replique.repl-cljs/in-ns))
 (def ^:private cljs-compiler-env (utils/dynaload 'replique.repl-cljs/compiler-env))
@@ -16,6 +16,9 @@
   "Take the &env from a macro, and tell whether we are expanding into cljs."
   [env]
   (boolean (:ns env)))
+
+(defn cljs-repl []
+  (@cljs-repl*))
 
 ;; At the moment, load file does not intern macros in the cljs-env, making dynamically loaded
 ;; macros unavailable to autocompletion/repliquedoc.
@@ -77,6 +80,6 @@
 
   (core-s/stop-server :test)
 
-  (remote-repl "127.0.0.1" 9000)
+  (remote-repl "localhost" 9000)
   )
 
