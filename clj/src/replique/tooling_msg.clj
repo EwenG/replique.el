@@ -24,7 +24,7 @@
   [{:keys [directory type] :as msg}]
   {:directory directory
    :type type
-   :error (IllegalArgumentException. (format "Invalid tooling message type: %s" type))})
+   :error (format "Invalid tooling message type: %s" type)})
 
 (defn uncaught-exception [thread ex]
   (if (or (nil? tooling-err) (nil? tooling-out-lock))

@@ -599,6 +599,13 @@ This allows you to temporarily modify read-only buffers too."
      (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
      (clojurec-mode . (-partial 'replique/load-file-cljc file-path)))))
 
+(defun replique/browser ()
+  (interactive)
+  (let ((cljs-repl (replique/active-repl :cljs)))
+    (when (not cljs-repl)
+      (user-error "No active Clojurescript REPL"))
+    (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
+
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL"
   (interactive
@@ -680,7 +687,9 @@ This allows you to temporarily modify read-only buffers too."
            (if err
                (progn
                  (message "%s" (replique-edn/pr-str err))
-                 (message "list-cljs-namespaces failed"))
+                 (message "list-cljs-namespaces failed")
+                 ;; TODO test me !
+                 (replique-async/close! out-chan))
              (replique-async/put! out-chan resp))))))
     out-chan))
 
@@ -703,31 +712,63 @@ This allows you to temporarily modify read-only buffers too."
                (replique-async/default-chan (replique/hash-map :namespaces nil))
              (replique/list-cljs-namespaces tooling-repl))
            (lambda (resp)
-             (let* ((namespaces (replique/get resp :namespaces))
-                    (main-ns (or main-ns
-                                 (replique/return-nil-on-quit
-                                  (completing-read "Main Clojurescript namespace: "
-                                                   namespaces nil t nil nil '(nil))))))
-               (replique/send-tooling-msg
-                tooling-repl
-                (replique/hash-map :type :output-main-cljs-files
-                                   :main-cljs-files (replique/hash-map output-to main-ns)))
-               (replique-async/<!
-                tooling-chan
-                (lambda (resp)
-                  (when resp
-                    (let ((err (replique/get resp :error)))
-                      (if err
-                          (progn
-                            (message "%s" (replique-edn/pr-str err))
-                            (message "output-main-cljs-file failed"))
-                        (message "Main Clojurescript file written to: %s" output-to)
-                        (thread-last 
-                            (replique/update-in tooling-repl [:main-cljs-files]
-                                                'replique/assoc output-to main-ns)
-                          (replique/update-repl tooling-repl))
-                        (replique/save-repls
-                         (replique/get tooling-repl :directory)))))))))))))))
+             (when resp
+               (let* ((namespaces (replique/get resp :namespaces))
+                      (main-ns (or main-ns
+                                   (replique/return-nil-on-quit
+                                    (completing-read "Main Clojurescript namespace: "
+                                                     namespaces nil t nil nil '(nil))))))
+                 (replique/send-tooling-msg
+                  tooling-repl
+                  (replique/hash-map :type :output-main-cljs-files
+                                     :main-cljs-files (replique/hash-map output-to main-ns)))
+                 (replique-async/<!
+                  tooling-chan
+                  (lambda (resp)
+                    (when resp
+                      (let ((err (replique/get resp :error)))
+                        (if err
+                            (progn
+                              (message "%s" (replique-edn/pr-str err))
+                              (message "output-main-cljs-file failed"))
+                          (message "Main Clojurescript file written to: %s" output-to)
+                          (thread-last 
+                              (replique/update-in tooling-repl [:main-cljs-files]
+                                                  'replique/assoc output-to main-ns)
+                            (replique/update-repl tooling-repl))
+                          (replique/save-repls
+                           (replique/get tooling-repl :directory))))))))))))))))
+
+(defun replique/list-css (tooling-repl)
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (out-chan (replique-async/chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :list-css))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "list-css failed")
+                 (replique-async/close! out-chan))
+             (replique-async/put! out-chan resp))))))
+    out-chan))
+
+(defun replique/load-css (file-name)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan))
+         (cljs-repl (replique/active-repl :cljs)))
+    (when (not cljs-repl)
+      (user-error "No active Clojurescript REPL"))
+    (replique-async/<!
+     (replique/list-css tooling-repl)
+     (lambda (resp)
+       (when resp
+         (print resp))))))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
@@ -1180,7 +1221,7 @@ The following commands are available:
                   ;; Second parameter is nil because the function does not use the
                   ;; tooling repl anyway
                   (replique/send-input-from-source-clj
-                   "(@replique.interactive/cljs-repl)" nil repl))
+                   "(replique.interactive/cljs-repl)" nil repl))
                 (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
@@ -1291,7 +1332,7 @@ The following commands are available:
                (saved-host (replique/get saved-tooling-repl :host))
                (saved-port (replique/get saved-tooling-repl :port))
                (random-port? (replique/get saved-tooling-repl :random-port?))
-               (host (or host saved-host "127.0.0.1"))
+               (host (or host saved-host "localhost"))
                (port (or port (if random-port? 0 saved-port) (read-number "Port number: " 0)))
                (main-cljs-files (replique/get saved-tooling-repl :main-cljs-files)))
           (if (not (replique/is-valid-port-nb? port))
@@ -1439,11 +1480,9 @@ The following commands are available:
 
 (provide 'replique2)
 
-;; Add load-file to main mode to load current ns
-;; API namespace for public functions
 ;; jump to definition
 ;; Epresent
-;; css, garden, js
+;; css, js
 ;; sourcepath, classpath live reload
 ;; var explorer
 ;; exceptions explorer (fold/unfold?)

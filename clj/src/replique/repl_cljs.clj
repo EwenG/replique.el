@@ -265,7 +265,9 @@ replique.cljs_env.repl.connect(\"" url "\");
   ;; Merge repl-opts in browserenv because clojurescript expects this. This is weird
   (let [repl-opts {:analyze-path []
                    :static-dir [utils/cljs-compile-path]}]
-    (merge (BrowserEnv. repl-opts) repl-opts)))
+    (merge (BrowserEnv. repl-opts) repl-opts
+           ;; st/parse-stacktrace expects host host-port and port to be defined on the repl-env
+           {:host "localhost" :host-port (server/server-port) :port (server/server-port)})))
 
 (defn init-compiler-env [repl-env]
   (let [comp-opts {:output-to (str (File. ^String utils/cljs-compile-path "main.js"))
@@ -470,3 +472,18 @@ replique.cljs_env.repl.connect(\"" url "\");
     (->> (->CljsCompilerEnv @compiler-env)
          replique.environment/all-ns
          (assoc msg :namespaces))))
+
+(defmethod tooling-msg/tooling-msg-handle :list-css [msg]
+  (tooling-msg/with-tooling-response msg
+    (let [{:keys [status value]} (cljs.repl/-evaluate
+                                  @repl-env "<cljs repl>" 1
+                                  "replique.cljs_env.browser.list_css_infos();")]
+      (when (= :error status)
+        (assoc msg :error value))
+      (assoc msg :css-infos (read-string value)))))
+
+(comment
+  (require '[goog.dom])
+  (.appendChild (.-head js/document) (goog.dom/createDom "link" #js{:rel "stylesheet" :type "text/css" :href "mystyle.css"}))
+  
+  )

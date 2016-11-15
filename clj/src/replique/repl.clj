@@ -19,9 +19,9 @@
    #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
    #'clojure.core/*math-context* #'*files-specs*])
 
-(defn normalize-ip-address [address]
-  (cond (= "0.0.0.0" address) "127.0.0.1"
-        (= "0:0:0:0:0:0:0:1" address) "127.0.0.1"
+(defn normalize-host [address]
+  (cond (= "0.0.0.0" address) "localhost"
+        (= "0:0:0:0:0:0:0:1" address) "localhost"
         :else address))
 
 (def ^:private dispatch-request
@@ -74,7 +74,7 @@
     (elisp/prn {:host (let [ss  (-> @#'server/servers (get :replique) :socket)
                             inet (.getInetAddress ^java.net.ServerSocket ss)
                             ip (.getHostAddress ^java.net.InetAddress inet)]
-                        (normalize-ip-address ip))
+                        (normalize-host ip))
                 :port (server/server-port)
                 :directory (.getAbsolutePath (file "."))})
     (catch Throwable t
