@@ -1,5 +1,5 @@
 ;;; replique2.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "25") (clojure-mode "4.0.1") (company "0.9.0") (s "1.9.0"))
+;;; Package-Requires: ((emacs "25") (clojure-mode "4.0.1") (company "0.9.0"))
 ;;; Commentary:
 
 ;;; Code:
@@ -143,9 +143,9 @@
     (replique/send-tooling-msg
      tooling-repl
      (replique/hash-map :type msg-type
-                  :context (replique/form-with-prefix)
-                  :ns ns
-                  :prefix prefix))
+                        :context (replique/form-with-prefix)
+                        :ns ns
+                        :prefix prefix))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -189,10 +189,11 @@
 (defun replique/auto-complete (prefix company-callback)
   (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
-     (replique/mode . (-partial 'replique/auto-complete-session prefix company-callback))
-     (clojure-mode . (-partial 'replique/auto-complete-clj prefix company-callback))
-     (clojurescript-mode . (-partial 'replique/auto-complete-cljs prefix company-callback))
-     (clojurec-mode . (-partial 'replique/auto-complete-cljc prefix company-callback)))))
+     (replique/mode . (apply-partially 'replique/auto-complete-session prefix company-callback))
+     (clojure-mode . (apply-partially 'replique/auto-complete-clj prefix company-callback))
+     (clojurescript-mode . (apply-partially 'replique/auto-complete-cljs
+                                            prefix company-callback))
+     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix company-callback)))))
 
 (defun replique/auto-complete-annotation (candidate)
   (when-let ((meta (get-text-property 0 'meta candidate)))
@@ -326,9 +327,9 @@
 (defun replique/in-ns (ns-name)
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
   (replique/with-modes-dispatch
-   (clojure-mode . (-partial 'replique/in-ns-clj ns-name))
-   (clojurescript-mode . (-partial 'replique/in-ns-cljs ns-name))
-   (clojurec-mode . (-partial 'replique/in-ns-cljc ns-name))))
+   (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
+   (clojurescript-mode . (apply-partially 'replique/in-ns-cljs ns-name))
+   (clojurec-mode . (apply-partially 'replique/in-ns-cljc ns-name))))
 
 (defun replique/symbol-backward ()
   (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
@@ -389,7 +390,7 @@ This allows you to temporarily modify read-only buffers too."
                               (replique/symbol-backward)))
    ((equal command 'sorted) t)
    ((equal command 'candidates)
-    `(:async . ,(-partial 'replique/auto-complete arg)))
+    `(:async . ,(apply-partially 'replique/auto-complete arg)))
    ((equal command 'annotation) (replique/auto-complete-annotation arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
@@ -544,9 +545,9 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
-   (clojure-mode . (-partial 'replique/send-input-from-source-clj input))
-   (clojurescript-mode . (-partial'replique/send-input-from-source-cljs input))
-   (clojurec-mode . (-partial'replique/send-input-from-source-cljc input input))))
+   (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
+   (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
+   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input input))))
 
 (defun replique/eval-region (start end)
   "Eval the currently highlighted region."
@@ -589,15 +590,14 @@ This allows you to temporarily modify read-only buffers too."
      (format "(replique.interactive/load-file \"%s\")" file-path)
      props clj-repl cljs-repl)))
 
-(defun replique/load-file ()
+(defun replique/load-file (file-path)
   "Load a file in a replique REPL"
-  (interactive)
-  (let ((file-path (buffer-file-name)))
-    (comint-check-source file-path)
-    (replique/with-modes-dispatch
-     (clojure-mode . (-partial 'replique/load-file-clj file-path))
-     (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
-     (clojurec-mode . (-partial 'replique/load-file-cljc file-path)))))
+  (interactive (list (buffer-file-name)))
+  (comint-check-source file-path)
+  (replique/with-modes-dispatch
+   (clojure-mode . (apply-partially 'replique/load-file-clj file-path))
+   (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
+   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))))
 
 (defun replique/browser ()
   (interactive)
@@ -702,9 +702,11 @@ This allows you to temporarily modify read-only buffers too."
       (user-error "No active Clojurescript REPL"))
     (when-let ((output-to (or
                            output-to
-                           (read-file-name "Output main cljs file to: "
-                                           (replique/get cljs-repl :directory)))))
+                           (ido-read-file-name "Output main cljs file to: "
+                                               (replique/get cljs-repl :directory)))))
       (let ((output-to (file-truename output-to)))
+        (when (file-directory-p output-to)
+          (user-error "%s is a directory" output-to))
         (when (or (not (file-exists-p output-to))
                   (yes-or-no-p (format "Override %s?" output-to))) 
           (replique-async/<!
@@ -716,8 +718,8 @@ This allows you to temporarily modify read-only buffers too."
                (let* ((namespaces (replique/get resp :namespaces))
                       (main-ns (or main-ns
                                    (replique/return-nil-on-quit
-                                    (completing-read "Main Clojurescript namespace: "
-                                                     namespaces nil t nil nil '(nil))))))
+                                    (ido-completing-read "Main Clojurescript namespace: "
+                                                         namespaces nil t nil nil '(nil))))))
                  (replique/send-tooling-msg
                   tooling-repl
                   (replique/hash-map :type :output-main-cljs-files
@@ -739,6 +741,38 @@ This allows you to temporarily modify read-only buffers too."
                           (replique/save-repls
                            (replique/get tooling-repl :directory))))))))))))))))
 
+(defun replique/uri-compare (url1 url2)
+  (let* ((path1 (url-filename (url-generic-parse-url url1)))
+         (path2 (url-filename (url-generic-parse-url url2)))
+         (uri1 (cdr (split-string path1 "/")))
+         (uri2 (cdr (split-string path2 "/")))
+         (l1 (length uri1))
+         (l2 (length uri2))
+         (uri1 (seq-subseq uri1 (- l1 (min l1 l2)) l1))
+         (uri2 (seq-subseq uri2 (- l2 (min l1 l2)) l2))
+         (uri1 (apply 'concat uri1))
+         (uri2 (apply 'concat uri2))
+         (res (compare-strings uri1 0 (length uri1) uri2 0 (length uri2))))
+    (if (equal t res)
+        0 res)))
+
+(defun replique/uri-sort-fn (reference uri1 uri2)
+  (let ((diff1 (replique/uri-compare reference uri1))
+        (diff2 (replique/uri-compare reference uri2)))
+    (cond ((equal uri1 "*new-data-uri*") nil)
+          ((equal uri2 "*new-data-uri*") t)
+          ((equal diff1 0) t)
+          ((equal diff2 0) nil)
+          ((>= (abs diff1) (abs diff2)) t)
+          (t nil))))
+
+(defun replique/css-candidates (css-infos)
+  (cond ((string= "data" (replique/get css-infos :scheme))
+         `(,(concat "data-uri:" (replique/get css-infos :file-path)) . ,css-infos))
+        ((string= "http" (replique/get css-infos :scheme))
+         `(,(replique/get css-infos :uri) . ,css-infos))
+        (t nil)))
+
 (defun replique/list-css (tooling-repl)
   (let ((tooling-chan (replique/get tooling-repl :chan))
         (out-chan (replique-async/chan)))
@@ -758,7 +792,8 @@ This allows you to temporarily modify read-only buffers too."
              (replique-async/put! out-chan resp))))))
     out-chan))
 
-(defun replique/load-css (file-name)
+(defun replique/load-css (file-path)
+  (interactive (list (buffer-file-name)))
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (tooling-chan (replique/get tooling-repl :chan))
          (cljs-repl (replique/active-repl :cljs)))
@@ -768,7 +803,41 @@ This allows you to temporarily modify read-only buffers too."
      (replique/list-css tooling-repl)
      (lambda (resp)
        (when resp
-         (print resp))))))
+         (let* ((css-infos (replique/get resp :css-infos))
+                (f-data-scheme-p (lambda (i)
+                                   (and (equal "data" (replique/get i :scheme))
+                                        (equal file-path (replique/get i :file-path)))))
+                (f-as-data-scheme? (seq-find f-data-scheme-p css-infos))
+                (candidates (seq-filter (lambda (x) (not (null x)))
+                                        (mapcar 'replique/css-candidates css-infos)))
+                (candidates (if f-as-data-scheme?
+                                candidates
+                              (cons `("*new-data-uri*" .
+                                      ,(replique/hash-map :scheme "data" :uri file-path))
+                                    candidates)))
+                (completing-read-candidates (thread-last candidates
+                                              (mapcar 'car)
+                                              (seq-sort (apply-partially
+                                                         'replique/uri-sort-fn file-path))))
+                (selected (ido-completing-read "Reload css file: "
+                                               completing-read-candidates nil t))
+                (selected (cdr (assoc selected candidates))))
+           (replique/send-tooling-msg
+            tooling-repl
+            (replique/hash-map :type :load-css
+                               :file-path file-path
+                               :uri (replique/get selected :uri)
+                               :scheme (replique/get selected :scheme)))
+           (replique-async/<!
+            tooling-chan
+            (lambda (resp)
+              (when resp
+                (let ((err (replique/get resp :error)))
+                  (if err
+                      (progn
+                        (message "%s" (replique-edn/pr-str err))
+                        (message "load-css %s: failed" file-path))
+                    (message "load-css %s: done" file-path))))))))))))
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
@@ -1111,7 +1180,7 @@ The following commands are available:
                                                         host port))
                      (tooling-chan (replique/process-filter-chan network-proc)))
                 (set-process-sentinel
-                 network-proc (-partial 'replique/on-tooling-repl-close host port))
+                 network-proc (apply-partially 'replique/on-tooling-repl-close host port))
                 ;; The REPL accept fn will read a char in order to check whether the request
                 ;; is an HTTP one or not
                 (process-send-string network-proc "R")
@@ -1180,7 +1249,7 @@ The following commands are available:
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
          (repl-cmd (format "(replique.repl/repl)\n")))
-    (set-process-sentinel proc (-partial 'replique/on-repl-close host port buff))
+    (set-process-sentinel proc (apply-partially 'replique/on-repl-close host port buff))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
     (process-send-string proc "R")
@@ -1359,7 +1428,7 @@ The following commands are available:
                            saved-repls)
                  (let* ((buff-name (replique/clj-buff-name directory :clj)))
                    (replique/make-repl buff-name directory host port :clj nil)))))
-           (-partial saved-repls))))))
+           (apply-partially saved-repls))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
   (let* ((directory (replique/get repl :directory))
@@ -1494,7 +1563,6 @@ The following commands are available:
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
-;; Set the asset path in repl-env on :ready because it is used elsewhere (parsestacktrace ...), bot webapp-env and browser-env when using the main file
 ;; The cljs-env makes no use of :repl-require
 ;; autocomplete interactive command
 
@@ -1505,5 +1573,6 @@ The following commands are available:
 
 ;; Normalize file path for *files-specs*
 ;; new cljs tagged reader
+;; defclass is deprecated
 
 ;; replique.el ends here

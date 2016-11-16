@@ -7,7 +7,7 @@
 
 (def ^:private cljs-repl* (utils/dynaload 'replique.repl-cljs/cljs-repl))
 (def ^:private cljs-load-file (utils/dynaload 'replique.repl-cljs/load-file))
-(def ^:private cljs-in-ns (utils/dynaload 'replique.repl-cljs/in-ns))
+(def ^:private cljs-in-ns* (utils/dynaload 'replique.repl-cljs/in-ns))
 (def ^:private cljs-compiler-env (utils/dynaload 'replique.repl-cljs/compiler-env))
 (def ^:private cljs-set-repl-verbose
   (utils/dynaload 'replique.repl-cljs/set-cljs-repl-verbose))
@@ -29,7 +29,7 @@
 
 ;; It seems that naming this macro "in-ns" make the cljs compiler to crash
 (defmacro cljs-in-ns [ns-quote]
-  (quote ~(@cljs-in-ns ns-quote)))
+  (list 'quote (@cljs-in-ns* ns-quote)))
 
 (defmacro set-cljs-repl-verbose [b]
   (@cljs-set-repl-verbose b)
