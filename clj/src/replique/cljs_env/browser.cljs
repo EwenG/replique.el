@@ -15,8 +15,9 @@
         href (.-href css)]
     (if-not href
       false
-      (= (.getDomain (goog.Uri/parse href))
-         current-domain))))
+      (or (= "data" (.-scheme (.-ownerNode css)))
+          (= (.getDomain (goog.Uri/parse href))
+             current-domain)))))
 
 (defn css-infos [css]
   (cond (and (.-href css)
