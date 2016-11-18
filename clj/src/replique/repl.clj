@@ -10,14 +10,20 @@
   (:import [java.io File FileNotFoundException]))
 
 (defonce ^:dynamic *files-specs* {})
+
 (def watched-bindings
-  [#'clojure.core/*data-readers* #'clojure.core/*print-namespace-maps*
-   #'clojure.spec/*explain-out*  #'clojure.core/*print-level*
-   #'clojure.core/*default-data-reader-fn* #'clojure.core/*print-length*
-   #'clojure.core/*read-eval* #'clojure.core/*print-meta* #'clojure.core/*assert*
+  [#'clojure.core/*data-readers* 
+   #'clojure.core/*print-level* #'clojure.core/*default-data-reader-fn*
+   #'clojure.core/*print-length* #'clojure.core/*read-eval*
+   #'clojure.core/*print-meta* #'clojure.core/*assert*
    #'clojure.core/*unchecked-math* #'clojure.core/*warn-on-reflection*
    #'clojure.core/*compile-path* #'clojure.core/*command-line-args*
    #'clojure.core/*math-context* #'*files-specs*])
+
+(utils/with-1.9+ (alter-var-root
+                  #'watched-bindings conj
+                  #'clojure.core/*print-namespace-maps*
+                  #'clojure.spec/*explain-out*))
 
 (defn normalize-host [address]
   (cond (= "0.0.0.0" address) "localhost"

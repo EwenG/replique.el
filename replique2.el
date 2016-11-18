@@ -109,12 +109,6 @@
   (or (locate-dominating-file default-directory "project.clj")
       default-directory))
 
-(defun replique/replique-root-dir ()
-  (thread-first (locate-library "replique")
-    file-name-directory))
-
-
-
 
 ;; Auto completion
 
@@ -438,9 +432,9 @@ This allows you to temporarily modify read-only buffers too."
     (let ((current-message (if (current-message)
                                (concat (current-message) "\n")
                              (current-message))))
-      (->> (replique/format-eval-message msg)
-           (concat current-message)
-           replique/message-nolog))))
+      (thread-last (replique/format-eval-message msg)
+        (concat current-message)
+        replique/message-nolog))))
 
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((props-sym (make-symbol "props-sym"))
@@ -839,6 +833,13 @@ This allows you to temporarily modify read-only buffers too."
                         (message "load-css %s: failed" file-path))
                     (message "load-css %s: done" file-path))))))))))))
 
+(defconst replique/client-version "0.0.1-SNAPSHOT")
+
+(defcustom replique/version "0.0.1-SNAPSHOT"
+  "Hook for customizing the version of the replique REPL server to be used"
+  :type 'string
+  :group 'replique)
+
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
   :type 'regexp
@@ -846,16 +847,6 @@ This allows you to temporarily modify read-only buffers too."
 
 (defcustom replique/lein-script "/Users/egr/bin/lein"
   "Leiningen script path"
-  :type 'file
-  :group 'replique)
-
-(defcustom replique/clojure-jar "/Users/egr/bin/clojure-1.9.0-alpha11.jar"
-  ""
-  :type 'file
-  :group 'replique)
-
-(defcustom replique/clojurescript-jar nil
-  ""
   :type 'file
   :group 'replique)
 
@@ -867,7 +858,7 @@ This allows you to temporarily modify read-only buffers too."
   :group 'replique)
 
 (defcustom replique/cljs-compile-path "target-cljs"
-  ""
+  "Clojurescript compiler output directory"
   :type 'string
   :group 'replique)
 
@@ -938,37 +929,25 @@ The following commands are available:
                 'replique/eldoc-documentation-function)
   (setq-local company-tooltip-align-annotations t))
 
-(defun replique/raw-command-classpath ()
-  (cond ((and (null replique/clojure-jar)
-              (null replique/clojurescript-jar))
-         (error "None of the clojure or clojurescript jar have been configured"))
-        ((null replique/clojurescript-jar)
-         (format "%s:%sclj/src" replique/clojure-jar (replique/replique-root-dir)))
-        ((null replique/clojure-jar)
-         (format "%s:%sclj/src" replique/clojurescript-jar (replique/replique-root-dir)))
-        (t
-         (format "%s:%s:%sclj/src"
-                 replique/clojure-jar replique/clojurescript-jar
-                 (replique/replique-root-dir)))))
+;; lein update-in :dependencies conj "[replique \"0.0.1-SNAPSHOT\"]"  -- update-in :aliases assoc "\"replique\"" "[\"trampoline\" \"run\" \"-m\" \"replique.main/-main\" \"{:type :clj :port 9000 :directory \\\"~testc\\\" :replique-vars {:files-specs {} :cljs-compile-path \\\"target-cljs\\\"}}\"]" -- replique
 
-(defun replique/raw-command (directory port)
-  `("java" "-cp" ,(replique/raw-command-classpath) "clojure.main" "-m" "replique.main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
-             (number-to-string port) (replique-edn/pr-str directory)
-             (replique-edn/pr-str replique/files-specs)
-             (replique-edn/pr-str replique/cljs-compile-path))))
+(defun replique/command-opts (directory port)
+  (replique-edn/pr-str
+   (format
+    "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
+    (number-to-string port) (replique-edn/pr-str directory)
+    (replique-edn/pr-str replique/files-specs)
+    (replique-edn/pr-str replique/cljs-compile-path))))
 
 (defun replique/lein-command (directory port)
-  `(,(or replique/lein-script "lein") "update-in" ":source-paths" "conj"
-    ,(format "\"%sclj/src\"" (replique/replique-root-dir))
-    "--" "run" "-m" "replique.main/-main"
-    ,(format "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
-             (number-to-string port) (replique-edn/pr-str directory)
-             (replique-edn/pr-str replique/files-specs)
-             (replique-edn/pr-str replique/cljs-compile-path))))
-
-(defun replique/is-lein-project (directory)
-  (file-exists-p (expand-file-name "project.clj" directory)))
+  `(,(or replique/lein-script "lein") "update-in" ":dependencies" "conj" 
+    ,(format "[replique/replique \"%s\"]" replique/version)
+    "--"
+    "update-in" ":aliases" "assoc" "\"replique\""
+    ,(format "[\"trampoline\" \"run\" \"-m\" \"replique.main/-main\" %s]"
+             (replique/command-opts directory port))
+    "--"
+    "replique"))
 
 (defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
@@ -1052,13 +1031,6 @@ The following commands are available:
          (replique/close-repls host port))
         (t nil)))
 
-;; java -cp "/Users/egr/bin/clojure-1.8.0.jar:/Users/egr/bin/cljs-1.9.216.jar:/Users/egr/replique.el/clj/src" clojure.main -m replique.main "{:type :clj :port 0}"
-
-(defun replique/dispatch-repl-cmd (directory port)
-  (if (replique/is-lein-project directory)
-      (replique/lein-command directory port)
-    (replique/raw-command directory port)))
-
 (defun replique/is-in-exec-path (file absolute?)
   (thread-first (seq-mapcat
                  (lambda (dir)
@@ -1067,33 +1039,15 @@ The following commands are available:
     (seq-contains file)))
 
 (defun replique/repl-cmd-pre-cond (directory)
-  (let ((is-lein-project (replique/is-lein-project directory)))
-    (cond ((and is-lein-project
-                replique/lein-script
-                (not (replique/is-in-exec-path replique/lein-script t)))
-           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script)
-           nil)
-          ((and is-lein-project
-                (not replique/lein-script)
-                (not (replique/is-in-exec-path "lein" nil)))
-           (message "Error while starting the REPL. No lein script found in exec-path")
-           nil)
-          ((and (not is-lein-project)
-                (not replique/clojure-jar)
-                (not replique/clojurescript-jar))
-           (message "Error while starting the REPL. None of replique/clojure-jar or replique/clojurescript-jar have been customized")
-           nil)
-          ((and (not is-lein-project)
-                replique/clojure-jar
-                (not (replique/is-in-exec-path replique/clojure-jar t)))
-           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/clojure-jar" replique/clojure-jar)
-           nil)
-          ((and (not is-lein-project)
-                replique/clojurescript-jar
-                (not (replique/is-in-exec-path replique/clojurescript-jar t)))
-           (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/clojurescript-jar" replique/clojurescript-jar)
-           nil)
-          (t t))))
+  (cond ((and replique/lein-script
+              (not (replique/is-in-exec-path replique/lein-script t)))
+         (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script)
+         nil)
+        ((and (not replique/lein-script)
+              (not (replique/is-in-exec-path "lein" nil)))
+         (message "Error while starting the REPL. No lein script found in exec-path")
+         nil)
+        (t t)))
 
 (defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
   (replique-async/<!
@@ -1137,26 +1091,27 @@ The following commands are available:
                (when (replique/is-main-cljs-file k)
                  (puthash k v filtered-mains)))
              (or main-cljs-files (replique/hash-map)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :output-main-cljs-files
-                        :main-cljs-files filtered-mains))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (when err
-             (message "%s" (replique-edn/pr-str err))
-             (message "Error while refreshing main cljs files")))
-         (replique-async/put!
-          out-chan (replique/assoc tooling-repl :main-cljs-files filtered-mains)))))
+    (if (equal (hash-table-count filtered-mains) 0)
+        (replique-async/put! out-chan tooling-repl)
+      (replique/send-tooling-msg
+       tooling-repl
+       (replique/hash-map :type :output-main-cljs-files :main-cljs-files filtered-mains))
+      (replique-async/<!
+       tooling-chan
+       (lambda (resp)
+         (when resp
+           (let ((err (replique/get resp :error)))
+             (when err
+               (message "%s" (replique-edn/pr-str err))
+               (message "Error while refreshing main cljs files")))
+           (replique-async/put!
+            out-chan (replique/assoc tooling-repl :main-cljs-files filtered-mains))))))
     out-chan))
 
 (defun replique/make-tooling-repl (host port directory main-cljs-files out-chan)
   (let* ((default-directory directory)
          (random-port? (equal port 0))
-         (repl-cmd (replique/dispatch-repl-cmd directory port))
+         (repl-cmd (replique/lein-command directory port))
          (proc (apply 'start-process directory (format " *%s*" directory)
                       (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
@@ -1188,9 +1143,9 @@ The following commands are available:
                 ;; since it does not print anything
                 (process-send-string
                  network-proc "(replique.repl/shared-tooling-repl)\n")
-                (let* ((tooling-chan (-> tooling-chan
-                                         (replique/read-chan network-proc)
-                                         replique/dispatch-tooling-msg))
+                (let* ((tooling-chan (thread-first tooling-chan
+                                       (replique/read-chan network-proc)
+                                       replique/dispatch-tooling-msg))
                        (tooling-repl (replique/hash-map
                                       :directory directory
                                       :repl-type :tooling
@@ -1409,7 +1364,8 @@ The following commands are available:
             (replique/make-tooling-repl host port directory main-cljs-files tooling-repl-chan))))
       (replique-async/<!
        tooling-repl-chan
-       (-> (lambda (saved-repls repl)
+       (thread-first
+           (lambda (saved-repls repl)
              (let ((directory (replique/get repl :directory))
                    (host (replique/get repl :host))
                    (port (replique/get repl :port))
@@ -1428,7 +1384,7 @@ The following commands are available:
                            saved-repls)
                  (let* ((buff-name (replique/clj-buff-name directory :clj)))
                    (replique/make-repl buff-name directory host port :clj nil)))))
-           (apply-partially saved-repls))))))
+         (apply-partially saved-repls))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
   (let* ((directory (replique/get repl :directory))

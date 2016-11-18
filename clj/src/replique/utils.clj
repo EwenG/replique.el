@@ -4,6 +4,11 @@
 
 (defonce cljs-compile-path nil)
 
+(defmacro with-1.9+ [& body]
+  (let [{:keys [major minor]} *clojure-version*]
+    (when (or (> major 1) (and (= 1 major) (>= minor 9)))
+      `(do ~@body))))
+
 ;; Same as Delay but don't realize the Delay on exception.
 ;; This would not be possible with clojure Delay because it makes its function ^:once because
 ;; of local clearings. Replique Delay is not expected to be used in situations where local

@@ -21,7 +21,7 @@
   (@cljs-repl*))
 
 ;; At the moment, load file does not intern macros in the cljs-env, making dynamically loaded
-;; macros unavailable to autocompletion/repliquedoc.
+;; macros unavailable to autocompletion/repliquedoc
 (defmacro load-file [file-path]
   (if (cljs-env? &env)
     (@cljs-load-file file-path)
