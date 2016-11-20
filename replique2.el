@@ -481,6 +481,9 @@ This allows you to temporarily modify read-only buffers too."
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'js-mode m)
+                      `((equal 'js-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f (replique/repl-by :buffer (current-buffer))))))))
@@ -605,7 +608,8 @@ This allows you to temporarily modify read-only buffers too."
    (clojure-mode . (apply-partially 'replique/load-file-clj file-path))
    (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
    (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))
-   (css-mode . (apply-partially 'replique/load-css file-path))))
+   (css-mode . (apply-partially 'replique/load-css file-path))
+   (js-mode . (apply-partially 'replique/load-js file-path))))
 
 (defun replique/browser ()
   (interactive)
@@ -843,6 +847,24 @@ This allows you to temporarily modify read-only buffers too."
                         (message "%s" (replique-edn/pr-str err))
                         (message "load-css %s: failed" file-path))
                     (message "load-css %s: done" file-path))))))))))))
+
+(defun replique/load-js (file-path tooling-repl cljs-repl)
+  (when (not cljs-repl)
+    (user-error "No active Clojurescript REPL"))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :load-js :file-path file-path))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "load-js %s: failed" file-path))
+             (message "load-js %s: done" file-path))))))))
 
 (defconst replique/client-version "0.0.1-SNAPSHOT")
 
@@ -1501,6 +1523,6 @@ The following commands are available:
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
 
-;; ido-*-read check
+;; close tooling repl when repl startup fails
 
 ;; replique.el ends here
