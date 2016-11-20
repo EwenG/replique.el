@@ -457,7 +457,7 @@ This allows you to temporarily modify read-only buffers too."
         replique/message-nolog))))
 
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
-  (let* ((props-sym (make-symbol "props-sym"))
+  (let* ((tooling-repl-sym (make-symbol "tooling-repl"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
          (cljs-repl-sym (make-symbol "cljs-repl-sym"))
          (clj-buff-sym (make-symbol "clj-buff-sym"))
@@ -471,23 +471,16 @@ This allows you to temporarily modify read-only buffers too."
                ;; the use of the macro
                (cond ((equal 'clojure-mode m)
                       `((equal 'clojure-mode major-mode)
-                        (funcall ,f ,props-sym ,clj-repl-sym)))
+                        (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
                      ((equal 'clojurescript-mode m)
                       `((equal 'clojurescript-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error "No active Clojurescript REPL"))))
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'clojurec-mode m)
                       `((equal 'clojurec-mode major-mode)
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f ,props-sym
-                                     ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error "No active Clojure or Clojurescript REPL"))))
+                        (funcall ,f ,tooling-repl-sym ,clj-repl-sym ,cljs-repl-sym)))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error "No active Clojurescript REPL"))))
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f (replique/repl-by :buffer (current-buffer))))))))
@@ -496,7 +489,7 @@ This allows you to temporarily modify read-only buffers too."
                                 '((t (user-error
                                       "Cannot eval from major mode: %s"
                                       major-mode))))))
-    `(let* ((,props-sym (replique/active-repl :tooling t))
+    `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
             (,clj-repl-sym (replique/active-repl :clj))
             (,cljs-repl-sym (replique/active-repl :cljs))
             (,clj-buff-sym (replique/get ,clj-repl-sym :buffer))
@@ -611,7 +604,8 @@ This allows you to temporarily modify read-only buffers too."
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/load-file-clj file-path))
    (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
-   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))))
+   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))
+   (css-mode . (apply-partially 'replique/load-css file-path))))
 
 (defun replique/browser ()
   (interactive)
@@ -716,8 +710,8 @@ This allows you to temporarily modify read-only buffers too."
       (user-error "No active Clojurescript REPL"))
     (when-let ((output-to (or
                            output-to
-                           (ido-read-file-name "Output main cljs file to: "
-                                               (replique/get cljs-repl :directory)))))
+                           (read-file-name "Output main cljs file to: "
+                                           (replique/get cljs-repl :directory)))))
       (let ((output-to (file-truename output-to)))
         (when (file-directory-p output-to)
           (user-error "%s is a directory" output-to))
@@ -806,13 +800,10 @@ This allows you to temporarily modify read-only buffers too."
              (replique-async/put! out-chan resp))))))
     out-chan))
 
-(defun replique/load-css (file-path)
-  (interactive (list (buffer-file-name)))
-  (let* ((tooling-repl (replique/active-repl :tooling t))
-         (tooling-chan (replique/get tooling-repl :chan))
-         (cljs-repl (replique/active-repl :cljs)))
-    (when (not cljs-repl)
-      (user-error "No active Clojurescript REPL"))
+(defun replique/load-css (file-path tooling-repl cljs-repl)
+  (when (not cljs-repl)
+    (user-error "No active Clojurescript REPL"))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique-async/<!
      (replique/list-css tooling-repl)
      (lambda (resp)
@@ -868,18 +859,6 @@ This allows you to temporarily modify read-only buffers too."
 (defcustom replique/lein-script "/Users/egr/bin/lein"
   "Leiningen script path"
   :type 'file
-  :group 'replique)
-
-;; TODO check the hashmap type
-(defcustom replique/files-specs
-  (replique/hash-map)
-  ""
-  :type '(restricted-sexp :match-alternatives (hash-table-p 'nil))
-  :group 'replique)
-
-(defcustom replique/cljs-compile-path "target-cljs"
-  "Clojurescript compiler output directory"
-  :type 'string
   :group 'replique)
 
 (defvar replique/mode-hook '()
@@ -949,25 +928,15 @@ The following commands are available:
                 'replique/eldoc-documentation-function)
   (setq-local company-tooltip-align-annotations t))
 
-;; lein update-in :dependencies conj "[replique \"0.0.1-SNAPSHOT\"]"  -- update-in :aliases assoc "\"replique\"" "[\"trampoline\" \"run\" \"-m\" \"replique.main/-main\" \"{:type :clj :port 9000 :directory \\\"~testc\\\" :replique-vars {:files-specs {} :cljs-compile-path \\\"target-cljs\\\"}}\"]" -- replique
-
-(defun replique/command-opts (directory port)
-  (replique-edn/pr-str
-   (format
-    "{:type :clj :port %s :directory %s :replique-vars {:files-specs %s :cljs-compile-path %s}}"
-    (number-to-string port) (replique-edn/pr-str directory)
-    (replique-edn/pr-str replique/files-specs)
-    (replique-edn/pr-str replique/cljs-compile-path))))
+;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
 (defun replique/lein-command (directory port)
-  `(,(or replique/lein-script "lein") "update-in" ":dependencies" "conj" 
+  `(,(or replique/lein-script "lein") "update-in" ":plugins" "conj" 
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
-    "update-in" ":aliases" "assoc" "\"replique\""
-    ,(format "[\"trampoline\" \"run\" \"-m\" \"replique.main/-main\" %s]"
-             (replique/command-opts directory port))
-    "--"
-    "replique"))
+    "trampoline" "replique"
+    ,(format "%s" directory) ,(format "%s" port)
+    ,(format "%s" replique/version)))
 
 (defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
@@ -1219,7 +1188,7 @@ The following commands are available:
     (run-hooks 'comint-exec-hook)
     buffer))
 
-(defun replique/make-repl (buffer-name directory host port repl-type bindings)
+(defun replique/make-repl (buffer-name directory host port repl-type)
   (let* ((buff (get-buffer-create buffer-name))
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
@@ -1229,44 +1198,39 @@ The following commands are available:
     ;; is an HTTP one or not
     (process-send-string proc "R")
     (let ((chan (replique/read-chan chan-src proc)))
-      ;; Restore bindings and get the session number
-      ;; The forms are wrapped in a do to avoid the need to read the result
-      ;; of restore-bindings
-      (process-send-string proc (format "(replique.repl/init-and-print-session %s)\n"
-                                        (replique-edn/pr-str bindings)))
-         (replique-async/<!
-          chan
-          (lambda (resp)
-            (let ((session (replique/get resp :client)))
-              (set-process-filter proc nil)
-              (replique/make-comint proc buff)
-              (set-buffer buff)
-              (replique/mode)
-              (process-send-string proc repl-cmd)
-              (let ((repl (replique/hash-map :directory directory
-                                             :host host
-                                             :port port
-                                             :repl-type repl-type
-                                             :session session
-                                             :ns 'user
-                                             :buffer buff
-                                             :bindings bindings)))
-                (push repl replique/repls)
-                (replique/save-repls directory)
-                ;; Save REPL props when its name changes. The hook will run for interactive
-                ;; commands only
-                (with-current-buffer buff
-                  (add-hook 'post-command-hook
-                            (lambda ()
-                              (when (equal 'rename-buffer this-command)
-                                (replique/save-repls directory)))
-                            t t))
-                (when (equal repl-type :cljs)
-                  ;; Second parameter is nil because the function does not use the
-                  ;; tooling repl anyway
-                  (replique/send-input-from-source-clj
-                   "(replique.interactive/cljs-repl)" nil repl))
-                (display-buffer buff))))))))
+      (process-send-string proc "replique.server/*session*\n")
+      (replique-async/<!
+       chan
+       (lambda (resp)
+         (let ((session (replique/get resp :client)))
+           (set-process-filter proc nil)
+           (replique/make-comint proc buff)
+           (set-buffer buff)
+           (replique/mode)
+           (process-send-string proc repl-cmd)
+           (let ((repl (replique/hash-map :directory directory
+                                          :host host
+                                          :port port
+                                          :repl-type repl-type
+                                          :session session
+                                          :ns 'user
+                                          :buffer buff)))
+             (push repl replique/repls)
+             (replique/save-repls directory)
+             ;; Save REPL props when its name changes. The hook will run for interactive
+             ;; commands only
+             (with-current-buffer buff
+               (add-hook 'post-command-hook
+                         (lambda ()
+                           (when (equal 'rename-buffer this-command)
+                             (replique/save-repls directory)))
+                         t t))
+             (when (equal repl-type :cljs)
+               ;; Second parameter is nil because the function does not use the
+               ;; tooling repl anyway
+               (replique/send-input-from-source-clj
+                "(replique.interactive/cljs-repl)" nil repl))
+             (display-buffer buff))))))))
 
 (defun replique/clj-buff-name (directory repl-type)
   (let ((repl-type-string (replique/keyword-to-string repl-type)))
@@ -1295,7 +1259,6 @@ The following commands are available:
                                         (repl-type (replique/get repl :repl-type))
                                         (random-port? (replique/get repl :random-port?))
                                         (buffer (replique/get repl :buffer))
-                                        (bindings (replique/get repl :bindings))
                                         (main-cljs-files (replique/get repl :main-cljs-files)))
                                     (if (equal repl-type :tooling)
                                         (replique/hash-map :host host :port port
@@ -1303,8 +1266,7 @@ The following commands are available:
                                                            :repl-type repl-type
                                                            :main-cljs-files main-cljs-files)
                                       (replique/hash-map :repl-type repl-type
-                                                         :buffer-name (buffer-name buffer)
-                                                         :bindings bindings))))
+                                                         :buffer-name (buffer-name buffer)))))
                                 repls))
                  (repls-string (with-output-to-string (pp repls))))
             (insert repls-string)))))))
@@ -1318,16 +1280,14 @@ The following commands are available:
              (host (replique/get saved-repl :host))
              (port (replique/get saved-repl :port))
              (random-port? (replique/get saved-repl :random-port?))
-             (buffer-name (replique/get saved-repl :buffer-name))
-             (bindings (replique/get saved-repl :bindings)))
+             (buffer-name (replique/get saved-repl :buffer-name)))
         (cond ((and (equal repl-type :tooling)
                     (not (null host)) (stringp host)
                     (replique/is-valid-port-nb? port))
                (replique/validate-saved-repls
                 (cons saved-repl validated) (cdr saved-repls)))
               ((and (or (equal :clj repl-type) (equal :cljs repl-type))
-                    (not (null buffer-name)) (stringp buffer-name)
-                    (or (null bindings) (hash-table-p bindings)))
+                    (not (null buffer-name)) (stringp buffer-name))
                (replique/validate-saved-repls
                 (cons saved-repl validated) (cdr saved-repls)))
               ;; This is an error, return nil
@@ -1393,17 +1353,15 @@ The following commands are available:
                (if saved-repls
                    (mapcar (lambda (repl)
                              (let ((repl-type (replique/get repl :repl-type))
-                                   (buffer-name (replique/get repl :buffer-name))
-                                   (bindings (replique/get repl :bindings)))
+                                   (buffer-name (replique/get repl :buffer-name)))
                                (when (not (equal repl-type :tooling))
                                  ;; make-repl expects buffer-name to be the name of no already
                                  ;; existing buffer
                                  (replique/make-repl (generate-new-buffer-name buffer-name)
-                                                     directory host port repl-type
-                                                     bindings))))
+                                                     directory host port repl-type))))
                            saved-repls)
                  (let* ((buff-name (replique/clj-buff-name directory :clj)))
-                   (replique/make-repl buff-name directory host port :clj nil)))))
+                   (replique/make-repl buff-name directory host port :clj)))))
          (apply-partially saved-repls))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
@@ -1440,18 +1398,6 @@ The following commands are available:
                     (propertize "Uncaught exception" 'face '(:foreground "red"))
                     (replique/get msg :thread)
                     (replique-edn/pr-str (replique/get msg :value))))
-          ((equal :binding (replique/get msg :type))
-           (let* ((repl (replique/repl-by
-                         :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :directory)))
-                  (buffer (replique/get repl :buffer))
-                  (var (replique/get msg :var)))
-             (when repl
-               (thread-last
-                   (replique/get msg :value)
-                 (replique/assoc-in repl `[:bindings ,var])
-                 (replique/update-repl repl))
-               (replique/save-repls (replique/get msg :directory)))))
           ((equal :eval (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
@@ -1528,27 +1474,31 @@ The following commands are available:
 ;; jump to definition
 ;; Epresent
 ;; css, js
-;; sourcepath, classpath live reload
-;; var explorer
+;; var explorer: namespaces -> vars
 ;; exceptions explorer (fold/unfold?)
 ;; compliment keywords cljs -> missing :require ... ?
-;; remove emacs auto save files
-;; check for nil when reading from chan because the chan can be closed
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; support for no cljs-env
 ;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
-;; autocomplete interactive command
+;; cljs-repl interactive command
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
 
 ;; autocomplete using the spec first, compliment next if no candidates
 
-;; Normalize file path for *files-specs*
 ;; new cljs tagged reader
 ;; defclass is deprecated
+
+;; spec autocomplete for files -> emacs first line local variables
+;; spec autocomplete for macros -> specized macros
+
+;; race condition when there is an exception in start-server -> the process get killed before
+;; the excpetion has been fully read
+;; error when loading replique repl_cljs from webapp
+;; ido-*-read check
 
 ;; replique.el ends here
