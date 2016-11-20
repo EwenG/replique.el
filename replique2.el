@@ -1012,8 +1012,8 @@ The following commands are available:
               (replique/close-tooling-repl repl))
             tooling-repls)))
 
-(defun replique/on-tooling-repl-close (host port process event)
-  (replique/kill-process-buffer process)
+(defun replique/on-tooling-repl-close (network-proc-buffer host port process event)
+  (replique/kill-process-buffer network-proc-buffer)
   (cond ((string= "deleted\n" event)
          (replique/close-repls host port))
         ((string= "connection broken by remote peer\n" event)
@@ -1101,17 +1101,19 @@ The following commands are available:
   (let* ((default-directory directory)
          (random-port? (equal port 0))
          (repl-cmd (replique/lein-command directory port))
-         (proc (apply 'start-process directory (format " *%s*" directory)
-                      (car repl-cmd) (cdr repl-cmd)))
+         ;; proc-buff is not tied to the proc lifecycle because we want to be able to read
+         ;; proc output even after the process ended
+         (proc-buff (generate-new-buffer (format " *%s*" directory)))
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
          (chan (replique/read-chan
-                proc-chan proc
+                proc-chan proc proc-buff
                 (lambda (proc-out-s)
                   (error "Error while starting the REPL: %s" proc-out-s)))))
-    (set-process-sentinel proc (lambda (proc string) (replique/kill-process-buffer proc)))
+    (set-process-sentinel proc (lambda (proc string) (replique/kill-process-buffer proc-buff)))
     (replique-async/<!
      chan (lambda (repl-infos)
-            (replique/kill-process-buffer proc)
+            (replique/kill-process-buffer proc-buff)
             ;; Print messages from unbound threads
             (set-process-filter proc (lambda (proc string)
                                        (message "Process %s: %s" (process-name proc) string)))
@@ -1120,11 +1122,13 @@ The following commands are available:
                          (replique-edn/pr-str (replique/get repl-infos :error)))
               (let* ((host (replique/get repl-infos :host))
                      (port (replique/get repl-infos :port))
-                     (network-proc (open-network-stream directory (format " *%s*" directory)
-                                                        host port))
+                     (network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+                     (network-proc (open-network-stream directory nil host port))
                      (tooling-chan (replique/process-filter-chan network-proc)))
                 (set-process-sentinel
-                 network-proc (apply-partially 'replique/on-tooling-repl-close host port))
+                 network-proc
+                 (apply-partially
+                  'replique/on-tooling-repl-close network-proc-buff host port))
                 ;; The REPL accept fn will read a char in order to check whether the request
                 ;; is an HTTP one or not
                 (process-send-string network-proc "R")
@@ -1133,7 +1137,7 @@ The following commands are available:
                 (process-send-string
                  network-proc "(replique.repl/shared-tooling-repl)\n")
                 (let* ((tooling-chan (thread-first tooling-chan
-                                       (replique/read-chan network-proc)
+                                       (replique/read-chan network-proc network-proc-buff)
                                        replique/dispatch-tooling-msg))
                        (tooling-repl (replique/hash-map
                                       :directory directory
@@ -1189,7 +1193,7 @@ The following commands are available:
     buffer))
 
 (defun replique/make-repl (buffer-name directory host port repl-type)
-  (let* ((buff (get-buffer-create buffer-name))
+  (let* ((buff (generate-new-buffer buffer-name))
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
          (repl-cmd (format "(replique.repl/repl)\n")))
@@ -1197,7 +1201,7 @@ The following commands are available:
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
     (process-send-string proc "R")
-    (let ((chan (replique/read-chan chan-src proc)))
+    (let ((chan (replique/read-chan chan-src proc buff)))
       (process-send-string proc "replique.server/*session*\n")
       (replique-async/<!
        chan
@@ -1437,37 +1441,38 @@ The following commands are available:
             (replique/read-buffer chan-out))
         (end-of-file (delete-region 1 (point-max)))))))
 
-(defun replique/read-chan* (chan-in chan-out proc &optional error-handler)
+(defun replique/read-chan* (chan-in chan-out proc buffer &optional error-handler)
   (replique-async/<!
    chan-in
    (lambda (string)
      (when string
        (condition-case err
-           (when (buffer-live-p (process-buffer proc))
-             (with-current-buffer (process-buffer proc)
+           (when (buffer-live-p buffer)
+             (with-current-buffer buffer
                (let ((p (point)))
                  (insert string)
                  (goto-char p))
                (replique/read-buffer chan-out))
-             (replique/read-chan* chan-in chan-out proc error-handler))
+             (replique/read-chan* chan-in chan-out proc buffer error-handler))
          (error
           (if error-handler
               (funcall error-handler string)
             (error (error-message-string err)))))))))
 
-(defun replique/read-chan (chan-in proc &optional error-handler)
+(defun replique/read-chan (chan-in proc buffer &optional error-handler)
   (let ((chan-out (replique-async/chan))
         (parser-state nil))
-    (with-current-buffer (process-buffer proc)
+    (with-current-buffer buffer
       (setq-local replique/parser-state nil))
-    (replique/read-chan* chan-in chan-out proc error-handler)
+    (replique/read-chan* chan-in chan-out proc buffer error-handler)
     chan-out))
 
-(defun replique/kill-process-buffer (proc)
-  (let ((proc-buffer (process-buffer proc)))
-    (set-process-buffer proc nil)
-    (when proc-buffer
-      (kill-buffer proc-buffer))))
+(defun replique/kill-process-buffer (buffer)
+  (if (not (equal (buffer-size buffer) 0))
+      ;; There is still stuff in the buffer, let a chance to the reader to finish reading the
+      ;; process output
+      (run-at-time 1 nil (lambda () (kill-buffer buffer)))
+    (kill-buffer buffer)))
 
 (provide 'replique2)
 
@@ -1496,9 +1501,6 @@ The following commands are available:
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
 
-;; race condition when there is an exception in start-server -> the process get killed before
-;; the excpetion has been fully read
-;; error when loading replique repl_cljs from webapp
 ;; ido-*-read check
 
 ;; replique.el ends here
