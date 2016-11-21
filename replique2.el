@@ -866,6 +866,37 @@ This allows you to temporarily modify read-only buffers too."
                  (message "load-js %s: failed" file-path))
              (message "load-js %s: done" file-path))))))))
 
+(defun replique/eval-form (repl-type form)
+  (let ((repl (replique/active-repl repl-type)))
+    (if (null repl)
+        (format "No active %s REPL" repl-type)
+      (let* ((form (replace-regexp-in-string "\n" " " form))
+             (tooling-repl (replique/active-repl :tooling t))
+             (tooling-chan (replique/get tooling-repl :chan))
+             (msg-type (thread-last (replique/keyword-to-string repl-type)
+                         (concat ":eval-")
+                         (make-symbol)))
+             (p (make-process))
+             (done nil)
+             (result nil))
+        (replique/send-tooling-msg
+         tooling-repl
+         (replique/hash-map :type msg-type :form form))
+        (replique-async/<!
+         tooling-chan
+         (lambda (resp)
+           (when resp
+             (let ((err (replique/get resp :error)))
+               (if err
+                   (setq result (replique-edn/pr-str err))
+                 (setq result (replique/get resp :result)))))
+           (setq done t)))
+        ;; We are polling because accept-process-output does not work well with
+        ;; run-at-time (replique-async)
+        (while (not done)
+          (accept-process-output p 0 200))
+        result))))
+
 (defconst replique/client-version "0.0.1-SNAPSHOT")
 
 (defcustom replique/version "0.0.1-SNAPSHOT"
@@ -988,6 +1019,24 @@ The following commands are available:
       (interrupt-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
+(defun replique/maybe-clean-tooling-repl (host port)
+  (let ((other-repls (replique/repls-by :host host :port port)))
+    (when (seq-every-p (lambda (repl)
+                         (equal :tooling (replique/get repl :repl-type)))
+                       other-repls)
+      (mapcar (lambda (tooling-repl)
+                (let ((tooling-chan (replique/get tooling-repl :chan)))
+                  (when (process-live-p (replique/get tooling-repl :network-proc))
+                    (replique/send-tooling-msg
+                     tooling-repl (replique/hash-map :type :shutdown))
+                    (replique-async/<!
+                     tooling-chan
+                     (lambda (msg)
+                       (when (and msg (replique/get msg :error))
+                         (error "Error while shutting down the REPL: %s"
+                                (replique-edn/pr-str (replique/get msg :error)))))))))
+              other-repls))))
+
 (defun replique/close-repl (repl-props &optional dont-save-repls?)
   (let* ((buffer (replique/get repl-props :buffer))
          (host (replique/get repl-props :host))
@@ -1001,23 +1050,8 @@ The following commands are available:
     (setq replique/repls (delete repl-props replique/repls))
     (when (not dont-save-repls?)
       (replique/save-repls directory))
-    ;; If the only repl left is a tooling repl, thus let's close it
-    (let ((other-repls (replique/repls-by :host host :port port)))
-      (when (seq-every-p (lambda (repl)
-                           (equal :tooling (replique/get repl :repl-type)))
-                         other-repls)
-        (mapcar (lambda (tooling-repl)
-                  (let ((tooling-chan (replique/get tooling-repl :chan)))
-                    (when (process-live-p (replique/get tooling-repl :network-proc))
-                        (replique/send-tooling-msg
-                         tooling-repl (replique/hash-map :type :shutdown))
-                      (replique-async/<!
-                       tooling-chan
-                       (lambda (msg)
-                         (when (and msg (replique/get msg :error))
-                           (error "Error while shutting down the REPL: %s"
-                                  (replique-edn/pr-str (replique/get msg :error)))))))))
-                other-repls)))))
+    ;; If the only repl left is a tooling repl, let's close it
+    (replique/maybe-clean-tooling-repl host port)))
 
 (defun replique/close-repls (host port &optional dont-save-repls?)
   (let* ((repls (replique/repls-by :host host :port port))
