@@ -705,6 +705,16 @@ This allows you to temporarily modify read-only buffers too."
              (replique-async/put! out-chan resp))))))
     out-chan))
 
+(defun replique/cljs-repl ()
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan))
+         (clj-repl (replique/active-repl :clj)))
+    (when (not clj-repl)
+      (user-error "No active Clojure REPL"))
+    (replique/send-input-from-source-clj
+     "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
+
 (defun replique/output-main-cljs-file (output-to &optional main-ns)
   (interactive (list nil nil))
   (let* ((tooling-repl (replique/active-repl :tooling t))
@@ -749,9 +759,7 @@ This allows you to temporarily modify read-only buffers too."
                           (thread-last 
                               (replique/update-in tooling-repl [:main-cljs-files]
                                                   'replique/assoc output-to main-ns)
-                            (replique/update-repl tooling-repl))
-                          (replique/save-repls
-                           (replique/get tooling-repl :directory))))))))))))))))
+                            (replique/update-repl tooling-repl))))))))))))))))
 
 (defun replique/uri-compare (url1 url2)
   (let* ((path1 (url-filename (url-generic-parse-url url1)))
@@ -914,6 +922,22 @@ This allows you to temporarily modify read-only buffers too."
   :type 'file
   :group 'replique)
 
+(defcustom replique/host "localhost"
+  "Replique REPLs listening socket host"
+  :type 'string
+  :group 'replique)
+
+(defcustom replique/do-refresh-main-cljs-files t
+  "When true, replique will try to refresh main cljs files on REPL startup. Refreshing main
+cljs files may be useful because the REPL port may change between REPL sessions"
+  :type 'boolean
+  :group 'replique)
+
+(defcustom replique/main-cljs-files-regexp "^\\.?main\\.js$"
+  "Regexp used to recognize main cljs files"
+  :type 'string
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -1010,12 +1034,11 @@ The following commands are available:
      (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
              (replique-edn/pr-str msg)))))
 
-;; Note: a tooling repl may not be closed when there is a pending non daemon thread
-;; We don't want to save REPLs when closing the process, as opposed to closing a single REPL
-(defun replique/close-tooling-repl (repl &optional dont-save-repls?)
+(defun replique/close-tooling-repl (repl)
   (let ((tooling-proc (replique/get repl :proc))
         (tooling-chan (replique/get repl :chan)))
     (when (process-live-p tooling-proc)
+      ;; try to close the tooling REPL even if there is pending non daemon threads
       (interrupt-process tooling-proc))
     (setq replique/repls (delete repl replique/repls))))
 
@@ -1037,23 +1060,21 @@ The following commands are available:
                                 (replique-edn/pr-str (replique/get msg :error)))))))))
               other-repls))))
 
-(defun replique/close-repl (repl-props &optional dont-save-repls?)
-  (let* ((buffer (replique/get repl-props :buffer))
-         (host (replique/get repl-props :host))
-         (port (replique/get repl-props :port))
-         (directory (replique/get repl-props :directory))
+(defun replique/close-repl (repl)
+  (let* ((buffer (replique/get repl :buffer))
+         (host (replique/get repl :host))
+         (port (replique/get repl :port))
+         (directory (replique/get repl :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
       (delete-process proc))
     (kill-buffer buffer)
-    (setq replique/repls (delete repl-props replique/repls))
-    (when (not dont-save-repls?)
-      (replique/save-repls directory))
+    (setq replique/repls (delete repl replique/repls))
     ;; If the only repl left is a tooling repl, let's close it
     (replique/maybe-clean-tooling-repl host port)))
 
-(defun replique/close-repls (host port &optional dont-save-repls?)
+(defun replique/close-repls (host port)
   (let* ((repls (replique/repls-by :host host :port port))
          (not-tooling-repls (seq-filter (lambda (repl)
                                        (not (equal :tooling (replique/get repl :repl-type))))
@@ -1062,7 +1083,7 @@ The following commands are available:
                                    (equal :tooling (replique/get repl :repl-type)))
                                  repls)))
     (mapcar (lambda (repl)
-              (replique/close-repl repl dont-save-repls?))
+              (replique/close-repl repl))
             not-tooling-repls)
     (mapcar (lambda (repl)
               (replique/close-tooling-repl repl))
@@ -1083,16 +1104,14 @@ The following commands are available:
                  exec-path)
     (seq-contains file)))
 
-(defun replique/repl-cmd-pre-cond (directory)
+(defun replique/check-lein-script ()
   (cond ((and replique/lein-script
               (not (replique/is-in-exec-path replique/lein-script t)))
-         (message "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script)
-         nil)
+         (format "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script))
         ((and (not replique/lein-script)
               (not (replique/is-in-exec-path "lein" nil)))
-         (message "Error while starting the REPL. No lein script found in exec-path")
-         nil)
-        (t t)))
+         "Error while starting the REPL. No lein script found in exec-path")
+        (t nil)))
 
 (defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
   (replique-async/<!
@@ -1125,17 +1144,18 @@ The following commands are available:
          (condition-case err
              (with-temp-buffer
                (insert-file-contents f nil 0 check-length)
-               (equal (buffer-substring-no-properties 1 (+ 1  check-length)) first-line))
+               (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
-(defun replique/refresh-main-cljs-files (tooling-repl main-cljs-files)
-  (let ((tooling-chan (replique/get tooling-repl :chan))
+(defun replique/refresh-main-cljs-files (tooling-repl)
+  (let ((directory (replique/get tooling-repl :directory))
+        (tooling-chan (replique/get tooling-repl :chan))
         (out-chan (replique-async/chan))
-        (filtered-mains (replique/hash-map)))
-    (maphash (lambda (k v)
-               (when (replique/is-main-cljs-file k)
-                 (puthash k v filtered-mains)))
-             (or main-cljs-files (replique/hash-map)))
+        (filtered-mains (thread-last replique/main-cljs-regexp
+                          (directory-files-recursively default-directory)
+                          (seq-filter 'replique/is-main-cljs-file))))
+    ;; TODO check port number change
+    ;; TODO request files overide
     (if (equal (hash-table-count filtered-mains) 0)
         (replique-async/put! out-chan tooling-repl)
       (replique/send-tooling-msg
@@ -1153,9 +1173,9 @@ The following commands are available:
             out-chan (replique/assoc tooling-repl :main-cljs-files filtered-mains))))))
     out-chan))
 
-(defun replique/make-tooling-repl (host port directory main-cljs-files out-chan)
-  (let* ((default-directory directory)
-         (random-port? (equal port 0))
+(defun replique/make-tooling-repl (host port directory)
+  (let* ((out-chan (replique-async/chan))
+         (default-directory directory)
          (repl-cmd (replique/lein-command directory port))
          ;; proc-buff is not tied to the proc lifecycle because we want to be able to read
          ;; proc output even after the process ended
@@ -1202,14 +1222,13 @@ The following commands are available:
                                       :network-proc network-proc
                                       :host host
                                       :port port
-                                      :random-port? random-port?
                                       :chan tooling-chan)))
                   ;; Refresh main-cljs-files with the new port number
-                  (replique-async/<!
-                   (replique/refresh-main-cljs-files tooling-repl main-cljs-files)
+                  (replique-async/<! (replique/refresh-main-cljs-files tooling-repl)
                    (lambda (tooling-repl)
                      (push tooling-repl replique/repls)
-                     (replique-async/put! out-chan tooling-repl))))))))))
+                     (replique-async/put! out-chan tooling-repl))))))))
+    out-chan))
 
 (defun replique/on-repl-close (host port buffer process event)
   (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
@@ -1232,9 +1251,7 @@ The following commands are available:
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port)))
-    ;; When closing the process, we don't override REPLs saved on disk, by contrast with
-    ;; closing a single REPL
-    (replique/close-repls host port t)))
+    (replique/close-repls host port)))
 
 (defun replique/make-comint (proc buffer)
   (with-current-buffer buffer
@@ -1276,15 +1293,6 @@ The following commands are available:
                                           :ns 'user
                                           :buffer buff)))
              (push repl replique/repls)
-             (replique/save-repls directory)
-             ;; Save REPL props when its name changes. The hook will run for interactive
-             ;; commands only
-             (with-current-buffer buff
-               (add-hook 'post-command-hook
-                         (lambda ()
-                           (when (equal 'rename-buffer this-command)
-                             (replique/save-repls directory)))
-                         t t))
              (when (equal repl-type :cljs)
                ;; Second parameter is nil because the function does not use the
                ;; tooling repl anyway
@@ -1299,130 +1307,39 @@ The following commands are available:
              (file-name-nondirectory (directory-file-name directory))
              repl-type-string))))
 
-(defun replique/save-repls (directory)
-  ;; Processes started from a symbolic link are not persisted
-  (when (equal (file-truename directory) directory)
-    (let* ((repls (replique/repls-by :directory directory))
-           (repls-directory (concat directory ".replique/"))
-           (repls-file-name (concat repls-directory "repls")))
-      (if (or
-           (null repls)
-           (and (equal 1 (length repls))
-                (equal :tooling (replique/get (car repls) :repl-type))))
-          (when (file-exists-p repls-file-name)
-            (delete-file repls-file-name))
-        (make-directory repls-directory t)
-        (with-temp-file repls-file-name
-          (let* ((repls (mapcar (lambda (repl)
-                                  (let ((host (replique/get repl :host))
-                                        (port (replique/get repl :port))
-                                        (repl-type (replique/get repl :repl-type))
-                                        (random-port? (replique/get repl :random-port?))
-                                        (buffer (replique/get repl :buffer))
-                                        (main-cljs-files (replique/get repl :main-cljs-files)))
-                                    (if (equal repl-type :tooling)
-                                        (replique/hash-map :host host :port port
-                                                           :random-port? random-port?
-                                                           :repl-type repl-type
-                                                           :main-cljs-files main-cljs-files)
-                                      (replique/hash-map :repl-type repl-type
-                                                         :buffer-name (buffer-name buffer)))))
-                                repls))
-                 (repls-string (with-output-to-string (pp repls))))
-            (insert repls-string)))))))
-
-(defun replique/validate-saved-repls (validated saved-repls)
-  (if (null saved-repls)
-      validated
-    (when (hash-table-p (car saved-repls))
-      (let* ((saved-repl (car saved-repls))
-             (repl-type (replique/get saved-repl :repl-type))
-             (host (replique/get saved-repl :host))
-             (port (replique/get saved-repl :port))
-             (random-port? (replique/get saved-repl :random-port?))
-             (buffer-name (replique/get saved-repl :buffer-name)))
-        (cond ((and (equal repl-type :tooling)
-                    (not (null host)) (stringp host)
-                    (replique/is-valid-port-nb? port))
-               (replique/validate-saved-repls
-                (cons saved-repl validated) (cdr saved-repls)))
-              ((and (or (equal :clj repl-type) (equal :cljs repl-type))
-                    (not (null buffer-name)) (stringp buffer-name))
-               (replique/validate-saved-repls
-                (cons saved-repl validated) (cdr saved-repls)))
-              ;; This is an error, return nil
-              (t nil))))))
-
-;; Returns nil in case of an error
-;; Return 0 as port number in case of a random port
-(defun replique/read-saved-repls (directory)
-  ;; Processes started from a symbolic link are not persisted
-  (when (equal (file-truename directory) directory)
-    (let ((repls-file-name (concat directory ".replique/repls")))
-      (when (file-exists-p repls-file-name)
-        (let* ((saved-repls (with-temp-buffer
-                              (insert-file-contents repls-file-name)
-                              (buffer-string)))
-               (saved-repls (condition-case err
-                                (read saved-repls)
-                              (error (message "Error while reading saved REPLs: %s"
-                                              (error-message-string err))
-                                     nil))))
-          (replique/validate-saved-repls nil saved-repls))))))
-
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (expand-file-name directory)))
 
-;; Port number is ignored when a REPL process is already existing - the existing REPL port
-;; number is used instead
 ;;;###autoload
-(defun replique/repl (&optional directory host port)
+(defun replique/repl (directory &optional port buffer-name)
   (interactive
    (let ((directory (read-directory-name
                      "Project directory: " (replique/guess-project-root-dir) nil t)))
      ;; Normalizing the directory name is necessary in order to be able to search repls
      ;; by directory name
      (list (replique/normalize-directory-name directory))))
-  (if (not (replique/repl-cmd-pre-cond directory))
-      nil
-    (let* ((existing-repl (replique/repl-by
-                           :directory directory
-                           :repl-type :tooling))
-           (saved-repls (if existing-repl nil (replique/read-saved-repls directory)))
-           (tooling-repl-chan (replique-async/chan)))
-      (if existing-repl
-          (replique-async/put! tooling-repl-chan existing-repl)
-        (let* ((saved-tooling-repl (replique/get-by saved-repls :repl-type :tooling))
-               (saved-host (replique/get saved-tooling-repl :host))
-               (saved-port (replique/get saved-tooling-repl :port))
-               (random-port? (replique/get saved-tooling-repl :random-port?))
-               (host (or host saved-host "localhost"))
-               (port (or port (if random-port? 0 saved-port) (read-number "Port number: " 0)))
-               (main-cljs-files (replique/get saved-tooling-repl :main-cljs-files)))
-          (if (not (replique/is-valid-port-nb? port))
-              (user-error "Invalid port number: %d" port)
-            (replique/make-tooling-repl host port directory main-cljs-files tooling-repl-chan))))
+  (let* ((existing-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (host replique/host)
+         (port (if existing-repl
+                   (replique/get existing-repl :port)
+                 (read-number "Port number: " 0)))
+         (lein-script-error (replique/check-lein-script)))
+    (cond
+     ((not (replique/is-valid-port-nb? port))
+      (user-error "Invalid port number: %d" port))
+     (lein-script-error
+      (user-error lein-script-error))
+     (t
       (replique-async/<!
-       tooling-repl-chan
-       (thread-first
-           (lambda (saved-repls repl)
-             (let ((directory (replique/get repl :directory))
-                   (host (replique/get repl :host))
-                   (port (replique/get repl :port))
-                   (tooling-chan (replique/get repl :chan)))
-               (if saved-repls
-                   (mapcar (lambda (repl)
-                             (let ((repl-type (replique/get repl :repl-type))
-                                   (buffer-name (replique/get repl :buffer-name)))
-                               (when (not (equal repl-type :tooling))
-                                 ;; make-repl expects buffer-name to be the name of no already
-                                 ;; existing buffer
-                                 (replique/make-repl (generate-new-buffer-name buffer-name)
-                                                     directory host port repl-type))))
-                           saved-repls)
-                 (let* ((buff-name (replique/clj-buff-name directory :clj)))
-                   (replique/make-repl buff-name directory host port :clj)))))
-         (apply-partially saved-repls))))))
+       (if existing-repl
+           (replique-async/default-chan existing-repl)
+         (replique/make-tooling-repl host port directory))
+       (lambda (tooling-repl)
+         (let ((directory (replique/get tooling-repl :directory))
+               (port (replique/get tooling-repl :port))
+               (tooling-chan (replique/get tooling-repl :chan))
+               (buffer-name (or buffer-name (replique/clj-buff-name directory :clj))))
+           (replique/make-repl buffer-name directory host port :clj))))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
   (let* ((directory (replique/get repl :directory))
@@ -1439,8 +1356,7 @@ The following commands are available:
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
             (rename-buffer (generate-new-buffer-name new-buffer-name)))))
-      (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type))
-      (replique/save-repls directory))))
+      (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type)))))
 
 (defun replique/dispatch-tooling-msg* (in-chan out-chan)
   (replique-async/<!
