@@ -1021,15 +1021,16 @@ The following commands are available:
      (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
              (replique-edn/pr-str msg)))))
 
-(defun replique/close-tooling-repl (repl)
-  (let ((tooling-proc (replique/get repl :proc))
-        (tooling-chan (replique/get repl :chan)))
+(defun replique/close-tooling-repl (tooling-repl)
+  (let ((tooling-proc (replique/get tooling-repl :proc))
+        (tooling-chan (replique/get tooling-repl :chan)))
     (when (process-live-p tooling-proc)
-      ;; try to close the tooling REPL even if there is pending non daemon threads
+      ;; SIGINT, the jvm should stop, even if there is pending non daemon threads, shutdown
+      ;; hooks should run
       (interrupt-process tooling-proc))
-    (setq replique/repls (delete repl replique/repls))))
+    (setq replique/repls (delete tooling-repl replique/repls))))
 
-(defun replique/maybe-clean-tooling-repl (host port)
+(defun replique/maybe-close-tooling-repl (host port)
   (let ((other-repls (replique/repls-by :host host :port port)))
     (when (seq-every-p (lambda (repl)
                          (equal :tooling (replique/get repl :repl-type)))
@@ -1038,21 +1039,25 @@ The following commands are available:
                 (replique/close-tooling-repl tooling-repl))
               other-repls))))
 
-(defun replique/close-repl (repl)
+(defun replique/close-repl (repl kill-buffers)
   (let* ((buffer (replique/get repl :buffer))
          (host (replique/get repl :host))
          (port (replique/get repl :port))
-         (directory (replique/get repl :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
       (delete-process proc))
-    (kill-buffer buffer)
+    (if kill-buffers
+        (kill-buffer buffer)
+      (with-current-buffer buffer
+        (save-excursion
+          (goto-char (point-max))
+          (insert (concat "\nConnection broken by remote peer\n")))))
     (setq replique/repls (delete repl replique/repls))
     ;; If the only repl left is a tooling repl, let's close it
-    (replique/maybe-clean-tooling-repl host port)))
+    (replique/maybe-close-tooling-repl host port)))
 
-(defun replique/close-repls (host port)
+(defun replique/close-repls (host port kill-buffers)
   (let* ((repls (replique/repls-by :host host :port port))
          (not-tooling-repls (seq-filter (lambda (repl)
                                           (not (equal :tooling (replique/get repl :repl-type))))
@@ -1061,19 +1066,28 @@ The following commands are available:
                                       (equal :tooling (replique/get repl :repl-type)))
                                     repls)))
     (mapcar (lambda (repl)
-              (replique/close-repl repl))
+              (replique/close-repl repl kill-buffers))
             not-tooling-repls)
-    (mapcar (lambda (repl)
-              (replique/close-tooling-repl repl))
+    (mapcar (lambda (tooling-repl)
+              (replique/close-tooling-repl tooling-repl))
             tooling-repls)))
 
+(defun replique/on-repl-close (buffer process event)
+  (let ((closing-repl (replique/repl-by :buffer buffer)))
+    (when closing-repl
+      (cond ((string= "deleted\n" event)
+             (replique/close-repl closing-repl t))
+            ((string= "connection broken by remote peer\n" event)
+             (replique/close-repl closing-repl nil))
+            (t nil)))))
+
 (defun replique/on-tooling-repl-close (network-proc-buffer host port process event)
-  (replique/kill-process-buffer network-proc-buffer)
   (cond ((string= "deleted\n" event)
-         (replique/close-repls host port))
+         (replique/close-repls host port t))
         ((string= "connection broken by remote peer\n" event)
-         (replique/close-repls host port))
-        (t nil)))
+         (replique/close-repls host port nil))
+        (t nil))
+  (replique/kill-process-buffer network-proc-buffer))
 
 (defun replique/is-in-exec-path (file absolute?)
   (thread-first (seq-mapcat
@@ -1197,19 +1211,6 @@ The following commands are available:
                   (replique-async/put! out-chan tooling-repl))))))
     out-chan))
 
-(defun replique/on-repl-close (host port buffer process event)
-  (let ((closing-repl (replique/repl-by :host host :port port :buffer buffer)))
-    (when closing-repl
-      (cond ((string= "deleted\n" event)
-             (replique/close-repl closing-repl))
-            ((string= "connection broken by remote peer\n" event)
-             (with-current-buffer buffer
-               (save-excursion
-                 (goto-char (point-max))
-                 (insert (concat "\n" event "\n"))))
-             (replique/close-repl closing-repl))
-            (t nil)))))
-
 (defun replique/close-process (directory)
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
@@ -1218,7 +1219,7 @@ The following commands are available:
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port)))
-    (replique/close-repls host port)))
+    (replique/close-repls host port t)))
 
 (defun replique/make-comint (proc buffer)
   (with-current-buffer buffer
@@ -1237,7 +1238,7 @@ The following commands are available:
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
          (repl-cmd (format "(replique.repl/repl)\n")))
-    (set-process-sentinel proc (apply-partially 'replique/on-repl-close host port buff))
+    (set-process-sentinel proc (apply-partially 'replique/on-repl-close buff))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
     (process-send-string proc "R")
@@ -1309,7 +1310,7 @@ The following commands are available:
            (condition-case err
                (replique/make-repl buffer-name directory host port :clj)
              (error
-              (replique/maybe-clean-tooling-repl host port)
+              (replique/maybe-close-tooling-repl host port)
               ;; rethrow the error
               (signal (car err) (cdr err)))))))))))
 
