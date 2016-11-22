@@ -1050,6 +1050,8 @@ The following commands are available:
     (if kill-buffers
         (kill-buffer buffer)
       (with-current-buffer buffer
+        ;; Disable replique/mode
+        (fundamental-mode)
         (save-excursion
           (goto-char (point-max))
           (insert (concat "\nConnection broken by remote peer\n")))))
