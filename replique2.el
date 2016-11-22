@@ -635,7 +635,7 @@ This allows you to temporarily modify read-only buffers too."
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
-     (list (ido-completing-read "Switch to REPL: " repl-names nil t))))
+     (list (completing-read "Switch to REPL: " repl-names nil t))))
   ;; All windows displaying the previously active repl are set to display the newly active
   ;; repl (repl with the same repl-type)
   (let* ((buffer (get-buffer repl-buff-name))
@@ -658,7 +658,7 @@ This allows you to temporarily modify read-only buffers too."
                                tooling-repls)))
      (when (not (car directories))
        (user-error "No started REPL"))
-     (list (ido-completing-read "Switch to process: " directories nil t))))
+     (list (completing-read "Switch to process: " directories nil t))))
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
@@ -716,7 +716,7 @@ This allows you to temporarily modify read-only buffers too."
      "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
 
 (defun replique/output-main-cljs-file (output-to &optional main-ns)
-  (interactive (list nil nil))
+  (interactive (list nil))
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (tooling-chan (replique/get tooling-repl :chan))
          (cljs-repl (replique/active-repl :cljs)))
@@ -740,12 +740,13 @@ This allows you to temporarily modify read-only buffers too."
                (let* ((namespaces (replique/get resp :namespaces))
                       (main-ns (or main-ns
                                    (replique/return-nil-on-quit
-                                    (ido-completing-read "Main Clojurescript namespace: "
-                                                         namespaces nil t nil nil '(nil))))))
+                                    (completing-read "Main Clojurescript namespace: "
+                                                     namespaces nil t nil nil '(nil))))))
                  (replique/send-tooling-msg
                   tooling-repl
                   (replique/hash-map :type :output-main-cljs-files
-                                     :main-cljs-files (replique/hash-map output-to main-ns)))
+                                     :output-to output-to
+                                     :main-ns main-ns))
                  (replique-async/<!
                   tooling-chan
                   (lambda (resp)
@@ -756,10 +757,7 @@ This allows you to temporarily modify read-only buffers too."
                               (message "%s" (replique-edn/pr-str err))
                               (message "output-main-cljs-file failed"))
                           (message "Main Clojurescript file written to: %s" output-to)
-                          (thread-last 
-                              (replique/update-in tooling-repl [:main-cljs-files]
-                                                  'replique/assoc output-to main-ns)
-                            (replique/update-repl tooling-repl))))))))))))))))
+                          ))))))))))))))
 
 (defun replique/uri-compare (url1 url2)
   (let* ((path1 (url-filename (url-generic-parse-url url1)))
@@ -836,7 +834,7 @@ This allows you to temporarily modify read-only buffers too."
                                               (mapcar 'car)
                                               (seq-sort (apply-partially
                                                          'replique/uri-sort-fn file-path))))
-                (selected (ido-completing-read "Reload css file: "
+                (selected (completing-read "Reload css file: "
                                                completing-read-candidates nil t))
                 (selected (cdr (assoc selected candidates))))
            (replique/send-tooling-msg
@@ -924,17 +922,6 @@ This allows you to temporarily modify read-only buffers too."
 
 (defcustom replique/host "localhost"
   "Replique REPLs listening socket host"
-  :type 'string
-  :group 'replique)
-
-(defcustom replique/do-refresh-main-cljs-files t
-  "When true, replique will try to refresh main cljs files on REPL startup. Refreshing main
-cljs files may be useful because the REPL port may change between REPL sessions"
-  :type 'boolean
-  :group 'replique)
-
-(defcustom replique/main-cljs-files-regexp "^\\.?main\\.js$"
-  "Regexp used to recognize main cljs files"
   :type 'string
   :group 'replique)
 
@@ -1048,16 +1035,7 @@ The following commands are available:
                          (equal :tooling (replique/get repl :repl-type)))
                        other-repls)
       (mapcar (lambda (tooling-repl)
-                (let ((tooling-chan (replique/get tooling-repl :chan)))
-                  (when (process-live-p (replique/get tooling-repl :network-proc))
-                    (replique/send-tooling-msg
-                     tooling-repl (replique/hash-map :type :shutdown))
-                    (replique-async/<!
-                     tooling-chan
-                     (lambda (msg)
-                       (when (and msg (replique/get msg :error))
-                         (error "Error while shutting down the REPL: %s"
-                                (replique-edn/pr-str (replique/get msg :error)))))))))
+                (replique/close-tooling-repl tooling-repl))
               other-repls))))
 
 (defun replique/close-repl (repl)
@@ -1077,11 +1055,11 @@ The following commands are available:
 (defun replique/close-repls (host port)
   (let* ((repls (replique/repls-by :host host :port port))
          (not-tooling-repls (seq-filter (lambda (repl)
-                                       (not (equal :tooling (replique/get repl :repl-type))))
-                                     repls))
+                                          (not (equal :tooling (replique/get repl :repl-type))))
+                                        repls))
          (tooling-repls (seq-filter (lambda (repl)
-                                   (equal :tooling (replique/get repl :repl-type)))
-                                 repls)))
+                                      (equal :tooling (replique/get repl :repl-type)))
+                                    repls)))
     (mapcar (lambda (repl)
               (replique/close-repl repl))
             not-tooling-repls)
@@ -1147,31 +1125,24 @@ The following commands are available:
                (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
-(defun replique/refresh-main-cljs-files (tooling-repl)
-  (let ((directory (replique/get tooling-repl :directory))
-        (tooling-chan (replique/get tooling-repl :chan))
-        (out-chan (replique-async/chan))
-        (filtered-mains (thread-last replique/main-cljs-regexp
-                          (directory-files-recursively default-directory)
-                          (seq-filter 'replique/is-main-cljs-file))))
-    ;; TODO check port number change
-    ;; TODO request files overide
-    (if (equal (hash-table-count filtered-mains) 0)
-        (replique-async/put! out-chan tooling-repl)
-      (replique/send-tooling-msg
-       tooling-repl
-       (replique/hash-map :type :output-main-cljs-files :main-cljs-files filtered-mains))
-      (replique-async/<!
-       tooling-chan
-       (lambda (resp)
-         (when resp
-           (let ((err (replique/get resp :error)))
-             (when err
-               (message "%s" (replique-edn/pr-str err))
-               (message "Error while refreshing main cljs files")))
-           (replique-async/put!
-            out-chan (replique/assoc tooling-repl :main-cljs-files filtered-mains))))))
-    out-chan))
+(defun replique/refresh-main-cljs-files (directory)
+  (interactive (list nil))
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (port (replique/get tooling-repl :port))
+         (directory (or directory
+                        (read-file-name "Refresh main cljs files in directory: " directory))))
+    (message "Searching main cljs files ...")
+    (let* ((js-files (directory-files-recursively directory "\\.js$"))
+           (main-cljs-files (seq-filter 'replique/is-main-cljs-file js-files)))
+      (mapcar (lambda (f)
+                (with-temp-file f
+                  (insert-file-contents f)
+                  (save-match-data
+                    (when (re-search-forward "var port = \'[0-9]+\';" nil t)
+                      (replace-match (format "var port = \'%s\';" port))))
+                  (buffer-substring-no-properties 1 (point-max))))
+              main-cljs-files)
+      (message "%s files refreshed" (length main-cljs-files)))))
 
 (defun replique/make-tooling-repl (host port directory)
   (let* ((out-chan (replique-async/chan))
@@ -1196,8 +1167,7 @@ The following commands are available:
             (if (replique/get repl-infos :error)
                 (message "Error while starting the REPL: %s"
                          (replique-edn/pr-str (replique/get repl-infos :error)))
-              (let* ((host (replique/get repl-infos :host))
-                     (port (replique/get repl-infos :port))
+              (let* ((port (replique/get repl-infos :port))
                      (network-proc-buff (generate-new-buffer (format " *%s*" directory)))
                      (network-proc (open-network-stream directory nil host port))
                      (tooling-chan (replique/process-filter-chan network-proc)))
@@ -1223,11 +1193,8 @@ The following commands are available:
                                       :host host
                                       :port port
                                       :chan tooling-chan)))
-                  ;; Refresh main-cljs-files with the new port number
-                  (replique-async/<! (replique/refresh-main-cljs-files tooling-repl)
-                   (lambda (tooling-repl)
-                     (push tooling-repl replique/repls)
-                     (replique-async/put! out-chan tooling-repl))))))))
+                  (push tooling-repl replique/repls)
+                  (replique-async/put! out-chan tooling-repl))))))
     out-chan))
 
 (defun replique/on-repl-close (host port buffer process event)
@@ -1247,7 +1214,7 @@ The following commands are available:
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
           (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
-     (list (ido-completing-read "Close process: " directories nil t))))
+     (list (completing-read "Close process: " directories nil t))))
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port)))
@@ -1258,7 +1225,7 @@ The following commands are available:
     (unless (derived-mode-p 'comint-mode)
       (comint-mode))
     (set-process-filter proc 'comint-output-filter)
-    (setq-local comint-ptyp process-connection-type) ; t if pty, nil if pipe.
+    (setq-local comint-ptyp process-connection-type)
     ;; Jump to the end, and set the process mark.
     (goto-char (point-max))
     (set-marker (process-mark proc) (point))
@@ -1339,7 +1306,12 @@ The following commands are available:
                (port (replique/get tooling-repl :port))
                (tooling-chan (replique/get tooling-repl :chan))
                (buffer-name (or buffer-name (replique/clj-buff-name directory :clj))))
-           (replique/make-repl buffer-name directory host port :clj))))))))
+           (condition-case err
+               (replique/make-repl buffer-name directory host port :clj)
+             (error
+              (replique/maybe-clean-tooling-repl host port)
+              ;; rethrow the error
+              (signal (car err) (cdr err)))))))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type)
   (let* ((directory (replique/get repl :directory))
