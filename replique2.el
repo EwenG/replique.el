@@ -869,6 +869,8 @@ This allows you to temporarily modify read-only buffers too."
                  (message "load-js %s: failed" file-path))
              (message "load-js %s: done" file-path))))))))
 
+(defconst replique/eval-form-proc (start-process "eval-form-proc" nil nil))
+
 (defun replique/eval-form (repl-type form-s)
   (let ((repl (replique/active-repl repl-type)))
     (if (null repl)
@@ -879,7 +881,6 @@ This allows you to temporarily modify read-only buffers too."
              (msg-type (thread-last (replique/keyword-to-string repl-type)
                          (concat ":eval-")
                          (make-symbol)))
-             (p (start-process "eval-form-proc" nil nil))
              (done nil)
              (result nil))
         (replique/send-tooling-msg
@@ -893,12 +894,11 @@ This allows you to temporarily modify read-only buffers too."
                (if err
                    (setq result (replique-edn/pr-str err))
                  (setq result (replique/get resp :result)))))
-           (setq done t)
-           (kill-process p)))
+           (setq done t)))
         ;; We are polling because accept-process-output does not work well with
         ;; run-at-time (replique-async)
         (while (not done)
-          (accept-process-output p 0 200))
+          (accept-process-output replique/eval-form-proc 0 200))
         result))))
 
 (defconst replique/client-version "0.0.1-SNAPSHOT")
