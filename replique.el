@@ -918,7 +918,7 @@ This allows you to temporarily modify read-only buffers too."
   :type 'boolean
   :group 'replique)
 
-(defcustom replique/lein-script "/Users/egr/bin/lein"
+(defcustom replique/lein-script nil
   "Leiningen script path"
   :type 'file
   :group 'replique)
