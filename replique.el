@@ -1,25 +1,48 @@
-;;; replique.el ---   -*- lexical-binding: t; -*-
-;;; Package-Requires: ((emacs "24") (clojure-mode "4.0.1") (dash "2.12.0") (company "0.9.0") (dash-functional "1.2.0") (s "1.9.0"))
-;;; Commentary:
+;; replique.el ---   -*- lexical-binding: t; -*-
 
-;;; Code:
+;; Copyright © 2016 Ewen Grosjean
 
-(require 'dash)
-(require 'dash-functional)
-(require 's)
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+;; This file is not part of GNU Emacs.
+
+;; Version 0.0.1-SNAPSHOT
+;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (company "0.9.0"))
+
+;; Commentary:
+
+;; Code:
+
+(require 'subr-x)
 (require 'comint)
 (require 'clojure-mode)
 (require 'replique-edn)
 (require 'replique-async)
 (require 'company)
+(require 'replique-hashmap)
+(require 'map)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
   nil)
 
-(defun replique/message-nolog (format-string &rest args)
+(defun replique/keyword-to-string (k)
+  (substring (symbol-name k) 1))
+
+(defun replique/message-nolog (format-string)
   (let ((message-log-max nil))
-    (apply 'message format-string args)))
+    (message "%s" format-string)))
 
 (defun replique/visible-buffers ()
   (let ((buffers '()))
@@ -35,770 +58,297 @@
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
-(defun replique/read-symbol (prompt default)
-  (list (let* ((prompt (if default
-                           (format "%s (default %s): " prompt default)
-                         (concat prompt ": ")))
-               (input (read-string prompt))
-               (input (if (zerop (length input)) default input)))
-          (if (zerop (length input)) nil (make-symbol input)))))
+(defvar replique/repls nil)
 
-(defgroup replique nil
-  ""
-  :group 'clojure)
+(defun replique/pp-repls ()
+  (string-join
+   (thread-last replique/repls
+     (mapcar (lambda (repl)
+               (let* ((repl (if (replique/contains? repl :buffer)
+                                (replique/assoc repl :buffer '**)
+                              repl))
+                      (repl (if (replique/contains? repl :proc)
+                                (replique/assoc repl :proc '**)
+                              repl))
+                      (repl (if (replique/contains? repl :network-proc)
+                                (replique/assoc repl :network-proc '**)
+                              repl))
+                      (repl (if (replique/contains? repl :chan)
+                                (replique/assoc repl :chan '**)
+                              repl)))
+                 repl)))
+     (mapcar 'replique-edn/pr-str))
+   "\n"))
 
-(defcustom replique/prompt "^[^=> \n]+=> *"
-  "Regexp to recognize prompts in the replique mode."
-  :type 'regexp
-  :group 'replique)
+(defun replique/plist->alist (plist)
+  (let ((alist '()))
+    (while plist
+      (setq alist (push `(,(car plist) . ,(cadr plist)) alist))
+      (setq plist (cddr plist)))
+    alist))
 
-(defvar replique/processes nil)
+(defun replique/update-repl (old-repl updated-repl)
+  (setq replique/repls (mapcar (lambda (repl)
+                                 (if (eq repl old-repl)
+                                     updated-repl
+                                   repl))
+                               replique/repls)))
 
-(defun replique/alist-to-map (alist)
-  (let ((m (make-hash-table :test 'equal)))
-    (mapcar (-lambda ((k . v))
-              (puthash k v m))
-            alist)
-    m))
-
-(defun replique/process-filter-chan (proc)
-  (let ((chan (replique-async/chan)))
-    (set-process-filter
-     proc (lambda (proc string)
-            (replique-async/put! chan string)))
-    chan))
-
-(defun replique/process-props-by (pred &optional error-on-nil)
-  (let ((props (-first pred replique/processes)))
-    (if (and (null props) error-on-nil)
+(defun replique/repls-or-repl-by (filtering-fn source &rest args)
+  (let* ((pred (lambda (repl)
+                 (seq-every-p (lambda (arg)
+                                (let ((k (car arg))
+                                      (v (cdr arg)))
+                                  (or (equal :error-on-nil k)
+                                      (and (replique/contains? repl k)
+                                           (equal v (replique/get repl k))))))
+                              (replique/plist->alist args))))
+         (found (funcall filtering-fn pred source)))
+    (if (and (null found) (plist-get args :error-on-nil))
         (user-error "No started REPL")
-      props)))
+      found)))
 
-(defun replique/processes-props-by (pred &optional error-on-nil)
-  (let ((props (-filter pred replique/processes)))
-    (if (and (null props) error-on-nil)
-        (user-error "No started REPL")
-      props)))
+(defun replique/repl-by (&rest args)
+  (apply 'replique/repls-or-repl-by 'seq-find replique/repls args))
 
-(defun replique/active-process-props (&optional error-on-nil)
-  (replique/process-props-by
-   (-lambda ((&alist :active active))
-     active)
-   error-on-nil))
+(defun replique/repls-by (&rest args)
+  (apply 'replique/repls-or-repl-by 'seq-filter replique/repls args))
 
-(defun replique/process-props-by-host-port
-    (host port &optional error-on-nil)
-  (replique/process-props-by
-   (-lambda ((&alist :host h :port p))
-     (and (string= h host) (equal p port)))
-   error-on-nil))
+(defun replique/get-by (source &rest args)
+  (apply 'replique/repls-or-repl-by 'seq-find source args))
 
-(defun replique/get-active-clj-repl (&optional error-on-nil)
-  (->> (replique/active-process-props error-on-nil)
-       (assoc :active-clj-repl) cdr))
+(defun replique/get-all-by (source &rest args)
+  (apply 'replique/repls-or-repl-by 'seq-filter source args))
 
-(defun replique/get-active-cljs-repl (&optional error-on-nil)
-  (->> (replique/active-process-props error-on-nil)
-       (assoc :active-cljs-repl) cdr))
+(defun replique/active-repl (repl-type &optional error-on-nil)
+  (if error-on-nil
+      (replique/repl-by :repl-type repl-type :error-on-nil error-on-nil)
+    (replique/repl-by :repl-type repl-type)))
 
-(defun replique/get-active-repl-by-type (type &optional error-on-nil)
-  (let ((res (-first (lambda (repl)
-                       (equal type (cdr (assoc :type repl))))
-                     (list (replique/get-active-clj-repl error-on-nil)
-                           (replique/get-active-cljs-repl error-on-nil)))))
-    (when (and error-on-nil (null res))
-      (error "Invalid type %s" type))
-    res))
+(defun replique/guess-project-root-dir ()
+  (or (locate-dominating-file default-directory "project.clj")
+      default-directory))
 
-(defun replique/get-repl-by-session
-    (repl-type session &optional error-on-nil)
-  (let* ((props (replique/active-process-props error-on-nil))
-         (repls (cond ((equal :clj repl-type)
-                       (cdr (assoc :clj-repls props)))
-                      ((equal :cljs repl-type)
-                       (cdr (assoc :cljs-repls props)))
-                      (t '()))))
-    (-first (lambda (repl)
-              (equal (cdr (assoc :session repl)) session))
-            repls)))
 
-(defun replique/get-repl-by-buffer
-    (buffer &optional error-on-nil)
-  (-some
-   (lambda (props)
-     (let* ((clj-repls (cdr (assoc :clj-repls props)))
-            (cljs-repls (cdr (assoc :cljs-repls props))))
-       (or (-first (lambda (repl)
-                     (eq (cdr (assoc :buffer repl)) buffer))
-                   clj-repls)
-           (-first (lambda (repl)
-                     (eq (cdr (assoc :buffer repl)) buffer))
-                   cljs-repls))))
-   replique/processes))
+;; Auto completion
 
-(defun replique/set-active-process
-    (host port &optional display-msg)
-  (interactive
-   (let* ((buffer-descs (mapcar
-                         (-lambda ((&alist :directory dir
-                                     :host host
-                                     :port port))
-                           `(,(format "%s|%s:%s" dir host port)
-                             . (,host ,port)))
-                         replique/processes))
-          (buffer-names (mapcar 'car buffer-descs))
-          (choosen (ido-completing-read
-                    "Set active buffer to: "
-                    buffer-names nil t)))
-     (append (cdr (-first
-                   (lambda (x) (string= (car x) choosen))
-                   buffer-descs))
-             '(t))))
-  (let ((active-proc nil))
-    (mapcar
-     (lambda (props)
-       (-let (((&alist :host proc-host :port proc-port) props))
-         (if (and (string= proc-host host)
-                  (equal proc-port port))
-             (progn (setcdr (assoc :active props) t)
-                    (setq active-proc props))
-           (setcdr (assoc :active props) nil))))
-     replique/processes)
-    (if (and display-msg active-proc)
-        (-let (((&alist :directory dir :host host :port port) active-proc))
-          (message "Active process switched to %s"
-                   (format "%s|%s:%s" dir host port)))
-      (message "Active process switched"))))
+(defconst replique/annotations-map
+  (replique/hash-map
+   :method "me"
+   :field "fi"
+   :static-method "sm"
+   :static-field "sf"
+   :keyword "k"
+   :local "l"
+   :namespace "n"
+   :class "c"
+   :macro "m"
+   :function "f"
+   :var "v"
+   :resource "r"
+   :special-form "s"))
 
-(defun replique/comint-is-closed-sexpr (start limit)
-  (let ((depth (car (parse-partial-sexp start limit))))
-    (if (<= depth 0) t nil)))
+(defun replique/make-candidate (c)
+  (map-let ((:candidate candidate) (:type type) (:package package) (:ns ns)) c
+    (propertize candidate 'meta (replique/hash-map :type type :package package :ns ns))))
 
-(defun replique/comint-send-input (&optional no-read-eval-chan)
-  (interactive)
-  (let* ((buff (current-buffer))
-         (repl (replique/get-repl-by-buffer buff))
-         (eval-chan (cdr (assoc :eval-chan repl)))
-         (proc (get-buffer-process buff)))
-    (if (not proc) (user-error "Current buffer has no process")
-      (widen)
-      (let* ((pmark (process-mark proc)))
-        (cond (;; Point is at the end of the line and the sexpr is
-               ;; terminated
-               (and (equal (point) (point-max))
-                    (replique/comint-is-closed-sexpr pmark (point)))
-               (comint-send-input)
-               (when (null no-read-eval-chan)
-                 (replique-async/<!
-                  eval-chan
-                  (lambda (msg)
-                    (when msg
-                      (replique/display-eval-result msg buff)))
-                  t)))
-              ;; Point is after the prompt but (before the end of line or
-              ;; the sexpr is not terminated)
-              ((comint-after-pmark-p) (comint-accumulate))
-              ;; Point is before the prompt. Do nothing.
+(defun replique/auto-complete* (prefix company-callback tooling-repl msg-type ns)
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type msg-type
+                        :context (replique/form-with-prefix)
+                        :ns ns
+                        :prefix prefix))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "completion failed with prefix %s" prefix))
+             (let* ((candidates (replique/get resp :candidates))
+                    (candidates (mapcar 'replique/make-candidate candidates)))
+               (funcall company-callback candidates)))))))))
+
+(defun replique/auto-complete-session (prefix company-callback repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (repl-type (replique/get repl :repl-type))
+         (msg-type (cond ((equal :clj repl-type)
+                          :clj-completion)
+                         ((equal :cljs repl-type)
+                          :cljs-completion)
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (ns (symbol-name (replique/get repl :ns))))
+    (replique/auto-complete* prefix company-callback tooling-repl msg-type ns)))
+
+(defun replique/auto-complete-clj (prefix company-callback tooling-repl clj-repl)
+  (when clj-repl
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :clj-completion (clojure-find-ns))))
+
+(defun replique/auto-complete-cljs (prefix company-callback tooling-repl cljs-repl)
+  (when cljs-repl
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :cljs-completion (clojure-find-ns))))
+
+(defun replique/auto-complete-cljc (prefix company-callback tooling-repl clj-repl cljs-repl)
+  (when (and clj-repl cljs-repl)
+    (replique/auto-complete* prefix company-callback tooling-repl
+                             :cljc-completion (clojure-find-ns))))
+
+(defun replique/auto-complete (prefix company-callback)
+  (when (not (null (replique/active-repl :tooling)))
+    (replique/with-modes-dispatch
+     (replique/mode . (apply-partially 'replique/auto-complete-session prefix company-callback))
+     (clojure-mode . (apply-partially 'replique/auto-complete-clj prefix company-callback))
+     (clojurescript-mode . (apply-partially 'replique/auto-complete-cljs
+                                            prefix company-callback))
+     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix company-callback)))))
+
+(defun replique/auto-complete-annotation (candidate)
+  (when-let ((meta (get-text-property 0 'meta candidate)))
+    (map-let ((:type type) (:package package) (:ns ns)) meta
+      (let ((type (gethash type replique/annotations-map)))
+        (cond ((and ns type)
+               (format "%s <%s>" ns type))
+              ((and package type)
+               (format "%s <%s>" package type))
+              (type
+               (format "<%s>" type))
+              (ns
+               (format "%s" ns))
+              (package
+               (format "%s" package))
               (t nil))))))
 
-(defun comint-kill-input ()
-  "Kill all text from last stuff output by interpreter to point."
-  (interactive)
-  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
-    (if (> (point) (marker-position pmark))
-	(kill-region pmark (point)))))
+(defun replique/repliquedoc-format-arglist (index arglist)
+  (let ((args-index 1)
+        (force-highlight nil))
+    (thread-first
+        (lambda (arg)
+          (cond ((equal '& arg)
+                 (when (<= args-index index)
+                   (setq force-highlight t))
+                 arg)
+                ((or force-highlight (equal index args-index))
+                 (setq args-index (1+ args-index))
+                 (replique-edn/with-face :object arg :face 'eldoc-highlight-function-argument))
+                (t
+                 (setq args-index (1+ args-index))
+                 arg)))
+      (mapcar arglist)
+      (seq-into 'vector))))
 
-(defun replique/comint-kill-input ()
-  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
-    (if (> (point) (marker-position pmark))
-        (let ((killed (buffer-substring-no-properties pmark (point))))
-          (kill-region pmark (point))
-          killed)
-      "")))
+(defun replique/repliquedoc-format-arglists (index arglists)
+  (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
+    (mapcar arglists)
+    replique-edn/print-str))
 
-(defun replique/comint-send-input-from-source (input)
-  (let ((process (get-buffer-process (current-buffer))))
-    (when (not process)
-      (user-error "Current buffer has no process"))
-    (goto-char (point-max))
-    (let ((old-input (replique/comint-kill-input)))
-         (goto-char (process-mark process))
-         (insert input)
-         (replique/comint-send-input t)
-         (goto-char (process-mark process))
-         (insert old-input))))
-
-(defun replique/keyword-to-string (k)
-  (substring (symbol-name k) 1))
-
-(defun replique/format-eval-message (msg)
-  (if (gethash :error msg)
-      (let ((value (gethash :value msg))
-            (repl-type (gethash :repl-type msg))
-            (ns (gethash :ns msg)))
-        (if (s-starts-with-p "Error:" value)
-            (format "(%s) %s=> %s"
-                    (replique/keyword-to-string repl-type) ns value)
-          (format "(%s) %s=> Error: %s"
-                  (replique/keyword-to-string repl-type) ns value)))
-    (let ((result (gethash :result msg))
-          (repl-type (gethash :repl-type msg))
-          (ns (gethash :ns msg)))
-      (format "(%s) %s=> %s"
-              (replique/keyword-to-string repl-type) ns result))))
-
-(defun replique/display-eval-result (msg buff)
-  (when (not (-contains? (replique/visible-buffers) buff))
-    (replique/message-nolog
-     (replique/format-eval-message msg))))
-
-(defun replique/display-eval-results (msg1 msg2 clj-buff cljs-buff)
-  (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (-first (lambda (msg)
-                           (equal :clj (gethash :repl-type msg)))
-                         (list msg1 msg2)))
-        (cljs-msg (-first (lambda (msg)
-                            (equal :cljs (gethash :repl-type msg)))
-                          (list msg1 msg2))))
-    (cond ((and (not (-contains? visible-buffers clj-buff))
-                (not (-contains? visible-buffers cljs-buff)))
-           (replique/message-nolog
-            "%s\n%s"
-            (replique/format-eval-message clj-msg)
-            (replique/format-eval-message cljs-msg)))
-          ((not (-contains? visible-buffers clj-buff))
-           (replique/message-nolog
-            (replique/format-eval-message clj-msg)))
-          ((not (-contains? visible-buffers cljs-buff))
-           (replique/message-nolog
-            (replique/format-eval-message cljs-msg))))))
-
-(defun replique/format-load-file-message (msg)
-  (if (gethash :error msg)
-      (let ((value (gethash :value msg))
-            (repl-type (gethash :repl-type msg)))
-        (if (s-starts-with-p "Error:" value)
-            (format "(%s) load-file: %s"
-                    (replique/keyword-to-string repl-type) value)
-          (format "(%s) load-file: Error: %s"
-                  (replique/keyword-to-string repl-type) value)))
-    (let ((result (gethash :result msg))
-          (repl-type (gethash :repl-type msg)))
-      (format "(%s) load-file: %s"
-              (replique/keyword-to-string repl-type) result))))
-
-(defun replique/display-load-file-result (msg buff)
-  (when (not (-contains? (replique/visible-buffers) buff))
-    (replique/message-nolog
-     (replique/format-load-file-message msg))))
-
-(defun replique/display-load-file-results (msg1 msg2 clj-buff cljs-buff)
-  (let ((visible-buffers (replique/visible-buffers))
-        (clj-msg (-first (lambda (msg)
-                           (equal :clj (gethash :repl-type msg)))
-                         (list msg1 msg2)))
-        (cljs-msg (-first (lambda (msg)
-                            (equal :cljs (gethash :repl-type msg)))
-                          (list msg1 msg2))))
-    (cond ((and (not (-contains? visible-buffers clj-buff))
-                (not (-contains? visible-buffers cljs-buff)))
-           (replique/message-nolog
-            "%s\n%s"
-            (replique/format-load-file-message clj-msg)
-            (replique/format-load-file-message cljs-msg)))
-          ((not (-contains? visible-buffers clj-buff))
-           (replique/message-nolog
-            (replique/format-load-file-message clj-msg)))
-          ((not (-contains? visible-buffers cljs-buff))
-           (replique/message-nolog
-            (replique/format-load-file-message cljs-msg))))))
-
-(defmacro replique/with-modes-dispatch (&rest modes-alist)
-  (let* ((props-sym (make-symbol "props-sym"))
-         (clj-repl-sym (make-symbol "clj-repl-sym"))
-         (cljs-repl-sym (make-symbol "cljs-repl-sym"))
-         (clj-buff-sym (make-symbol "clj-buff-sym"))
-         (cljs-buff-sym (make-symbol "cljs-buff-sym"))
-         (dispatch-code
-          (mapcar
-           (lambda (item)
-             (let ((m (car item))
-                   (f (cdr item)))
-               (cond ((equal 'clojure-mode m)
-                      `((equal 'clojure-mode major-mode)
-                        (if ,clj-buff-sym
-                            (funcall ,f ,props-sym ,clj-repl-sym)
-                          (user-error "No active Clojure REPL"))))
-                     ;; No active clojure REPL is required
-                     ;; For example, it is possible to load a clojure file
-                     ;; when only a clojurescript REPL is active because of
-                     ;; macro reloading
-                     ((equal 'clojure-mode* m)
-                      `((equal 'clojure-mode major-mode)
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f
-                                     ,props-sym
-                                     ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojure or Clojurescript REPL"))))
-                     ((equal 'clojurescript-mode m)
-                      `((equal 'clojurescript-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error "No active Clojurescript REPL"))))
-                     ((equal 'clojurec-mode m)
-                      `((equal 'clojurec-mode major-mode)
-                        (if (or ,clj-buff-sym ,cljs-buff-sym)
-                            (funcall ,f ,props-sym
-                                     ,clj-repl-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojure or Clojurescript REPL"))))
-                     ((equal 'css-mode m)
-                      `((equal 'css-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojurescript REPL"))))
-                     ((equal 'scss-mode m)
-                      `((equal 'scss-mode major-mode)
-                        (if ,cljs-buff-sym
-                            (funcall ,f ,props-sym ,cljs-repl-sym)
-                          (user-error
-                           "No active Clojurescript REPL"))))
-                     ((equal 'replique/mode m)
-                      `((equal 'replique/mode major-mode)
-                        (funcall ,f ,props-sym
-                                 (replique/get-repl-by-buffer
-                                  (current-buffer))))))))
-           modes-alist))
-         (dispatch-code (append dispatch-code
-                                '((t (user-error
-                                      "Cannot eval from major mode: %s"
-                                      major-mode))))))
-    `(let* ((,props-sym (replique/active-process-props t))
-            (,clj-repl-sym (replique/get-active-clj-repl))
-            (,cljs-repl-sym (replique/get-active-cljs-repl))
-            (,clj-buff-sym (cdr (assoc :buffer ,clj-repl-sym)))
-            (,cljs-buff-sym (cdr (assoc :buffer ,cljs-repl-sym))))
-       (cond ,@dispatch-code))))
-
-(defun replique/send-input-from-source-clj-cljs
-    (input display-result-fn props repl)
-  (let ((buff (cdr (assoc :buffer repl)))
-        (eval-chan (cdr (assoc :eval-chan repl))))
-    (with-current-buffer buff
-      (replique/comint-send-input-from-source input))
-    (replique-async/<!
-     eval-chan
-     (lambda (msg)
-       (when msg
-         (funcall display-result-fn msg buff)))
-     t)))
-
-(defun replique/send-input-from-source-cljc
-    (input-clj input-cljs display-result-fn display-results-fn
-               props clj-repl cljs-repl)
-  (let ((clj-buff (cdr (assoc :buffer clj-repl)))
-        (clj-eval-chan (cdr (assoc :eval-chan clj-repl)))
-        (cljs-buff (cdr (assoc :buffer cljs-repl)))
-        (cljs-eval-chan (cdr (assoc :eval-chan cljs-repl))))
-    (when clj-buff
-      (with-current-buffer clj-buff
-        (replique/comint-send-input-from-source input-clj)))
-    (when cljs-buff
-      (with-current-buffer cljs-buff
-        (replique/comint-send-input-from-source input-cljs)))
-    (cond ((and clj-buff cljs-buff)
-           (let ((chan (replique-async/chan)))
-             (replique-async/<!
-              clj-eval-chan
-              (lambda (msg)
-                (replique-async/put! chan msg)))
-             (replique-async/<!
-              cljs-eval-chan
-              (lambda (msg)
-                (replique-async/put! chan msg)))
-             (replique-async/<!
-              chan
-              (lambda (msg1)
-                (replique-async/<!
-                 chan
-                 (lambda (msg2)
-                   (funcall display-results-fn
-                            msg1 msg2 clj-buff cljs-buff))))
-              t)))
-          (clj-buff
-           (replique-async/<!
-                     clj-eval-chan
-                     (lambda (msg)
-                       (when msg
-                         (funcall display-result-fn msg clj-buff)))
-                     t))
-          (cljs-buff
-           (replique-async/<!
-                     cljs-eval-chan
-                     (lambda (msg)
-                       (when msg
-                         (funcall display-result-fn msg cljs-buff)))
-                     t)))))
-
-(defun replique/send-input-from-source-dispatch (input)
-  (replique/with-modes-dispatch
-   (clojure-mode . (-partial
-                    'replique/send-input-from-source-clj-cljs
-                    input 'replique/display-eval-result))
-   (clojurescript-mode . (-partial
-                          'replique/send-input-from-source-clj-cljs
-                          input 'replique/display-eval-result))
-   (clojurec-mode . (-partial
-                     'replique/send-input-from-source-cljc
-                     input input
-                     'replique/display-eval-result
-                     'replique/display-eval-results))))
-
-(defun replique/eval-region (start end)
-  "Eval the currently highlighted region."
-  (interactive "r")
-  (let ((input (filter-buffer-substring start end)))
-    (replique/send-input-from-source-dispatch input)))
-
-(defun replique/eval-last-sexp ()
-  "Eval the previous sexp."
-  (interactive)
-  (replique/eval-region
-   (save-excursion
-     (clojure-backward-logical-sexp 1) (point))
-   (point)))
-
-(defun replique/eval-defn ()
-  "Eval the current defn expression."
-  (interactive)
-  (replique/send-input-from-source-dispatch (thing-at-point 'defun)))
-
-(defun replique/load-file-success (repl file-path res)
-  (let ((buff (cdr (assoc :buffer repl))))
-    (with-current-buffer buff
-      (comint-output-filter
-       (get-buffer-process (current-buffer)) res)
-      (replique/comint-refresh-prompt))))
-
-(defun replique/format-exception-via (via)
-  (let ((type (gethash :type via))
-        (message (gethash :message via))
-        (at (gethash :at via)))
-    (format "
-  {:type %s
-   :message %s
-   :at %s}"
-            (replique-edn/pr-str type)
-            (replique-edn/pr-str message)
-            (replique-edn/pr-str at))))
-
-(defun replique/load-file-clj (file-path props clj-repl cljs-repl)
-  (if clj-repl
-      (replique/send-input-from-source-clj-cljs
-       (format "(clojure.core/load-file \"%s\")" file-path)
-       'replique/display-load-file-result
-       props clj-repl)
-    (replique/send-input-from-source-clj-cljs
-     (format "(ewen.replique.cljs-env.macros/load-file :clj \"%s\")"
-             file-path)
-     'replique/display-load-file-result
-     props cljs-repl)))
-
-(defun replique/load-file-cljs (file-path props cljs-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")"
-           file-path)
-   'replique/display-load-file-result
-   props cljs-repl))
-
-(defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
-  (replique/send-input-from-source-cljc
-   (format "(clojure.core/load-file \"%s\")" file-path)
-   (format "(ewen.replique.cljs-env.macros/load-file \"%s\")" file-path)
-   'replique/display-load-file-result
-   'replique/display-load-file-results
-   props clj-repl cljs-repl))
-
-(defun replique/css-candidates (css-infos)
-  (-let (((&hash :scheme scheme
-                 :uri uri
-                 :file-path file-path) css-infos))
-    (cond ((string= "data" scheme)
-           (concat "data-uri:" file-path))
-          ((string= "http" scheme)
-           uri)
+(defun replique/repliquedoc-format (msg)
+  (map-let ((:name name) (:arglists arglists) (:return return) (:index index)) msg
+    (cond ((and arglists return)
+           (format "%s: %s -> %s"
+                   name (replique/repliquedoc-format-arglists index arglists) return))
+          (arglists
+           (format "%s: %s" name (replique/repliquedoc-format-arglists index arglists)))
+          (name (format "%s" name))
           (t nil))))
 
-(defun replique/sass-candidate (sass-infos)
-  (-let (((&hash :scheme scheme
-                 :file-path file-path
-                 :css-file css-file) sass-infos))
-    (cond ((string= "data" scheme)
-           (concat "data-uri:" file-path))
-          ((string= "http" scheme)
-           css-file)
-          (t nil))))
+;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
+;; response into an asynchronous one, we always return eldoc-last-message and call
+;; eldoc-message ourselves later
+(defun replique/repliquedoc* (tooling-repl msg-type ns)
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (when tooling-chan
+      (replique/send-tooling-msg
+       tooling-repl
+       (replique/hash-map :type msg-type
+                          :context (replique/form-with-prefix)
+                          :ns ns
+                          :symbol (symbol-name (symbol-at-point))))
+      (replique-async/<!
+       tooling-chan
+       (lambda (resp)
+         (when resp
+           (let ((err (replique/get resp :error)))
+             (if err
+                 (progn
+                   (message "%s" (replique-edn/pr-str err))
+                   (message "eldoc failed"))
+               (with-demoted-errors "eldoc error: %s"
+                 (when-let ((msg (replique/repliquedoc-format (replique/get resp :doc))))
+                   (eldoc-message msg))))))))))
+  eldoc-last-message)
 
-(defun replique/selected-saas-infos
-    (selected-scheme target-file sass-infos-list)
-  (if (string= "*new-data-uri*" target-file)
-      nil
-    (-find
-     (-lambda ((&hash :scheme scheme
-                :css-file css-file
-                :main-source main-source
-                :file-path file-path))
-       (cond ((and (string= "http" selected-scheme)
-                   (string= "http" scheme)
-                   (string= target-file css-file))
-              t)
-             ((and (string= "data" selected-scheme)
-                   (string= "data" scheme)
-                   (string= target-file (concat "data-uri:" file-path)))
-              t)
-             (t nil)))
-     sass-infos-list)))
+(defun replique/repliquedoc-session (repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (repl-type (replique/get repl :repl-type))
+         (msg-type (cond ((equal :clj repl-type)
+                          :repliquedoc-clj)
+                         ((equal :cljs repl-type)
+                          :repliquedoc-cljs)
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (ns (symbol-name (replique/get repl :ns))))
+    (replique/repliquedoc* tooling-repl msg-type ns)))
 
-(defun replique/uri-compare (url1 url2)
-  (let* ((path1 (url-filename (url-generic-parse-url url1)))
-         (path2 (url-filename (url-generic-parse-url url2)))
-         (uri1 (-> (split-string path1 "/")
-                   cdr))
-         (uri2 (-> (split-string path2 "/")
-                   cdr))
-         (l1 (list-length uri1))
-         (l2 (list-length uri2))
-         (uri1 (-slice uri1 (- l1 (min l1 l2)) l1))
-         (uri2 (-slice uri2 (- l2 (min l1 l2)) l2))
-         (uri1 (apply 'concat uri1))
-         (uri2 (apply 'concat uri2))
-         (res (compare-strings uri1 0 (length uri1) uri2 0 (length uri2))))
-    (if (equal t res)
-        0 res)))
+(defun replique/repliquedoc-clj (tooling-repl clj-repl)
+  (when clj-repl
+    (replique/repliquedoc* tooling-repl :repliquedoc-clj (clojure-find-ns))))
 
-(defun replique/uri-sort-fn (reference uri1 uri2)
-  (let ((diff1 (replique/uri-compare reference uri1))
-        (diff2 (replique/uri-compare reference uri2)))
-    (cond ((equal diff1 0) t)
-          ((equal diff2 0) nil)
-          ((>= (abs diff1) (abs diff2)) t)
-          (t nil))))
+(defun replique/repliquedoc-cljs (tooling-repl cljs-repl)
+  (when cljs-repl
+    (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns))))
 
-(defun replique/list-css (props cljs-repl callback)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
-    (when (not cljs-repl)
-      (user-error "No active Clojurescript REPL"))
-    (replique/send-tooling-msg props `((:type . :list-css)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (error "List css failed"))
-           (funcall callback (gethash :css-infos resp)))))
-     t)))
+(defun replique/repliquedoc-cljc (tooling-repl clj-repl cljs-repl)
+  (when (and clj-repl cljs-repl)
+    (replique/repliquedoc* tooling-repl :repliquedoc-cljc (clojure-find-ns))))
 
-(defun replique/load-css (file-path props cljs-repl)
-  (replique/list-css
-   props cljs-repl
-   (lambda (css-infos)
-     (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
-            (candidates (-map 'replique/css-candidates css-infos))
-            (candidates (if (-contains?
-                             candidates
-                             (concat "data-uri:" file-path))
-                            candidates
-                          (cons "*new-data-uri*" candidates)))
-            (candidates (-sort (-partial
-                                'replique/uri-sort-fn
-                                file-path)
-                               candidates))
-            (uri (ido-completing-read
-                  "Reload css file: "
-                  candidates
-                  nil t))
-            (scheme (cond ((string= "*new-data-uri*" uri)
-                           "data")
-                          ((s-starts-with? "data-uri:" uri)
-                           "data")
-                          (t "http")))
-            (uri (cond ((string= "*new-data-uri*" uri)
-                        file-path)
-                       ((s-starts-with? "data-uri:" uri)
-                        (s-chop-prefix "data-uri:" uri))
-                       (t uri))))
-       (replique/send-tooling-msg
-        props
-        `((:type . :load-css)
-          (:file-path . ,file-path)
-          (:uri . ,uri)
-          (:scheme . ,scheme)))
-       (replique-async/<!
-        tooling-chan
-        (lambda (resp)
-          (let ((err (gethash :error resp)))
-            (if err
-                (progn
-                  (message (replique-edn/pr-str err))
-                  (message "load-css %s: failed" file-path))
-              (message "load-css %s: done" file-path))))
-        t)))))
-
-(defun replique/list-sass (file-path props cljs-repl callback)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
-    (when (not cljs-repl)
-      (user-error "No active Clojurescript REPL"))
-    (replique/send-tooling-msg props `((:type . :list-sass)
-                                        (:file-path . ,file-path)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (error "List sass failed"))
-           (funcall callback (gethash :sass-infos resp)))))
-     t)))
-
-(defun replique/load-scss (file-path props cljs-repl)
-  (replique/list-sass
-   file-path props cljs-repl
-   (lambda (sass-infos)
-     (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
-            (candidates (-map 'replique/sass-candidate sass-infos))
-            (candidates (if (-contains?
-                             candidates (concat "data-uri:" file-path))
-                            candidates
-                          (append candidates '("*new-data-uri*"))))
-            (target-file (ido-completing-read
-                          "Compile scss to: "
-                          candidates
-                          nil t)))
-       (if (null target-file)
-           nil
-         (let* ((scheme (cond ((string= "*new-data-uri*" target-file)
-                               "data")
-                              ((s-starts-with? "data-uri:" target-file)
-                               "data")
-                              (t "http")))
-                (sass-infos (replique/selected-saas-infos
-                             scheme target-file sass-infos))
-                (uri (if (string= "*new-data-uri*" target-file)
-                         nil
-                       (gethash :uri sass-infos)))
-                (main-source (cond ((string= "*new-data-uri*" target-file)
-                                    file-path)
-                                   ((string= "data" scheme)
-                                    (gethash :file-path sass-infos))
-                                   (t (gethash :main-source sass-infos))))
-                (target-file (cond ((string= "*new-data-uri*" target-file)
-                                    file-path)
-                                   ((string= "data" scheme)
-                                    (s-chop-prefix "data-uri:" target-file))
-                                   (t target-file))))
-           (replique/send-tooling-msg
-            props
-            `((:type . :load-scss)
-              (:scheme . ,scheme)
-              (:uri . ,uri)
-              (:file-path . ,target-file)
-              (:main-source . ,main-source)))
-           (replique-async/<!
-            tooling-chan
-            (lambda (resp)
-              (let ((err (gethash :error resp)))
-                (if err
-                    (progn
-                      (message (replique-edn/pr-str err))
-                      (message "load-scss %s: failed" file-path))
-                  (message "load-scss %s: done" file-path))))
-            t)))))))
-
-(defun replique/load-file ()
-  "Load a file in a replique REPL"
-  (interactive)
-  (let ((file-path (buffer-file-name)))
-    (comint-check-source file-path)
+(defun replique/eldoc-documentation-function ()
+  ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
+  (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
-     (clojure-mode* . (-partial 'replique/load-file-clj file-path))
-     (clojurescript-mode . (-partial 'replique/load-file-cljs file-path))
-     (clojurec-mode . (-partial 'replique/load-file-cljc file-path))
-     (css-mode . (-partial 'replique/load-css file-path))
-     (scss-mode . (-partial 'replique/load-scss file-path)))))
+     (replique/mode . 'replique/repliquedoc-session)
+     (clojure-mode . 'replique/repliquedoc-clj)
+     (clojurescript-mode . 'replique/repliquedoc-cljs)
+     (clojurec-mode . 'replique/repliquedoc-cljc))))
 
-(defun replique/in-ns-clj (ns-name props clj-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(clojure.core/in-ns '%s)" ns-name)
-   'replique/display-eval-result
-   props clj-repl))
+(defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/send-input-from-source-clj
+     (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl)))
 
-(defun replique/in-ns-cljs (ns-name props cljs-repl)
-  (replique/send-input-from-source-clj-cljs
-   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   'replique/display-eval-result
-   props cljs-repl))
+(defun replique/in-ns-cljs (ns-name tooling-repl cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/send-input-from-source-cljs
+     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
+     tooling-repl cljs-repl)))
 
-(defun replique/in-ns-cljc (ns-name props clj-repl cljs-repl)
-  (replique/send-input-from-source-cljc
-   (format "(clojure.core/in-ns '%s)" ns-name)
-   (format "(ewen.replique.cljs-env.macros/cljs-in-ns '%s)" ns-name)
-   'replique/display-eval-result
-   'replique/display-eval-results
-   props clj-repl cljs-repl))
+(defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (replique/send-input-from-source-cljc
+     (format "(clojure.core/in-ns '%s)" ns-name)
+     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
+     tooling-repl clj-repl cljs-repl)))
 
 (defun replique/in-ns (ns-name)
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
   (replique/with-modes-dispatch
-   (clojure-mode . (-partial 'replique/in-ns-clj ns-name))
-   (clojurescript-mode . (-partial 'replique/in-ns-cljs ns-name))
-   (clojurec-mode . (-partial 'replique/in-ns-cljc ns-name)))) ;
-
-(defun replique/skip-regexp-forward (regexp)
-  (let ((data (match-data)))
-    (when (looking-at regexp)
-      (let ((match-length (-> (match-string 0)
-                              length)))
-        (forward-char match-length)
-        (set-match-data data)
-        (replique/skip-regexp-forward regexp)))
-    (set-match-data data)))
-
-(defun replique/skip-symbol-backward ()
-  (skip-chars-backward (concat "^" clojure--sym-forbidden-1st-chars))
-  (replique/skip-regexp-forward "#_\\|#\\|'"))
-
-(defun replique/skip-symbol-forward ()
-  (skip-chars-forward
-   (concat "^" clojure--sym-forbidden-rest-chars)))
+   (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
+   (clojurescript-mode . (apply-partially 'replique/in-ns-cljs ns-name))
+   (clojurec-mode . (apply-partially 'replique/in-ns-cljc ns-name))))
 
 (defun replique/symbol-backward ()
-  (save-excursion
-    (let ((end (point)))
-      (replique/skip-symbol-backward)
-      (when (not (equal end (point)))
-        (buffer-substring-no-properties (point) end)))))
-
-(defun replique/symbol-at-point ()
-  (save-excursion
-    (replique/skip-symbol-backward)
-    (let ((begin (point)))
-      (replique/skip-symbol-forward)
-      (when (not (equal begin (point)))
-        (make-symbol
-         (buffer-substring-no-properties begin (point)))))))
-
-(defun replique/bounds-of-symbol-at-point ()
-  (save-excursion
-    (replique/skip-symbol-backward)
-    (let ((begin (point)))
-      (replique/skip-symbol-forward)
-      (when (not (equal begin (point)))
-        `(,begin . ,(point))))))
+  (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
+    (when sym-bounds
+      (buffer-substring-no-properties (car sym-bounds) (point)))))
 
 (defmacro replique/temporary-invisible-change (&rest forms)
   "Executes FORMS with a temporary buffer-undo-list, undoing on return.
@@ -822,13 +372,12 @@ This allows you to temporarily modify read-only buffers too."
   txt)
 
 (defun replique/form-with-prefix* ()
-  (let ((bounds (replique/bounds-of-symbol-at-point)))
+  (let ((bounds (bounds-of-thing-at-point 'symbol)))
     (replique/temporary-invisible-change
-     (if bounds
-         (progn (delete-region (car bounds) (cdr bounds))
-                (insert "__prefix__")
-                (thing-at-point 'defun))
-       nil))))
+     (progn
+       (when bounds (delete-region (car bounds) (cdr bounds)))
+       (insert "__prefix__")
+       (thing-at-point 'defun t)))))
 
 ;; Execute in a temp buffer because company-mode expects the current buffer
 ;; to not change at all
@@ -839,150 +388,11 @@ This allows you to temporarily modify read-only buffers too."
              (defun-content (buffer-substring (car defun-bounds)
                                               (cdr defun-bounds))))
         (with-temp-buffer
+          (clojure-mode-variables)
+          (set-syntax-table clojure-mode-syntax-table)
           (insert defun-content)
           (backward-char point-offset-backward)
           (replique/form-with-prefix*))))))
-
-(defun replique/pos-at-line-col (l c)
-  (when l
-    (save-excursion
-      (goto-char (point-min))
-      (forward-line (- l 1))
-      (when c (move-to-column c))
-      (point))))
-
-(defun replique/goto-file (symbol meta)
-  (let* ((file (when meta (gethash :file meta)))
-         (line (when meta (gethash :line meta)))
-         (column (when meta (gethash :column meta))))
-    (if (fboundp 'xref-push-marker-stack)
-        (xref-push-marker-stack)
-      (with-no-warnings
-        (ring-insert find-tag-marker-ring (point-marker))))
-    (cond
-     ((and file line column)
-      (find-file file)
-      (goto-char (replique/pos-at-line-col line column)))
-     ((and file line)
-      (find-file file)
-      (goto-char (replique/pos-at-line-col line column)))
-     (file
-      (find-file file))
-     (t
-      (pop-tag-mark)
-      (message "Don't know how to find '%s'" symbol)))))
-
-(defun replique/jump-to-definition-clj (symbol props clj-repl)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
-    (replique/send-tooling-msg
-     props
-     `((:type . :clj-var-meta)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(make-symbol (clojure-find-ns))))
-       (:symbol . (quote ,symbol))
-       (:keys . (quote (:file :line :column)))))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "jump-to-definition %s: failed" symbol))
-           (replique/goto-file symbol (gethash :meta resp)))))
-     t)))
-
-(defun replique/jump-to-definition-cljs (symbol props cljs-repl)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
-    (replique/send-tooling-msg
-     props
-     `((:type . :cljs-var-meta)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(make-symbol (clojure-find-ns))))
-       (:symbol . (quote ,symbol))
-       (:keys . (quote (:file :line :column)))))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "jump-to-definition %s: failed" symbol))
-           (replique/goto-file symbol (gethash :meta resp)))))
-     t)))
-
-(defun replique/jump-to-definition (symbol)
-  (interactive (let* ((sym-at-point (replique/symbol-at-point))
-                      (at-point (and sym-at-point)))
-                 (if at-point
-                     (list at-point)
-                   (replique/read-symbol "Symbol" nil))))
-  (replique/with-modes-dispatch
-   (clojure-mode . (-partial 'replique/jump-to-definition-clj symbol))
-   (clojurescript-mode . (-partial 'replique/jump-to-definition-cljs
-                                   symbol))))
-
-;; Auto completion
-
-(defun replique/auto-complete-session (prefix company-callback props repl)
-  (let* ((tooling-chan (cdr (assoc :tooling-chan props)))
-         (repl-type (cdr (assoc :type repl)))
-         (msg-type (cond ((equal :clj repl-type)
-                          :clj-completion)
-                         ((equal :cljs repl-type)
-                          :cljs-completion)
-                         (t (error "Invalid REPL type: %s" repl-type)))))
-    (replique/send-tooling-msg
-     props
-     `((:type . ,msg-type)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(cdr (assoc :ns repl))))
-       (:prefix . ,prefix)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp)))))
-     t)))
-
-(defun replique/auto-complete* (prefix company-callback props msg-type)
-  (let ((tooling-chan (cdr (assoc :tooling-chan props))))
-    (replique/send-tooling-msg
-     props
-     `((:type . ,msg-type)
-       (:context . ,(replique/form-with-prefix))
-       (:ns . (quote ,(make-symbol (clojure-find-ns))))
-       (:prefix . ,prefix)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let ((err (gethash :error resp)))
-         (if err
-             (progn
-               (message (replique-edn/pr-str err))
-               (message "completion failed with prefix %s" prefix))
-           (funcall company-callback (gethash :candidates resp)))))
-     t)))
-
-(defun replique/auto-complete-clj (prefix company-callback props clj-repl)
-  (replique/auto-complete* prefix company-callback props :clj-completion))
-
-(defun replique/auto-complete-cljs (prefix company-callback props cljs-repl)
-  (replique/auto-complete* prefix company-callback props :cljs-completion))
-
-(defun replique/auto-complete (prefix company-callback)
-  (replique/with-modes-dispatch
-   (replique/mode . (-partial 'replique/auto-complete-session
-                              prefix company-callback))
-   (clojure-mode . (-partial 'replique/auto-complete-clj
-                             prefix company-callback))
-   (clojurescript-mode . (-partial 'replique/auto-complete-cljs
-                                   prefix company-callback))))
 
 (defun replique/company-backend (command &optional arg &rest ignored)
   (interactive (list 'interactive))
@@ -992,29 +402,532 @@ This allows you to temporarily modify read-only buffers too."
    ((equal command 'prefix) (when (or (derived-mode-p 'clojure-mode)
                                       (derived-mode-p 'replique/mode))
                               (replique/symbol-backward)))
+   ((equal command 'sorted) t)
    ((equal command 'candidates)
-    `(:async . ,(-partial 'replique/auto-complete arg)))))
+    `(:async . ,(apply-partially 'replique/auto-complete arg)))
+   ((equal command 'annotation) (replique/auto-complete-annotation arg))))
 
-(defun replique/eval-form (repl-type form)
-  (message "Evaluating form %s ..." form)
-  (-let* ((form (replace-regexp-in-string "\n" " " form))
-          (repl (replique/get-active-repl-by-type repl-type t))
-          (eval-chan (cdr (assoc :eval-chan repl)))
-          (buff (cdr (assoc :buffer repl)))
-          (res nil)
-          (p (start-process "" nil nil)))
-    (with-current-buffer buff
-      (replique/comint-send-input-from-source form))
+(defun replique/comint-is-closed-sexpr (start limit)
+  (let ((depth (car (parse-partial-sexp start limit))))
+    (if (<= depth 0) t nil)))
+
+(defun replique/comint-send-input ()
+  (interactive)
+  (let* ((buff (current-buffer))
+         (proc (get-buffer-process buff)))
+    (if (not proc) (user-error "Current buffer has no process")
+      (widen)
+      (let* ((pmark (process-mark proc)))
+        (cond (;; Point is at the end of the line and the sexpr is
+               ;; terminated
+               (and (equal (point) (point-max))
+                    (replique/comint-is-closed-sexpr pmark (point)))
+               (comint-send-input))
+              ;; Point is after the prompt but (before the end of line or
+              ;; the sexpr is not terminated)
+              ((comint-after-pmark-p) (comint-accumulate))
+              ;; Point is before the prompt. Do nothing.
+              (t nil))))))
+
+(defun replique/format-eval-message (msg)
+  (if (replique/get msg :error)
+      (let ((value (replique/get msg :value))
+            (repl-type (replique/get msg :repl-type))
+            (ns (replique/get msg :ns)))
+        (if (string-prefix-p "Error:" value)
+            (format "(%s) %s=> %s"
+                    (replique/keyword-to-string repl-type) ns value)
+          (format "(%s) %s=> Error: %s"
+                  (replique/keyword-to-string repl-type) ns value)))
+    (let ((result (replique/get msg :result))
+          (repl-type (replique/get msg :repl-type))
+          (ns (replique/get msg :ns)))
+      (format "(%s) %s=> %s"
+              (replique/keyword-to-string repl-type) ns result))))
+
+(defun replique/display-eval-result (msg buff)
+  ;; Concat to the current message in order to handle displaying results from cljc files
+  ;; Note that (current-message) is cleared on any user action
+  (when (not (seq-contains (replique/visible-buffers) buff))
+    (let ((current-message (if (current-message)
+                               (concat (current-message) "\n")
+                             (current-message))))
+      (thread-last (replique/format-eval-message msg)
+        (concat current-message)
+        replique/message-nolog))))
+
+(defmacro replique/with-modes-dispatch (&rest modes-alist)
+  (let* ((tooling-repl-sym (make-symbol "tooling-repl"))
+         (clj-repl-sym (make-symbol "clj-repl-sym"))
+         (cljs-repl-sym (make-symbol "cljs-repl-sym"))
+         (clj-buff-sym (make-symbol "clj-buff-sym"))
+         (cljs-buff-sym (make-symbol "cljs-buff-sym"))
+         (dispatch-code
+          (mapcar
+           (lambda (item)
+             (let ((m (car item))
+                   (f (cdr item)))
+               ;; The order of priority is the order of the modes as defined during
+               ;; the use of the macro
+               (cond ((equal 'clojure-mode m)
+                      `((equal 'clojure-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
+                     ((equal 'clojurescript-mode m)
+                      `((equal 'clojurescript-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'clojurec-mode m)
+                      `((equal 'clojurec-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,clj-repl-sym ,cljs-repl-sym)))
+                     ((equal 'css-mode m)
+                      `((equal 'css-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'js-mode m)
+                      `((equal 'js-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'replique/mode m)
+                      `((equal 'replique/mode major-mode)
+                        (funcall ,f (replique/repl-by :buffer (current-buffer))))))))
+           modes-alist))
+         (dispatch-code (append dispatch-code
+                                '((t (user-error
+                                      "Cannot eval from major mode: %s"
+                                      major-mode))))))
+    `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
+            (,clj-repl-sym (replique/active-repl :clj))
+            (,cljs-repl-sym (replique/active-repl :cljs))
+            (,clj-buff-sym (replique/get ,clj-repl-sym :buffer))
+            (,cljs-buff-sym (replique/get ,cljs-repl-sym :buffer)))
+       (cond ,@dispatch-code))))
+
+(defmacro replique/return-nil-on-quit (&rest body)
+  (let ((ret-sym (make-symbol "ret-sym")))
+    `(let ((inhibit-quit t))
+       (let ((,ret-sym (with-local-quit ,@body)))
+         (setq quit-flag nil)
+         ,ret-sym))))
+
+(defun replique/comint-kill-input ()
+  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
+    (if (> (point) (marker-position pmark))
+        (let ((killed (buffer-substring-no-properties pmark (point))))
+          (kill-region pmark (point))
+          killed)
+      "")))
+
+(defun replique/comint-send-input-from-source (input)
+  (let ((process (get-buffer-process (current-buffer))))
+    (when (not process)
+      (user-error "Current buffer has no process"))
+    (goto-char (point-max))
+    (let ((old-input (replique/comint-kill-input)))
+      (goto-char (process-mark process))
+      (insert input)
+      (replique/comint-send-input)
+      (goto-char (process-mark process))
+      (insert old-input))))
+
+(defun replique/send-input-from-source-clj (input tooling-repl clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (let ((buff (replique/get clj-repl :buffer)))
+      (with-current-buffer buff
+        (replique/comint-send-input-from-source input)))))
+
+(defun replique/send-input-from-source-cljs (input tooling-repl cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (let ((buff (replique/get cljs-repl :buffer)))
+      (with-current-buffer buff
+        (replique/comint-send-input-from-source input)))))
+
+(defun replique/send-input-from-source-cljc
+    (input-clj input-cljs tooling-repl clj-repl cljs-repl)
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (let ((clj-buff (replique/get clj-repl :buffer))
+          (cljs-buff (replique/get  cljs-repl :buffer)))
+      (when clj-buff
+        (with-current-buffer clj-buff
+          (replique/comint-send-input-from-source input-clj)))
+      (when cljs-buff
+        (with-current-buffer cljs-buff
+          (replique/comint-send-input-from-source input-cljs))))))
+
+(defun replique/send-input-from-source-dispatch (input)
+  (replique/with-modes-dispatch
+   (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
+   (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
+   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input input))))
+
+(defun replique/eval-region (start end)
+  "Eval the currently highlighted region."
+  (interactive "r")
+  (let ((input (filter-buffer-substring start end)))
+    (replique/send-input-from-source-dispatch input)))
+
+(defun replique/eval-last-sexp ()
+  "Eval the previous sexp."
+  (interactive)
+  (replique/eval-region
+   (save-excursion
+     (clojure-backward-logical-sexp 1) (point))
+   (point)))
+
+(defun replique/eval-defn ()
+  "Eval the current defn expression."
+  (interactive)
+  (replique/send-input-from-source-dispatch (thing-at-point 'defun)))
+
+(defun replique/load-file-clj (file-path props clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/send-input-from-source-clj
+     (format "(replique.interactive/load-file \"%s\")" file-path)
+     props clj-repl)))
+
+(defun replique/load-file-cljs (file-path props cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/send-input-from-source-cljs
+     (format "(replique.interactive/load-file \"%s\")" file-path)
+     props cljs-repl)))
+
+(defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (replique/send-input-from-source-cljc
+     (format "(replique.interactive/load-file \"%s\")" file-path)
+     (format "(replique.interactive/load-file \"%s\")" file-path)
+     props clj-repl cljs-repl)))
+
+(defun replique/load-file (file-path)
+  "Load a file in a replique REPL"
+  (interactive (list (buffer-file-name)))
+  (comint-check-source file-path)
+  (replique/with-modes-dispatch
+   (clojure-mode . (apply-partially 'replique/load-file-clj file-path))
+   (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
+   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))
+   (css-mode . (apply-partially 'replique/load-css file-path))
+   (js-mode . (apply-partially 'replique/load-js file-path))))
+
+(defun replique/browser ()
+  (interactive)
+  (let ((cljs-repl (replique/active-repl :cljs)))
+    (when (not cljs-repl)
+      (user-error "No active Clojurescript REPL"))
+    (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
+
+(defun replique/switch-active-repl (repl-buff-name)
+  "Switch the currently active REPL"
+  (interactive
+   (let* ((active-repl (replique/active-repl :tooling t))
+          (directory (replique/get active-repl :directory))
+          (repls (seq-filter (lambda (repl)
+                               (let ((repl-type (replique/get repl :repl-type))
+                                     (d (replique/get repl :directory)))
+                                 (and
+                                  (equal d directory)
+                                  (not (equal :tooling repl-type)))))
+                             replique/repls))
+          (repl-names (mapcar (lambda (repl)
+                                (buffer-name (replique/get repl :buffer)))
+                              repls)))
+     (when (null repls)
+       (user-error "No started REPL"))
+     (list (completing-read "Switch to REPL: " repl-names nil t))))
+  ;; All windows displaying the previously active repl are set to display the newly active
+  ;; repl (repl with the same repl-type)
+  (let* ((buffer (get-buffer repl-buff-name))
+         (repl (replique/repl-by :buffer buffer))
+         (repl-type (replique/get repl :repl-type))
+         (prev-active-repl (replique/repl-by :repl-type repl-type))
+         (prev-active-buffer (replique/get prev-active-repl :buffer))
+         (prev-active-windows (get-buffer-window-list prev-active-buffer)))
+    (setq replique/repls (delete repl replique/repls))
+    (setq replique/repls (push repl replique/repls))
+    (mapcar (lambda (window)
+              (set-window-buffer window buffer))
+            prev-active-windows)))
+
+(defun replique/switch-active-process (proc-name)
+  "Switch the currently active process"
+  (interactive
+   (let* ((tooling-repls (replique/repls-by :repl-type :tooling))
+          (directories (mapcar (lambda (repl) (replique/get repl :directory))
+                               tooling-repls)))
+     (when (not (car directories))
+       (user-error "No started REPL"))
+     (list (completing-read "Switch to process: " directories nil t))))
+  (let* ((new-active-repls (replique/repls-by :directory proc-name))
+         (prev-active-tooling-repl (replique/active-repl :tooling))
+         (prev-active-directory (replique/get prev-active-tooling-repl :directory))
+         (prev-repls (replique/repls-by :directory prev-active-directory))
+         (prev-repl-types (mapcar (lambda (repl) (replique/get repl :repl-type)) prev-repls)))
+    ;; All windows displaying the previously active repls are set to display the newly active
+    ;; repls (repl with the same repl-type and same position in the replique/repls list)
+    (mapcar (lambda (repl-type)
+              (let* ((prev-active-repl (replique/repl-by :directory prev-active-directory
+                                                         :repl-type repl-type))
+                     (prev-buffer (replique/get prev-active-repl :buffer))
+                     (new-active-repl (replique/repl-by
+                                       :directory proc-name
+                                       :repl-type repl-type))
+                     (new-buffer (replique/get new-active-repl :buffer))
+                     (windows (get-buffer-window-list prev-buffer)))
+                (when new-buffer
+                  (mapcar (lambda (window)
+                            (set-window-buffer window new-buffer))
+                          windows))))
+            prev-repl-types)
+    (mapcar (lambda (repl)
+              (setq replique/repls (delete repl replique/repls))
+              (setq replique/repls (push repl replique/repls)))
+            (seq-reverse new-active-repls))))
+
+(defun replique/list-cljs-namespaces (tooling-repl)
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (out-chan (replique-async/chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :list-cljs-namespaces))
     (replique-async/<!
-     eval-chan
-     (lambda (msg)
-       (setq res msg)
-       (process-send-string p "\n")
-       (delete-process p)))
-    (accept-process-output p)
-    (if (gethash :error res)
-        (gethash :value res)
-      (gethash :result res))))
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "list-cljs-namespaces failed")
+                 (replique-async/close! out-chan))
+             (replique-async/put! out-chan resp))))))
+    out-chan))
+
+(defun replique/cljs-repl ()
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan))
+         (clj-repl (replique/active-repl :clj)))
+    (when (not clj-repl)
+      (user-error "No active Clojure REPL"))
+    (replique/send-input-from-source-clj
+     "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
+
+(defun replique/output-main-cljs-file (output-to &optional main-ns)
+  (interactive (list nil))
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan)))
+    (when-let ((output-to (or
+                           output-to
+                           (read-file-name "Output main cljs file to: "
+                                           (replique/get tooling-repl :directory)))))
+      (let ((output-to (file-truename output-to)))
+        (when (file-directory-p output-to)
+          (user-error "%s is a directory" output-to))
+        (when (or (not (file-exists-p output-to))
+                  (yes-or-no-p (format "Override %s?" output-to))) 
+          (replique-async/<!
+           (if main-ns
+               (replique-async/default-chan (replique/hash-map :namespaces nil))
+             (replique/list-cljs-namespaces tooling-repl))
+           (lambda (resp)
+             (when resp
+               (let* ((namespaces (replique/get resp :namespaces))
+                      (main-ns (cond (main-ns main-ns)
+                                     ((seq-empty-p namespaces) nil)
+                                     (t (replique/return-nil-on-quit
+                                         (completing-read "Main Clojurescript namespace: "
+                                                          namespaces nil t nil nil '(nil)))))))
+                 (replique/send-tooling-msg
+                  tooling-repl
+                  (replique/hash-map :type :output-main-cljs-files
+                                     :output-to output-to
+                                     :main-ns main-ns))
+                 (replique-async/<!
+                  tooling-chan
+                  (lambda (resp)
+                    (when resp
+                      (let ((err (replique/get resp :error)))
+                        (if err
+                            (progn
+                              (message "%s" (replique-edn/pr-str err))
+                              (message "output-main-cljs-file failed"))
+                          (message "Main Clojurescript file written to: %s" output-to)
+                          ))))))))))))))
+
+(defun replique/uri-compare (url1 url2)
+  (let* ((path1 (url-filename (url-generic-parse-url url1)))
+         (path2 (url-filename (url-generic-parse-url url2)))
+         (uri1 (cdr (split-string path1 "/")))
+         (uri2 (cdr (split-string path2 "/")))
+         (l1 (length uri1))
+         (l2 (length uri2))
+         (uri1 (seq-subseq uri1 (- l1 (min l1 l2)) l1))
+         (uri2 (seq-subseq uri2 (- l2 (min l1 l2)) l2))
+         (uri1 (apply 'concat uri1))
+         (uri2 (apply 'concat uri2))
+         (res (compare-strings uri1 0 (length uri1) uri2 0 (length uri2))))
+    (if (equal t res)
+        0 res)))
+
+(defun replique/uri-sort-fn (reference uri1 uri2)
+  (let ((diff1 (replique/uri-compare reference uri1))
+        (diff2 (replique/uri-compare reference uri2)))
+    (cond ((equal uri1 "*new-data-uri*") nil)
+          ((equal uri2 "*new-data-uri*") t)
+          ((equal diff1 0) t)
+          ((equal diff2 0) nil)
+          ((>= (abs diff1) (abs diff2)) t)
+          (t nil))))
+
+(defun replique/css-candidates (css-infos)
+  (cond ((string= "data" (replique/get css-infos :scheme))
+         `(,(concat "data-uri:" (replique/get css-infos :file-path)) . ,css-infos))
+        ((string= "http" (replique/get css-infos :scheme))
+         `(,(replique/get css-infos :uri) . ,css-infos))
+        (t nil)))
+
+(defun replique/list-css (tooling-repl)
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (out-chan (replique-async/chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :list-css))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "list-css failed")
+                 (replique-async/close! out-chan))
+             (replique-async/put! out-chan resp))))))
+    out-chan))
+
+(defun replique/load-css (file-path tooling-repl cljs-repl)
+  (when (not cljs-repl)
+    (user-error "No active Clojurescript REPL"))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique-async/<!
+     (replique/list-css tooling-repl)
+     (lambda (resp)
+       (when resp
+         (let* ((css-infos (replique/get resp :css-infos))
+                (f-data-scheme-p (lambda (i)
+                                   (and (equal "data" (replique/get i :scheme))
+                                        (equal file-path (replique/get i :file-path)))))
+                (f-as-data-scheme? (seq-find f-data-scheme-p css-infos))
+                (candidates (seq-filter (lambda (x) (not (null x)))
+                                        (mapcar 'replique/css-candidates css-infos)))
+                (candidates (if f-as-data-scheme?
+                                candidates
+                              (cons `("*new-data-uri*" .
+                                      ,(replique/hash-map :scheme "data" :uri file-path))
+                                    candidates)))
+                (completing-read-candidates (thread-last candidates
+                                              (mapcar 'car)
+                                              (seq-sort (apply-partially
+                                                         'replique/uri-sort-fn file-path))))
+                (selected (completing-read "Reload css file: "
+                                               completing-read-candidates nil t))
+                (selected (cdr (assoc selected candidates))))
+           (replique/send-tooling-msg
+            tooling-repl
+            (replique/hash-map :type :load-css
+                               :file-path file-path
+                               :uri (replique/get selected :uri)
+                               :scheme (replique/get selected :scheme)))
+           (replique-async/<!
+            tooling-chan
+            (lambda (resp)
+              (when resp
+                (let ((err (replique/get resp :error)))
+                  (if err
+                      (progn
+                        (message "%s" (replique-edn/pr-str err))
+                        (message "load-css %s: failed" file-path))
+                    (message "load-css %s: done" file-path))))))))))))
+
+(defun replique/load-js (file-path tooling-repl cljs-repl)
+  (when (not cljs-repl)
+    (user-error "No active Clojurescript REPL"))
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :load-js :file-path file-path))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "load-js %s: failed" file-path))
+             (message "load-js %s: done" file-path))))))))
+
+(defconst replique/eval-form-proc (start-process "eval-form-proc" nil nil))
+
+(defun replique/eval-form (repl-type form-s)
+  (let ((repl (replique/active-repl repl-type)))
+    (if (null repl)
+        (format "No active %s REPL" repl-type)
+      (let* ((form-s (replace-regexp-in-string "\n" " " form-s))
+             (tooling-repl (replique/active-repl :tooling t))
+             (tooling-chan (replique/get tooling-repl :chan))
+             (msg-type (thread-last (replique/keyword-to-string repl-type)
+                         (concat ":eval-")
+                         (make-symbol)))
+             (done nil)
+             (result nil))
+        (replique/send-tooling-msg
+         tooling-repl
+         (replique/hash-map :type msg-type :form form-s))
+        (replique-async/<!
+         tooling-chan
+         (lambda (resp)
+           (when resp
+             (let ((err (replique/get resp :error)))
+               (if err
+                   (setq result (replique-edn/pr-str err))
+                 (setq result (replique/get resp :result)))))
+           (setq done t)))
+        ;; We are polling because accept-process-output does not work well with
+        ;; run-at-time (replique-async)
+        (while (not done)
+          (accept-process-output replique/eval-form-proc 0 200))
+        result))))
+
+(defconst replique/client-version "0.0.1-SNAPSHOT")
+
+(defcustom replique/version "0.0.1-SNAPSHOT"
+  "Hook for customizing the version of the replique REPL server to be used"
+  :type 'string
+  :group 'replique)
+
+(defcustom replique/prompt "^[^=> \n]+=> *"
+  "Regexp to recognize prompts in the replique mode."
+  :type 'regexp
+  :group 'replique)
+
+(defcustom replique/lein-script "/Users/egr/bin/lein"
+  "Leiningen script path"
+  :type 'file
+  :group 'replique)
+
+(defcustom replique/host "localhost"
+  "Replique REPLs listening socket host"
+  :type 'string
+  :group 'replique)
+
+(defcustom replique/main-cljs-files-max-depth 5
+  "Maximum directory nesting when search for main cljs files. Set to a negative value to
+disable main cljs files refreshing."
+  :type 'integer
+  :group 'replique)
 
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
@@ -1023,17 +936,21 @@ This allows you to temporarily modify read-only buffers too."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
+    (define-key map "\C-xr" 'replique/switch-active-repl)
     map))
 
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
-  (setq comint-prompt-regexp replique/prompt)
-  (setq comint-prompt-read-only t)
-  (setq mode-line-process '(":%s"))
+  (setq-local comint-prompt-regexp replique/prompt)
+  (setq-local comint-prompt-read-only t)
+  (setq-local mode-line-process '(":%s"))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
+  (set-syntax-table clojure-mode-syntax-table)
   (add-to-list 'company-backends 'replique/company-backend)
-  )
+  (add-function :before-until (local 'eldoc-documentation-function)
+                'replique/eldoc-documentation-function)
+  (setq-local company-tooltip-align-annotations t))
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1042,6 +959,7 @@ This allows you to temporarily modify read-only buffers too."
     (define-key map "\C-\M-x" 'replique/eval-defn)
     (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
+    (define-key map "\C-xr" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'pop-tag-mark)
     (easy-menu-define replique/minor-mode-menu map
@@ -1054,6 +972,8 @@ This allows you to temporarily modify read-only buffers too."
         ["Load file" replique/load-file t]
         "--"
         ["Set REPL ns" replique/in-ns t]
+        "--"
+        ["Switch active REPL" replique/switch-active-repl t]
         "--"
         ["Jump to definition" replique/jump-to-definition t]
         ))
@@ -1071,359 +991,483 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
-  (add-to-list 'company-backends 'replique/company-backend))
+  (add-to-list 'company-backends 'replique/company-backend)
+  (add-function :before-until (local 'eldoc-documentation-function)
+                'replique/eldoc-documentation-function)
+  (setq-local company-tooltip-align-annotations t))
 
-;;;###autoload
-(define-minor-mode replique/generic-minor-mode
-  "Minor mode for interacting with the replique process buffer.
+;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
-The following commands are available:
+(defun replique/lein-command (directory port)
+  `(,(or replique/lein-script "lein") "update-in" ":plugins" "conj" 
+    ,(format "[replique/replique \"%s\"]" replique/version)
+    "--"
+    "trampoline" "replique"
+    ,(format "%s" directory) ,(format "%s" port)
+    ,(format "%s" replique/version)))
 
-\\{replique/generic-minor-mode-map}"
-  :lighter "Replique" :keymap replique/generic-minor-mode-map)
+(defun replique/process-filter-chan (proc)
+  (let ((chan (replique-async/chan)))
+    (set-process-filter
+     proc (lambda (proc string)
+            (replique-async/put! chan string)))
+    chan))
 
 (defun replique/is-valid-port-nb? (port-nb)
   (< -1 port-nb 65535))
 
-(defun replique/guess-port-nb ()
-  (let ((port-file (locate-dominating-file
-                    default-directory ".replique-port")))
-    (when port-file
-      (with-temp-buffer
-        (insert-file-contents (concat port-file ".replique-port"))
-        (->> (buffer-string)
-             replique-edn/read-string
-             (gethash :repl))))))
+(defun replique/send-tooling-msg (tooling-repl msg)
+  (let* ((tooling-network-proc (replique/get tooling-repl :network-proc))
+         (directory (replique/get tooling-repl :directory))
+         (msg (replique/assoc msg :directory directory)))
+    (process-send-string
+     tooling-network-proc
+     (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
+             (replique-edn/pr-str msg)))))
 
-(defvar replique/edn-tag-readers
-  `((error . identity)
-    (object . identity)))
+(defun replique/close-tooling-repl (tooling-repl)
+  (let ((tooling-proc (replique/get tooling-repl :proc))
+        (tooling-chan (replique/get tooling-repl :chan)))
+    (when (process-live-p tooling-proc)
+      ;; SIGINT, the jvm should stop, even if there is pending non daemon threads, shutdown
+      ;; hooks should run
+      (interrupt-process tooling-proc))
+    (setq replique/repls (delete tooling-repl replique/repls))))
 
-(defun replique/dispatch-eval-msg* (in-chan out-chan)
+(defun replique/maybe-close-tooling-repl (host port)
+  (let ((other-repls (replique/repls-by :host host :port port)))
+    (when (seq-every-p (lambda (repl)
+                         (equal :tooling (replique/get repl :repl-type)))
+                       other-repls)
+      (mapcar (lambda (tooling-repl)
+                (replique/close-tooling-repl tooling-repl))
+              other-repls))))
+
+(defun replique/close-repl (repl kill-buffers)
+  (let* ((buffer (replique/get repl :buffer))
+         (host (replique/get repl :host))
+         (port (replique/get repl :port))
+         (proc (get-buffer-process buffer)))
+    (when proc
+      (set-process-sentinel proc nil)
+      (delete-process proc))
+    (if kill-buffers
+        (kill-buffer buffer)
+      (with-current-buffer buffer
+        ;; Disable replique/mode
+        (fundamental-mode)
+        (save-excursion
+          (goto-char (point-max))
+          (insert (concat "\nConnection broken by remote peer\n")))))
+    (setq replique/repls (delete repl replique/repls))
+    ;; If the only repl left is a tooling repl, let's close it
+    (replique/maybe-close-tooling-repl host port)))
+
+(defun replique/close-repls (host port kill-buffers)
+  (let* ((repls (replique/repls-by :host host :port port))
+         (not-tooling-repls (seq-filter (lambda (repl)
+                                          (not (equal :tooling (replique/get repl :repl-type))))
+                                        repls))
+         (tooling-repls (seq-filter (lambda (repl)
+                                      (equal :tooling (replique/get repl :repl-type)))
+                                    repls)))
+    (mapcar (lambda (repl)
+              (replique/close-repl repl kill-buffers))
+            not-tooling-repls)
+    (mapcar (lambda (tooling-repl)
+              (replique/close-tooling-repl tooling-repl))
+            tooling-repls)))
+
+(defun replique/on-repl-close (buffer process event)
+  (let ((closing-repl (replique/repl-by :buffer buffer)))
+    (when closing-repl
+      (cond ((string= "deleted\n" event)
+             (replique/close-repl closing-repl t))
+            ((string= "connection broken by remote peer\n" event)
+             (replique/close-repl closing-repl nil))
+            (t nil)))))
+
+(defun replique/on-tooling-repl-close (network-proc-buffer host port process event)
+  (cond ((string= "deleted\n" event)
+         (replique/close-repls host port t))
+        ((string= "connection broken by remote peer\n" event)
+         (replique/close-repls host port nil))
+        (t nil))
+  (replique/kill-process-buffer network-proc-buffer))
+
+(defun replique/is-in-exec-path (file absolute?)
+  (thread-first (seq-mapcat
+                 (lambda (dir)
+                   (directory-files dir absolute?))
+                 exec-path)
+    (seq-contains file)))
+
+(defun replique/check-lein-script ()
+  (cond ((and replique/lein-script
+              (not (replique/is-in-exec-path replique/lein-script t)))
+         (format "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script))
+        ((and (not replique/lein-script)
+              (not (replique/is-in-exec-path "lein" nil)))
+         "Error while starting the REPL. No lein script found in exec-path")
+        (t nil)))
+
+(defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
+  (replique-async/<!
+   proc-chan (lambda (msg)
+               ;; REPL has already been started
+               (cond (filtered?
+                      (replique-async/put! filtered-chan msg)
+                      (replique/skip-repl-starting-output* proc-chan filtered-chan t))
+                     ;; Check if the REPL is starting, or, otherwise, if the process is still
+                     ;; printing init messages
+                     ((string-match-p (regexp-quote "Starting Clojure REPL...\n") msg)
+                      (let ((splitted-msg (split-string msg "Starting Clojure REPL...\n")))
+                        (message "%s" (car splitted-msg))
+                        (replique-async/put! filtered-chan (cadr splitted-msg))
+                        (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
+                     ;; Print all the init messages
+                     (t
+                      (message "%s" msg)
+                      (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
+
+(defun replique/skip-repl-starting-output (proc-chan)
+  (let ((filtered-chan (replique-async/chan)))
+    (replique/skip-repl-starting-output* proc-chan filtered-chan)
+    filtered-chan))
+
+(defun replique/is-main-cljs-file (f)
+  (let* ((first-line "//main-cljs-file autogenerated by replique")
+         (check-length (length first-line)))
+    (and (file-exists-p f)
+         (condition-case err
+             (with-temp-buffer
+               (insert-file-contents f nil 0 check-length)
+               (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
+           (error nil)))))
+
+(defun replique/directory-files-recursively (dir regexp exclude-dir max-depth)
+  (let ((exclude-dir (expand-file-name exclude-dir dir))
+        (result nil)
+        (files nil))
+    (unless (< max-depth 0)
+        (dolist (file (file-name-all-completions "" dir))
+          (unless (member file '("./" "../"))
+            (if (directory-name-p file)
+                (let* ((leaf (substring file 0 (1- (length file))))
+                       (full-file (expand-file-name leaf dir)))
+                  ;; Don't follow symlinks to other directories.
+                  (unless (or (file-symlink-p full-file) (equal full-file exclude-dir))
+                    (setq result
+                          (nconc result (replique/directory-files-recursively
+                                         full-file regexp exclude-dir (1- max-depth))))))
+              (when (string-match regexp file)
+                (push (expand-file-name file dir) files))))))
+    (nconc result files)))
+
+(defun replique/refresh-main-cljs-files (directory port cljs-compile-path)
+  (message "Refreshing main cljs files ...")
+  (let* ((js-files (replique/directory-files-recursively
+                    directory "\\.js$" cljs-compile-path replique/main-cljs-files-max-depth))
+         (main-cljs-files (seq-filter 'replique/is-main-cljs-file js-files)))
+    (mapcar (lambda (f)
+              (with-temp-file f
+                (insert-file-contents f)
+                (save-match-data
+                  (when (re-search-forward "var port = \'[0-9]+\';" nil t)
+                    (replace-match (format "var port = \'%s\';" port))))
+                (buffer-substring-no-properties 1 (point-max))))
+            main-cljs-files)
+    (message "Refreshing main cljs files ... %s files refreshed" (length main-cljs-files))))
+
+(defun replique/make-tooling-repl (host port directory)
+  (let* ((out-chan (replique-async/chan))
+         (default-directory directory)
+         (repl-cmd (replique/lein-command directory port))
+         ;; proc-buff is not tied to the proc lifecycle because we want to be able to read
+         ;; proc output even after the process ended
+         (proc-buff (generate-new-buffer (format " *%s*" directory)))
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+         (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
+         (chan (replique/read-chan
+                proc-chan proc proc-buff
+                (lambda (proc-out-s)
+                  (error "Error while starting the REPL: %s" proc-out-s)))))
+    (set-process-sentinel proc (lambda (proc string) (replique/kill-process-buffer proc-buff)))
+    (replique-async/<!
+     chan (lambda (repl-infos)
+            (replique/kill-process-buffer proc-buff)
+            ;; Print messages from unbound threads
+            (set-process-filter proc (lambda (proc string)
+                                       (message "Process %s: %s" (process-name proc) string)))
+            (if (replique/get repl-infos :error)
+                (message "Error while starting the REPL: %s"
+                         (replique-edn/pr-str (replique/get repl-infos :error)))
+              (let* ((port (replique/get repl-infos :port))
+                     (cljs-compile-path (replique/get repl-infos :cljs-compile-path))
+                     (network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+                     (network-proc (open-network-stream directory nil host port))
+                     (tooling-chan (replique/process-filter-chan network-proc)))
+                (set-process-sentinel
+                 network-proc
+                 (apply-partially
+                  'replique/on-tooling-repl-close network-proc-buff host port))
+                ;; The REPL accept fn will read a char in order to check whether the request
+                ;; is an HTTP one or not
+                (process-send-string network-proc "R")
+                ;; No need to wait for the return value of shared-tooling-repl
+                ;; since it does not print anything
+                (process-send-string
+                 network-proc "(replique.repl/shared-tooling-repl)\n")
+                (let* ((tooling-chan (thread-first tooling-chan
+                                       (replique/read-chan network-proc network-proc-buff)
+                                       replique/dispatch-tooling-msg))
+                       (tooling-repl (replique/hash-map
+                                      :directory directory
+                                      :repl-type :tooling
+                                      :proc proc
+                                      :network-proc network-proc
+                                      :host host
+                                      :port port
+                                      :chan tooling-chan)))
+                  (push tooling-repl replique/repls)
+                  (replique-async/put! out-chan tooling-repl)
+                  (when (>= replique/main-cljs-files-max-depth 0)
+                    (replique/refresh-main-cljs-files directory port cljs-compile-path)))))))
+    out-chan))
+
+(defun replique/close-process (directory)
+  (interactive
+   (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
+          (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
+     (list (completing-read "Close process: " directories nil t))))
+  (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
+         (host (replique/get tooling-repl :host))
+         (port (replique/get tooling-repl :port)))
+    (replique/close-repls host port t)))
+
+(defun replique/make-comint (proc buffer)
+  (with-current-buffer buffer
+    (unless (derived-mode-p 'comint-mode)
+      (comint-mode))
+    (set-process-filter proc 'comint-output-filter)
+    (setq-local comint-ptyp process-connection-type)
+    ;; Jump to the end, and set the process mark.
+    (goto-char (point-max))
+    (set-marker (process-mark proc) (point))
+    (run-hooks 'comint-exec-hook)
+    buffer))
+
+(defun replique/make-repl (buffer-name directory host port repl-type)
+  (let* ((buff (generate-new-buffer buffer-name))
+         (proc (open-network-stream buffer-name buff host port))
+         (chan-src (replique/process-filter-chan proc))
+         (repl-cmd (format "(replique.repl/repl)\n")))
+    (set-process-sentinel proc (apply-partially 'replique/on-repl-close buff))
+    ;; The REPL accept fn will read a char in order to check whether the request
+    ;; is an HTTP one or not
+    (process-send-string proc "R")
+    (let ((chan (replique/read-chan chan-src proc buff)))
+      (process-send-string proc "replique.server/*session*\n")
+      (replique-async/<!
+       chan
+       (lambda (resp)
+         (let ((session (replique/get resp :client)))
+           (set-process-filter proc nil)
+           (replique/make-comint proc buff)
+           (set-buffer buff)
+           (replique/mode)
+           (process-send-string proc repl-cmd)
+           (let ((repl (replique/hash-map :directory directory
+                                          :host host
+                                          :port port
+                                          :repl-type repl-type
+                                          :session session
+                                          :ns 'user
+                                          :buffer buff)))
+             (push repl replique/repls)
+             (when (equal repl-type :cljs)
+               ;; Second parameter is nil because the function does not use the
+               ;; tooling repl anyway
+               (replique/send-input-from-source-clj
+                "(replique.interactive/cljs-repl)" nil repl))
+             (display-buffer buff))))))))
+
+(defun replique/clj-buff-name (directory repl-type)
+  (let ((repl-type-string (replique/keyword-to-string repl-type)))
+    (generate-new-buffer-name
+     (format "*replique*%s*%s*"
+             (file-name-nondirectory (directory-file-name directory))
+             repl-type-string))))
+
+(defun replique/normalize-directory-name (directory)
+  (file-name-as-directory (expand-file-name directory)))
+
+;;;###autoload
+(defun replique/repl (directory &optional port buffer-name)
+  (interactive
+   (let ((directory (read-directory-name
+                     "Project directory: " (replique/guess-project-root-dir) nil t)))
+     ;; Normalizing the directory name is necessary in order to be able to search repls
+     ;; by directory name
+     (list (replique/normalize-directory-name directory))))
+  (let* ((existing-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (host replique/host)
+         (port (if existing-repl
+                   (replique/get existing-repl :port)
+                 (read-number "Port number: " 0)))
+         (lein-script-error (replique/check-lein-script)))
+    (cond
+     ((not (replique/is-valid-port-nb? port))
+      (user-error "Invalid port number: %d" port))
+     (lein-script-error
+      (user-error lein-script-error))
+     (t
+      (replique-async/<!
+       (if existing-repl
+           (replique-async/default-chan existing-repl)
+         (replique/make-tooling-repl host port directory))
+       (lambda (tooling-repl)
+         (let ((directory (replique/get tooling-repl :directory))
+               (port (replique/get tooling-repl :port))
+               (tooling-chan (replique/get tooling-repl :chan))
+               (buffer-name (or buffer-name (replique/clj-buff-name directory :clj))))
+           (condition-case err
+               (replique/make-repl buffer-name directory host port :clj)
+             (error
+              (replique/maybe-close-tooling-repl host port)
+              ;; rethrow the error
+              (signal (car err) (cdr err)))))))))))
+
+(defun replique/on-repl-type-change (repl new-repl-type)
+  (let* ((directory (replique/get repl :directory))
+         (repl-type (replique/get repl :repl-type))
+         (repl-type-s (replique/keyword-to-string repl-type))
+         (new-repl-type-s (replique/keyword-to-string new-repl-type))
+         (repl-buffer (replique/get repl :buffer)))
+    (when (not (equal repl-type new-repl-type))
+      (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
+                            (buffer-name repl-buffer))
+        (let* ((new-buffer-name (replace-regexp-in-string
+                                 (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
+                                 (format "*%s*" new-repl-type-s)
+                                 (buffer-name repl-buffer))))
+          (with-current-buffer repl-buffer
+            (rename-buffer (generate-new-buffer-name new-buffer-name)))))
+      (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type)))))
+
+(defun replique/dispatch-tooling-msg* (in-chan out-chan)
   (replique-async/<!
    in-chan
    (lambda (msg)
-     (cond ((equal :eval (gethash :type msg))
-            (let ((repl (replique/get-repl-by-session
-                         (gethash :repl-type msg)
-                         (gethash :client (gethash :session msg)))))
-              (when repl
-                (setcdr (assoc :ns repl) (gethash :ns msg))
-                (replique-async/put! (cdr (assoc :eval-chan repl)) msg)))
-            (replique/dispatch-eval-msg* in-chan out-chan))
-           (t (replique-async/put! out-chan msg)
-              (replique/dispatch-eval-msg* in-chan out-chan))))))
+     (condition-case err
+         (cond
+          ((not (hash-table-p msg))
+           (message "Received invalid message while dispatching tooling messages: %s" msg))
+          (;; Global error (uncaught exception)
+           (and
+            (replique/get msg :error)
+            (replique/get msg :thread))
+           (message "%s - Thread: %s - Exception: %s"
+                    (propertize "Uncaught exception" 'face '(:foreground "red"))
+                    (replique/get msg :thread)
+                    (replique-edn/pr-str (replique/get msg :value))))
+          ((equal :eval (replique/get msg :type))
+           (let* ((repl (replique/repl-by
+                         :session (replique/get (replique/get msg :session) :client)
+                         :directory (replique/get msg :directory)))
+                  (buffer (replique/get repl :buffer)))
+             (when repl
+               (replique/on-repl-type-change repl (replique/get msg :repl-type))
+               (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
+               (replique/display-eval-result msg buffer))))
+          (t (replique-async/put! out-chan msg)))
+       (error (message (error-message-string err))))
+     (replique/dispatch-tooling-msg* in-chan out-chan))))
 
-(defun replique/dispatch-eval-msg (in-chan)
+(defun replique/dispatch-tooling-msg (in-chan)
   (let ((out-chan (replique-async/chan)))
-    (replique/dispatch-eval-msg* in-chan out-chan)
+    (replique/dispatch-tooling-msg* in-chan out-chan)
     out-chan))
 
-(defun replique/edn-read-stream* (chan-in chan-out edn-state)
+(defun replique/read-from-to (chan-out from to)
+  (goto-char from)
+  (when-let ((o (read (current-buffer))))
+    (replique-async/put! chan-out o))
+  (while (< (point) to)
+    (when-let ((o (read (current-buffer))))
+      (replique-async/put! chan-out o))))
+
+(defun replique/read-buffer (chan-out)
+  (let ((new-parser-state (parse-partial-sexp
+                           (point) (point-max) 0 nil replique/parser-state)))
+    (if (not (= 0 (car new-parser-state)))
+        (setq replique/parser-state new-parser-state)
+      (setq replique/parser-state nil)
+      (condition-case err
+          (let ((to (point)))
+            (replique/read-from-to chan-out 1 to)
+            (delete-region 1 to)
+            (replique/read-buffer chan-out))
+        (end-of-file (delete-region 1 (point-max)))))))
+
+(defun replique/read-chan* (chan-in chan-out proc buffer &optional error-handler)
   (replique-async/<!
    chan-in
-   (lambda (s)
-     (let ((continue t))
-       (while continue
-         (let* ((reader (replique-edn/reader nil :str s))
-                (result-state (assoc :result-state
-                                     (symbol-value edn-state)))
-                (result-state (if result-state (cdr result-state) nil)))
-           (if (equal :waiting (symbol-value result-state))
-               (replique-edn/set-reader edn-state reader)
-             (-> (replique-edn/init-state reader edn-state)
-                 (replique-edn/set-tagged-readers
-                  replique/edn-tag-readers)))
-           (replique-edn/read edn-state)
-           (-let (((&alist :result result
-                           :result-state result-state)
-                   (symbol-value edn-state))
-                  (rest-string
-                   (replique-edn/reader-rest-string reader)))
-             (when (and
-                    (not (equal :waiting (symbol-value result-state)))
-                    (car (symbol-value result)))
-               (replique-async/put!
-                chan-out (car (symbol-value result))))
-             (if (not (string= "" rest-string))
-                 (setq s rest-string)
-               (setq continue nil)))))
-       (replique/edn-read-stream* chan-in chan-out edn-state)))))
+   (lambda (string)
+     (when string
+       (condition-case err
+           (when (buffer-live-p buffer)
+             (with-current-buffer buffer
+               (let ((p (point)))
+                 (insert string)
+                 (goto-char p))
+               (replique/read-buffer chan-out))
+             (replique/read-chan* chan-in chan-out proc buffer error-handler))
+         (error
+          (if error-handler
+              (funcall error-handler string)
+            (error (error-message-string err)))))))))
 
-(defun replique/edn-read-stream (chan-in)
-  (let ((edn-state (-> (replique-edn/reader nil :str "")
-                       replique-edn/init-state
-                       (replique-edn/set-tagged-readers
-                        replique/edn-tag-readers)))
-        (chan-out (replique-async/chan)))
-    (replique/edn-read-stream* chan-in chan-out edn-state)
+(defun replique/read-chan (chan-in proc buffer &optional error-handler)
+  (let ((chan-out (replique-async/chan))
+        (parser-state nil))
+    (with-current-buffer buffer
+      (setq-local replique/parser-state nil))
+    (replique/read-chan* chan-in chan-out proc buffer error-handler)
     chan-out))
 
-(comment
- (defvar in-chan (replique-async/chan))
- (defvar out-chan (replique/edn-read-stream in-chan))
+(defun replique/kill-process-buffer (buffer)
+  (if (not (equal (buffer-size buffer) 0))
+      ;; There is still stuff in the buffer, let a chance to the reader to finish reading the
+      ;; process output
+      (run-at-time 1 nil (lambda () (kill-buffer buffer)))
+    (kill-buffer buffer)))
 
- (replique-async/<!
-  out-chan
-  (lambda (x)
-    (print x)))
+(provide 'replique)
 
- (replique-async/put! in-chan "3 ")
- )
+;; jump to definition
+;; Epresent
+;; css, js
+;; var explorer: namespaces -> vars
+;; exceptions explorer (fold/unfold?)
+;; compliment keywords cljs -> missing :require ... ?
+;; CSS / HTML autocompletion, with core.spec ?
+;; support for no cljs-env
+;; We must print the full exception infos to the tooling channel in order to make an exception explorer
+;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
+;; multi-process -> print directory in messages
+;; The cljs-env makes no use of :repl-require
+;; cljs-repl interactive command
 
-(defun replique/send-tooling-msg (props msg)
-  (-let (((&alist :tooling-proc proc) props)
-         (msg (replique/alist-to-map msg)))
-    (process-send-string
-     proc (format "(ewen.replique.server/tooling-msg-handle %s)\n"
-                  (replique-edn/pr-str msg)))))
+;; compliment invalidate memoized on classpath update
+;; Use a lein task to compute the new classpath and send it to the clojure process.
 
-(defun replique/clj-buff-name (directory host port)
-  (generate-new-buffer-name
-   (format "%s|%s:%s|clj" (file-name-nondirectory directory) host port)))
+;; autocomplete using the spec first, compliment next if no candidates
 
-(defun replique/cljs-buff-name (directory host port)
-  (generate-new-buffer-name
-   (format "%s|%s:%s|cljs" (file-name-nondirectory directory) host port)))
+;; new cljs tagged reader
+;; defclass is deprecated
 
-(comment
- (replique/cljs-buff-name "/home/egr" "127.0.0.1" 9000)
- )
+;; spec autocomplete for files -> emacs first line local variables
+;; spec autocomplete for macros -> specized macros
 
-(defun replique/cleanup-process (props)
-  (let ((active-removed? nil))
-    (-let (((&alist :active active
-                    :tooling-proc tooling-proc
-                    :clj-repls clj-repls
-                    :cljs-repls cljs-repls)
-            props))
-      (when (and (equal clj-repls '())
-                 (equal cljs-repls '()))
-        (when (process-live-p tooling-proc)
-          (set-process-filter
-           tooling-proc (lambda (proc string) nil))
-          (process-send-eof tooling-proc))
-        (setq replique/processes
-              (delete props replique/processes))
-        (when active
-          (let ((props (car replique/processes)))
-            (when props
-              (setcdr (assoc :active props) t))))))))
-
-(defun replique/cleanup-repl (host port b)
-  (-let* ((props (replique/process-props-by-host-port host port))
-          ((&alist :clj-repls clj-repls
-                   :cljs-repls cljs-repls
-                   :active-clj-repl active-clj-repl
-                   :active-cljs-repl active-cljs-repl)
-           props)
-          (repl-clj (-first (lambda (repl)
-                          (eq b (cdr (assoc :buffer repl))))
-                            clj-repls))
-          (repl-cljs (-first (lambda (repl)
-                          (eq b (cdr (assoc :buffer repl))))
-                        cljs-repls)))
-    (when repl-clj
-      (let* ((buff (cdr (assoc :buffer repl-clj)))
-             (proc (get-buffer-process buff)))
-        (setcdr (assoc :clj-repls props)
-                (delete repl-clj clj-repls))
-        (when (and proc (process-live-p proc))
-          (process-send-eof proc)))
-      (when (eq active-clj-repl repl-clj)
-        (setcdr (assoc :active-clj-repl props)
-                (cadr (assoc :clj-repls props)))))
-    (when repl-cljs
-      (let* ((buff (cdr (assoc :buffer repl-cljs)))
-             (proc (get-buffer-process buff)))
-        (setcdr (assoc :cljs-repls props)
-                (delete repl-cljs cljs-repls))
-        (when (and proc (process-live-p proc))
-          (process-send-eof proc)))
-      (when (eq active-cljs-repl repl-cljs)
-        (setcdr (assoc :active-cljs-repl props)
-                (cadr (assoc :cljs-repls props)))))
-    (replique/cleanup-process props)))
-
-(defun replique/cleanup-repls (host port)
-  (let ((props (replique/process-props-by-host-port host port)))
-    (-let (((&alist :clj-repls clj-repls
-                    :cljs-repls cljs-repls)
-            props))
-      (mapcar (lambda (repl)
-                (replique/cleanup-repl
-                 host port (cdr (assoc :buffer repl))))
-              clj-repls)
-      (mapcar (lambda (repl)
-                (replique/cleanup-repl
-                 host port (cdr (assoc :buffer repl))))
-              cljs-repls))
-    (replique/cleanup-process props)))
-
-(defun replique/on-repl-close (host port buffer process event)
-  (cond ((string= "deleted\n" event)
-         (replique/cleanup-repl host port buffer))
-        ((string= "connection broken by remote peer\n" event)
-         (with-current-buffer buffer
-           (save-excursion
-             (goto-char (point-max))
-             (insert (concat "\n" event "\n"))))
-         (replique/cleanup-repl host port buffer))
-        (t nil)))
-
-(defun replique/make-repl
-    (buffer-name host port repl-type init-ns &optional pop-buff)
-  (-let* ((buff (make-comint (concat " " buffer-name) `(,host . ,port)))
-          (proc (get-buffer-process buff))
-          (chan-src (replique/process-filter-chan proc))
-          (props (replique/process-props-by-host-port host port))
-          ((&alist :clj-repls clj-repls :cljs-repls cljs-repls
-                   :active-clj-repl active-clj-repl
-                   :active-cljs-repl active-cljs-repl) props)
-          (repl-cmd (format "(ewen.replique.server/repl %s)\n" repl-type)))
-    (set-process-sentinel
-     proc (-partial 'replique/on-repl-close host port buff))
-    ;; Discard the prompt
-    (replique-async/<!
-     chan-src
-     (lambda (x)
-       (let ((chan (replique/edn-read-stream chan-src)))
-         ;; Get the session number
-         (process-send-string proc "(ewen.replique.server/tooling-repl)\n")
-         (process-send-string proc "clojure.core.server/*session*\n")
-         (replique-async/<!
-          chan
-          (lambda (resp)
-            (let ((session (gethash :client resp)))
-              ;; Reset process filter to the default one
-              (set-process-filter proc 'comint-output-filter)
-              (set-buffer buff)
-              (replique/mode)
-              (process-send-string proc repl-cmd)
-              (let ((repl `((:type . ,repl-type)
-                            (:session . ,session)
-                            (:ns . ,init-ns)
-                            (:buffer . ,buff)
-                            (:eval-chan . ,(replique-async/chan)))))
-                (when (equal :clj repl-type)
-                  (setcdr (assoc :clj-repls props)
-                          (push repl clj-repls))
-                  (setcdr (assoc :active-clj-repl props) repl))
-                (when (equal :cljs repl-type)
-                  (setcdr (assoc :cljs-repls props)
-                          (push repl clj-repls))
-                  (setcdr (assoc :active-cljs-repl props) repl)))
-              (when pop-buff
-                (pop-to-buffer buff))))))))))
-
-(defun replique/repl-existing (props)
-  (-let (((&alist :active active
-                  :host host :port port
-                  :clj-repls clj-repls :cljs-repls cljs-repls
-                  :active-clj-repl active-clj-repl
-                  :active-cljs-repl active-cljs-repl
-                  :tooling-proc tooling-proc
-                  :tooling-chan tooling-chan)
-          props))
-    (when (not active)
-      (replique/set-active-process host port t))
-    (replique/send-tooling-msg props `((:type . :repl-infos)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (let* ((directory (gethash :directory resp))
-              (clj-buff-name (replique/clj-buff-name
-                              directory host port))
-              (cljs-buff-name (replique/cljs-buff-name
-                               directory host port)))
-         (when (equal '() clj-repls)
-           (replique/make-repl clj-buff-name host
-                               port :clj 'user t))
-         (when (equal '() cljs-repls)
-           (replique/cljs-buff-name directory host port)
-           (replique/make-repl cljs-buff-name host
-                               port :cljs 'cljs.user)))))))
-
-(defun replique/on-tooling-repl-close
-    (tooling-chan-src host port process event)
-  (cond ((string= "deleted\n" event)
-         (replique/cleanup-repls host port))
-        ((string= "connection broken by remote peer\n" event)
-         (replique/cleanup-repls host port))
-        (t nil)))
-
-(defun replique/make-tooling-proc (host port callback)
-  (let* ((proc (open-network-stream "replique" nil host port))
-         (chan (replique/process-filter-chan proc)))
-    ;; Discard the prompt
-    (replique-async/<!
-     chan (lambda (x)
-            (set-process-filter proc nil)
-            (process-send-string
-             proc
-             "(ewen.replique.server/shared-tooling-repl)\n")
-            (funcall callback proc)))))
-
-;;;###autoload
-(defun replique/repl (&optional host port)
-  "Start a Clojure/Clojurescript REPL"
-  (interactive
-   (let ((host (read-string "Host: " "127.0.0.1"))
-         (port (read-number "Port number: " (replique/guess-port-nb))))
-     (list host port)))
-  (if (not (replique/is-valid-port-nb? port))
-      (message "Invalid port number: %d" port)
-    (let ((existing-proc (replique/process-props-by-host-port host port)))
-      (if existing-proc
-          (replique/repl-existing existing-proc)
-        (replique/make-tooling-proc
-         host port
-         (lambda (tooling-proc)
-           (let* ((tooling-chan-src (replique/process-filter-chan
-                                     tooling-proc))
-                  (tooling-chan (-> tooling-chan-src
-                                    replique/edn-read-stream
-                                    replique/dispatch-eval-msg)))
-             (set-process-sentinel
-              tooling-proc
-              (-partial 'replique/on-tooling-repl-close
-                        tooling-chan-src host port))
-             (replique/send-tooling-msg
-              `((:tooling-proc . ,tooling-proc))
-              `((:type . :repl-infos)))
-             (replique-async/<!
-              tooling-chan
-              (lambda (resp)
-                (let* ((directory (gethash :directory resp))
-                       (repl-type (gethash :repl-type resp))
-                       (clj-buff-name
-                        (replique/clj-buff-name directory host port))
-                       (cljs-buff-name
-                        (replique/cljs-buff-name directory host port))
-                       (buff-props `((:directory . ,directory)
-                                     (:active . ,t)
-                                     (:tooling-proc . ,tooling-proc)
-                                     (:host . ,host)
-                                     (:port . ,port)
-                                     (:tooling-chan . ,tooling-chan)
-                                     (:clj-repls . ,'())
-                                     (:cljs-repls . ,'())
-                                     (:active-clj-repl . ,nil)
-                                     (:active-cljs-repl . ,nil))))
-                  (push buff-props replique/processes)
-                  (replique/set-active-process host port nil)
-                  (cond ((equal :clj repl-type)
-                         (replique/make-repl
-                          clj-buff-name host port :clj 'user t))
-                        ((equal :cljs repl-type)
-                         (replique/make-repl
-                          clj-buff-name host port :clj 'user)
-                         (replique/make-repl
-                          cljs-buff-name host port :cljs 'cljs.user t))
-                        (t (replique/cleanup-repls host port)
-                           (error "Error while starting the REPL. Invalid REPL type: %s"
-                                  repl-type)))))))))))))
-
-(comment (provide 'replique))
-
-;;; replique.el ends here
+;; replique.el ends here

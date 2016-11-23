@@ -61,7 +61,7 @@
   "Execute a block of clojure code with org-babel.
   This function is called by `org-babel-execute-src-block'"
   (message "executing clojure source code block")
-  (require 'replique2)
+  (require 'replique)
   (let* ((processed-params (org-babel-process-params params))
          (result-params (cdr (org-babel-get-header
                               processed-params
@@ -96,7 +96,7 @@
   "Execute a block of clojurescript code with org-babel.
   This function is called by `org-babel-execute-src-block'"
   (message "executing clojurescript source code block")
-  (require 'replique2)
+  (require 'replique)
   (let* ((processed-params (org-babel-process-params params))
          (result-params (cdr (org-babel-get-header
                               processed-params
