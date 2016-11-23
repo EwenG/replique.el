@@ -913,6 +913,11 @@ This allows you to temporarily modify read-only buffers too."
   :type 'regexp
   :group 'replique)
 
+(defcustom replique/prompt-read-only t
+  "Whether to make the prompt read-only or not"
+  :type 'boolean
+  :group 'replique)
+
 (defcustom replique/lein-script "/Users/egr/bin/lein"
   "Leiningen script path"
   :type 'file
@@ -939,11 +944,12 @@ disable main cljs files refreshing."
     (define-key map "\C-xr" 'replique/switch-active-repl)
     map))
 
+(defun replique/commons ())
+
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
   (setq-local comint-prompt-regexp replique/prompt)
-  (setq-local comint-prompt-read-only t)
-  (setq-local mode-line-process '(":%s"))
+  (setq-local comint-prompt-read-only replique/prompt-read-only)
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
@@ -960,8 +966,8 @@ disable main cljs files refreshing."
     (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-xr" 'replique/switch-active-repl)
-    (define-key map "\M-." 'replique/jump-to-definition)
-    (define-key map "\M-," 'pop-tag-mark)
+    ;;(define-key map "\M-." 'replique/jump-to-definition)
+    ;;(define-key map "\M-," 'pop-tag-mark)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -974,13 +980,9 @@ disable main cljs files refreshing."
         ["Set REPL ns" replique/in-ns t]
         "--"
         ["Switch active REPL" replique/switch-active-repl t]
-        "--"
-        ["Jump to definition" replique/jump-to-definition t]
+        ;;"--"
+        ;;["Jump to definition" replique/jump-to-definition t]
         ))
-    map))
-
-(defvar replique/generic-minor-mode-map
-  (let ((map (make-sparse-keymap)))
     map))
 
 ;;;###autoload
