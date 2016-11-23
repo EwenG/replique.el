@@ -86,9 +86,11 @@
     ;; other language, please preprocess any file names involved with
     ;; the function `org-babel-process-file-name'. (See the way that
     ;; function is used in the language files)
-    (condition-case nil
+    (condition-case err
         (replique/eval-form :clj full-body)
-      (error "Error occured during evaluation"))))
+      (error
+       (message (error-message-string err))
+       "Error occured during evaluation"))))
 
 (defun org-babel-execute:clojurescript (body params)
   "Execute a block of clojurescript code with org-babel.
@@ -119,9 +121,11 @@
     ;; other language, please preprocess any file names involved with
     ;; the function `org-babel-process-file-name'. (See the way that
     ;; function is used in the language files)
-    (condition-case nil
+    (condition-case err
         (replique/eval-form :cljs full-body)
-      (error "Error occured during evaluation"))))
+      (error
+       (message (error-message-string err))
+       "Error occured during evaluation"))))
 
 (provide 'ob-replique)
 
