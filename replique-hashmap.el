@@ -47,7 +47,7 @@
 (defun replique/get-in (hash ks &optional default-val)
   (if (equal 0 (length ks))
       hash
-    (replique/get-in-helper data (append ks '()) default-val)))
+    (replique/get-in-helper hash (append ks '()) default-val)))
 
 (defun replique/copy-hash-table (hash)
   (if (hash-table-p hash)

@@ -50,15 +50,18 @@
   (let ((slots (mapcar (lambda (s)
                          (intern (concat ":" (symbol-name s))))
                        (object-slots o)))
-        (l nil))
-    (mapcar (lambda (s)
-              (push (slot-value o s) l)
-              (push s l))
-            slots)
+        (l nil)
+        (m (make-hash-table :test 'equal)))
+    (dolist (s slots)
+      (push (slot-value o s) l)
+      (push s l))
+    (let ((data-rest l))
+      (while data-rest
+        (puthash (car data-rest) (cadr data-rest) m)
+        (setq data-rest (cddr data-rest))))
     (format "#%s %s"
             (object-class o)
-            (replique-edn/pr-str
-             (replique-edn/list-to-map l)))))
+            (replique-edn/pr-str m))))
 
 (defclass replique-edn/with-face (replique-edn/printable)
   ((object :initarg :object)
@@ -66,8 +69,8 @@
          :type symbol)))
 
 (defmethod replique-edn/print-method ((o replique-edn/with-face))
-  (propertize (replique-edn/pr-str (oref o :object))
-              'face (oref o :face)))
+  (propertize (replique-edn/pr-str (oref o object))
+              'face (oref o face)))
 
 (defvar replique-edn/print-readably t)
 

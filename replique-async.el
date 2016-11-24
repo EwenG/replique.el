@@ -46,22 +46,20 @@
 
 (defmethod replique-async/close!
   ((ch replique-async/chan-impl))
-  (mapcar (lambda (listener)
-            (let-alist listener
-              (when .:listener-callback (replique-async/with-new-dyn-context
-                                         .:listener-callback nil))))
-          (oref ch listeners))
-  (mapcar (lambda (provider)
-            (let-alist provider
-              (when .:provider-callback
-                (replique-async/with-new-dyn-context .:provider-callback))))
-          (oref ch providers))
+  (dolist (listener (oref ch listeners))
+    (let-alist listener
+      (when .:listener-callback (replique-async/with-new-dyn-context
+                                 .:listener-callback nil))))
+  (dolist (provider (oref ch providers))
+    (let-alist provider
+      (when .:provider-callback
+        (replique-async/with-new-dyn-context .:provider-callback))))
   (oset ch listeners '())
   (oset ch providers '())
   (oset ch closed t))
 
 (defmethod replique-async/<!
-  ((ch replique-async/chan-impl) listener-callback &optional next-tick)
+  ((ch replique-async/chan-impl) listener-callback)
   (if (oref ch closed)
       (progn (replique-async/with-new-dyn-context listener-callback nil)
              nil)
@@ -74,8 +72,8 @@
             .:item)
         (progn (thread-last `((:listener-callback . ,listener-callback))
                  list
-                 (append (oref ch :listeners))
-                 (oset ch :listeners))
+                 (append (oref ch listeners))
+                 (oset ch listeners))
                nil)))))
 
 (defmethod replique-async/>!
@@ -91,8 +89,8 @@
                (progn (thread-last `((:item . ,item)
                                      (:provider-callback . ,provider-callback))
                         list
-                        (append (oref ch :providers))
-                        (oset ch :providers))
+                        (append (oref ch providers))
+                        (oset ch providers))
                       nil))))))
 
 (defmethod replique-async/put!
@@ -106,8 +104,8 @@
                    item)
                (progn (thread-last `((:item . ,item))
                         list
-                        (append (oref ch :providers))
-                        (oset ch :providers))
+                        (append (oref ch providers))
+                        (oset ch providers))
                       nil))))))
 
 (defun replique-async/default-chan (default-val)
