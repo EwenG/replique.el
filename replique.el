@@ -18,7 +18,7 @@
 ;; This file is not part of GNU Emacs.
 
 ;; Version 0.0.1-SNAPSHOT
-;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (company "0.9.0"))
+;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
 
 ;; Commentary:
 
@@ -29,7 +29,6 @@
 (require 'clojure-mode)
 (require 'replique-edn)
 (require 'replique-async)
-(require 'company)
 (require 'replique-hashmap)
 (require 'map)
 
@@ -934,6 +933,11 @@ disable main cljs files refreshing."
   :type 'integer
   :group 'replique)
 
+(defcustom replique/company-tooltip-align-annotations t
+  "See company-tooltip-align-annotations"
+  :type 'boolean
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -953,10 +957,12 @@ disable main cljs files refreshing."
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
-  (add-to-list 'company-backends 'replique/company-backend)
+  (when (boundp 'company-backends)
+    (add-to-list 'company-backends 'replique/company-backend)
+    (setq-local company-tooltip-align-annotations
+    	      replique/company-tooltip-align-annotations))
   (add-function :before-until (local 'eldoc-documentation-function)
-                'replique/eldoc-documentation-function)
-  (setq-local company-tooltip-align-annotations t))
+                'replique/eldoc-documentation-function))
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1471,5 +1477,7 @@ The following commands are available:
 
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
+
+;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
 ;; replique.el ends here
