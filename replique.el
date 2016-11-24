@@ -917,6 +917,12 @@ This allows you to temporarily modify read-only buffers too."
   :type 'file
   :group 'replique)
 
+(defcustom replique/default-lein-script "lein"
+  "Name of the lein script to be used when replique/lein-script is not set. The script will 
+be searched in exec-path."
+  :type 'string
+  :group 'replique)
+
 (defcustom replique/host "localhost"
   "Replique REPLs listening socket host"
   :type 'string
@@ -1002,7 +1008,8 @@ The following commands are available:
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
 (defun replique/lein-command (directory port)
-  `(,(or replique/lein-script "lein") "update-in" ":plugins" "conj" 
+  `(,(or replique/lein-script (executable-find replique/default-lein-script))
+    "update-in" ":plugins" "conj" 
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
     "trampoline" "replique"
@@ -1095,19 +1102,10 @@ The following commands are available:
         (t nil))
   (replique/kill-process-buffer network-proc-buffer))
 
-(defun replique/is-in-exec-path (file absolute?)
-  (thread-first (seq-mapcat
-                 (lambda (dir)
-                   (directory-files dir absolute?))
-                 exec-path)
-    (seq-contains file)))
-
 (defun replique/check-lein-script ()
-  (cond ((and replique/lein-script
-              (not (replique/is-in-exec-path replique/lein-script t)))
+  (cond ((and replique/lein-script (not (executable-find replique/lein-script)))
          (format "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script))
-        ((and (not replique/lein-script)
-              (not (replique/is-in-exec-path "lein" nil)))
+        ((and (not replique/lein-script) (not (executable-find replique/default-lein-script)))
          "Error while starting the REPL. No lein script found in exec-path")
         (t nil)))
 
