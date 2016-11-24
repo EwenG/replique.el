@@ -112,7 +112,7 @@ kill the buffer to close the REPL.
 
 ### Going further
 
-See the [default keymap](#Default-keymap), the [interactive commands](#Interactive-commands) and the [REPL API](#REPL-API).
+See the [default keymap](#default-keymap), the [interactive commands](#interactive-commands) and the [REPL API](#repl-api).
 
 ## Using multiple sessions
 
