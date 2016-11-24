@@ -134,7 +134,7 @@ When Clojurescript files get loaded, they are compiled to disk and then loaded i
 
 Including *%s* will splice the *:target-path* into this value.
 
-Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
+Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
 
 ## Default keymap
 
