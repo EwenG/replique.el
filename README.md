@@ -118,7 +118,7 @@ Multiple JVM processes can be started simultaneously. Use `replique/switch-activ
 
 ## Clojurescript and cljc support
 
-Replique supports autocompletion and [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style socumentation for Clojurescript with the limitation that autocompletion does not work for interop calls.
+Replique supports autocompletion and [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation for Clojurescript with the limitation that autocompletion does not work for interop calls.
 
 Clojurescript code can be evaluated in the browser, optionaly in the context of a web application. Others javascript environments are not currently supported.
 
@@ -128,7 +128,7 @@ When Clojurescript files get loaded, they are compiled to disk and then loaded i
 
 Including *%s* will splice the *:target-path* into this value.
 
-Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader consitional.
+Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
 
 ## License
 
