@@ -86,7 +86,7 @@ Enable code evaluation in org-mode
 
 Replique will ask you for a project directory and a port number. The project directory must contain a leiningen *project.clj* file. Replique will start a socket REPL using the provided port number. Use *0* to start the REPL on a random port number.
 
-Use `C-c-C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
+Use `C-c C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
 ### Clojurescript REPL
 
@@ -106,7 +106,7 @@ Connect a browser to the cljs REPL
 
 `M-x replique/browser`
 
-Use `C-c-C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
+Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
 
 ## License
 
