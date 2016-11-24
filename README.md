@@ -8,23 +8,23 @@ Replique is a development environment for Clojure and Clojurescript bundled as a
 
 Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+ with clojure-mode.
 
-# Emacs mode
+### Emacs mode
 
-Download the latest [replique release](https://github.com/EwenG/replique.el/releases). Extract the zip file in a directory of your choice and add it to your emacs load-path. For example:
+Download the latest [replique release](https://github.com/EwenG/replique.el/releases). Extract the zip file in a directory of your choice and add it to your emacs load-path. For example
 
 `(add-to-list 'load-path "~/.emacs.d/replique")`
 
-Load replique:
+Load replique
 
 `(require 'replique)`
 
-Enable replique when editing clojure files: 
+Enable replique when editing clojure files:
 
 `(add-hook 'clojure-mode-hook 'replique/minor-mode)`
 
-# Leiningen
+### Leiningen
 
-Download the [leiningen script](http://leiningen.org/). Either place the lein script in emacs `exec-path` or customize the `replique/lein-script` variable, for example:
+Download the [leiningen script](http://leiningen.org/). Either place the lein script in emacs `exec-path` or customize the `replique/lein-script` variable, for example
 
 `(setq replique/lein-script "~/bin/lein")`
 
@@ -80,7 +80,7 @@ Enable code evaluation in org-mode
 
 ## Getting started
 
-# Clojure REPL
+### Clojure REPL
 
 `M-x replique/repl`
 
@@ -88,7 +88,7 @@ Replique will ask you for a project directory and a port number. The project dir
 
 Use `C-c-C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
-# Clojurescript REPL
+### Clojurescript REPL
 
 Add Clojurescript to your project.clj dependencies
 
