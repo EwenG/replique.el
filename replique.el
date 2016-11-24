@@ -1000,10 +1000,12 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
-  (add-to-list 'company-backends 'replique/company-backend)
+  (when (boundp 'company-backends)
+    (add-to-list 'company-backends 'replique/company-backend)
+    (setq-local company-tooltip-align-annotations
+                replique/company-tooltip-align-annotations))
   (add-function :before-until (local 'eldoc-documentation-function)
-                'replique/eldoc-documentation-function)
-  (setq-local company-tooltip-align-annotations t))
+                'replique/eldoc-documentation-function))
 
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
