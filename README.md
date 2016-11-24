@@ -86,6 +86,8 @@ Replique will ask you for a project directory and a port number. The project dir
 
 Use `C-c C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
+Kill the buffer to close the REPL.
+
 ### Clojurescript REPL
 
 Add Clojurescript to your *project.clj* dependencies
@@ -106,6 +108,8 @@ Connect a browser to the cljs REPL
 
 Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
 
+kill the buffer to close the REPL.
+
 <> ### Going further
 
 <> Checkout the default keymap, the Replique interactive commands and the REPL api.
@@ -115,6 +119,8 @@ Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescrip
 To start multiple REPL sessions in the same JVM process, use `M-x replique/repl` multiple times, using the same directory. Replique will keep at most one Clojure REPL and one Clojurescript REPL active at the same time. Use `M-x replique/switch-active-repl` to change the currently active REPL.
 
 Multiple JVM processes can be started simultaneously. Use `replique/switch-active-process` to change the currently active process. Symbolic links can be used to start multiple JVM processes simultaneously for the same project.
+
+Use `replique/close-process` to close all the REPL sessions associated with a JVM process at the same time.
 
 ## Clojurescript and cljc support
 
