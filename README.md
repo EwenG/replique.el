@@ -41,14 +41,12 @@ Or
 ```elisp
 (add-hook 'clojure-mode-hook
 	  (lambda ()
-	    (sp-local-pair 'clojure-mode "'" nil :actions nil)
 	    (company-mode 1)))
 ```
        
 ```elisp
 (add-hook 'replique/mode-hook
 	  (lambda ()
-	    (sp-local-pair 'replique/mode "'" nil :actions nil)
 	    (company-mode 1)))
 ```
 
