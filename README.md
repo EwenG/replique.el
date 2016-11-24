@@ -110,9 +110,9 @@ Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescrip
 
 kill the buffer to close the REPL.
 
-<> ### Going further
+### Going further
 
-<> Checkout the default keymap, the Replique interactive commands and the REPL api.
+See the [default keymap](#Default-keymap), the [interactive commands](#Interactive-commands) and the [REPL API](#REPL-API).
 
 ## Using multiple sessions
 
@@ -136,7 +136,38 @@ Including *%s* will splice the *:target-path* into this value.
 
 Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
 
-## License
+## Default keymap
+
+Keybinding           | Description
+---------------------|----------------------------------
+<kbd>C-c C-r</kbd>   | Evaluate region
+<kbd>C-x C-e</kbd>   | Evaluate last sexp
+<kbd>C-M-x</kbd>     | Evaluate top level sexp
+<kbd>C-c C-l</kbd>   | Load file
+<kbd>C-c M-n</kbd>   | Change namespace
+<kbd>C-x r</kbd>     | Change active REPL session
+
+## Interactive commands
+
+Command                          | Description
+---------------------------------|----------------------------------
+`replique/repl`                  | Start a REPL
+`replique/cljs-repl`             | Start a cljs REPL in a clj REPL
+`replique/browser`               | Open a browser tab on the REPL port
+`replique/switch-active-repl`    | Change the active REPL session
+`replique/switch-active-process` | Change the active JVM process
+`replique/close-process`         | Close all processes associated with a JVM process
+`replique/output-main-cljs-file` | Write a main cljs file to disk
+
+## REPL API
+
+All REPL functions/macros are in the `replique.interactive` namespace
+
+Function/macro                   | Description
+---------------------------------|----------------------------------
+                                 |
+
+# License
 
 Copyright 2016 Ewen Grosjean.
 
