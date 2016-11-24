@@ -69,7 +69,7 @@ Enable code evaluation in org-mode
 ## Features
 
 - Clojure and Clojurescript REPL, support for mulitple simultaneous sessions
-- Preconfigured Clojurescript compiler 
+- Preconfigured Clojurescript compiler for development builds
 - Autocompletion for Clojure and Clojurescript
 - [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation for Clojure and Clojurescript
 - CSS files reloading
@@ -105,6 +105,30 @@ Connect a browser to the cljs REPL
 `M-x replique/browser`
 
 Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
+
+<> ### Going further
+
+<> Checkout the default keymap, the Replique interactive commands and the REPL api.
+
+## Using multiple sessions
+
+To start multiple REPL sessions in the same JVM process, use `M-x replique/repl` multiple times, using the same directory. Replique will keep at most one Clojure REPL and one Clojurescript REPL active at the same time. Use `M-x replique/switch-active-repl` to change the currently active REPL.
+
+Multiple JVM processes can be started simultaneously. Use `replique/switch-active-process` to change the currently active process. Symbolic links can be used to start multiple JVM processes simultaneously for the same project.
+
+## Clojurescript and cljc support
+
+Replique supports autocompletion and [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style socumentation for Clojurescript with the limitation that autocompletion does not work for interop calls.
+
+Clojurescript code can be evaluated in the browser, optionaly in the context of a web application. Others javascript environments are not currently supported.
+
+When Clojurescript files get loaded, they are compiled to disk and then loaded in the Clojurescript environment. By default, Replique compiles Clojurescript files in the *target/cljs* folder. The compilation output folder can be customized using the *project.clj* file:
+
+`{:replique {:cljs-compile-path "%s/cljs"}}`
+
+Including *%s* will splice the *:target-path* into this value.
+
+Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader consitional.
 
 ## License
 
