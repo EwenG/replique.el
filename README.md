@@ -84,7 +84,7 @@ Enable code evaluation in org-mode
 
 `M-x replique/repl`
 
-Replique will ask you for a project directory and a port number. The project directory must contain a leiningen *project.clj* file. Replique will start a socket REPL using the provided port number. Use *0* to start the REPL on a random port number.
+Replique will ask you for a project directory and a port number. The project directory must contain a leiningen *project.clj* file. Replique will start a socket REPL using the provided port number. Use `0` to start the REPL on a random port number.
 
 Use `C-c C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
