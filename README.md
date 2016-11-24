@@ -1,10 +1,12 @@
 # Replique
 
-An emacs mode for [Replique](https://github.com/EwenG/replique), a development environment for Clojure and Clojurescript bundled as a leiningen plugin.
+An emacs mode for [Replique](https://github.com/EwenG/replique).
+
+Replique is a development environment for Clojure and Clojurescript bundled as a leiningen plugin.
 
 ## Installation
 
-Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+. Replique requires emacs 25+ and clojure-mode.
+Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+ with clojure-mode.
 
 # Emacs mode
 
