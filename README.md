@@ -84,7 +84,7 @@ Enable code evaluation in org-mode
 
 Replique will ask you for a project directory and a port number. The project directory must contain a leiningen *project.clj* file. Replique will start a socket REPL using the provided port number. Use `0` to start the REPL on a random port number.
 
-Use `C-c C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
+Use `C-x C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
 Kill the buffer to close the REPL.
 
@@ -106,7 +106,7 @@ Connect a browser to the cljs REPL
 
 `M-x replique/browser`
 
-Use `C-c C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
+Use `C-x C-e` to evaluate a Clojurescript form, `C-c C-l` to load a Clojurescript file in the REPL and `C-c M-n` to change the REPL namespace.
 
 kill the buffer to close the REPL.
 
@@ -134,7 +134,7 @@ When Clojurescript files get loaded, they are compiled to disk and then loaded i
 
 Including *%s* will splice the *:target-path* into this value.
 
-Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires that both a Clojure and a Clojurescript REPL are started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
+Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
 
 ## Default keymap
 
