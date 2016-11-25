@@ -135,7 +135,12 @@ When Clojurescript files get loaded, they are compiled to disk and then loaded i
 
 Including *%s* will splice the *:target-path* into this value.
 
-Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional.
+Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates (and other tooling features) for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional, in which case it will be computed in the Clojurescript runtime.
+
+The Clojurescript compiler is preconfigured for development builds (optimisations at :none, sourcemaps enabled ...). A subset of the compiler options and repl options can be updated at the REPL (see [the Clojurescript wiki](https://github.com/clojure/clojurescript/wiki) for a description of the options). All functions and macros are in the `replique.interactive` namespace.
+
+- To update the *:repl-versose* REPL options, from a cljs REPL: `(replique.interactive/set-cljs-repl-verbose true)`. Note that `set-cljs-repl-verbose` is a macro.
+- To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings}* compiler options, from a clj REPL: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
 
 ## Default keymap
 
