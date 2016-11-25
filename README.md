@@ -71,6 +71,7 @@ Enable code evaluation in org-mode
 - Clojure and Clojurescript REPL, support for mulitple simultaneous sessions
 - Preconfigured Clojurescript compiler for development builds
 - Autocompletion for Clojure and Clojurescript
+- Jump to symbol definition for Clojure and Clojurescript
 - [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation for Clojure and Clojurescript
 - CSS files reloading
 - Javascript file reloading
@@ -145,6 +146,7 @@ Keybinding           | Description
 <kbd>C-M-x</kbd>     | Evaluate top level sexp
 <kbd>C-c C-l</kbd>   | Load file
 <kbd>C-c M-n</kbd>   | Change namespace
+<kbd>M-.</kbd>       | Jump to symbol definition
 <kbd>C-x r</kbd>     | Change active REPL session
 
 ## Interactive commands
