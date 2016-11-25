@@ -30,6 +30,7 @@
 (require 'replique-edn)
 (require 'replique-async)
 (require 'replique-hashmap)
+(require 'replique-resources)
 (require 'map)
 
 (defmacro comment (&rest body)
@@ -488,7 +489,7 @@ This allows you to temporarily modify read-only buffers too."
            modes-alist))
          (dispatch-code (append dispatch-code
                                 '((t (user-error
-                                      "Cannot eval from major mode: %s"
+                                      "Unsuported major mode: %s"
                                       major-mode))))))
     `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
             (,clj-repl-sym (replique/active-repl :clj))
@@ -895,6 +896,59 @@ This allows you to temporarily modify read-only buffers too."
           (accept-process-output p 0 200))
         result))))
 
+(defun replique/jump-to-definition* (symbol tooling-repl msg-type)
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type msg-type
+                        :ns (clojure-find-ns)
+                        :symbol symbol
+                        :context (replique/form-with-prefix)))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "jump-to-definition failed with symbol: %s" symbol))
+             (let* ((meta (replique/get resp :meta))
+                    (file (replique/get-in resp [:meta :file]))
+                    (line (replique/get-in resp [:meta :line]))
+                    (column (replique/get-in resp [:meta :column])))
+               (when-let (buff (replique-resources/find-file file))
+                 (xref-push-marker-stack)
+                 (pop-to-buffer-same-window buff)
+                 (goto-char (point-min))
+                 (when line
+                   (forward-line (1- line))
+                   (when column
+                     (move-to-column column))))))))))))
+
+(defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/jump-to-definition* symbol tooling-repl :meta-clj)))
+
+(defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/jump-to-definition* symbol tooling-repl :meta-cljs)))
+
+(defun replique/jump-to-definition-cljc (symbol tooling-repl clj-repl cljs-repl)
+  (if (not (and clj-repl cljs-repl))
+      (user-error "No active Clojure AND Clojurescript REPL")
+    (replique/jump-to-definition* symbol tooling-repl :meta-cljc)))
+
+(defun replique/jump-to-definition (symbol)
+  "Load a file in a replique REPL"
+  (interactive (list (symbol-name (symbol-at-point))))
+  (replique/with-modes-dispatch
+   (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
+   (clojurescript-mode . (apply-partially 'replique/jump-to-definition-cljs symbol))
+   (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))))
+
 (defconst replique/client-version "0.0.1-SNAPSHOT")
 
 (defcustom replique/version "0.0.1-SNAPSHOT"
@@ -973,8 +1027,8 @@ disable main cljs files refreshing."
     (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-xr" 'replique/switch-active-repl)
-    ;;(define-key map "\M-." 'replique/jump-to-definition)
-    ;;(define-key map "\M-," 'pop-tag-mark)
+    (define-key map "\M-." 'replique/jump-to-definition)
+    (define-key map "\M-," 'xref-pop-marker-stack)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -987,8 +1041,8 @@ disable main cljs files refreshing."
         ["Set REPL ns" replique/in-ns t]
         "--"
         ["Switch active REPL" replique/switch-active-repl t]
-        ;;"--"
-        ;;["Jump to definition" replique/jump-to-definition t]
+        "--"
+        ["Jump to definition" replique/jump-to-definition t]
         ))
     map))
 
@@ -1306,7 +1360,7 @@ The following commands are available:
   (interactive
    (let ((directory (read-directory-name
                      "Project directory: " (replique/guess-project-root-dir) nil t)))
-     ;; Normalizing the directory name is necessary in order to be able to search repls
+     ;; Normalizing the directory name is necessary in order to be able to find repls
      ;; by directory name
      (list (replique/normalize-directory-name directory))))
   (let* ((existing-repl (replique/repl-by :directory directory :repl-type :tooling))
@@ -1472,5 +1526,3 @@ The following commands are available:
 ;; spec autocomplete for macros -> specized macros
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
-
-;; replique.el ends here
