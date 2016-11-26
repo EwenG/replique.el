@@ -58,7 +58,7 @@ Enable [javascript files reloading](#javascript-files-reloading)
 
 `(add-hook 'js-mode-hook 'replique/minor-mode)`
 
-Enable [code evaluation in org-mode](#using-replique-with-orgmode)
+Enable [code evaluation in org-mode](#using-replique-with-org-mode)
 
 ```elisp
 (add-hook 'org-mode-hook
@@ -75,7 +75,7 @@ Enable [code evaluation in org-mode](#using-replique-with-orgmode)
 - [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation
 - CSS files reloading
 - Javascript file reloading
-- Orgmode integration
+- Org-mode integration
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
 
@@ -186,7 +186,7 @@ From a css file: `M-x replique/load-file` or `C-c C-l`
 
 Replique will prompt you for a css file to reload among all the css files linked in the current web page. Alternatively a css file can be embedded in the web page directly as a data uri.
 
-## Using Replique with [orgmode](http://orgmode.org/manual/Evaluating-code-blocks.html)
+## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
 ### Emacs setup
 
