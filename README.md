@@ -230,7 +230,7 @@ Replique supports connecting to a remote REPL by nesting a REPL inside another. 
 
 ## Uncaught exceptions
 
-Replique registers a default exception handler that prints all uncaught exceptions in the emacs *\*Messages\** buffer. To override the default exception handler:
+Replique registers a default exception handler that prints all uncaught exceptions in the emacs \*Messages* buffer. To override the default exception handler:
 
 ```clojure
 (Thread/setDefaultUncaughtExceptionHandler
@@ -242,7 +242,7 @@ Replique registers a default exception handler that prints all uncaught exceptio
 
 ## Process standard output
 
-All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed on the standard output of the JVM process is displayed in the *\*Message\** emacs buffer. Data can be printed to the standard output of the JVM process by binding *\*out\** to `replique.interactive/process-out`.
+All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed on the standard output of the JVM process is displayed in the emacs *\*Messages\** buffer. Data can be printed to the standard output of the JVM process by binding *\*out\** to `replique.interactive/process-out`.
 
 ## Default keymap
 
