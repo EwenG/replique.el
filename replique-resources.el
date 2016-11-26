@@ -18,9 +18,6 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.1-SNAPSHOT
-;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
-
 ;; Commentary:
 
 ;; Code:
