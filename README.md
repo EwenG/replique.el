@@ -226,7 +226,7 @@ The *:global-vars* leiningen key is supported and the following vars values are 
 
 ## Remote REPL
 
-Replique supports connecting to a remote REPL by nesting a REPL inside another. For example, `(replique.interactive/remote-repl host port)` will start a REPL on the server at *host:port*, assuming the server is running a [socket REPL server](http://clojure.org/reference/repl_and_main#_launching_a_socket_server).
+Replique supports connecting to a remote REPL by nesting a REPL inside another. `(replique.interactive/remote-repl host port)` will start a REPL on the server at *host:port*, assuming the server is running a [socket REPL server](http://clojure.org/reference/repl_and_main#_launching_a_socket_server).
 
 ## Uncaught exceptions
 
