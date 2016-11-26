@@ -206,7 +206,8 @@
      (replique/mode . (apply-partially 'replique/auto-complete-session prefix callback))
      (clojure-mode . (apply-partially 'replique/auto-complete-clj prefix callback))
      (clojurescript-mode . (apply-partially 'replique/auto-complete-cljs prefix callback))
-     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix callback)))))
+     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix callback))
+     (t . (funcall callback nil)))))
 
 (defun replique/auto-complete-annotation (candidate)
   (when-let ((meta (get-text-property 0 'meta candidate)))
@@ -314,7 +315,8 @@
      (replique/mode . 'replique/repliquedoc-session)
      (clojure-mode . 'replique/repliquedoc-clj)
      (clojurescript-mode . 'replique/repliquedoc-cljs)
-     (clojurec-mode . 'replique/repliquedoc-cljc))))
+     (clojurec-mode . 'replique/repliquedoc-cljc)
+     (t . nil))))
 
 (defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
   (if (not clj-repl)
@@ -342,7 +344,8 @@
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
    (clojurescript-mode . (apply-partially 'replique/in-ns-cljs ns-name))
-   (clojurec-mode . (apply-partially 'replique/in-ns-cljc ns-name))))
+   (clojurec-mode . (apply-partially 'replique/in-ns-cljc ns-name))
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/symbol-backward ()
   (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
@@ -485,12 +488,10 @@ This allows you to temporarily modify read-only buffers too."
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
-                        (funcall ,f (replique/repl-by :buffer (current-buffer))))))))
-           modes-alist))
-         (dispatch-code (append dispatch-code
-                                '((t (user-error
-                                      "Unsuported major mode: %s"
-                                      major-mode))))))
+                        (funcall ,f (replique/repl-by :buffer (current-buffer)))))
+                     ((equal 't m)
+                      `(t ,f)))))
+           modes-alist)))
     `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
             (,clj-repl-sym (replique/active-repl :clj))
             (,cljs-repl-sym (replique/active-repl :cljs))
@@ -556,7 +557,8 @@ This allows you to temporarily modify read-only buffers too."
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
    (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
-   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input input))))
+   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input input))
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/eval-region (start end)
   "Eval the currently highlighted region."
@@ -947,7 +949,8 @@ This allows you to temporarily modify read-only buffers too."
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
    (clojurescript-mode . (apply-partially 'replique/jump-to-definition-cljs symbol))
-   (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))))
+   (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defconst replique/client-version "0.0.1-SNAPSHOT")
 
@@ -1524,5 +1527,7 @@ The following commands are available:
 
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
+
+;; priting something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
