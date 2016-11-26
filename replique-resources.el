@@ -1,5 +1,6 @@
 ;; replique.el ---   -*- lexical-binding: t; -*-
 
+;; Copyright © 2015-2016  Artur Malabarba
 ;; Copyright © 2016 Ewen Grosjean
 
 ;; This program is free software: you can redistribute it and/or modify
