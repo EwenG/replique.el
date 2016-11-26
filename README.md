@@ -152,17 +152,17 @@ Replique only manages development builds. For production builds, I would recomme
 
 ### Clojurescript browser REPL
 
-Replique listens on the REPL port for connection from javascript runtimes. Replique currently only supports connections from web browsers. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`
+Replique listens on the REPL port for a connection from a javascript runtime. Replique currently only supports connections from web browsers. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`
 
 ### Using the REPL in a web application context
 
-`M-x replique/output-main-js-file` can be used to emit a javascript file acting as an entry point for your application. This javascript file also contains code to connect to the cljs REPL. This allows connecting to a cljs REPL in the context of a web application. The web application need not be aware of the cljs REPL and your web assets need not be different between development and production builds. This is equivalent to using the [*:main* option](https://github.com/clojure/clojurescript/wiki/Compiler-Options#main) of the cljs compiler.
+`M-x replique/output-main-js-file` can be used to emit a javascript file acting as an entry point for your application. This javascript file also contains code to connect to the cljs REPL. This allows connecting to a cljs REPL in the context of a web application. The web application need not be aware of the cljs REPL and your HTML markup need not be different between development and production builds. This is equivalent to using the [*:main* option](https://github.com/clojure/clojurescript/wiki/Compiler-Options#main) of the cljs compiler.
 
 `M-x replique/output-main-js-file` prompts for the output path of the main js file. If a cljs REPL is started, `M-x replique/output-main-js-file` also prompts for a cljs namespace. This namespace is the the entry point of your application.
 
 On startup, Replique will update all main js files found in the project directory with the (possibly new) REPL port number. This avoids the need to update main js files manually between REPL sessions when starting Replique with different port numbers.
 
-Nothing prevents you from using multiple main js files. Outputting multiple main js files is particularly useful when using [Google closure modules](https://github.com/clojure/clojurescript/wiki/Compiler-Options#modules).
+Nothing prevents you from using multiple main js files. Outputting multiple main js files is particularly useful when using [Google closure modules](https://github.com/clojure/clojurescript/wiki/Compiler-Options#modules), to keep HTML markup identical between dev and production.
 
 ## Javascript files reloading
 
