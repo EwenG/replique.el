@@ -222,7 +222,7 @@ Clojurescript code blocks
 
 Replique does not support all Leiningen configuration keys. In particular, since Replique is not based on [nrepl](https://github.com/clojure/tools.nrepl), none of the keys related to nrepl are supported.
 
-The *:global-vars* leiningen key is supported and the following vars values are propagated to the cljs REPL: *#{#'*assert* #'*print-length* #'*print-meta* #'*print-level* #'*flush-on-newline* #'*print-readably* #'*print-dup*})*
+The *:global-vars* leiningen key is supported and the following vars values are propagated to the cljs REPL: `#{#'*assert* #'*print-length* #'*print-meta* #'*print-level* #'*flush-on-newline* #'*print-readably* #'*print-dup*})`
 
 ## Remote REPL
 
