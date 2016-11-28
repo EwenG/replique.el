@@ -1076,9 +1076,7 @@ The following commands are available:
     "update-in" ":plugins" "conj" 
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
-    "trampoline" "replique"
-    ,(format "%s" directory) ,(format "%s" port)
-    ,(format "%s" replique/version)))
+    "trampoline" "replique" ,(format "%s" port)))
 
 (defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
@@ -1222,7 +1220,7 @@ The following commands are available:
                     (setq result
                           (nconc result (replique/directory-files-recursively
                                          full-file regexp exclude-dir (1- max-depth))))))
-              (when (string-match regexp file)
+              (when (string-match-p regexp file)
                 (push (expand-file-name file dir) files))))))
     (nconc result files)))
 
@@ -1508,21 +1506,23 @@ The following commands are available:
       (run-at-time 1 nil (lambda () (kill-buffer buffer)))
     (kill-buffer buffer)))
 
+(comment
+(defun replique/package (dir)
+  (interactive (list (read-directory-name "Replique dir: " nil nil t)))
+  (byte-recompile-directory dir 0 t)
+  (dolist (f (directory-files dir))
+    (when (string-match-p "*.elc" f)
+      (print f))))
+      )
+
+
 (provide 'replique)
 
-;; jump to definition
-;; Epresent
-;; css, js
-;; var explorer: namespaces -> vars
-;; exceptions explorer (fold/unfold?)
 ;; compliment keywords cljs -> missing :require ... ?
 ;; CSS / HTML autocompletion, with core.spec ?
-;; support for no cljs-env
-;; We must print the full exception infos to the tooling channel in order to make an exception explorer
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
-;; cljs-repl interactive command
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
@@ -1536,5 +1536,9 @@ The following commands are available:
 ;; spec autocomplete for macros -> specized macros
 
 ;; priting something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
+
+;; Document the use of cljsjs to use js libs
+;; Push to elpa
+;; acknowledgements -> compliment, cider
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
