@@ -340,6 +340,7 @@
      tooling-repl clj-repl cljs-repl)))
 
 (defun replique/in-ns (ns-name)
+  "Change the active REPL namespace"
   (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
@@ -414,6 +415,7 @@ This allows you to temporarily modify read-only buffers too."
     (if (<= depth 0) t nil)))
 
 (defun replique/comint-send-input ()
+  "Send the pending comint buffer input to the comint process if the pending input is well formed and point is after the prompt"
   (interactive)
   (let* ((buff (current-buffer))
          (proc (get-buffer-process buff)))
@@ -561,13 +563,13 @@ This allows you to temporarily modify read-only buffers too."
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/eval-region (start end)
-  "Eval the currently highlighted region."
+  "Eval the currently highlighted region"
   (interactive "r")
   (let ((input (filter-buffer-substring start end)))
     (replique/send-input-from-source-dispatch input)))
 
 (defun replique/eval-last-sexp ()
-  "Eval the previous sexp."
+  "Eval the previous sexp"
   (interactive)
   (replique/eval-region
    (save-excursion
@@ -575,7 +577,7 @@ This allows you to temporarily modify read-only buffers too."
    (point)))
 
 (defun replique/eval-defn ()
-  "Eval the current defn expression."
+  "Eval the top level sexpr at point"
   (interactive)
   (replique/send-input-from-source-dispatch (thing-at-point 'defun)))
 
@@ -613,6 +615,7 @@ This allows you to temporarily modify read-only buffers too."
    (js-mode . (apply-partially 'replique/load-js file-path))))
 
 (defun replique/browser ()
+  "Open a browser tab on the port the REPL is listening to"
   (interactive)
   (let ((cljs-repl (replique/active-repl :cljs)))
     (when (not cljs-repl)
@@ -620,7 +623,7 @@ This allows you to temporarily modify read-only buffers too."
     (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
 
 (defun replique/switch-active-repl (repl-buff-name)
-  "Switch the currently active REPL"
+  "Switch the currently active REPL session"
   (interactive
    (let* ((active-repl (replique/active-repl :tooling t))
           (directory (replique/get active-repl :directory))
@@ -652,7 +655,7 @@ This allows you to temporarily modify read-only buffers too."
             prev-active-windows)))
 
 (defun replique/switch-active-process (proc-name)
-  "Switch the currently active process"
+  "Switch the currently active JVM process"
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling))
           (directories (mapcar (lambda (repl) (replique/get repl :directory))
@@ -703,6 +706,7 @@ This allows you to temporarily modify read-only buffers too."
     out-chan))
 
 (defun replique/cljs-repl ()
+  "Start a Clojurescript REPL in the currently active Clojure REPL"
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (clj-repl (replique/active-repl :clj)))
@@ -712,6 +716,7 @@ This allows you to temporarily modify read-only buffers too."
      "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
 
 (defun replique/output-main-js-file (output-to &optional main-ns)
+  "Write a main javascript file to disk. The main javascript file acts as an entry point to your application and contains code to connect to the Clojurescript REPL"
   (interactive (list nil))
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (tooling-chan (replique/get tooling-repl :chan)))
@@ -944,7 +949,7 @@ This allows you to temporarily modify read-only buffers too."
     (replique/jump-to-definition* symbol tooling-repl :meta-cljc)))
 
 (defun replique/jump-to-definition (symbol)
-  "Load a file in a replique REPL"
+  "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
   (interactive (list (symbol-name (symbol-at-point))))
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
@@ -954,7 +959,7 @@ This allows you to temporarily modify read-only buffers too."
 
 (defconst replique/client-version "0.0.2-SNAPSHOT")
 
-(defcustom replique/version "0.0.2-SNAPSHOT"
+(defcustom replique/version "0.0.1"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
@@ -1292,6 +1297,7 @@ The following commands are available:
     out-chan))
 
 (defun replique/close-process (directory)
+  "Close all the REPL sessions associated with a JVM process"
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
           (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
@@ -1360,6 +1366,7 @@ The following commands are available:
 
 ;;;###autoload
 (defun replique/repl (directory &optional port buffer-name)
+  "Start a REPL session"
   (interactive
    (let ((directory (read-directory-name
                      "Project directory: " (replique/guess-project-root-dir) nil t)))
