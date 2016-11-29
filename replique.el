@@ -1071,12 +1071,12 @@ The following commands are available:
 
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
-(defun replique/lein-command (directory port)
+(defun replique/lein-command (port directory)
   `(,(or replique/lein-script (executable-find replique/default-lein-script))
     "update-in" ":plugins" "conj" 
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
-    "trampoline" "replique" ,(format "%s" port)))
+    "trampoline" "replique" ,(format "%s" port) ,(format "%s" directory)))
 
 (defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
@@ -1090,8 +1090,8 @@ The following commands are available:
 
 (defun replique/send-tooling-msg (tooling-repl msg)
   (let* ((tooling-network-proc (replique/get tooling-repl :network-proc))
-         (directory (replique/get tooling-repl :directory))
-         (msg (replique/assoc msg :directory directory)))
+         (process-id (replique/get tooling-repl :directory))
+         (msg (replique/assoc msg :process-id process-id)))
     (process-send-string
      tooling-network-proc
      (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
@@ -1241,7 +1241,7 @@ The following commands are available:
 (defun replique/make-tooling-repl (host port directory)
   (let* ((out-chan (replique-async/chan))
          (default-directory directory)
-         (repl-cmd (replique/lein-command directory port))
+         (repl-cmd (replique/lein-command port directory))
          ;; proc-buff is not tied to the proc lifecycle because we want to be able to read
          ;; proc output even after the process ended
          (proc-buff (generate-new-buffer (format " *%s*" directory)))
@@ -1317,7 +1317,7 @@ The following commands are available:
     (run-hooks 'comint-exec-hook)
     buffer))
 
-(defun replique/make-repl (buffer-name directory host port repl-type)
+(defun replique/make-repl (buffer-name directory host port)
   (let* ((buff (generate-new-buffer buffer-name))
          (proc (open-network-stream buffer-name buff host port))
          (chan-src (replique/process-filter-chan proc))
@@ -1340,24 +1340,16 @@ The following commands are available:
            (let ((repl (replique/hash-map :directory directory
                                           :host host
                                           :port port
-                                          :repl-type repl-type
+                                          :repl-type :clj
                                           :session session
                                           :ns 'user
                                           :buffer buff)))
              (push repl replique/repls)
-             (when (equal repl-type :cljs)
-               ;; Second parameter is nil because the function does not use the
-               ;; tooling repl anyway
-               (replique/send-input-from-source-clj
-                "(replique.interactive/cljs-repl)" nil repl))
              (display-buffer buff))))))))
 
-(defun replique/clj-buff-name (directory repl-type)
-  (let ((repl-type-string (replique/keyword-to-string repl-type)))
-    (generate-new-buffer-name
-     (format "*replique*%s*%s*"
-             (file-name-nondirectory (directory-file-name directory))
-             repl-type-string))))
+(defun replique/clj-buff-name (directory)
+  (generate-new-buffer-name
+   (format "*replique*%s*clj*" (file-name-nondirectory (directory-file-name directory)))))
 
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (expand-file-name directory)))
@@ -1392,9 +1384,9 @@ The following commands are available:
        (lambda (tooling-repl)
          (let ((directory (replique/get tooling-repl :directory))
                (port (replique/get tooling-repl :port))
-               (buffer-name (or buffer-name (replique/clj-buff-name directory :clj))))
+               (buffer-name (or buffer-name (replique/clj-buff-name directory))))
            (condition-case err
-               (replique/make-repl buffer-name directory host port :clj)
+               (replique/make-repl buffer-name directory host port)
              (error
               (replique/maybe-close-tooling-repl host port)
               ;; rethrow the error
@@ -1436,7 +1428,7 @@ The following commands are available:
           ((equal :eval (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :directory)))
+                         :directory (replique/get msg :process-id)))
                   (buffer (replique/get repl :buffer)))
              (when repl
                (replique/on-repl-type-change repl (replique/get msg :repl-type))
