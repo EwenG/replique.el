@@ -959,7 +959,7 @@ This allows you to temporarily modify read-only buffers too."
 
 (defconst replique/client-version "0.0.2-SNAPSHOT")
 
-(defcustom replique/version "0.0.1"
+(defcustom replique/version "0.0.2-SNAPSHOT"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
