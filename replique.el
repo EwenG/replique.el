@@ -1518,7 +1518,4 @@ The following commands are available:
 ;; Push to elpa
 ;; acknowledgements -> compliment, cider
 
-;; replique/package
-;; process-out -> System.out
-
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
