@@ -1492,16 +1492,6 @@ The following commands are available:
       (run-at-time 1 nil (lambda () (kill-buffer buffer)))
     (kill-buffer buffer)))
 
-(comment
-(defun replique/package (dir)
-  (interactive (list (read-directory-name "Replique dir: " nil nil t)))
-  (byte-recompile-directory dir 0 t)
-  (dolist (f (directory-files dir))
-    (when (string-match-p "*.elc" f)
-      (print f))))
-      )
-
-
 (provide 'replique)
 
 ;; compliment keywords cljs -> missing :require ... ?
