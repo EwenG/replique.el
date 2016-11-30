@@ -1171,24 +1171,19 @@ The following commands are available:
          "Error while starting the REPL. No lein script found in exec-path")
         (t nil)))
 
-(defun replique/skip-repl-starting-output* (proc-chan filtered-chan &optional filtered?)
-  (replique-async/<!
-   proc-chan (lambda (msg)
-               ;; REPL has already been started
-               (cond (filtered?
-                      (replique-async/put! filtered-chan msg)
-                      (replique/skip-repl-starting-output* proc-chan filtered-chan t))
-                     ;; Check if the REPL is starting, or, otherwise, if the process is still
-                     ;; printing init messages
-                     ((string-match-p (regexp-quote "Starting Clojure REPL...\n") msg)
-                      (let ((splitted-msg (split-string msg "Starting Clojure REPL...\n")))
-                        (message "%s" (car splitted-msg))
-                        (replique-async/put! filtered-chan (cadr splitted-msg))
-                        (replique/skip-repl-starting-output* proc-chan filtered-chan t)))
-                     ;; Print all the init messages
-                     (t
-                      (message "%s" msg)
-                      (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
+(defun replique/skip-repl-starting-output* (proc-chan filtered-chan)
+  (let ((started-regexp (format "Replique version %s listening on port \\([0-9]+\\)\n"
+                                replique/version)))
+    (replique-async/<!
+     proc-chan (lambda (msg)
+                 ;; REPL is started
+                 (if (string-match started-regexp msg)
+                     (thread-last (match-string 1 msg)
+                       string-to-number
+                       (replique-async/put! filtered-chan))                   
+                   ;; REPL is still starting. Print all the init messages
+                   (message "%s" msg)
+                   (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
 
 (defun replique/skip-repl-starting-output (proc-chan)
   (let ((filtered-chan (replique-async/chan)))
@@ -1242,56 +1237,55 @@ The following commands are available:
   (let* ((out-chan (replique-async/chan))
          (default-directory directory)
          (repl-cmd (replique/lein-command port directory))
-         ;; proc-buff is not tied to the proc lifecycle because we want to be able to read
-         ;; proc output even after the process ended
-         (proc-buff (generate-new-buffer (format " *%s*" directory)))
          (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc)))
-         (chan (replique/read-chan
-                proc-chan proc proc-buff
-                (lambda (proc-out-s)
-                  (error "Error while starting the REPL: %s" proc-out-s)))))
-    (set-process-sentinel proc (lambda (proc string) (replique/kill-process-buffer proc-buff)))
+         (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc))))
     (replique-async/<!
-     chan (lambda (repl-infos)
-            (replique/kill-process-buffer proc-buff)
-            ;; Print messages from unbound threads
-            (set-process-filter proc (lambda (proc string)
-                                       (message "Process %s: %s" (process-name proc) string)))
-            (if (replique/get repl-infos :error)
-                (message "Error while starting the REPL: %s"
-                         (replique-edn/pr-str (replique/get repl-infos :error)))
-              (let* ((port (replique/get repl-infos :port))
-                     (cljs-compile-path (replique/get repl-infos :cljs-compile-path))
-                     (network-proc-buff (generate-new-buffer (format " *%s*" directory)))
-                     (network-proc (open-network-stream directory nil host port))
-                     (tooling-chan (replique/process-filter-chan network-proc)))
-                (set-process-sentinel
-                 network-proc
-                 (apply-partially
-                  'replique/on-tooling-repl-close network-proc-buff host port))
-                ;; The REPL accept fn will read a char in order to check whether the request
-                ;; is an HTTP one or not
-                (process-send-string network-proc "R")
-                ;; No need to wait for the return value of shared-tooling-repl
-                ;; since it does not print anything
-                (process-send-string
-                 network-proc "(replique.repl/shared-tooling-repl)\n")
-                (let* ((tooling-chan (thread-first tooling-chan
-                                       (replique/read-chan network-proc network-proc-buff)
-                                       replique/dispatch-tooling-msg))
-                       (tooling-repl (replique/hash-map
-                                      :directory directory
-                                      :repl-type :tooling
-                                      :proc proc
-                                      :network-proc network-proc
-                                      :host host
-                                      :port port
-                                      :chan tooling-chan)))
-                  (push tooling-repl replique/repls)
-                  (replique-async/put! out-chan tooling-repl)
-                  (when (>= replique/main-js-files-max-depth 0)
-                    (replique/refresh-main-js-files directory port cljs-compile-path)))))))
+     proc-chan
+     (lambda (port)
+       ;; Print process messages
+       (set-process-filter proc (lambda (proc string)
+                                  (message "Process %s: %s" (process-name proc) string)))
+       (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+              (network-proc (open-network-stream directory nil host port))
+              (tooling-chan (replique/process-filter-chan network-proc))
+              (timeout (run-at-time 2 nil (lambda ()
+                                            (replique-async/put! tooling-chan :timeout)))))
+         (set-process-sentinel
+          network-proc
+          (apply-partially
+           'replique/on-tooling-repl-close network-proc-buff host port))
+         ;; The REPL accept fn will read a char in order to check whether the request
+         ;; is an HTTP one or not
+         (process-send-string network-proc "R")
+         ;; No need to wait for the return value of shared-tooling-repl
+         ;; since it does not print anything
+         (process-send-string
+          network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
+         (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+         (replique-async/<!
+          tooling-chan
+          (lambda (cljs-compile-path)
+            (cancel-timer timeout)
+            (if (equal :timeout cljs-compile-path)
+                (progn
+                  (message "Error while starting the REPL. The port number may already be used by another process")
+                  (when (process-live-p proc)
+                    (interrupt-process proc)))
+              (let* ((tooling-chan (thread-first tooling-chan
+                                     (replique/read-chan network-proc network-proc-buff)
+                                     replique/dispatch-tooling-msg))
+                     (tooling-repl (replique/hash-map
+                                    :directory directory
+                                    :repl-type :tooling
+                                    :proc proc
+                                    :network-proc network-proc
+                                    :host host
+                                    :port port
+                                    :chan tooling-chan)))
+                (push tooling-repl replique/repls)
+                (replique-async/put! out-chan tooling-repl)
+                (when (>= replique/main-js-files-max-depth 0)
+                  (replique/refresh-main-js-files directory port cljs-compile-path)))))))))
     out-chan))
 
 (defun replique/close-process (directory)
@@ -1515,6 +1509,7 @@ The following commands are available:
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
+;; Link a ref to a buffer
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
@@ -1532,5 +1527,8 @@ The following commands are available:
 ;; Document the use of cljsjs to use js libs
 ;; Push to elpa
 ;; acknowledgements -> compliment, cider
+
+;; replique/package
+;; process-out -> System.out
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
