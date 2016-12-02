@@ -755,7 +755,7 @@ This allows you to temporarily modify read-only buffers too."
                             (progn
                               (message "%s" (replique-edn/pr-str err))
                               (message "output-main-js-file failed"))
-                          (message "Main Clojurescript file written to: %s" output-to)
+                          (message "Main javascript file written to: %s" output-to)
                           ))))))))))))))
 
 (defun replique/uri-compare (url1 url2)
