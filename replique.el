@@ -1482,6 +1482,7 @@ The following commands are available:
   (let ((chan-out (replique-async/chan)))
     (with-current-buffer buffer
       (setq-local replique/parser-state nil))
+    (buffer-disable-undo buffer)
     (replique/read-chan* chan-in chan-out proc buffer error-handler)
     chan-out))
 
@@ -1499,7 +1500,6 @@ The following commands are available:
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
-;; Link a ref to a buffer
 
 ;; compliment invalidate memoized on classpath update
 ;; Use a lein task to compute the new classpath and send it to the clojure process.
