@@ -1,8 +1,6 @@
 # Replique
 
-An emacs mode for [Replique](https://github.com/EwenG/replique).
-
-Replique is a development environment for Clojure and Clojurescript implemented as a leiningen plugin.
+An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a development environment for Clojure and Clojurescript implemented as a leiningen plugin.
 
 ## Installation
 
@@ -43,7 +41,7 @@ Or
 	  (lambda ()
 	    (company-mode 1)))
 ```
-       
+
 ```elisp
 (add-hook 'replique/mode-hook
 	  (lambda ()
@@ -85,7 +83,7 @@ Replique tries, as much as possible, to keep features parity between Clojure and
 
 `M-x replique/repl`
 
-Replique will prompt you for a project directory and a port number. The project directory must contain a leiningen *project.clj* file. Replique will start a socket REPL using the provided port number. Use `0` to start the REPL on a random port number.
+Replique will prompt you for a project directory and a port number. The project directory must contain a leiningen `project.clj` file. Replique will start a socket REPL using the provided port number. Use `0` to start the REPL on a random port number.
 
 Use `C-x C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
@@ -125,21 +123,37 @@ Multiple JVM processes can be started simultaneously for different projects by u
 
 Use `replique/close-process` to close all the REPL sessions associated with a JVM process at the same time.
 
-## Clojurescript and cljc support
+## Clojurescript support
 
 Replique supports autocompletion, [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation, and jump to definition for Clojurescript with the limitation that autocompletion does not work for interop calls.
 
-Clojurescript code can be evaluated in the browser, optionally in the context of a web application. Others javascript environments are not currently supported.
-
-Loading a cljs file is done by compiling it to disk and then loading it in the Clojurescript environment. By default, Replique compiles Clojurescript files in the *target/cljs* folder. The compilation output folder can be customized using the *project.clj* file:
+Loading a cljs file is done by compiling it to disk and then loading it in the Clojurescript environment. By default, Replique compiles Clojurescript files in the `target/cljs` folder. The compilation output folder can be customized using the `project.clj` file:
 
 `{:replique {:cljs-compile-path "%s/cljs"}}`
 
-Including *%s* will splice the *:target-path* into this value.
+Including `%s` will splice the `:target-path` into this value.
+
+Clojurescript can only be evaluated in the browser. Others javascript environments are not currently supported.
+
+There are two kinds of workflows when using a browser REPL. The first one is when you want to evaluate Clojurescript code but don't want to bother with the setup of an HTTP server. The second one is when you already use an HTTP server and want to transparently use a Clojurescript REPL to develop a web application. The two worflows are covered below.
+
+### Clojurescript browser REPL
+
+Replique listens on the REPL port for a connection from a javascript runtime. Replique currently only supports connections from web browsers. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`.
+
+### Using the REPL to build a web application
+
+When developing a web application, the flow is slightly different than the one described above. See [replique-pedestal](https://github.com/EwenG/replique-pedestal) for a detailed example of using replique with a pedestal web application.
+
+The first thing you will need to do is to emit a javascript file that will be the entry point of your application. This file is the one you must include in your HTML markup. The command `M-x replique/output-main-js-file` emits such a file. This javascript file also contains code to connect to the cljs REPL. This allows connecting to a cljs REPL in the context of a web application. The web application needs not be aware of the cljs REPL and your HTML markup needs not be different between development and production builds. This is equivalent to using the [`:main` option](https://github.com/clojure/clojurescript/wiki/Compiler-Options#main) of the cljs compiler.
+
+`M-x replique/output-main-js-file` prompts for the output path of the main js file. If a cljs REPL is started, `M-x replique/output-main-js-file` also prompts for a cljs namespace. This namespace is the the entry point of your application.
+
+Nothing prevents you from using multiple main js files. Outputting multiple main js files is particularly useful when using [Google closure modules](https://github.com/clojure/clojurescript/wiki/Compiler-Options#modules), to keep HTML markup identical between dev and production.
 
 ### Cljc support
 
-Loading *.cljc* files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load *.cljc* files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates (and other tooling features) for *.cljc* files are computed using the Clojure runtime, unless the cursor is in a *#?cljs* reader conditional, in which case it will be computed using the Clojurescript runtime.
+Loading `.cljc` files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load `.cljc` files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates (and other tooling features) for `.cljc` files are computed using the Clojure runtime, unless the cursor is in a `#?cljs` reader conditional, in which case it will be computed using the Clojurescript runtime.
 
 ### Clojurescript compiler configuration
 
@@ -150,19 +164,11 @@ The Clojurescript compiler is preconfigured for development builds (optimization
 
 Replique only manages development builds. For production builds, I would recommend using a custom script, a lein plugin (such as [lein-cljsbuild](https://github.com/emezeske/lein-cljsbuild)) or any other existing solution.
 
-### Clojurescript browser REPL
+### Other considerations when using the browser REPL
 
-Replique listens on the REPL port for a connection from a javascript runtime. Replique currently only supports connections from web browsers. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`
+The main javascript files emitted using the `replique/output-main-js-file` command internally uses the port number of the Replique REPL. If the port number changes across REPL session, the main javascript files must be updated accordingly. Fortunately, Replique handles this for you and updates all main javascript files found in the project directory on REPL startup.
 
-### Using the REPL in a web application context
-
-`M-x replique/output-main-js-file` can be used to emit a javascript file acting as an entry point for your application. This javascript file also contains code to connect to the cljs REPL. This allows connecting to a cljs REPL in the context of a web application. The web application need not be aware of the cljs REPL and your HTML markup need not be different between development and production builds. This is equivalent to using the [*:main* option](https://github.com/clojure/clojurescript/wiki/Compiler-Options#main) of the cljs compiler.
-
-`M-x replique/output-main-js-file` prompts for the output path of the main js file. If a cljs REPL is started, `M-x replique/output-main-js-file` also prompts for a cljs namespace. This namespace is the the entry point of your application.
-
-On startup, Replique will update all main js files found in the project directory with the (possibly new) REPL port number. This avoids the need to update main js files manually between REPL sessions when starting Replique with different port numbers.
-
-Nothing prevents you from using multiple main js files. Outputting multiple main js files is particularly useful when using [Google closure modules](https://github.com/clojure/clojurescript/wiki/Compiler-Options#modules), to keep HTML markup identical between dev and production.
+Replique internally serves javascript files on a different domain than your web server, using cross domain requests. As a consequence, your web server must allow cross domain requests to be performed during development. In particular, the [content security policy](https://www.owasp.org/index.php/OWASP_Secure_Headers_Project#Content-Security-Policy) HTTP headers must not be set to forbid these. Of course, this does not affects production environments.
 
 ## Javascript files reloading
 
