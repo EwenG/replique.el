@@ -286,6 +286,10 @@ Function/macro                   | Description
 ---------------------------------|----------------------------------
                                  |
 
+## Acknowledgments
+
+Replique.el takes inspiration from and uses parts of [cider](https://github.com/clojure-emacs/cider). I would like to thank cider authors/contributors.
+
 # License
 
 Copyright 2016 Ewen Grosjean.
