@@ -41,7 +41,7 @@ Or
 	  (lambda ()
 	    (company-mode 1)))
 ```
-
+       
 ```elisp
 (add-hook 'replique/mode-hook
 	  (lambda ()
@@ -163,6 +163,10 @@ The Clojurescript compiler is preconfigured for development builds (optimization
 - To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings}* compiler options, **from a clj REPL**: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
 
 Replique only manages development builds. For production builds, I would recommend using a custom script, a lein plugin (such as [lein-cljsbuild](https://github.com/emezeske/lein-cljsbuild)) or any other existing solution.
+
+### Using external javascript libraries
+
+Replique does not expose the Clojurescript compiler options related to using javascript libraries ([:foreign-libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#foreign-libs) and [:libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#libs)). The recommended way to deal with external libraries when using Replique is to use [cljsjs](https://github.com/clojure/clojurescript/wiki/Dependencies#cljsjs).
 
 ### Other considerations when using the browser REPL
 
