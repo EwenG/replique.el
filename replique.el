@@ -58,6 +58,15 @@
                (ans (read-string prompt)))
           (if (zerop (length ans)) default ans))))
 
+;; completing-read uses an alphabetical order by default. This function can be used too keep
+;; the order of the candidates
+(defun replique/presorted-completion-table (completions)
+  (lambda (string pred action)
+    (if (eq action 'metadata)
+        `(metadata (display-sort-function . ,'identity))
+      (complete-with-action action completions string pred))
+    completions))
+
 (defvar replique/repls nil)
 
 (defun replique/pp-repls ()
@@ -488,6 +497,21 @@ This allows you to temporarily modify read-only buffers too."
                      ((equal 'js-mode m)
                       `((equal 'js-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'sass-mode m)
+                      `((equal 'sass-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'scss-mode m)
+                      `((equal 'scss-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'less-css-mode m)
+                      `((equal 'less-css-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal 'stylus-mode m)
+                      `((equal 'stylus-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
+                     ((equal '-mode m)
+                      `((equal 'less-mode major-mode)
+                        (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'replique/mode m)
                       `((equal 'replique/mode major-mode)
                         (funcall ,f (replique/repl-by :buffer (current-buffer)))))
@@ -612,7 +636,11 @@ This allows you to temporarily modify read-only buffers too."
    (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
    (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))
    (css-mode . (apply-partially 'replique/load-css file-path))
-   (js-mode . (apply-partially 'replique/load-js file-path))))
+   (js-mode . (apply-partially 'replique/load-js file-path))
+   (stylus-mode . (apply-partially 'replique/load-stylus file-path))
+   (scss-mode . (apply-partially 'replique/load-scss file-path))
+   (sass-mode . (apply-partially 'replique/load-sass file-path))
+   (less-css-mode . (apply-partially 'replique/load-less file-path))))
 
 (defun replique/browser ()
   "Open a browser tab on the port the REPL is listening to"
@@ -758,38 +786,6 @@ This allows you to temporarily modify read-only buffers too."
                           (message "Main javascript file written to: %s" output-to)
                           ))))))))))))))
 
-(defun replique/uri-compare (url1 url2)
-  (let* ((path1 (url-filename (url-generic-parse-url url1)))
-         (path2 (url-filename (url-generic-parse-url url2)))
-         (uri1 (cdr (split-string path1 "/")))
-         (uri2 (cdr (split-string path2 "/")))
-         (l1 (length uri1))
-         (l2 (length uri2))
-         (uri1 (seq-subseq uri1 (- l1 (min l1 l2)) l1))
-         (uri2 (seq-subseq uri2 (- l2 (min l1 l2)) l2))
-         (uri1 (apply 'concat uri1))
-         (uri2 (apply 'concat uri2))
-         (res (compare-strings uri1 0 (length uri1) uri2 0 (length uri2))))
-    (if (equal t res)
-        0 res)))
-
-(defun replique/uri-sort-fn (reference uri1 uri2)
-  (let ((diff1 (replique/uri-compare reference uri1))
-        (diff2 (replique/uri-compare reference uri2)))
-    (cond ((equal uri1 "*new-data-uri*") nil)
-          ((equal uri2 "*new-data-uri*") t)
-          ((equal diff1 0) t)
-          ((equal diff2 0) nil)
-          ((>= (abs diff1) (abs diff2)) t)
-          (t nil))))
-
-(defun replique/css-candidates (css-infos)
-  (cond ((string= "data" (replique/get css-infos :scheme))
-         `(,(concat "data-uri:" (replique/get css-infos :file-path)) . ,css-infos))
-        ((string= "http" (replique/get css-infos :scheme))
-         `(,(replique/get css-infos :uri) . ,css-infos))
-        (t nil)))
-
 (defun replique/list-css (tooling-repl)
   (let ((tooling-chan (replique/get tooling-repl :chan))
         (out-chan (replique-async/chan)))
@@ -809,6 +805,21 @@ This allows you to temporarily modify read-only buffers too."
              (replique-async/put! out-chan resp))))))
     out-chan))
 
+(defun replique/asset-url-matches? (file-name url)
+  (let ((url-filename (file-name-nondirectory (url-filename (url-generic-parse-url url)))))
+    (equal file-name url-filename)))
+
+(defvar replique/css-prefered-files (replique/hash-map))
+
+;; Choose a css url either by looking into replique/css-prefered-files (if the user already
+;; has chosen one before) or by prompting the user
+(defun replique/select-css-url (file-path css-urls)
+  (or (replique/get replique/css-prefered-files file-path)
+      (let ((selected-url (completing-read "Select the css file to reload: " css-urls nil t)))
+        (setq replique/css-prefered-files (replique/assoc replique/css-prefered-files
+                                                          file-path selected-url))
+        selected-url)))
+
 (defun replique/load-css (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
@@ -817,41 +828,33 @@ This allows you to temporarily modify read-only buffers too."
      (replique/list-css tooling-repl)
      (lambda (resp)
        (when resp
-         (let* ((css-infos (replique/get resp :css-infos))
-                (f-data-scheme-p (lambda (i)
-                                   (and (equal "data" (replique/get i :scheme))
-                                        (equal file-path (replique/get i :file-path)))))
-                (f-as-data-scheme? (seq-find f-data-scheme-p css-infos))
-                (candidates (seq-filter (lambda (x) (not (null x)))
-                                        (mapcar 'replique/css-candidates css-infos)))
-                (candidates (if f-as-data-scheme?
-                                candidates
-                              (cons `("*new-data-uri*" .
-                                      ,(replique/hash-map :scheme "data" :uri file-path))
-                                    candidates)))
-                (completing-read-candidates (thread-last candidates
-                                              (mapcar 'car)
-                                              (seq-sort (apply-partially
-                                                         'replique/uri-sort-fn file-path))))
-                (selected (completing-read "Reload css file: "
-                                               completing-read-candidates nil t))
-                (selected (cdr (assoc selected candidates))))
-           (replique/send-tooling-msg
-            tooling-repl
-            (replique/hash-map :type :load-css
-                               :file-path file-path
-                               :uri (replique/get selected :uri)
-                               :scheme (replique/get selected :scheme)))
-           (replique-async/<!
-            tooling-chan
-            (lambda (resp)
-              (when resp
-                (let ((err (replique/get resp :error)))
-                  (if err
-                      (progn
-                        (message "%s" (replique-edn/pr-str err))
-                        (message "load-css %s: failed" file-path))
-                    (message "load-css %s: done" file-path))))))))))))
+         (let* ((css-urls (replique/get resp :css-urls))
+                (css-urls (seq-filter (apply-partially 'replique/asset-url-matches?
+                                                       (file-name-nondirectory file-path))
+                                      css-urls))
+                (selected-url (cond ((equal 0 (length css-urls))
+                                     ;; No stylesheet matches, do nothing
+                                     nil)
+                                    ((equal 1 (length css-urls))
+                                     ;; Reload the stylesheet that matches
+                                     (car css-urls))
+                                    (t (replique/select-css-url file-path css-urls)))))
+           (if (null selected-url)
+               (message "Could not find a css file to reload")
+             (replique/send-tooling-msg
+              tooling-repl
+              (replique/hash-map :type :load-css
+                                 :url selected-url))
+             (replique-async/<!
+              tooling-chan
+              (lambda (resp)
+                (when resp
+                  (let ((err (replique/get resp :error)))
+                    (if err
+                        (progn
+                          (message "%s" (replique-edn/pr-str err))
+                          (message "load-css %s: failed" file-path))
+                      (message "load-css %s: done" file-path)))))))))))))
 
 (defun replique/load-js (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
@@ -870,6 +873,141 @@ This allows you to temporarily modify read-only buffers too."
                  (message "%s" (replique-edn/pr-str err))
                  (message "load-js %s: failed" file-path))
              (message "load-js %s: done" file-path))))))))
+
+;; {directory {css-preprocessor-type {:output-files {output-file main-source-file}
+;;                                   {:last-selected-output-file output-file}}}}
+;; When the user triggers a compilation, he is prompted for an output css file. The
+;; compilation is performed using the main source file.
+(defvar replique/css-preprocessors-output-files (replique/hash-map))
+
+;; Move x to the first position in coll
+(defun replique/move-to-front (coll x)
+  (when (and coll (seq-contains coll x))
+    (thread-last coll
+      (seq-remove (lambda (y) (equal x y)))
+      (cons x))))
+
+(defcustom replique/stylus-executable "stylus"
+  "Stylus executable path"
+  :type 'string
+  :group 'replique)
+
+(defun replique/stylus-args-builder-default (input output)
+  (list "-m" "--sourcemap-inline" "--out" output input))
+
+(defvar replique/stylus-args-builder 'replique/stylus-args-builder-default
+  "Function that returns the command to use when compiling stylus files")
+
+(defcustom replique/sass-executable "sass"
+  "Sass executable path"
+  :type 'string
+  :group 'replique)
+
+(defun replique/sass-args-builder-default (input output)
+  (list "--sourcemap=inline" input output))
+
+(defvar replique/sass-args-builder 'replique/sass-args-builder-default
+  "Function that returns the command to use when compiling sass files")
+
+(defcustom replique/scss-executable "scss"
+  "Scss executable path"
+  :type 'string
+  :group 'replique)
+
+(defun replique/scss-args-builder-default (input output)
+  (list "--sourcemap=inline" input output))
+
+(defvar replique/scss-args-builder 'replique/scss-args-builder-default
+  "Function that returns the command to use when compiling scss files")
+
+(defcustom replique/less-executable "lessc"
+  "Scss executable path"
+  :type 'string
+  :group 'replique)
+
+(defun replique/less-args-builder-default (input output)
+  (list "--source-map" "--source-map-less-inline" input output))
+
+(defvar replique/less-args-builder 'replique/less-args-builder-default
+  "Function that returns the command to use when compiling less files")
+
+(defun replique/load-css-preprocessor
+    (type executable args-builder file-path tooling-repl cljs-repl)
+  (when (not cljs-repl)
+    (user-error "No active Clojurescript REPL"))
+  (let* ((tooling-chan (replique/get tooling-repl :chan))
+         (directory (replique/get tooling-repl :directory))
+         (output-files (replique/get-in replique/css-preprocessors-output-files
+                                        `[,directory ,type :output-files]))
+         (output-files (replique/keys output-files))
+         (last-selected-output-file (replique/get-in
+                                     replique/css-preprocessors-output-files
+                                     `[,directory ,type :last-selected-output-file]))
+         (output-files (replique/move-to-front output-files last-selected-output-file))
+         ;; We don't want ivy to sort candidates by alphabetical order
+         (ivy-sort-functions-alist nil)
+         (output (if output-files
+                     (completing-read "Compile to file: "
+                                      ;; All candidates are lists in order for completing-read
+                                      ;; to keep the order of the candidates
+                                      (replique/presorted-completion-table
+                                       (append output-files '("*new-file*")))
+                                      nil t)
+                   "*new-file*"))
+         (is-new-file (equal output "*new-file*"))
+         (output (if is-new-file
+                     (read-file-name "Compile to file: "
+                                     (replique/get tooling-repl :directory)
+                                     nil t)
+                   output))
+         (main-source-file (if is-new-file
+                               file-path
+                             (replique/get-in replique/css-preprocessors-output-files
+                                              `[,directory ,type :output-files ,output])))
+         (output (file-truename output))
+         (command-result 0))
+    (when (file-directory-p output)
+      (user-error "%s is a directory" output))
+    (when (or (not is-new-file)
+              (not (file-exists-p output))
+              (yes-or-no-p (format "Override %s?" output)))
+      (with-temp-buffer
+        (setq command-result (apply 'call-process executable nil t nil
+                                    (funcall args-builder main-source-file output)))
+        (when (not (equal 0 command-result))
+          (ansi-color-apply-on-region (point-min) (point-max))
+          (message (buffer-substring (point-min) (point-max)))))
+      (when (equal 0 command-result)
+        (setq replique/css-preprocessors-output-files
+              (replique/update-in
+               replique/css-preprocessors-output-files
+               `[,directory ,type]
+               (lambda (x)
+                 (thread-first x
+                   (replique/assoc :last-selected-output-file output)
+                   (replique/assoc-in `[:output-files ,output] main-source-file)))))
+        (replique/load-css output tooling-repl cljs-repl)))))
+
+(defun replique/load-stylus (file-path tooling-repl cljs-repl)
+  (replique/load-css-preprocessor :stylus replique/stylus-executable
+                                  replique/stylus-args-builder
+                                  file-path tooling-repl cljs-repl))
+
+
+(defun replique/load-scss (file-path tooling-repl cljs-repl)
+  (replique/load-css-preprocessor :scss replique/scss-executable
+                                  replique/scss-args-builder
+                                  file-path tooling-repl cljs-repl))
+
+(defun replique/load-sass (file-path tooling-repl cljs-repl)
+  (replique/load-css-preprocessor :sass replique/sass-executable
+                                  replique/sass-args-builder
+                                  file-path tooling-repl cljs-repl))
+
+(defun replique/load-less (file-path tooling-repl cljs-repl)
+  (replique/load-css-preprocessor :less replique/less-executable
+                                  replique/less-args-builder
+                                  file-path tooling-repl cljs-repl))
 
 (defun replique/eval-form (repl-type form-s)
   (let ((repl (replique/active-repl repl-type)))
@@ -1515,7 +1653,10 @@ The following commands are available:
 ;; priting something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
 
 ;; Document the use of cljsjs to use js libs
-;; Push to elpa
+;; check the package.el protocol
 ;; acknowledgements -> compliment, cider
+;; Customization var for excluded folders when refreshing main js files
+;; completion for strings that match a path
+;; add a watcher on cljs compiler to implement cljs vars watching
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
