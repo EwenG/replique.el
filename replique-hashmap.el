@@ -110,6 +110,9 @@
         (replique/copy-hash-table hash)
       (replique/update-in-helper hash ks f args))))
 
+(defun replique/keys (hash)
+  (when hash (hash-table-keys hash)))
+
 (defconst replique/nothing (make-symbol "nothing"))
 
 (defun replique/contains? (hash key)
