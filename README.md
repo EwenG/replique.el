@@ -4,13 +4,23 @@ An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a d
 
 ## Installation
 
-Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+ with clojure-mode.
+Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+.
 
 ### Emacs mode
 
-Download the latest [replique release](https://github.com/EwenG/replique.el/releases). Extract the zip file in a directory of your choice and add it to your emacs load-path. For example
+Add Replique to your emacs package archives
 
-`(add-to-list 'load-path "~/.emacs.d/replique")`
+```elisp
+(add-to-list 'package-archives '("replique" . "https://raw.githubusercontent.com/EwenG/replique.el/master/packages/") t)
+```
+
+Install Replique
+
+```elisp
+(unless (package-installed-p 'replique)
+    (package-refresh-contents)
+  (package-install 'replique))
+```
 
 Load replique
 
