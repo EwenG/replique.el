@@ -62,6 +62,18 @@ Enable [css files reloading](#css-files-reloading)
 
 `(add-hook 'css-mode-hook 'replique/minor-mode)`
 
+Enable [stylus files reloading](#stylus-files-reloading)
+
+`(add-hook 'stylus-mode-hook 'replique/minor-mode)`
+
+Enable [less files reloading](#less-files-reloading)
+
+`(add-hook 'less-css-mode-hook 'replique/minor-mode)`
+
+Enable [sass or scss files reloading](#sass/scss-files-reloading)
+
+`(add-hook 'sass-mode-hook 'replique/minor-mode)`
+
 Enable [javascript files reloading](#javascript-files-reloading)
 
 `(add-hook 'js-mode-hook 'replique/minor-mode)`
@@ -82,6 +94,7 @@ Enable [code evaluation in org-mode](#using-replique-with-org-mode)
 - Jump to symbol definition
 - [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation
 - CSS files reloading
+- [Stylus](http://stylus-lang.com/), [less](http://lesscss.org/), [sass](http://sass-lang.com/) file reloading
 - Javascript file reloading
 - Org-mode integration
 
@@ -186,7 +199,7 @@ Replique internally serves javascript files on a different domain than your web 
 
 ## Javascript files reloading
 
-Replique support reloading javascript files from the cljs REPL
+Replique supports reloading javascript files from the cljs REPL
 
 ### Emacs setup
 
@@ -196,7 +209,7 @@ From a javascript file: `M-x replique/load-file` or `C-c C-l`
 
 ## CSS files reloading
 
-Replique support reloading css file from the cljs REPL
+Replique supports reloading css file from the cljs REPL
 
 ### Emacs setup
 
@@ -204,7 +217,69 @@ Replique support reloading css file from the cljs REPL
 
 From a css file: `M-x replique/load-file` or `C-c C-l`
 
-Replique will prompt you for a css file to reload among all the css files linked in the current web page. Alternatively a css file can be embedded in the web page directly as a data uri.
+Replique will search in the currently displayed web page for a css file with the same name that the file beeing reloaded. If found, this file is refreshed. If multiple files are found, Replique will prompt you for the right one and remember your choice.
+
+## Stylus files reloading
+
+Replique supports reloading stylus files from the cljs REPL. Stylus must be installed and the `stylus` executable must be in the emacs `exec-path`.
+
+The stylus command can be customized:
+
+`(setq replique/stylus-executable "stylus")`
+
+The arguments used to compile stylus files can be customized with a function taking the input file and output path as parameters. The function returns the list of parameters passed to the stylus command:
+
+`(setq replique/stylus-args-builder 'replique/stylus-args-builder-default)`
+
+### Emacs setup
+
+`(add-hook 'stylus-mode-hook 'replique/minor-mode)`
+
+From a stylus file: `M-x replique/load-file` or `C-c C-l`
+
+## Less files reloading
+
+Replique supports reloading less files from the cljs REPL. Less must be installed and the `lessc` executable must be in the emacs `exec-path`.
+
+The lessc command can be customized:
+
+`(setq replique/less-executable "lessc")`
+
+The arguments used to compile less files can be customized with a function taking the input file and output path as parameters. The function returns the list of parameters passed to the stylus command:
+
+`(setq replique/less-args-builder 'replique/less-args-builder-default)`
+
+### Emacs setup
+
+`(add-hook 'less-css-mode-hook 'replique/minor-mode)`
+
+From a less file: `M-x replique/load-file` or `C-c C-l`
+
+## Sass/scss files reloading
+
+Replique supports reloading sass or scss files from the cljs REPL. Sass must be installed and the `sass` or `scss` executable must be in the emacs `exec-path`.
+
+The sass and scss commands can be customized:
+
+`(setq replique/sass-executable "sass")`
+
+Or
+
+`(setq replique/scss-executable "scss")`
+
+The arguments used to compile sass or scss files can be customized with a function taking the input file and output path as parameters. The function returns the list of parameters passed to the sass or scss command:
+
+`(setq replique/sass-args-builder 'replique/sass-args-builder-default)`
+
+Or
+
+`(setq replique/scss-args-builder 'replique/scss-args-builder-default)`
+
+### Emacs setup
+
+`(add-hook 'sass-mode-hook 'replique/minor-mode)`
+
+From a sass or scss file: `M-x replique/load-file` or `C-c C-l`
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
