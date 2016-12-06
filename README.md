@@ -70,7 +70,7 @@ Enable [less files reloading](#less-files-reloading)
 
 `(add-hook 'less-css-mode-hook 'replique/minor-mode)`
 
-Enable [sass or scss files reloading](#sass/scss-files-reloading)
+Enable [sass or scss files reloading](#sassscss-files-reloading)
 
 `(add-hook 'sass-mode-hook 'replique/minor-mode)`
 
