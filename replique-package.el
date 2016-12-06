@@ -17,13 +17,25 @@
 
 ;; This file is not part of GNU Emacs.
 
-(defun replique/package (dir)
-  (interactive (list (read-directory-name "Replique dir: " nil nil t)))
-  (byte-recompile-directory dir 0 t)
-  (let ((default-directory dir))
-    (shell-command (concat "zip replique.zip *.el *.elc")))
-  (dolist (f (directory-files dir))
-    (when (string-match-p "\.elc$" f)
-      (delete-file f))))
+(require 'package-x)
+
+(defvar local-archive
+  (expand-file-name "packages/" "~/replique.el")
+  "Location of the package archive.")
+(setq package-archive-upload-base local-archive)
+
+(defun make-package (version)
+  (let ((default-directory "~/"))
+    (shell-command (format "cp -R replique.el replique-%s" version))
+    (shell-command (format "COPYFILE_DISABLE=1 tar -cvf replique-%s.tar --exclude=\"replique-%s/.*\" --exclude=\"replique-%s/packages\" replique-%s/" version version version version))
+    (shell-command (format "rm -r ~/replique-%s" version))
+    (package-upload-file (format "~/replique-%s.tar" version))
+    (shell-command (format "rm ~/replique-%s.tar" version))))
+
+(comment
+ (make-package "0.0.2")
+ )
+
+;; package-upload-file
 
 (provide 'replique-package)
