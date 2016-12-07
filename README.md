@@ -2,6 +2,23 @@
 
 An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a development environment for Clojure and Clojurescript implemented as a leiningen plugin.
 
+## Table of contents
+
+- [Installation](#installation)
+- [Optional configuration](#optional-configuration)
+- [Features](#features)
+- [Getting started](#getting-started)
+- [Using multiple REPL sessions](#using-multiple-repl-sessions)
+- [Clojurescript support](#clojurescript-support)
+- [Javascript files reloading](#javascript-files-reloading)
+- [CSS files reloading](#css-files-reloading)
+- [Using a CSS preprocessor](#using-a-css-preprocessor)
+- [Org-mode integration](#using-replique-with-org-mode)
+- [Leiningen configuration](#leiningen-configuration)
+- [Remote REPL](#remote-repl)
+- [Using the standard output](#using-the-standard-output)
+- [Default keymap](#default-keymap)
+
 ## Installation
 
 Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+.
@@ -51,7 +68,7 @@ Or
 	  (lambda ()
 	    (company-mode 1)))
 ```
-       
+
 ```elisp
 (add-hook 'replique/mode-hook
 	  (lambda ()
@@ -138,7 +155,7 @@ Kill the buffer to close the REPL.
 
 See the [default keymap](#default-keymap), the [interactive commands](#interactive-commands) and the [REPL API](#repl-api).
 
-## Using multiple sessions
+## Using multiple REPL sessions
 
 To start multiple REPL sessions in the same JVM process, use `M-x replique/repl` multiple times, using the same directory. Replique will keep at most one Clojure REPL and one Clojurescript REPL active at the same time. Use `M-x replique/switch-active-repl` to change the currently active REPL.
 
@@ -211,7 +228,7 @@ From a javascript file: `M-x replique/load-file` or `C-c C-l`
 
 Replique supports reloading css file from the cljs REPL
 
-### Emacs setup
+#### Emacs setup
 
 `(add-hook 'css-mode-hook 'replique/minor-mode)`
 
@@ -219,7 +236,17 @@ From a css file: `M-x replique/load-file` or `C-c C-l`
 
 Replique will search in the currently displayed web page for a css file with the same name that the file beeing reloaded. If found, this file is refreshed. If multiple files are found, Replique will prompt you for the right one and remember your choice.
 
-## Stylus files reloading
+## Using a CSS preprocessor
+
+### Reloading stylus/less/sass files
+
+Stylus/less/sass files are organized into a files hierarchy. Files reference one another through `import` statements. Replique always recompiles the whole file hierarchy, starting at the root file.
+
+In order for Replique to know which file is the one at the root, the first compilation must be triggered from the root file.
+
+Here are the instructions to setup Replique for the different CSS preprocessors.
+
+### Stylus
 
 Replique supports reloading stylus files from the cljs REPL. Stylus must be installed and the `stylus` executable must be in the emacs `exec-path`.
 
@@ -231,13 +258,11 @@ The arguments used to compile stylus files can be customized with a function tak
 
 `(setq replique/stylus-args-builder 'replique/stylus-args-builder-default)`
 
-### Emacs setup
+Setup emacs to recognize stylus files:
 
 `(add-hook 'stylus-mode-hook 'replique/minor-mode)`
 
-From a stylus file: `M-x replique/load-file` or `C-c C-l`
-
-## Less files reloading
+### Less
 
 Replique supports reloading less files from the cljs REPL. Less must be installed and the `lessc` executable must be in the emacs `exec-path`.
 
@@ -249,13 +274,11 @@ The arguments used to compile less files can be customized with a function takin
 
 `(setq replique/less-args-builder 'replique/less-args-builder-default)`
 
-### Emacs setup
+Setup emacs to recognize less files:
 
 `(add-hook 'less-css-mode-hook 'replique/minor-mode)`
 
-From a less file: `M-x replique/load-file` or `C-c C-l`
-
-## Sass/scss files reloading
+### Sass/scss
 
 Replique supports reloading sass or scss files from the cljs REPL. Sass must be installed and the `sass` or `scss` executable must be in the emacs `exec-path`.
 
@@ -275,11 +298,9 @@ Or
 
 `(setq replique/scss-args-builder 'replique/scss-args-builder-default)`
 
-### Emacs setup
+Setup emacs to recognize sass/scss files:
 
 `(add-hook 'sass-mode-hook 'replique/minor-mode)`
-
-From a sass or scss file: `M-x replique/load-file` or `C-c C-l`
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
@@ -323,7 +344,11 @@ The *:global-vars* leiningen key is supported and the following vars values are 
 
 Replique supports connecting to a remote REPL by nesting a REPL inside another. `(replique.interactive/remote-repl host port)` will start a REPL on the server at *host:port*, assuming the server is running a [socket REPL server](http://clojure.org/reference/repl_and_main#_launching_a_socket_server).
 
-## Uncaught exceptions
+## Using the standard output
+
+All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed to the standard output of the JVM process is displayed in the emacs \*Messages* buffer. Data can be printed to the standard output of the JVM process by binding \*out* to `replique.interactive/process-out`.
+
+### Uncaught exceptions
 
 Replique registers a default exception handler that prints all uncaught exceptions in the emacs \*Messages* buffer. To override the default exception handler:
 
@@ -334,10 +359,6 @@ Replique registers a default exception handler that prints all uncaught exceptio
        ;; Do what you want here
        )))
 ```
-
-## Process standard output
-
-All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed to the standard output of the JVM process is displayed in the emacs \*Messages* buffer. Data can be printed to the standard output of the JVM process by binding \*out* to `replique.interactive/process-out`.
 
 ## Default keymap
 
