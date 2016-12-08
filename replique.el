@@ -789,7 +789,7 @@ This allows you to temporarily modify read-only buffers too."
 ;; by the cljs repl
 ;; Wait a second before connecting to the cljs repl because there is no way to plug into
 ;; the goog.require loading mechanism
-(defun replique/connection-script ()
+(defun replique/cljs-repl-connection-script ()
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (port (replique/get tooling-repl :port))
