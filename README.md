@@ -234,17 +234,15 @@ Replique supports reloading css file from the cljs REPL
 
 From a css file: `M-x replique/load-file` or `C-c C-l`
 
-Replique will search in the currently displayed web page for a css file with the same name that the file beeing reloaded. If found, this file is refreshed. If multiple files are found, Replique will prompt you for the right one and remember your choice.
+Replique will search in the currently loaded web page for a css file with the same name than the file being reloaded. If found, this file is refreshed. If multiple files are found, Replique will prompt you for the right one and remember your choice.
 
 ## Using a CSS preprocessor
 
 ### Reloading stylus/less/sass files
 
-Stylus/less/sass files are organized into a files hierarchy. Files reference one another through `import` statements. Replique always recompiles the whole file hierarchy, starting at the root file.
+Stylus/less/sass files are organized into a files hierarchy. Files reference one another using `import` statements. Replique always recompiles the whole file hierarchy, starting at the root file. The only requirement is that the first compilation must be triggered from the file at the root of the hierarchy.
 
-In order for Replique to know which file is the one at the root, the first compilation must be triggered from the root file.
-
-Here are the instructions to setup Replique for the different CSS preprocessors.
+Here are the instructions to setup Replique for different CSS preprocessors.
 
 ### Stylus
 
