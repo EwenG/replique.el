@@ -785,6 +785,38 @@ This allows you to temporarily modify read-only buffers too."
                           (message "Main javascript file written to: %s" output-to)
                           ))))))))))))))
 
+;; I don't know why goog/deps.js is needed here but is not needed in the init script returned
+;; by the cljs repl
+;; Wait a second before connecting to the cljs repl because there is no way to plug into
+;; the goog.require loading mechanism
+(defun replique/connection-script ()
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (port (replique/get tooling-repl :port))
+         (script (format "(function() {
+  var scripts = [];
+  var makeScript = function() {
+    var script = document.createElement(\"script\");
+    scripts.push(script);
+    return script;
+  }
+  var execScripts = function() {
+    if(scripts.length > 0) {
+      scripts[0].onload = execScripts;
+      document.body.appendChild(scripts.shift());
+    }
+  }
+  makeScript().src = \"http://localhost:%s/goog/base.js\";
+  makeScript().src = \"http://localhost:%s/goog/deps.js\";
+  makeScript().src = \"http://localhost:%s/cljs_deps.js\";
+  makeScript().src = \"http://localhost:%s/replique/cljs_env/bootstrap.js\";
+  makeScript().textContent = \"goog.require(\\\"replique.cljs_env.repl\\\"); goog.require(\\\"replique.cljs_env.browser\\\");\";
+  execScripts();
+  setTimeout(function(){replique.cljs_env.repl.connect(\"http://localhost:%s\");}, 1000);
+})();" port port port port port)))
+    (kill-new script)
+    (message script)))
+
 (defun replique/list-css (tooling-repl)
   (let ((tooling-chan (replique/get tooling-repl :chan))
         (out-chan (replique-async/chan)))
@@ -1659,5 +1691,7 @@ The following commands are available:
 ;; Customization var for excluded folders when refreshing main js files
 ;; completion for strings that match a path
 ;; add a watcher on cljs compiler to implement cljs vars watching
+
+;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
