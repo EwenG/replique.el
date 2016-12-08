@@ -1408,7 +1408,9 @@ The following commands are available:
                   (message "Error while starting the REPL. The port number may already be used by another process")
                   (when (process-live-p proc)
                     (interrupt-process proc)))
-              (let* ((tooling-chan (thread-first tooling-chan
+              (let* (;; cljs compile path do not come from a read chan
+                     (cljs-compile-path (read cljs-compile-path))
+                     (tooling-chan (thread-first tooling-chan
                                      (replique/read-chan network-proc network-proc-buff)
                                      replique/dispatch-tooling-msg))
                      (tooling-repl (replique/hash-map
