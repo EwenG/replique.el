@@ -1240,12 +1240,14 @@ The following commands are available:
 
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
 
-(defun replique/lein-command (port directory)
+(defun replique/lein-command (host port directory)
   `(,(or replique/lein-script (executable-find replique/default-lein-script))
     "update-in" ":plugins" "conj" 
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
-    "trampoline" "replique" ,(format "%s" port) ,(format "%s" directory)))
+    "trampoline" "replique"
+    ,(format "%s" host) ,(format "%s" port)
+    ,(format "%s" directory)))
 
 (defun replique/process-filter-chan (proc)
   (let ((chan (replique-async/chan)))
@@ -1405,7 +1407,7 @@ The following commands are available:
 (defun replique/make-tooling-repl (host port directory)
   (let* ((out-chan (replique-async/chan))
          (default-directory directory)
-         (repl-cmd (replique/lein-command port directory))
+         (repl-cmd (replique/lein-command host port directory))
          (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
          (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc))))
     (replique-async/<!
