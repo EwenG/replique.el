@@ -1404,6 +1404,9 @@ The following commands are available:
         (buffer-substring-no-properties 1 (point-max))))
     (message "Refreshing main js files ... %s files refreshed" (length main-js-files))))
 
+;; Used to regroup output from the process standard output
+(defvar-local proc-out nil)
+
 (defun replique/make-tooling-repl (host port directory)
   (let* ((out-chan (replique-async/chan))
          (default-directory directory)
@@ -1415,7 +1418,17 @@ The following commands are available:
      (lambda (port)
        ;; Print process messages
        (set-process-filter proc (lambda (proc string)
-                                  (message "Process %s: %s" (process-name proc) string)))
+                                  ;; We avoid to split the standard process output in multiple
+                                  ;; messages (because of buffering)
+                                  (if (null proc-out)
+                                      (thread-last string
+                                        (format "Process %s: %s" (process-name proc))
+                                        (concat proc-out)
+                                        (setq proc-out))
+                                    (setq proc-out (concat proc-out string)))
+                                  (when (not (accept-process-output proc 0 0 t))
+                                    (message "%s" proc-out)
+                                    (setq proc-out nil))))
        (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
               (network-proc (open-network-stream directory nil host port))
               (tooling-chan (replique/process-filter-chan network-proc))
@@ -1685,15 +1698,17 @@ The following commands are available:
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
 
-;; priting something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
+;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
 
 ;; Document the use of cljsjs to use js libs
-;; check the package.el protocol
-;; acknowledgements -> compliment, cider
 ;; Customization var for excluded folders when refreshing main js files
 ;; completion for strings that match a path
 ;; add a watcher on cljs compiler to implement cljs vars watching
 
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
+;; direct linking not supported because of alter-var-root! calls
+;; Messages printed from unbound threads can be splitted because of buffering
+;; Binding to the loopback address prevents connecting from the outise (mobile device ...)
+;; Handle :rename-macros and :renames in environment
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40

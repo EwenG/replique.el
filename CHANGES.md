@@ -1,5 +1,6 @@
 # Version 0.0.3
 
+- Avoid splitting long messages from the standard output because of buffering
 - Exclude the cljs-output-folder when searching for main javascript files
 - implement the replique/cljs-repl-connection-script command to connect to the cljs-repl
 from any environment, even non clojurescript ones
