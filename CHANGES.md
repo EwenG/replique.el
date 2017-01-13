@@ -1,5 +1,6 @@
 # Version 0.0.3
 
+- Enable jump-to-definition in the comint buffer of the REPL
 - Avoid the split of long messages from the standard output (caused by buffering)
 - Exclude the cljs-output-folder when searching for main javascript files
 - implement the replique/cljs-repl-connection-script command to connect to the cljs-repl

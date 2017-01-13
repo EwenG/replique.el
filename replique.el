@@ -1079,6 +1079,8 @@ This allows you to temporarily modify read-only buffers too."
      (replique/hash-map :type msg-type
                         :ns (clojure-find-ns)
                         :symbol symbol
+                        ;; weither the cursor is in a string
+                        :string? (not (null (nth 3 (syntax-ppss))))
                         :context (replique/form-with-prefix)))
     (replique-async/<!
      tooling-chan
@@ -1102,6 +1104,18 @@ This allows you to temporarily modify read-only buffers too."
                    (when column
                      (move-to-column column))))))))))))
 
+(defun replique/jump-to-definition-session (symbol repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (repl-type (replique/get repl :repl-type))
+         (msg-type (cond ((equal :clj repl-type)
+                          :meta-clj)
+                         ((equal :cljs repl-type)
+                          :meta-cljs)
+                         (t (error "Invalid REPL type: %s" repl-type))))
+         (ns (symbol-name (replique/get repl :ns))))
+    (replique/jump-to-definition* symbol tooling-repl msg-type)))
+
 (defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
@@ -1121,6 +1135,7 @@ This allows you to temporarily modify read-only buffers too."
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
   (interactive (list (symbol-name (symbol-at-point))))
   (replique/with-modes-dispatch
+   (replique/mode . (apply-partially 'replique/jump-to-definition-session symbol))
    (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
    (clojurescript-mode . (apply-partially 'replique/jump-to-definition-cljs symbol))
    (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
@@ -1178,6 +1193,7 @@ disable main js files refreshing."
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
     (define-key map "\C-xr" 'replique/switch-active-repl)
+    (define-key map "\M-." 'replique/jump-to-definition)
     map))
 
 (defun replique/commons ())
@@ -1707,8 +1723,9 @@ The following commands are available:
 
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 ;; direct linking not supported because of alter-var-root! calls
-;; Messages printed from unbound threads can be splitted because of buffering
-;; Binding to the loopback address prevents connecting from the outise (mobile device ...)
-;; Handle :rename-macros and :renames in environment
+;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
+;; Copy the cljs repl fn
+;; cljs repl server hangs on serving assets on a broken connection ?
+;; cljs compiler "define" customization
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
