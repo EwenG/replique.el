@@ -223,7 +223,9 @@
      (replique/hash-map :type msg-type
                         :context (replique/form-with-prefix)
                         :ns ns
-                        :prefix prefix))
+                        :prefix prefix
+                        ;; whether the cursor is in a string
+                        :is-string? (not (null (nth 3 (syntax-ppss))))))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -1079,8 +1081,8 @@ This allows you to temporarily modify read-only buffers too."
      (replique/hash-map :type msg-type
                         :ns (clojure-find-ns)
                         :symbol symbol
-                        ;; weither the cursor is in a string
-                        :string? (not (null (nth 3 (syntax-ppss))))
+                        ;; whether the cursor is in a string
+                        :is-string? (not (null (nth 3 (syntax-ppss))))
                         :context (replique/form-with-prefix)))
     (replique-async/<!
      tooling-chan
@@ -1718,7 +1720,7 @@ The following commands are available:
 
 ;; Document the use of cljsjs to use js libs
 ;; Customization var for excluded folders when refreshing main js files
-;; completion for strings that match a path
+;; completion for strings that match a path and are in a (File.) / (file) form
 ;; add a watcher on cljs compiler to implement cljs vars watching
 
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
@@ -1726,6 +1728,5 @@ The following commands are available:
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; Copy the cljs repl fn
 ;; cljs repl server hangs on serving assets on a broken connection ?
-;; cljs compiler "define" customization
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
