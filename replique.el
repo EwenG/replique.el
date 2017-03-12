@@ -1710,7 +1710,6 @@ The following commands are available:
 
 ;; autocomplete using the spec first, compliment next if no candidates
 
-;; new cljs tagged reader
 ;; defclass is deprecated
 
 ;; spec autocomplete for files -> emacs first line local variables
@@ -1726,7 +1725,9 @@ The following commands are available:
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
-;; Copy the cljs repl fn
 ;; cljs repl server hangs on serving assets on a broken connection ?
+;; Print cljs exceptions like clj ones
+
+;; restore print-namespaced-maps somewhere
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
