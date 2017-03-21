@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.4-SNAPSHOT
+;; Version 0.0.4
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
 
 ;; Commentary:
@@ -1143,9 +1143,9 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
-(defconst replique/client-version "0.0.4-SNAPSHOT")
+(defconst replique/client-version "0.0.4")
 
-(defcustom replique/version "0.0.4-SNAPSHOT"
+(defcustom replique/version "0.0.4"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
@@ -1727,6 +1727,7 @@ The following commands are available:
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
 ;; Print cljs exceptions like clj ones
+;; autocompletion for locals when in the same binding form
 
 ;; restore print-namespaced-maps somewhere
 
