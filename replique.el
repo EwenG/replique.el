@@ -1553,7 +1553,7 @@ The following commands are available:
   (file-name-as-directory (expand-file-name directory)))
 
 ;;;###autoload
-(defun replique/repl (directory &optional port buffer-name)
+(defun replique/repl (directory &optional host port buffer-name)
   "Start a REPL session"
   (interactive
    (let ((directory (read-directory-name
@@ -1562,7 +1562,10 @@ The following commands are available:
      ;; by directory name
      (list (replique/normalize-directory-name directory))))
   (let* ((existing-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (host replique/host)
+         (host (cond (host host)
+                     ((equal 4 (prefix-numeric-value current-prefix-arg))
+                      (read-string "Hostname: "))
+                     (t replique/host)))
          (port (cond
                 (port port)
                 (existing-repl
@@ -1722,7 +1725,6 @@ The following commands are available:
 ;; completion for strings that match a path and are in a (File.) / (file) form
 ;; add a watcher on cljs compiler to implement cljs vars watching
 
-;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
@@ -1730,5 +1732,6 @@ The following commands are available:
 ;; autocompletion for locals when in the same binding form
 
 ;; restore print-namespaced-maps somewhere
+;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
