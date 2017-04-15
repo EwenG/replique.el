@@ -155,6 +155,10 @@ Kill the buffer to close the REPL.
 
 See the [default keymap](#default-keymap), the [interactive commands](#interactive-commands) and the [REPL API](#repl-api).
 
+## REPL hostname
+
+The REPL binds itself to localhost by default. The default host can be changed by customizing the `replique/host` variable. A REPL can be started using a specific host by using the universal prefix argument (`C-u`) when running the `replique/repl` command. 
+
 ## Using multiple REPL sessions
 
 To start multiple REPL sessions in the same JVM process, use `M-x replique/repl` multiple times, using the same directory. Replique will keep at most one Clojure REPL and one Clojurescript REPL active at the same time. Use `M-x replique/switch-active-repl` to change the currently active REPL.
@@ -374,7 +378,7 @@ Keybinding           | Description
 
 Command                          | Description
 ---------------------------------|----------------------------------
-`replique/repl`                  | Start a REPL
+`replique/repl`                  | Start a REPL, use the universal prefix argument (`C-u`) to customize the REPL host
 `replique/cljs-repl`             | Start a cljs REPL in a clj REPL
 `replique/browser`               | Open a browser tab on the REPL port
 `replique/switch-active-repl`    | Change the active REPL session
@@ -386,9 +390,23 @@ Command                          | Description
 
 All REPL functions/macros are in the `replique.interactive` namespace
 
-Function/macro                   | Description
+Functions                        | Description
 ---------------------------------|----------------------------------
-                                 |
+`cljs-repl`                      | Turn the REPL into a Clojurescript REPL
+`remote-repl`                    | Connect to a remote socket REPL server
+
+Macros                           | Description
+---------------------------------|----------------------------------
+`load-file`                      | Loads a clj/cljs/cljc file in the REPL
+`cljs-in-ns`                     | Change the cljs REPL namespace
+`set-cljs-repl-verbose`          | Set the verbose option of the Clojurescript REPL
+`set-cljs-compiler-opt`          | Customize a Clojurescript compiler option. See the `compiler-opts` var for availbable options
+
+Vars                             | Description
+---------------------------------|----------------------------------
+`repl-port`                      | The current REPL port number
+`compiler-opts`                  | The compiler options that can be customized at the REPL
+
 
 ## Acknowledgments
 
