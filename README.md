@@ -93,7 +93,7 @@ Enable [sass or scss files reloading](#sassscss-files-reloading)
 
 Enable [javascript files reloading](#javascript-files-reloading)
 
-`(add-hook 'js-mode-hook 'replique/minor-mode)`
+`(add-hook 'js2-mode-hook 'replique/minor-mode)`
 
 Enable [code evaluation in org-mode](#using-replique-with-org-mode)
 
@@ -220,7 +220,7 @@ Replique supports reloading javascript files from the cljs REPL
 
 ### Emacs setup
 
-`(add-hook 'js-mode-hook 'replique/minor-mode)`
+`(add-hook 'js2-mode-hook 'replique/minor-mode)`
 
 From a javascript file: `M-x replique/load-file` or `C-c C-l`
 
