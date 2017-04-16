@@ -937,7 +937,7 @@ This allows you to temporarily modify read-only buffers too."
   :group 'replique)
 
 (defun replique/sass-args-builder-default (input output)
-  (list "--sourcemap=inline" input output))
+  (list "--sourcemap=inline" "--default-encoding" "utf-8" input output))
 
 (defvar replique/sass-args-builder 'replique/sass-args-builder-default
   "Function that returns the command to use when compiling sass files")
@@ -948,7 +948,7 @@ This allows you to temporarily modify read-only buffers too."
   :group 'replique)
 
 (defun replique/scss-args-builder-default (input output)
-  (list "--sourcemap=inline" input output))
+  (list "--sourcemap=inline" "--default-encoding" "utf-8" input output))
 
 (defvar replique/scss-args-builder 'replique/scss-args-builder-default
   "Function that returns the command to use when compiling scss files")
