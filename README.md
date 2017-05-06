@@ -87,10 +87,6 @@ Enable [less files reloading](#less-files-reloading)
 
 `(add-hook 'less-css-mode-hook 'replique/minor-mode)`
 
-Enable [sass or scss files reloading](#sassscss-files-reloading)
-
-`(add-hook 'sass-mode-hook 'replique/minor-mode)`
-
 Enable [javascript files reloading](#javascript-files-reloading)
 
 `(add-hook 'js2-mode-hook 'replique/minor-mode)`
@@ -299,10 +295,6 @@ The arguments used to compile sass or scss files can be customized with a functi
 Or
 
 `(setq replique/scss-args-builder 'replique/scss-args-builder-default)`
-
-Setup emacs to recognize sass/scss files:
-
-`(add-hook 'sass-mode-hook 'replique/minor-mode)`
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
