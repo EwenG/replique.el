@@ -1,5 +1,6 @@
 # Version 0.0.5
 
+- Add a cljs-repl-nashorn command to start a nashorn cljs REPL
 - sass/scss commands now use UTF-8 encoding by default 
 - The replique/repl commands now takes the hostname to start the REPL with as an optional argument
 - When started with the universal prefix argument, the replique/repl commands now prompts for the hostname to start the REPL with 

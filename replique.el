@@ -744,6 +744,16 @@ This allows you to temporarily modify read-only buffers too."
     (replique/send-input-from-source-clj
      "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
 
+(defun replique/cljs-repl-nashorn ()
+  "Start a Clojurescript Nashorn REPL in the currently active Clojure REPL"
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (clj-repl (replique/active-repl :clj)))
+    (when (not clj-repl)
+      (user-error "No active Clojure REPL"))
+    (replique/send-input-from-source-clj
+     "(replique.interactive/cljs-repl-nashorn)" tooling-repl clj-repl)))
+
 (defun replique/output-main-js-file (output-to &optional main-ns)
   "Write a main javascript file to disk. The main javascript file acts as an entry point to your application and contains code to connect to the Clojurescript REPL"
   (interactive (list nil))
@@ -1734,4 +1744,13 @@ The following commands are available:
 ;; restore print-namespaced-maps somewhere
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 
+;; copy html / css on load-file (problem: override or not (web app context))
+;; release replique with var/ns watch
+
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
+
+
+(comment
+ (local-set-key (kbd "C-c C-c") 'outline-hide-other)
+ (local-set-key (kbd "C-s C-s") 'outline-show-all)
+ )
