@@ -173,7 +173,8 @@ Loading a cljs file is done by compiling it to disk and then loading it in the C
 
 Including `%s` will splice the `:target-path` into this value.
 
-Clojurescript can only be evaluated in the browser. Others javascript environments are not currently supported.
+Clojurescript can be evaluated in the browser or in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environment.
+Others javascript environments are not currently supported.
 
 There are two kinds of workflows when using a browser REPL. The first one is when you want to evaluate Clojurescript code but don't want to bother with the setup of an HTTP server. The second one is when you already use an HTTP server and want to transparently use a Clojurescript REPL to develop a web application. The two worflows are covered below.
 
@@ -411,6 +412,7 @@ All REPL functions/macros are in the `replique.interactive` namespace
 Functions                        | Description
 ---------------------------------|----------------------------------
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
+`cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
 `remote-repl`                    | Connect to a remote socket REPL server
 
 Macros                           | Description
