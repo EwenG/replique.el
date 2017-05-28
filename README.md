@@ -208,6 +208,32 @@ Replique only manages development builds. For production builds, I would recomme
 
 Replique does not expose the Clojurescript compiler options related to using javascript libraries ([:foreign-libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#foreign-libs) and [:libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#libs)). The recommended way to deal with external libraries when using Replique is to use [cljsjs](https://github.com/clojure/clojurescript/wiki/Dependencies#cljsjs).
 
+### Watching Clojurescript vars or namespaces
+
+Clojurescript vars and namespaces are not reified in the javascript runtime environment. As a consequence, one cannot watch them using
+[Clojure watchers](https://clojuredocs.org/clojure.core/add-watch).
+Replique provides a workaround to watch vars or namespaces during development, by using the data available in the Clojurescript
+compiler environment.
+Here is an example of a Clojurescript macro that sets a watcher on the namespace where it is defined. Every time a var is
+redefined in the namespace, `my-callback` is triggered.
+
+```
+(defn my-callback [repl-env compiler-env]
+  (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();"))
+
+(defmacro def-with-watcher []
+  (swap! cljs.env/*compiler* update :replique/ns-watches
+         assoc ana/*cljs-ns* my-callback)
+  nil)
+```
+
+To watch a var instead of a namespace:
+
+```
+(swap! cljs.env/*compiler* update :replique/var-watches
+       assoc ana/*cljs-ns* {'my-var my-callback})
+```
+
 ### Other considerations when using the browser REPL
 
 The main javascript files emitted using the `replique/output-main-js-file` command internally uses the port number of the Replique REPL. If the port number changes across REPL session, the main javascript files must be updated accordingly. Fortunately, Replique handles this for you and updates all main javascript files found in the project directory on REPL startup.
