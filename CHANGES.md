@@ -1,5 +1,6 @@
 # Version 0.0.5
 
+- Add support for javafx css file reloading 
 - Add a cljs-repl-nashorn command to start a nashorn cljs REPL
 - sass/scss commands now use UTF-8 encoding by default 
 - The replique/repl commands now takes the hostname to start the REPL with as an optional argument
