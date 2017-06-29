@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.5
+;; Version 0.0.6-SNAPSHOT
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
 
 ;; Commentary:
@@ -1153,9 +1153,9 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
-(defconst replique/client-version "0.0.5")
+(defconst replique/client-version "0.0.6-SNAPSHOT")
 
-(defcustom replique/version "0.0.5"
+(defcustom replique/version "0.0.6-SNAPSHOT"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
