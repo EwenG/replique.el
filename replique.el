@@ -1733,7 +1733,6 @@ The following commands are available:
 ;; Document the use of cljsjs to use js libs
 ;; Customization var for excluded folders when refreshing main js files
 ;; completion for strings that match a path and are in a (File.) / (file) form
-;; add a watcher on cljs compiler to implement cljs vars watching
 
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
