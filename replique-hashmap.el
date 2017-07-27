@@ -113,6 +113,9 @@
 (defun replique/keys (hash)
   (when hash (hash-table-keys hash)))
 
+(defun replique/vals (hash)
+  (when hash (hash-table-values hash)))
+
 (defconst replique/nothing (make-symbol "nothing"))
 
 (defun replique/contains? (hash key)
@@ -144,5 +147,10 @@
         ((arrayp coll) (vconcat coll `[,x] xs))
         ;; conj to hash-tables not yet implemented
         (t (error "cannot conj to %s" coll))))
+
+(defun replique/count (coll)
+  (if (hash-table-p coll)
+      (hash-table-count coll)
+      (length coll)))
 
 (provide 'replique-hashmap)
