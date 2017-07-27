@@ -1,5 +1,7 @@
 # Version 0.0.6
 
+- Implement cljc-mode to customize the REPL(s) used to evaluate cljc code
+
 # Version 0.0.5
 
 - Add support for javafx css file reloading 

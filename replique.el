@@ -152,10 +152,14 @@
                ;; The order of priority is the order of the modes as defined during
                ;; the use of the macro
                (cond ((equal 'clojure-mode m)
-                      `((equal 'clojure-mode major-mode)
+                      `((or (equal 'clojure-mode major-mode)
+                            (and (equal 'clojurec-mode major-mode)
+                                 (equal replique/current-cljc-mode "clj")))
                         (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
                      ((equal 'clojurescript-mode m)
-                      `((equal 'clojurescript-mode major-mode)
+                      `((or (equal 'clojurescript-mode major-mode)
+                            (and (equal 'clojurec-mode major-mode)
+                                 (equal replique/current-cljc-mode "cljs")))
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'clojurec-mode m)
                       `((equal 'clojurec-mode major-mode)
@@ -650,6 +654,16 @@ This allows you to temporarily modify read-only buffers too."
     (when (not cljs-repl)
       (user-error "No active Clojurescript REPL"))
     (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
+
+(defvar replique/current-cljc-mode "cljc")
+
+(defun replique/cljc-mode (mode)
+  (interactive (list (completing-read
+                      (format "cljc mode (current is %s): " replique/current-cljc-mode)
+                      '("cljc" "clj" "cljs")
+                      nil t)))
+  (setq replique/current-cljc-mode mode)
+  (message "cljc-mode set to %s" mode))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL session"
@@ -1744,7 +1758,8 @@ The following commands are available:
 ;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
 
 ;; copy html / css on load-file (problem: override or not (web app context))
-;; release replique with var/ns watch
+
+;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
