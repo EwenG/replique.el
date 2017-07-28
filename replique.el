@@ -103,14 +103,14 @@
                                    repl))
                                replique/repls)))
 
-(defun replique/repls-or-repl-by (filtering-fn source &rest args)
+(defun replique/repls-or-repl-by (filtering-fn matching-fn source &rest args)
   (let* ((pred (lambda (repl)
                  (seq-every-p (lambda (arg)
                                 (let ((k (car arg))
                                       (v (cdr arg)))
                                   (or (equal :error-on-nil k)
                                       (and (replique/contains? repl k)
-                                           (equal v (replique/get repl k))))))
+                                           (funcall matching-fn (replique/get repl k) v)))))
                               (replique/plist->alist args))))
          (found (funcall filtering-fn pred source)))
     (if (and (null found) (plist-get args :error-on-nil))
@@ -118,21 +118,18 @@
       found)))
 
 (defun replique/repl-by (&rest args)
-  (apply 'replique/repls-or-repl-by 'seq-find replique/repls args))
+  (apply 'replique/repls-or-repl-by 'seq-find 'equal replique/repls args))
 
 (defun replique/repls-by (&rest args)
-  (apply 'replique/repls-or-repl-by 'seq-filter replique/repls args))
+  (apply 'replique/repls-or-repl-by 'seq-filter 'equal replique/repls args))
 
-(defun replique/get-by (source &rest args)
-  (apply 'replique/repls-or-repl-by 'seq-find source args))
-
-(defun replique/get-all-by (source &rest args)
-  (apply 'replique/repls-or-repl-by 'seq-filter source args))
-
-(defun replique/active-repl (repl-type &optional error-on-nil)
-  (if error-on-nil
-      (replique/repl-by :repl-type repl-type :error-on-nil error-on-nil)
-    (replique/repl-by :repl-type repl-type)))
+(defun replique/active-repl (repl-type-or-types &optional error-on-nil)
+  (if (listp repl-type-or-types)
+      (apply 'replique/repls-or-repl-by 'seq-find
+             (lambda (repl-v repl-type-or-types)
+               (member repl-v repl-type-or-types))
+             replique/repls (list :repl-type repl-type-or-types))
+    (replique/repl-by :repl-type repl-type-or-types :error-on-nil error-on-nil)))
 
 (defun replique/guess-project-root-dir ()
   (or (locate-dominating-file default-directory "project.clj")
@@ -142,8 +139,7 @@
   (let* ((tooling-repl-sym (make-symbol "tooling-repl"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
          (cljs-repl-sym (make-symbol "cljs-repl-sym"))
-         (clj-buff-sym (make-symbol "clj-buff-sym"))
-         (cljs-buff-sym (make-symbol "cljs-buff-sym"))
+         (active-repl-sym (make-symbol "active-repl-sym"))
          (dispatch-code
           (mapcar
            (lambda (item)
@@ -152,18 +148,14 @@
                ;; The order of priority is the order of the modes as defined during
                ;; the use of the macro
                (cond ((equal 'clojure-mode m)
-                      `((or (equal 'clojure-mode major-mode)
-                            (and (equal 'clojurec-mode major-mode)
-                                 (equal replique/current-cljc-mode "clj")))
+                      `((equal 'clojure-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
                      ((equal 'clojurescript-mode m)
-                      `((or (equal 'clojurescript-mode major-mode)
-                            (and (equal 'clojurec-mode major-mode)
-                                 (equal replique/current-cljc-mode "cljs")))
+                      `((equal 'clojurescript-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'clojurec-mode m)
                       `((equal 'clojurec-mode major-mode)
-                        (funcall ,f ,tooling-repl-sym ,clj-repl-sym ,cljs-repl-sym)))
+                        (funcall ,f ,tooling-repl-sym ,active-repl-sym)))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
@@ -194,8 +186,7 @@
     `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
             (,clj-repl-sym (replique/active-repl :clj))
             (,cljs-repl-sym (replique/active-repl :cljs))
-            (,clj-buff-sym (replique/get ,clj-repl-sym :buffer))
-            (,cljs-buff-sym (replique/get ,cljs-repl-sym :buffer)))
+            (,active-repl-sym (replique/active-repl '(:clj :cljs))))
        (cond ,@dispatch-code))))
 
 ;; Auto completion
@@ -247,11 +238,10 @@
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
          (repl-type (replique/get repl :repl-type))
-         (msg-type (cond ((equal :clj repl-type)
-                          :clj-completion)
-                         ((equal :cljs repl-type)
-                          :cljs-completion)
-                         (t (error "Invalid REPL type: %s" repl-type))))
+         (msg-type (thread-first repl-type
+                     symbol-name
+                     (concat "-completion")
+                     intern))
          (ns (symbol-name (replique/get repl :ns))))
     (replique/auto-complete* prefix callback tooling-repl msg-type ns)))
 
@@ -265,10 +255,15 @@
     (replique/auto-complete* prefix callback tooling-repl
                              :cljs-completion (clojure-find-ns))))
 
-(defun replique/auto-complete-cljc (prefix callback tooling-repl clj-repl cljs-repl)
-  (when (and clj-repl cljs-repl)
-    (replique/auto-complete* prefix callback tooling-repl
-                             :cljc-completion (clojure-find-ns))))
+(defun replique/auto-complete-cljc (prefix callback tooling-repl repl)
+  (when repl
+    (replique/auto-complete*
+     prefix callback tooling-repl
+     (thread-first (replique/get repl :repl-type)
+       symbol-name
+       (concat "-completion")
+       intern)
+     (clojure-find-ns))))
 
 (defun replique/auto-complete (prefix callback)
   (when (not (null (replique/active-repl :tooling)))
@@ -374,9 +369,15 @@
   (when cljs-repl
     (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns))))
 
-(defun replique/repliquedoc-cljc (tooling-repl clj-repl cljs-repl)
-  (when (and clj-repl cljs-repl)
-    (replique/repliquedoc* tooling-repl :repliquedoc-cljc (clojure-find-ns))))
+(defun replique/repliquedoc-cljc (tooling-repl repl)
+  (when repl
+    (replique/repliquedoc*
+     tooling-repl
+     (thread-last (replique/get repl :repl-type)
+       replique/keyword-to-string
+       (concat ":repliquedoc-")
+       intern)
+     (clojure-find-ns))))
 
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
@@ -401,13 +402,14 @@
      (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
      tooling-repl cljs-repl)))
 
-(defun replique/in-ns-cljc (ns-name tooling-repl clj-repl cljs-repl)
-  (if (not (and clj-repl cljs-repl))
-      (user-error "No active Clojure AND Clojurescript REPL")
+(defun replique/in-ns-cljc (ns-name tooling-repl repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
     (replique/send-input-from-source-cljc
-     (format "(clojure.core/in-ns '%s)" ns-name)
-     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
-     tooling-repl clj-repl cljs-repl)))
+     (if (equal :cljs (replique/get repl :repl-type))
+         (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
+       (format "(clojure.core/in-ns '%s)" ns-name))
+     tooling-repl repl)))
 
 (defun replique/in-ns (ns-name)
   "Change the active REPL namespace"
@@ -572,23 +574,18 @@ This allows you to temporarily modify read-only buffers too."
         (replique/comint-send-input-from-source input)))))
 
 (defun replique/send-input-from-source-cljc
-    (input-clj input-cljs tooling-repl clj-repl cljs-repl)
-  (if (not (and clj-repl cljs-repl))
-      (user-error "No active Clojure AND Clojurescript REPL")
-    (let ((clj-buff (replique/get clj-repl :buffer))
-          (cljs-buff (replique/get  cljs-repl :buffer)))
-      (when clj-buff
-        (with-current-buffer clj-buff
-          (replique/comint-send-input-from-source input-clj)))
-      (when cljs-buff
-        (with-current-buffer cljs-buff
-          (replique/comint-send-input-from-source input-cljs))))))
+    (input tooling-repl repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
+    (let ((buff (replique/get repl :buffer)))
+      (with-current-buffer buff
+        (replique/comint-send-input-from-source input)))))
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
    (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
-   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input input))
+   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/eval-region (start end)
@@ -624,13 +621,12 @@ This allows you to temporarily modify read-only buffers too."
      (format "(replique.interactive/load-file \"%s\")" file-path)
      props cljs-repl)))
 
-(defun replique/load-file-cljc (file-path props clj-repl cljs-repl)
-  (if (not (and clj-repl cljs-repl))
-      (user-error "No active Clojure AND Clojurescript REPL")
+(defun replique/load-file-cljc (file-path props repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
     (replique/send-input-from-source-cljc
      (format "(replique.interactive/load-file \"%s\")" file-path)
-     (format "(replique.interactive/load-file \"%s\")" file-path)
-     props clj-repl cljs-repl)))
+     props repl)))
 
 (defun replique/load-file (file-path)
   "Load a file in a replique REPL"
@@ -654,16 +650,6 @@ This allows you to temporarily modify read-only buffers too."
     (when (not cljs-repl)
       (user-error "No active Clojurescript REPL"))
     (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
-
-(defvar replique/current-cljc-mode "cljc")
-
-(defun replique/cljc-mode (mode)
-  (interactive (list (completing-read
-                      (format "cljc mode (current is %s): " replique/current-cljc-mode)
-                      '("cljc" "clj" "cljs")
-                      nil t)))
-  (setq replique/current-cljc-mode mode)
-  (message "cljc-mode set to %s" mode))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL session"
@@ -1134,11 +1120,10 @@ This allows you to temporarily modify read-only buffers too."
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
          (repl-type (replique/get repl :repl-type))
-         (msg-type (cond ((equal :clj repl-type)
-                          :meta-clj)
-                         ((equal :cljs repl-type)
-                          :meta-cljs)
-                         (t (error "Invalid REPL type: %s" repl-type))))
+         (msg-type (thread-last repl-type
+                     replique/keyword-to-string
+                     (concat ":meta-")
+                     intern))
          (ns (symbol-name (replique/get repl :ns))))
     (replique/jump-to-definition* symbol tooling-repl msg-type)))
 
@@ -1152,10 +1137,16 @@ This allows you to temporarily modify read-only buffers too."
       (user-error "No active Clojurescript REPL")
     (replique/jump-to-definition* symbol tooling-repl :meta-cljs)))
 
-(defun replique/jump-to-definition-cljc (symbol tooling-repl clj-repl cljs-repl)
-  (if (not (and clj-repl cljs-repl))
-      (user-error "No active Clojure AND Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl :meta-cljc)))
+(defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
+    (replique/jump-to-definition*
+     symbol
+     tooling-repl
+     (thread-last (replique/get repl :repl-type)
+       replique/keyword-to-string
+       (concat ":meta-")
+       intern))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
@@ -1234,7 +1225,7 @@ disable main js files refreshing."
   (when (boundp 'company-backends)
     (add-to-list 'company-backends 'replique/company-backend)
     (setq-local company-tooltip-align-annotations
-    	      replique/company-tooltip-align-annotations))
+                replique/company-tooltip-align-annotations))
   (add-function :before-until (local 'eldoc-documentation-function)
                 'replique/eldoc-documentation-function))
 
@@ -1418,18 +1409,18 @@ The following commands are available:
         (result nil)
         (files nil))
     (unless (< max-depth 0)
-        (dolist (file (file-name-all-completions "" dir))
-          (unless (member file '("./" "../"))
-            (if (directory-name-p file)
-                (let* ((leaf (substring file 0 (1- (length file))))
-                       (full-file (expand-file-name leaf dir)))
-                  ;; Don't follow symlinks to other directories.
-                  (unless (or (file-symlink-p full-file) (equal full-file exclude-dir))
-                    (setq result
-                          (nconc result (replique/directory-files-recursively
-                                         full-file regexp exclude-dir (1- max-depth))))))
-              (when (string-match-p regexp file)
-                (push (expand-file-name file dir) files))))))
+      (dolist (file (file-name-all-completions "" dir))
+        (unless (member file '("./" "../"))
+          (if (directory-name-p file)
+              (let* ((leaf (substring file 0 (1- (length file))))
+                     (full-file (expand-file-name leaf dir)))
+                ;; Don't follow symlinks to other directories.
+                (unless (or (file-symlink-p full-file) (equal full-file exclude-dir))
+                  (setq result
+                        (nconc result (replique/directory-files-recursively
+                                       full-file regexp exclude-dir (1- max-depth))))))
+            (when (string-match-p regexp file)
+              (push (expand-file-name file dir) files))))))
     (nconc result files)))
 
 (defun replique/refresh-main-js-files (directory port cljs-compile-path)

@@ -1,6 +1,6 @@
 # Version 0.0.6
 
-- Implement cljc-mode to customize the REPL(s) used to evaluate cljc code
+- Remove the possibility to eval cljc code in multiple repls simultaneously
 
 # Version 0.0.5
 
