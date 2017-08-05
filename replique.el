@@ -1209,7 +1209,7 @@ disable main js files refreshing."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
-    (define-key map "\C-xr" 'replique/switch-active-repl)
+    (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     map))
 
@@ -1231,12 +1231,12 @@ disable main js files refreshing."
 
 (defvar replique/minor-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "\C-c\C-r" 'replique/eval-region)
+    (define-key map "\C-x\C-r" 'replique/eval-region)
     (define-key map "\C-x\C-e" 'replique/eval-last-sexp)
     (define-key map "\C-\M-x" 'replique/eval-defn)
     (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
-    (define-key map "\C-xr" 'replique/switch-active-repl)
+    (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'xref-pop-marker-stack)
     (easy-menu-define replique/minor-mode-menu map
