@@ -101,7 +101,8 @@
                                  (if (eq repl old-repl)
                                      updated-repl
                                    repl))
-                               replique/repls)))
+                               replique/repls))
+  updated-repl)
 
 (defun replique/repls-or-repl-by (filtering-fn matching-fn source &rest args)
   (let* ((pred (lambda (repl)
@@ -504,33 +505,6 @@ This allows you to temporarily modify read-only buffers too."
               ((comint-after-pmark-p) (comint-accumulate))
               ;; Point is before the prompt. Do nothing.
               (t nil))))))
-
-(defun replique/format-eval-message (msg)
-  (if (replique/get msg :error)
-      (let ((value (replique/get msg :value))
-            (repl-type (replique/get msg :repl-type))
-            (ns (replique/get msg :ns)))
-        (if (string-prefix-p "Error:" value)
-            (format "(%s) %s=> %s"
-                    (replique/keyword-to-string repl-type) ns value)
-          (format "(%s) %s=> Error: %s"
-                  (replique/keyword-to-string repl-type) ns value)))
-    (let ((result (replique/get msg :result))
-          (repl-type (replique/get msg :repl-type))
-          (ns (replique/get msg :ns)))
-      (format "(%s) %s=> %s"
-              (replique/keyword-to-string repl-type) ns result))))
-
-(defun replique/display-eval-result (msg buff)
-  ;; Concat to the current message in order to handle displaying results from cljc files
-  ;; Note that (current-message) is cleared on any user action
-  (when (not (seq-contains (replique/visible-buffers) buff))
-    (let ((current-message (if (current-message)
-                               (concat (current-message) "\n")
-                             (current-message))))
-      (thread-last (replique/format-eval-message msg)
-        (concat current-message)
-        replique/message-nolog))))
 
 (defmacro replique/return-nil-on-quit (&rest body)
   (let ((ret-sym (make-symbol "ret-sym")))
@@ -1208,6 +1182,12 @@ disable main js files refreshing."
   :type 'boolean
   :group 'replique)
 
+(defcustom replique/display-output-in-minibuffer t
+  "Whether the output of the active REPL is displayed in the minibuffer when the REPL buffer 
+is not visible"
+  :type 'boolean
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -1277,7 +1257,7 @@ The following commands are available:
   (add-function :before-until (local 'eldoc-documentation-function)
                 'replique/eldoc-documentation-function))
 
-;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique
+;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique localhost 9000
 
 (defun replique/lein-command (host port directory)
   `(,(or replique/lein-script (executable-find replique/default-lein-script))
@@ -1524,11 +1504,23 @@ The following commands are available:
          (port (replique/get tooling-repl :port)))
     (replique/close-repls host port t)))
 
+(defun replique/comint-output-filter (process string)
+  "Wrap comint-output-filter in order to display the output of hidden active REPLs in the 
+minibuffer"
+  (let* ((active-repl (replique/active-repl '(:clj :cljs)))
+         (active-buffer (replique/get active-repl :buffer))
+         (active-proc (get-buffer-process active-buffer)))
+    (when (and (eq active-proc process)
+               (not (seq-contains (replique/visible-buffers) active-buffer))
+               replique/display-output-in-minibuffer)
+      (replique/message-nolog string))
+    (comint-output-filter process string)))
+
 (defun replique/make-comint (proc buffer)
   (with-current-buffer buffer
     (unless (derived-mode-p 'comint-mode)
       (comint-mode))
-    (set-process-filter proc 'comint-output-filter)
+    (set-process-filter proc 'replique/comint-output-filter)
     (setq-local comint-ptyp process-connection-type)
     ;; Jump to the end, and set the process mark.
     (goto-char (point-max))
@@ -1620,7 +1612,8 @@ The following commands are available:
          (repl-type-s (replique/keyword-to-string repl-type))
          (new-repl-type-s (replique/keyword-to-string new-repl-type))
          (repl-buffer (replique/get repl :buffer)))
-    (when (not (equal repl-type new-repl-type))
+    (if (equal repl-type new-repl-type)
+        repl
       (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
                             (buffer-name repl-buffer))
         (let* ((new-buffer-name (replace-regexp-in-string
@@ -1640,22 +1633,25 @@ The following commands are available:
           ((not (hash-table-p msg))
            (message "Received invalid message while dispatching tooling messages: %s" msg))
           (;; Global error (uncaught exception)
-           (and
-            (replique/get msg :error)
-            (replique/get msg :thread))
+           (equal :error (replique/get msg :type))
            (message "%s - Thread: %s - Exception: %s"
                     (propertize "Uncaught exception" 'face '(:foreground "red"))
                     (replique/get msg :thread)
                     (replique-edn/pr-str (replique/get msg :value))))
-          ((equal :eval (replique/get msg :type))
+          ((equal :in-ns (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :process-id)))
-                  (buffer (replique/get repl :buffer)))
+                         :directory (replique/get msg :process-id)
+                         :repl-type (replique/get msg :repl-type))))
              (when repl
-               (replique/on-repl-type-change repl (replique/get msg :repl-type))
-               (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))
-               (replique/display-eval-result msg buffer))))
+               (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns))))))
+          ((equal :repl-type (replique/get msg :type))
+           (let* ((repl (replique/repl-by
+                         :session (replique/get (replique/get msg :session) :client)
+                         :directory (replique/get msg :process-id))))
+             (when repl
+               (let ((repl (replique/on-repl-type-change repl (replique/get msg :repl-type))))
+                 (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
           (t (replique-async/put! out-chan msg)))
        (error (message (error-message-string err))))
      (replique/dispatch-tooling-msg* in-chan out-chan))))
@@ -1757,6 +1753,10 @@ The following commands are available:
 ;; copy html / css on load-file (problem: override or not (web app context))
 
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
+;; errors in cljs load-file are displayed in the browser console only
+;; autocomplete -> use omniscient data?
+;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
+;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
