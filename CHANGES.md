@@ -1,5 +1,6 @@
 # Version 0.0.6
 
+- change switch-active-repl and eval-region default keymap
 - Remove the possibility to eval cljc code in multiple repls simultaneously
 
 # Version 0.0.5
