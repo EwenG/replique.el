@@ -559,6 +559,11 @@ This allows you to temporarily modify read-only buffers too."
       (goto-char (process-mark process))
       (insert old-input))))
 
+(defun replique/send-input-from-source-session (input repl)
+  (let ((buff (replique/get repl :buffer)))
+    (with-current-buffer buff
+      (replique/comint-send-input-from-source input))))
+
 (defun replique/send-input-from-source-clj (input tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
@@ -583,6 +588,7 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
+   (replique/mode . (apply-partially 'replique/send-input-from-source-session input))
    (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
    (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
    (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
