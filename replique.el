@@ -1638,14 +1638,7 @@ minibuffer"
                     (propertize "Uncaught exception" 'face '(:foreground "red"))
                     (replique/get msg :thread)
                     (replique-edn/pr-str (replique/get msg :value))))
-          ((equal :in-ns (replique/get msg :type))
-           (let* ((repl (replique/repl-by
-                         :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :process-id)
-                         :repl-type (replique/get msg :repl-type))))
-             (when repl
-               (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns))))))
-          ((equal :repl-type (replique/get msg :type))
+          ((equal :ns-change (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
                          :directory (replique/get msg :process-id))))
@@ -1756,7 +1749,9 @@ minibuffer"
 ;; errors in cljs load-file are displayed in the browser console only
 ;; autocomplete -> use omniscient data?
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
-;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj
+;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
+;; printed warnings when printing in the minibuffer are displayed for a very short time 
+;; remove remote-repl / or tooling in remote repl
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
