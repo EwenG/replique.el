@@ -32,6 +32,7 @@
 (require 'replique-hashmap)
 (require 'replique-resources)
 (require 'map)
+(require 'replique-omniscient)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -568,54 +569,71 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
-(defun replique/eval-region (start end)
+(defun replique/eval-region (start end p)
   "Eval the currently highlighted region"
-  (interactive "r")
+  (interactive "r\nP")
   (let ((input (filter-buffer-substring start end)))
-    (replique/send-input-from-source-dispatch input)))
+    (when (> (length input) 0)
+      (if p
+          (replique/send-input-from-source-dispatch
+           (concat "(replique.omniscient/with-redefs " input ")"))
+        (replique/send-input-from-source-dispatch input)))))
 
-(defun replique/eval-last-sexp ()
+(defun replique/eval-last-sexp (p)
   "Eval the previous sexp"
-  (interactive)
+  (interactive "P")
   (replique/eval-region
    (save-excursion
      (clojure-backward-logical-sexp 1) (point))
-   (point)))
+   (point)
+   p))
 
-(defun replique/eval-defn ()
+(defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
-  (interactive)
-  (replique/send-input-from-source-dispatch (thing-at-point 'defun)))
+  (interactive "P")
+  (replique/send-input-from-source-dispatch
+   (if p
+       (concat "(replique.omniscient/with-redefs " (thing-at-point 'defun) ")")
+     (thing-at-point 'defun))))
 
-(defun replique/load-file-clj (file-path props clj-repl)
+(defun replique/load-file-clj (file-path p props clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
-     (format "(replique.interactive/load-file \"%s\")" file-path)
+     (format (if p
+                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
+               "(replique.interactive/load-file \"%s\")")
+             file-path)
      props clj-repl)))
 
-(defun replique/load-file-cljs (file-path props cljs-repl)
+(defun replique/load-file-cljs (file-path p props cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format "(replique.interactive/load-file \"%s\")" file-path)
+     (format (if p
+                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
+               "(replique.interactive/load-file \"%s\")")
+             file-path)
      props cljs-repl)))
 
-(defun replique/load-file-cljc (file-path props repl)
+(defun replique/load-file-cljc (file-path p props repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique/send-input-from-source-cljc
-     (format "(replique.interactive/load-file \"%s\")" file-path)
+     (format (if p
+                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
+               "(replique.interactive/load-file \"%s\")")
+             file-path)
      props repl)))
 
-(defun replique/load-file (file-path)
+(defun replique/load-file (file-path p)
   "Load a file in a replique REPL"
-  (interactive (list (buffer-file-name)))
+  (interactive (list (buffer-file-name) current-prefix-arg))
   (comint-check-source file-path)
   (replique/with-modes-dispatch
-   (clojure-mode . (apply-partially 'replique/load-file-clj file-path))
-   (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path))
-   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path))
+   (clojure-mode . (apply-partially 'replique/load-file-clj file-path p))
+   (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path p))
+   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path p))
    (css-mode . (apply-partially 'replique/load-css file-path))
    (js-mode . (apply-partially 'replique/load-js file-path))
    (stylus-mode . (apply-partially 'replique/load-stylus file-path))
@@ -1197,6 +1215,7 @@ is not visible"
     (define-key map "\C-m" 'replique/comint-send-input)
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
+    (define-key map "\C-c\C-o" 'replique/omniscient)
     map))
 
 (defun replique/commons ())
@@ -1225,6 +1244,7 @@ is not visible"
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'xref-pop-marker-stack)
+    (define-key map "\C-c\C-o" 'replique/omniscient)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -1239,6 +1259,8 @@ is not visible"
         ["Switch active REPL" replique/switch-active-repl t]
         "--"
         ["Jump to definition" replique/jump-to-definition t]
+        "--"
+        ["Omniscient action" replique/omniscient t]
         ))
     map))
 
@@ -1750,8 +1772,9 @@ minibuffer"
 ;; autocomplete -> use omniscient data?
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
-;; printed warnings when printing in the minibuffer are displayed for a very short time 
 ;; remove remote-repl / or tooling in remote repl
+;; omniscient -> capture the stacktrace if possible
+;; document replique.interactive/repl
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
