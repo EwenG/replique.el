@@ -13,9 +13,9 @@ An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a d
 - [Javascript files reloading](#javascript-files-reloading)
 - [CSS files reloading](#css-files-reloading)
 - [Using a CSS preprocessor](#using-a-css-preprocessor)
+- [Omniscient debugger](#omniscient-debugger)
 - [Org-mode integration](#using-replique-with-org-mode)
 - [Leiningen configuration](#leiningen-configuration)
-- [Remote REPL](#remote-repl)
 - [Using the standard output](#using-the-standard-output)
 - [Default keymap](#default-keymap)
 
@@ -109,6 +109,7 @@ Enable [code evaluation in org-mode](#using-replique-with-org-mode)
 - CSS files reloading
 - [Stylus](http://stylus-lang.com/), [less](http://lesscss.org/), [sass](http://sass-lang.com/) file reloading
 - Javascript file reloading
+- Omniscient debugger
 - Org-mode integration
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
@@ -180,7 +181,7 @@ There are two kinds of workflows when using a browser REPL. The first one is whe
 
 ### Clojurescript browser REPL
 
-Replique listens on the REPL port for a connection from a javascript runtime. Replique currently only supports connections from web browsers. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`.
+Replique listens on the REPL port for a connection from a javascript runtime. Call `(replique.interactive/repl-port)` to know the port the REPL is listening on. Use `M-x replique/browser` to connect a web browser to the cljs REPL, or simply browse `http://localhost:port`.
 
 ### Using the REPL to build a web application
 
@@ -194,14 +195,14 @@ Nothing prevents you from using multiple main js files. Outputting multiple main
 
 ### Cljc support
 
-Loading `.cljc` files (see [reader conditionals](http://clojure.org/guides/reader_conditionals)) requires both a Clojure and a Clojurescript REPL to be started. Replique will load `.cljc` files simultaneously in the Clojure and the Clojurescipt REPL. Autocompletion candidates (and other tooling features) for `.cljc` files are computed using the Clojure runtime, unless the cursor is in a `#?cljs` reader conditional, in which case it will be computed using the Clojurescript runtime.
+When both a Clojure and Clojurescript REPL are started, Replique loads .cljc files in the currently active REPL. Use `M-x replique/switch-active-repl` (C-c C-r) to change the currently active REPL.
 
 ### Clojurescript compiler configuration
 
 The Clojurescript compiler is preconfigured for development builds (optimizations at :none, sourcemaps enabled ...). A subset of the compiler options and REPL options can be updated at the REPL (see [the Clojurescript wiki](https://github.com/clojure/clojurescript/wiki) for a description of the options).
 
 - To update the *:repl-verbose* REPL options, **from a cljs REPL**: `(replique.interactive/set-cljs-repl-verbose true)`. Note that `set-cljs-repl-verbose` is a macro.
-- To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings}* compiler options, **from a clj REPL**: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
+- To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings :checked-arrays}* compiler options, **from a clj REPL**: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
 
 Replique only manages development builds. For production builds, I would recommend using a custom script, a lein plugin (such as [lein-cljsbuild](https://github.com/emezeske/lein-cljsbuild)) or any other existing solution.
 
@@ -240,6 +241,11 @@ To watch a var instead of a namespace:
 The main javascript files emitted using the `replique/output-main-js-file` command internally uses the port number of the Replique REPL. If the port number changes across REPL session, the main javascript files must be updated accordingly. Fortunately, Replique handles this for you and updates all main javascript files found in the project directory on REPL startup.
 
 Replique internally serves javascript files on a different domain than your web server, using cross domain requests. As a consequence, your web server must allow cross domain requests to be performed during development. In particular, the [content security policy](https://www.owasp.org/index.php/OWASP_Secure_Headers_Project#Content-Security-Policy) HTTP headers must not be set to forbid these. Of course, this does not affects production environments.
+
+### Starting a Clojure REPL
+
+Replique does not support the use of the `clojure.main/repl` because Replique relies on the customization of the REPL to keep track of the current namespace. The `replique.interactive/repl` function should be used
+in place of `clojure.main/repl`. `replique.interactive/repl` supports the same options than `clojure.main/repl`.
 
 ## Javascript files reloading
 
@@ -323,6 +329,10 @@ Or
 
 `(setq replique/scss-args-builder 'replique/scss-args-builder-default)`
 
+## Omniscient debugger
+
+Documentation to come.
+
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
 ### Emacs setup
@@ -361,13 +371,9 @@ Replique does not support all Leiningen configuration keys. In particular, since
 
 The *:global-vars* leiningen key is supported and the following vars values are propagated to the cljs REPL: `#{#'*assert* #'*print-length* #'*print-meta* #'*print-level* #'*flush-on-newline* #'*print-readably* #'*print-dup*})`
 
-## Remote REPL
-
-Replique supports connecting to a remote REPL by nesting a REPL inside another. `(replique.interactive/remote-repl host port)` will start a REPL on the server at *host:port*, assuming the server is running a [socket REPL server](http://clojure.org/reference/repl_and_main#_launching_a_socket_server).
-
 ## Using the standard output
 
-All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed to the standard output of the JVM process is displayed in the emacs \*Messages* buffer. Data can be printed to the standard output of the JVM process by binding \*out* to `replique.interactive/process-out`.
+All Clojure and Clojurescript REPL output is printed in the [comint](https://www.emacswiki.org/emacs/ComintMode) buffer associated with the REPL. Data printed to the standard output of the JVM process is displayed in the emacs \*Messages* buffer. Data can be printed to the standard output of the JVM process by binding \*out* to `replique.utils/process-out`.
 
 ### Uncaught exceptions
 
@@ -385,13 +391,13 @@ Replique registers a default exception handler that prints all uncaught exceptio
 
 Keybinding           | Description
 ---------------------|----------------------------------
-<kbd>C-c C-r</kbd>   | Evaluate region
+<kbd>C-x C-r</kbd>   | Evaluate region
 <kbd>C-x C-e</kbd>   | Evaluate last sexp
 <kbd>C-M-x</kbd>     | Evaluate top level sexp
 <kbd>C-c C-l</kbd>   | Load file
 <kbd>C-c M-n</kbd>   | Change namespace
 <kbd>M-.</kbd>       | Jump to symbol definition
-<kbd>C-x r</kbd>     | Change active REPL session
+<kbd>C-c C-r</kbd>   | Change active REPL session
 
 ## Interactive commands
 
@@ -411,9 +417,9 @@ All REPL functions/macros are in the `replique.interactive` namespace
 
 Functions                        | Description
 ---------------------------------|----------------------------------
+`repl`                           | Start a Clojure REPL. This MUST be used instead of `clojure.main/repl`
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
 `cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
-`remote-repl`                    | Connect to a remote socket REPL server
 
 Macros                           | Description
 ---------------------------------|----------------------------------
