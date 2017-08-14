@@ -331,7 +331,15 @@ Or
 
 ## Omniscient debugger
 
-Documentation to come.
+Replique has the ability to compile function in a way that will make them capture their environment (parameters, closures, dynamic bindings) at the beginning of each of their execution.
+
+Clojure/Clojurescript code can be compiled with omniscient enabled using any of the evalution commands with a prefix argument (C-u) or by wrapping it in the `replique.omniscient/with-redefs` macro.
+
+A function with one or multiple captured environments can be debugged by placing the cursor at it and using the `replique/omniscient` command (C-c C-o). Replique will display an overview of all the captured environments for the selected function. The environments can be filtered and pretty printed at the REPL using TAB.
+
+Upon environment selection, Relique starts an special REPL in which the environment bindings are set. Type `:omniscient/quit` to quit the omniscient REPL.
+
+All code evaluation happening in an omniscient REPL is executed with the bindings of the selected environment, except the `replique.omniscient/with-redefs` macro (and its body) which escapes the environment bindings. 
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
