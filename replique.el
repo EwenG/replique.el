@@ -33,6 +33,7 @@
 (require 'replique-resources)
 (require 'map)
 (require 'replique-omniscient)
+(require 'replique-lein)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1740,9 +1741,6 @@ minibuffer"
 ;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
 
-;; compliment invalidate memoized on classpath update
-;; Use a lein task to compute the new classpath and send it to the clojure process.
-
 ;; autocomplete using the spec first, compliment next if no candidates
 
 ;; defclass is deprecated
@@ -1768,13 +1766,10 @@ minibuffer"
 ;; copy html / css on load-file (problem: override or not (web app context))
 
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
-;; errors in cljs load-file are displayed in the browser console only
-;; autocomplete -> use omniscient data?
+;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
-;; remove remote-repl / or tooling in remote repl
 ;; omniscient -> capture the stacktrace if possible
-;; document replique.interactive/repl
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
