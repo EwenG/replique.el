@@ -1,3 +1,7 @@
+# Version 0.0.7
+
+- Add the replique/classpath command for classpath reloading
+
 # Version 0.0.6
 
 - Add an omniscient debugger
