@@ -98,8 +98,6 @@
                (cond
                 ((equal 0 (replique/count locals))
                  (message "No captured environment for %s" symbol session-ns))
-                ((equal 1 (replique/count locals))
-                 (replique/select-environment repl symbol (car locals) 0))
                 (t (let ((minibuffer-setup-hook (cons 'replique/omniscient-setup-hook
                                                       minibuffer-setup-hook)))
                      (ivy-read

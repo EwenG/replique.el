@@ -1,5 +1,6 @@
 # Version 0.0.7
 
+- The omniscient debugger no longer automatically select the environment to be debugged when there is only one environment
 - Add the replique/classpath command for classpath reloading
 
 # Version 0.0.6
