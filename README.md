@@ -413,11 +413,13 @@ Command                          | Description
 ---------------------------------|----------------------------------
 `replique/repl`                  | Start a REPL, use the universal prefix argument (`C-u`) to customize the REPL host
 `replique/cljs-repl`             | Start a cljs REPL in a clj REPL
+`replique/cljs-repl-nashorn`     | Start a nashorn cljs REPL in a clj REPL
 `replique/browser`               | Open a browser tab on the REPL port
 `replique/switch-active-repl`    | Change the active REPL session
 `replique/switch-active-process` | Change the active JVM process
 `replique/close-process`         | Close all processes associated with a JVM process
 `replique/output-main-js-file`   | Write a main js file to disk
+`replique/classpath`             | Reload the classpath based on the project.clj configuration
 
 ## REPL API
 
