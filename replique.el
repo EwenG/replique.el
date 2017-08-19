@@ -1123,17 +1123,17 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (replique/jump-to-definition* symbol tooling-repl (get clj-repl :repl-env))))
+    (replique/jump-to-definition* symbol tooling-repl (replique/get clj-repl :repl-env))))
 
 (defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl (get cljs-repl :repl-env))))
+    (replique/jump-to-definition* symbol tooling-repl (replique/get cljs-repl :repl-env))))
 
 (defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl (get repl :repl-env))))
+    (replique/jump-to-definition* symbol tooling-repl (replique/get repl :repl-env))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
@@ -1759,7 +1759,6 @@ minibuffer"
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
 ;; omniscient -> capture the stacktrace if possible
-;; omniscient -> implement with-redefs for defrecord
 ;; omniscient -> document with-redefs for deftype, extend-type, defrecord
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; check jump to definition when using a var declared with (declare ...)
