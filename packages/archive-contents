@@ -1,6 +1,6 @@
 (1
  (replique .
-           [(0 0 6)
+           [(0 0 7)
             ((emacs
               (25))
              (clojure-mode
