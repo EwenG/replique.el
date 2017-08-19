@@ -331,6 +331,8 @@ Or
 
 ## Omniscient debugger
 
+The omniscient debugger requires the installation of [ivy-mode](https://github.com/abo-abo/swiper).
+
 Replique has the ability to compile function in a way that will make them capture their environment (parameters, closures, dynamic bindings) at the beginning of each of their execution.
 
 Clojure/Clojurescript code can be compiled with omniscient enabled using any of the evalution commands with a prefix argument (C-u) or by wrapping it in the `replique.omniscient/with-redefs` macro.
