@@ -63,10 +63,8 @@
 
 (defun replique/omniscient-filter-query (session-ns symbol filter)
   (setq replique/omniscient-expected-msg-id (+ 1 replique/omniscient-expected-msg-id))
-  (replique/hash-map :type (thread-last (replique/get replique/omniscient-repl :repl-type)
-                             replique/keyword-to-string
-                             (concat ":omniscient-filter-")
-                             intern)
+  (replique/hash-map :type :omniscient-filter
+                     :repl-env (replique/get replique/omniscient-repl :repl-env)
                      :msg-id replique/omniscient-expected-msg-id
                      :session-ns session-ns
                      :symbol symbol

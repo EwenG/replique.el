@@ -32,7 +32,9 @@
                                                   (executable-find replique/default-lein-script))
                                               " classpath"))))
     (replique/send-tooling-msg
-     tooling-repl (replique/hash-map :type :classpath :classpath classpath))
+     tooling-repl (replique/hash-map :type :classpath
+                                     :repl-env :replique/clj
+                                     :classpath classpath))
     (replique-async/<!
      tooling-chan
      (lambda (resp)

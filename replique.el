@@ -214,11 +214,12 @@
   (map-let ((:candidate candidate) (:type type) (:package package) (:ns ns)) c
     (propertize candidate 'meta (replique/hash-map :type type :package package :ns ns))))
 
-(defun replique/auto-complete* (prefix callback tooling-repl msg-type ns)
+(defun replique/auto-complete* (prefix callback tooling-repl repl-env ns)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type msg-type
+     (replique/hash-map :type :completion
+                        :repl-env repl-env
                         :context (replique/form-with-prefix)
                         :ns ns
                         :prefix prefix
@@ -240,33 +241,27 @@
 (defun replique/auto-complete-session (prefix callback repl)
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-type (replique/get repl :repl-type))
-         (msg-type (thread-first repl-type
-                     symbol-name
-                     (concat "-completion")
-                     intern))
+         (repl-env (replique/get repl :repl-env))
          (ns (symbol-name (replique/get repl :ns))))
-    (replique/auto-complete* prefix callback tooling-repl msg-type ns)))
+    (replique/auto-complete* prefix callback tooling-repl repl-env ns)))
 
 (defun replique/auto-complete-clj (prefix callback tooling-repl clj-repl)
   (when clj-repl
     (replique/auto-complete* prefix callback tooling-repl
-                             :clj-completion (clojure-find-ns))))
+                             (replique/get clj-repl :repl-env)
+                             (clojure-find-ns))))
 
 (defun replique/auto-complete-cljs (prefix callback tooling-repl cljs-repl)
   (when cljs-repl
     (replique/auto-complete* prefix callback tooling-repl
-                             :cljs-completion (clojure-find-ns))))
+                             (replique/get cljs-repl :repl-env)
+                             (clojure-find-ns))))
 
 (defun replique/auto-complete-cljc (prefix callback tooling-repl repl)
   (when repl
-    (replique/auto-complete*
-     prefix callback tooling-repl
-     (thread-first (replique/get repl :repl-type)
-       symbol-name
-       (concat "-completion")
-       intern)
-     (clojure-find-ns))))
+    (replique/auto-complete* prefix callback tooling-repl
+                             (replique/get repl :repl-env)
+                             (clojure-find-ns))))
 
 (defun replique/auto-complete (prefix callback)
   (when (not (null (replique/active-repl :tooling)))
@@ -329,12 +324,13 @@
 ;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
 ;; response into an asynchronous one, we always return eldoc-last-message and call
 ;; eldoc-message ourselves later
-(defun replique/repliquedoc* (tooling-repl msg-type ns)
+(defun replique/repliquedoc* (tooling-repl repl-env ns)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
     (when tooling-chan
       (replique/send-tooling-msg
        tooling-repl
-       (replique/hash-map :type msg-type
+       (replique/hash-map :type :repliquedoc
+                          :repl-env repl-env
                           :context (replique/form-with-prefix)
                           :ns ns
                           :symbol (symbol-name (symbol-at-point))))
@@ -355,32 +351,24 @@
 (defun replique/repliquedoc-session (repl)
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-type (replique/get repl :repl-type))
-         (msg-type (cond ((equal :clj repl-type)
-                          :repliquedoc-clj)
-                         ((equal :cljs repl-type)
-                          :repliquedoc-cljs)
-                         (t (error "Invalid REPL type: %s" repl-type))))
+         (repl-env (replique/get repl :repl-env))
          (ns (symbol-name (replique/get repl :ns))))
-    (replique/repliquedoc* tooling-repl msg-type ns)))
+    (replique/repliquedoc* tooling-repl repl-env ns)))
 
 (defun replique/repliquedoc-clj (tooling-repl clj-repl)
   (when clj-repl
-    (replique/repliquedoc* tooling-repl :repliquedoc-clj (clojure-find-ns))))
+    (replique/repliquedoc*
+     tooling-repl (replique/get clj-repl :repl-env) (clojure-find-ns))))
 
 (defun replique/repliquedoc-cljs (tooling-repl cljs-repl)
   (when cljs-repl
-    (replique/repliquedoc* tooling-repl :repliquedoc-cljs (clojure-find-ns))))
+    (replique/repliquedoc*
+     tooling-repl (replique/get cljs-repl :repl-env) (clojure-find-ns))))
 
 (defun replique/repliquedoc-cljc (tooling-repl repl)
   (when repl
     (replique/repliquedoc*
-     tooling-repl
-     (thread-last (replique/get repl :repl-type)
-       replique/keyword-to-string
-       (concat ":repliquedoc-")
-       intern)
-     (clojure-find-ns))))
+     tooling-repl (replique/get repl :repl-env) (clojure-find-ns))))
 
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
@@ -719,7 +707,8 @@ This allows you to temporarily modify read-only buffers too."
         (out-chan (replique-async/chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type :list-cljs-namespaces))
+     (replique/hash-map :type :list-namespaces
+                        :repl-env :replique/cljs))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -728,7 +717,7 @@ This allows you to temporarily modify read-only buffers too."
            (if err
                (progn
                  (message "%s" (replique-edn/pr-str err))
-                 (message "list-cljs-namespaces failed")
+                 (message "list-namespaces failed")
                  (replique-async/close! out-chan))
              (replique-async/put! out-chan resp))))))
     out-chan))
@@ -782,6 +771,7 @@ This allows you to temporarily modify read-only buffers too."
                  (replique/send-tooling-msg
                   tooling-repl
                   (replique/hash-map :type :output-main-js-files
+                                     :repl-env :replique/cljs
                                      :output-to output-to
                                      :main-ns main-ns))
                  (replique-async/<!
@@ -828,12 +818,14 @@ This allows you to temporarily modify read-only buffers too."
     (kill-new script)
     (message script)))
 
-(defun replique/list-css (tooling-repl)
+(defun replique/list-css (tooling-repl cljs-repl)
   (let ((tooling-chan (replique/get tooling-repl :chan))
+        (repl-env (replique/get cljs-repl :repl-env))
         (out-chan (replique-async/chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type :list-css))
+     (replique/hash-map :type :list-css
+                        :repl-env repl-env))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -865,9 +857,10 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/load-css (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (repl-env (replique/get cljs-repl :repl-env)))
     (replique-async/<!
-     (replique/list-css tooling-repl)
+     (replique/list-css tooling-repl cljs-repl)
      (lambda (resp)
        (when resp
          (let* ((css-urls (replique/get resp :css-urls))
@@ -886,6 +879,7 @@ This allows you to temporarily modify read-only buffers too."
              (replique/send-tooling-msg
               tooling-repl
               (replique/hash-map :type :load-css
+                                 :repl-env repl-env
                                  :url selected-url))
              (replique-async/<!
               tooling-chan
@@ -901,10 +895,13 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/load-js (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
+  (let ((tooling-chan (replique/get tooling-repl :chan))
+        (repl-env (replique/get cljs-repl :repl-env)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type :load-js :file-path file-path))
+     (replique/hash-map :type :load-js
+                        :repl-env repl-env
+                        :file-path file-path))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -1058,15 +1055,15 @@ This allows you to temporarily modify read-only buffers too."
       (let* ((form-s (replace-regexp-in-string "\n" " " form-s))
              (tooling-repl (replique/active-repl :tooling t))
              (tooling-chan (replique/get tooling-repl :chan))
-             (msg-type (thread-last (replique/keyword-to-string repl-type)
-                         (concat ":eval-")
-                         (make-symbol)))
+             (repl-env (replique/get repl :repl-env))
              (done nil)
              (result nil)
              (p (start-process "eval-form-proc" nil nil)))
         (replique/send-tooling-msg
          tooling-repl
-         (replique/hash-map :type msg-type :form form-s))
+         (replique/hash-map :type :eval
+                            :repl-env repl-env
+                            :form form-s))
         (replique-async/<!
          tooling-chan
          (lambda (resp)
@@ -1083,11 +1080,12 @@ This allows you to temporarily modify read-only buffers too."
           (accept-process-output p 0 200))
         result))))
 
-(defun replique/jump-to-definition* (symbol tooling-repl msg-type)
+(defun replique/jump-to-definition* (symbol tooling-repl repl-env)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique/send-tooling-msg
      tooling-repl
-     (replique/hash-map :type msg-type
+     (replique/hash-map :type :meta
+                        :repl-env repl-env
                         :ns (clojure-find-ns)
                         :symbol symbol
                         ;; whether the cursor is in a string
@@ -1118,34 +1116,24 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/jump-to-definition-session (symbol repl)
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-type (replique/get repl :repl-type))
-         (msg-type (thread-last repl-type
-                     replique/keyword-to-string
-                     (concat ":meta-")
-                     intern))
+         (repl-env (replique/get repl :repl-env))
          (ns (symbol-name (replique/get repl :ns))))
-    (replique/jump-to-definition* symbol tooling-repl msg-type)))
+    (replique/jump-to-definition* symbol tooling-repl repl-env)))
 
 (defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (replique/jump-to-definition* symbol tooling-repl :meta-clj)))
+    (replique/jump-to-definition* symbol tooling-repl (get clj-repl :repl-env))))
 
 (defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl :meta-cljs)))
+    (replique/jump-to-definition* symbol tooling-repl (get cljs-repl :repl-env))))
 
 (defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (replique/jump-to-definition*
-     symbol
-     tooling-repl
-     (thread-last (replique/get repl :repl-type)
-       replique/keyword-to-string
-       (concat ":meta-")
-       intern))))
+    (replique/jump-to-definition* symbol tooling-repl (get repl :repl-env))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
@@ -1575,6 +1563,7 @@ minibuffer"
                                           :host host
                                           :port port
                                           :repl-type :clj
+                                          :repl-env :replique/clj
                                           :session session
                                           :ns 'user
                                           :buffer buff)))
@@ -1629,14 +1618,14 @@ minibuffer"
               ;; rethrow the error
               (signal (car err) (cdr err)))))))))))
 
-(defun replique/on-repl-type-change (repl new-repl-type)
+(defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
          (repl-type (replique/get repl :repl-type))
          (repl-type-s (replique/keyword-to-string repl-type))
+         (repl-env (replique/get repl :repl-env))
          (new-repl-type-s (replique/keyword-to-string new-repl-type))
          (repl-buffer (replique/get repl :buffer)))
-    (if (equal repl-type new-repl-type)
-        repl
+    (when (not (equal repl-type new-repl-type))
       (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
                             (buffer-name repl-buffer))
         (let* ((new-buffer-name (replace-regexp-in-string
@@ -1644,8 +1633,12 @@ minibuffer"
                                  (format "*%s*" new-repl-type-s)
                                  (buffer-name repl-buffer))))
           (with-current-buffer repl-buffer
-            (rename-buffer (generate-new-buffer-name new-buffer-name)))))
-      (replique/update-repl repl (replique/assoc repl :repl-type new-repl-type)))))
+            (rename-buffer (generate-new-buffer-name new-buffer-name))))))
+    (if (and (equal repl-type new-repl-type) (equal repl-env new-repl-env))
+        repl
+      (replique/update-repl repl (replique/assoc repl
+                                                 :repl-type new-repl-type
+                                                 :repl-env new-repl-env)))))
 
 (defun replique/dispatch-tooling-msg* (in-chan out-chan)
   (replique-async/<!
@@ -1661,12 +1654,13 @@ minibuffer"
                     (propertize "Uncaught exception" 'face '(:foreground "red"))
                     (replique/get msg :thread)
                     (replique-edn/pr-str (replique/get msg :value))))
-          ((equal :ns-change (replique/get msg :type))
+          ((equal :repl-meta (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
                          :directory (replique/get msg :process-id))))
              (when repl
-               (let ((repl (replique/on-repl-type-change repl (replique/get msg :repl-type))))
+               (let ((repl (replique/on-repl-type-change
+                            repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
                  (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
           (t (replique-async/put! out-chan msg)))
        (error (message (error-message-string err))))
@@ -1743,7 +1737,7 @@ minibuffer"
 
 ;; autocomplete using the spec first, compliment next if no candidates
 
-;; defclass is deprecated
+;; elisp: defclass is deprecated
 
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
@@ -1757,19 +1751,18 @@ minibuffer"
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
-;; Print cljs exceptions like clj ones
 ;; autocompletion for locals when in the same binding form
-
 ;; restore print-namespaced-maps somewhere
-;; load-file (and other macros ?) are executed 2 times when called from the cljs repl
-
 ;; copy html / css on load-file (problem: override or not (web app context))
-
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 ;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
 ;; omniscient -> capture the stacktrace if possible
+;; omniscient -> implement with-redefs for defrecord
+;; omniscient -> document with-redefs for deftype, extend-type, defrecord
+;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
+;; check jump to definition when using a var declared with (declare ...)
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 
