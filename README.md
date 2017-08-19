@@ -341,7 +341,7 @@ A function with one or multiple captured environments can be debugged by placing
 
 Upon environment selection, Relique starts an special REPL in which the environment bindings are set. Type `:omniscient/quit` to quit the omniscient REPL.
 
-All code evaluation happening in an omniscient REPL is executed with the bindings of the selected environment, except the `replique.omniscient/with-redefs` macro (and its body) which escapes the environment bindings. 
+All code evaluation happening in an omniscient REPL is executed with the bindings of the selected environment, except for the `replique.omniscient/with-redefs` macro (and its body) which escapes the environment bindings. 
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
