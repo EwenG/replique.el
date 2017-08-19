@@ -1,3 +1,5 @@
+# Version 0.0.8
+
 # Version 0.0.7
 
 - The omniscient debugger no longer automatically select the environment to be debugged when there is only one environment
