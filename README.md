@@ -401,15 +401,20 @@ Replique registers a default exception handler that prints all uncaught exceptio
 
 ## Default keymap
 
-Keybinding           | Description
----------------------|----------------------------------
-<kbd>C-x C-r</kbd>   | Evaluate region
-<kbd>C-x C-e</kbd>   | Evaluate last sexp
-<kbd>C-M-x</kbd>     | Evaluate top level sexp
-<kbd>C-c C-l</kbd>   | Load file
-<kbd>C-c M-n</kbd>   | Change namespace
-<kbd>M-.</kbd>       | Jump to symbol definition
-<kbd>C-c C-r</kbd>   | Change active REPL session
+Keybinding              | Description
+------------------------|----------------------------------
+<kbd>C-x C-r</kbd>      | Evaluate region
+<kbd>C-u C-x C-r</kbd>  | Evaluate region, compiling function/method definitions with the debugger
+<kbd>C-x C-e</kbd>      | Evaluate last sexp
+<kbd>C-u C-x C-e</kbd>  | Evaluate last sexp, compiling function/method definitions with the debugger
+<kbd>C-M-x</kbd>        | Evaluate top level sexp
+<kbd>C-c C-l</kbd>      | Load file
+<kbd>C-u C-c C-l</kbd>  | Load file, compiling function/method definitions with the debugger
+<kbd>C-c M-n</kbd>      | Change namespace
+<kbd>M-.</kbd>          | Jump to symbol definition
+<kbd>C-c C-r</kbd>      | Change active REPL session
+<kbd>C-c C-o</kbd>      | Debug the var at point
+<kbd>C-u C-c C-o</kbd>  | Clear all the environments captured by the debugger
 
 ## Interactive commands
 
@@ -424,6 +429,7 @@ Command                          | Description
 `replique/close-process`         | Close all processes associated with a JVM process
 `replique/output-main-js-file`   | Write a main js file to disk
 `replique/classpath`             | Reload the classpath based on the project.clj configuration
+`replique/omniscient`            | Debug the var at point
 
 ## REPL API
 
