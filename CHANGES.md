@@ -1,5 +1,7 @@
 # Version 0.0.8
 
+- The omniscient debugger now only capture environments of functions executed directly from the REPL, unless the global-mode is true
+
 # Version 0.0.7
 
 - The omniscient debugger no longer automatically select the environment to be debugged when there is only one environment

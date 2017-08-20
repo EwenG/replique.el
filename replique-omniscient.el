@@ -194,6 +194,13 @@
          (clojurec-mode . (apply-partially 'replique/omniscient-clj symbol))
          (t . (user-error "Unsupported major mode: %s" major-mode)))))))
 
+(defun replique/omniscient-global-mode ()
+  "Toggle the omniscient global mode"
+  (interactive)
+  (if (not (featurep 'ivy))
+      (user-error "replique-omniscient requires ivy-mode")
+    (replique/send-input-from-source-dispatch "(swap! replique.omniscient-runtime/global-mode not)")))
+
 (defvar replique/omniscient-minibuffer-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "TAB") 'replique/expand-environment)
