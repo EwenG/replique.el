@@ -1762,6 +1762,7 @@ minibuffer"
 ;; omniscient -> document with-redefs for deftype, extend-type, defrecord
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; check jump to definition when using a var declared with (declare ...)
+;; eval-top-level form -> ignore (comment ...) form
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.8.40
 

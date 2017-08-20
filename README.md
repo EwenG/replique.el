@@ -408,6 +408,7 @@ Keybinding              | Description
 <kbd>C-x C-e</kbd>      | Evaluate last sexp
 <kbd>C-u C-x C-e</kbd>  | Evaluate last sexp, compiling function/method definitions with the debugger
 <kbd>C-M-x</kbd>        | Evaluate top level sexp
+<kbd>C-u C-M-x</kbd>    | Evaluate top level sexp, compiling function/method definitions with the debugger
 <kbd>C-c C-l</kbd>      | Load file
 <kbd>C-u C-c C-l</kbd>  | Load file, compiling function/method definitions with the debugger
 <kbd>C-c M-n</kbd>      | Change namespace
