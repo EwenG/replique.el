@@ -1,5 +1,6 @@
 # Version 0.0.8
 
+- Add the replique/remove-var interactive command
 - The omniscient debugger now only capture environments of functions executed directly from the REPL, unless the global-mode is true
 
 # Version 0.0.7
