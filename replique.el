@@ -34,6 +34,7 @@
 (require 'map)
 (require 'replique-omniscient)
 (require 'replique-lein)
+(require 'replique-remove-var)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -580,10 +581,14 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
   (interactive "P")
-  (replique/send-input-from-source-dispatch
-   (if p
-       (concat "(replique.omniscient/with-redefs " (thing-at-point 'defun) ")")
-     (thing-at-point 'defun))))
+  (let ((expr (thing-at-point 'defun)))
+    (when expr
+      (replique/send-input-from-source-dispatch
+       (if p
+           (concat "(replique.omniscient/with-redefs " expr ")")
+         (thing-at-point 'defun))))))
+
+;; (backward-up-list)
 
 (defun replique/load-file-clj (file-path p props clj-repl)
   (if (not clj-repl)
@@ -1751,7 +1756,7 @@ minibuffer"
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
-;; autocompletion for locals when in the same binding form
+
 ;; restore print-namespaced-maps somewhere
 ;; copy html / css on load-file (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
@@ -1759,12 +1764,16 @@ minibuffer"
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
 ;; omniscient -> capture the stacktrace if possible
-;; omniscient -> document with-redefs for deftype, extend-type, defrecord
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
-;; check jump to definition when using a var declared with (declare ...)
-;; eval-top-level form -> ignore (comment ...) form
+;; document omniscient global capture / rethink global capture for multithreads
+;; eval-top-level form -> ignore (comment ...) form -> unwrap top level comment | clojure.core/comment
+;; jump-to-definition for ns -> list all files
+;; load-file for files in jar
+;; clojurescript load-file with a :require pointing to an non exitent var ??
+;; clojurescript require :reload-all for :require (same as above)
+;; document remove-var
 
-;; min versions -> clojure 1.8.0, clojurescript 1.8.40
+;; min versions -> clojure 1.8.0, clojurescript 1.9.183
 
 
 (comment
