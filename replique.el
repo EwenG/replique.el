@@ -1769,9 +1769,11 @@ minibuffer"
 ;; eval-top-level form -> ignore (comment ...) form -> unwrap top level comment | clojure.core/comment
 ;; jump-to-definition for ns -> list all files
 ;; load-file for files in jar
-;; clojurescript load-file with a :require pointing to an non exitent var ??
-;; clojurescript require :reload-all for :require (same as above)
+;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
 ;; document remove-var
+;; remove-var for cljs when the runtime is not available/does not match the compiler state
+;; check clojurescript version number when starting replique
+;; multiprocess / active REPL -> bug
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.183
 
