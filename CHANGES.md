@@ -1,5 +1,6 @@
 # Version 0.0.8
 
+- Fix javascript commands (using js2-mode)
 - Add the replique/remove-var interactive command
 
 # Version 0.0.7
