@@ -294,7 +294,7 @@
         (force-highlight nil))
     (thread-first
         (lambda (arg)
-          (cond ((equal '& arg)
+          (cond ((equal "&" arg)
                  (when (<= args-index index)
                    (setq force-highlight t))
                  arg)
@@ -311,6 +311,10 @@
   (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
     (mapcar arglists)
     replique-edn/print-str))
+
+(comment
+ (replique/repliquedoc-format-arglists 0 '([">main-input" (replique/hash-map :keys ["uid" event data reply-fn] :as msg)]))
+ )
 
 (defun replique/repliquedoc-format (msg)
   (map-let ((:name name) (:arglists arglists) (:return return) (:index index)) msg

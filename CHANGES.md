@@ -1,5 +1,6 @@
 # Version 0.0.8
 
+- Replique no longer breaks when using clojure symbols that cannot be read by the elisp reader
 - Fix javascript commands (using js2-mode)
 - Add the replique/remove-var interactive command
 
