@@ -128,12 +128,21 @@
   (apply 'replique/repls-or-repl-by 'seq-filter 'equal replique/repls args))
 
 (defun replique/active-repl (repl-type-or-types &optional error-on-nil)
-  (if (listp repl-type-or-types)
-      (apply 'replique/repls-or-repl-by 'seq-find
-             (lambda (repl-v repl-type-or-types)
-               (member repl-v repl-type-or-types))
-             replique/repls (list :repl-type repl-type-or-types))
-    (replique/repl-by :repl-type repl-type-or-types :error-on-nil error-on-nil)))
+  ;; filter the repls to only keep the repls of the active process
+  (let* ((active-process-dir (thread-first
+                                 (replique/repl-by :repl-type :tooling :error-on-nil error-on-nil)
+                               (replique/get :directory)))
+         (replique/repls (if active-process-dir
+                             (seq-filter (lambda (repl)
+                                           (string= active-process-dir
+                                                    (replique/get repl :directory)))
+                                         replique/repls))))
+    (if (listp repl-type-or-types)
+        (apply 'replique/repls-or-repl-by 'seq-find
+               (lambda (repl-v repl-type-or-types)
+                 (member repl-v repl-type-or-types))
+               replique/repls (list :repl-type repl-type-or-types))
+      (replique/repl-by :repl-type repl-type-or-types :error-on-nil error-on-nil))))
 
 (defun replique/guess-project-root-dir ()
   (or (locate-dominating-file default-directory "project.clj")
