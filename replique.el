@@ -1098,13 +1098,13 @@ This allows you to temporarily modify read-only buffers too."
           (accept-process-output p 0 200))
         result))))
 
-(defun replique/jump-to-definition* (symbol tooling-repl repl-env)
+(defun replique/jump-to-definition* (symbol tooling-repl repl-env ns)
   (let ((tooling-chan (replique/get tooling-repl :chan)))
     (replique/send-tooling-msg
      tooling-repl
      (replique/hash-map :type :meta
                         :repl-env repl-env
-                        :ns (clojure-find-ns)
+                        :ns ns
                         :symbol symbol
                         ;; whether the cursor is in a string
                         :is-string? (not (null (nth 3 (syntax-ppss))))
@@ -1136,22 +1136,25 @@ This allows you to temporarily modify read-only buffers too."
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
          (repl-env (replique/get repl :repl-env))
          (ns (symbol-name (replique/get repl :ns))))
-    (replique/jump-to-definition* symbol tooling-repl repl-env)))
+    (replique/jump-to-definition* symbol tooling-repl repl-env ns)))
 
 (defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (replique/jump-to-definition* symbol tooling-repl (replique/get clj-repl :repl-env))))
+    (replique/jump-to-definition*
+     symbol tooling-repl (replique/get clj-repl :repl-env) (clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl (replique/get cljs-repl :repl-env))))
+    (replique/jump-to-definition*
+     symbol tooling-repl (replique/get cljs-repl :repl-env) (clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (replique/jump-to-definition* symbol tooling-repl (replique/get repl :repl-env))))
+    (replique/jump-to-definition*
+     symbol tooling-repl (replique/get repl :repl-env) (clojure-find-ns))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
