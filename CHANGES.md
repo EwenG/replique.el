@@ -1,5 +1,6 @@
 # Version 0.0.8
 
+- replique/eval-defn now unwraps the top level (comment ...) block, if any
 - Fix jump to definition when used in the REPL buffer
 - REPLs not belonging to the active process can no longer be considered as active
 - Replique no longer breaks when using clojure symbols that cannot be read by the elisp reader

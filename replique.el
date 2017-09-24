@@ -591,17 +591,41 @@ This allows you to temporarily modify read-only buffers too."
    (point)
    p))
 
+;; if the cursor is in a string, thing-at-point 'sexp does not return the string but the symbol
+(defun replique/thing-at-point ()
+  (let ((s-pps (syntax-ppss)))
+    (if (not (null (nth 3 s-pps)))
+        (save-excursion
+          (goto-char (nth 8 s-pps))
+          (thing-at-point 'sexp))
+      (thing-at-point 'sexp))))
+
+(defun replique/unwrap-comment (prev-expr)
+  (let ((sexpr-start (nth 1 (syntax-ppss))))
+    (if (null sexpr-start)
+        (if (or (null prev-expr) (seq-contains replique/clj-comment prev-expr))
+            (replique/thing-at-point)
+          (if (seq-find (lambda (comment-expr)
+                          (let* ((comment-expr (concat "(" comment-expr))
+                                 (bound (+ (point) (length comment-expr))))
+                            (search-forward comment-expr bound t)))
+                        replique/clj-comment)
+              prev-expr
+            (replique/thing-at-point)))
+      (let ((expr (replique/thing-at-point)))
+        (goto-char sexpr-start)
+        (replique/unwrap-comment expr)))))
+
 (defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
   (interactive "P")
-  (let ((expr (thing-at-point 'defun)))
-    (when expr
-      (replique/send-input-from-source-dispatch
-       (if p
-           (concat "(replique.omniscient/with-redefs " expr ")")
-         (thing-at-point 'defun))))))
-
-;; (backward-up-list)
+  (save-excursion
+    (let ((expr (replique/unwrap-comment nil)))
+      (when expr
+        (replique/send-input-from-source-dispatch
+         (if p
+             (concat "(replique.omniscient/with-redefs " expr ")")
+           expr))))))
 
 (defun replique/load-file-clj (file-path p props clj-repl)
   (if (not clj-repl)
@@ -1216,6 +1240,12 @@ is not visible"
   :type 'boolean
   :group 'replique)
 
+(defcustom replique/clj-comment '("comment" "clojure.core/comment")
+  "The symbols considered to be starting a clojure comment block. Used by replique/eval-defn when
+unwrapping a top level comment block "
+  :type 'list
+  :group 'replique)
+
 (defvar replique/mode-hook '()
   "Hook for customizing replique mode.")
 
@@ -1784,12 +1814,11 @@ minibuffer"
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; eval-top-level form -> ignore (comment ...) form -> unwrap top level comment | clojure.core/comment
 ;; jump-to-definition for ns -> list all files
-;; load-file for files in jar
 ;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
 ;; document remove-var
-;; remove-var for cljs when the runtime is not available/does not match the compiler state
-;; check clojurescript version number when starting replique
-;; multiprocess / active REPL -> bug
+;; omniscient no capured environment when executing replique/omniscient omniscient from a different namespace than the var
+;; load-file when an omniscient REPL causes issues ? executed with bindings in place ?
+;; cljs REPL broken pipe exception when reloading the browser
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.183
 
