@@ -40,13 +40,13 @@
   (when (boundp 'smartparens-mode)
     (smartparens-mode 1)))
 
-(defun replique/select-environment (repl sym r &optional index)
+(defun replique/select-environment (repl ns sym r &optional index)
   (when (> (replique/count replique/omniscient-indexes) 0)
     (let ((selected-index (aref replique/omniscient-indexes (or index ivy--index)))
           (buff (replique/get repl :buffer)))
       (with-current-buffer buff
         (replique/comint-send-input-from-source
-         (format "(replique.omniscient/repl %s %s)" sym selected-index))))))
+         (format "(replique.omniscient/repl %s/%s %s)" ns sym selected-index))))))
 
 (defun replique/expand-environment ()
   (interactive)
@@ -61,22 +61,22 @@
                    "(clojure.pprint/pprint (replique.omniscient/get-env %s %s))")
                  replique/omniscient-symbol selected-index))))))
 
-(defun replique/omniscient-filter-query (session-ns symbol filter)
+(defun replique/omniscient-filter-query (ns symbol filter)
   (setq replique/omniscient-expected-msg-id (+ 1 replique/omniscient-expected-msg-id))
   (replique/hash-map :type :omniscient-filter
                      :repl-env (replique/get replique/omniscient-repl :repl-env)
                      :msg-id replique/omniscient-expected-msg-id
-                     :session-ns session-ns
+                     :ns ns
                      :symbol symbol
                      ;; whether the cursor is over a string
                      :filter-term filter
                      :prev-index replique/omniscient-prev-index))
 
-(defun replique/omniscient-filter (session-ns symbol tooling-repl repl)
+(defun replique/omniscient-filter (ns symbol tooling-repl repl)
   (let ((tooling-chan (replique/get tooling-repl :chan))
         (init-candidates nil))
     (replique/send-tooling-msg
-     tooling-repl (replique/omniscient-filter-query session-ns symbol ""))
+     tooling-repl (replique/omniscient-filter-query ns symbol ""))
     (replique-async/<!
      tooling-chan
      (lambda (resp)
@@ -86,7 +86,7 @@
                (progn
                  (message "%s" (replique-edn/pr-str err))
                  (message "omniscient failed with symbol: %s, ns: %s, filter term: %s"
-                          symbol session-ns ""))
+                          symbol ns ""))
              (let ((locals (replique/get resp :locals))
                    (indexes (replique/get resp :indexes))
                    (index (replique/get resp :index)))
@@ -95,7 +95,7 @@
                (when index (ivy-set-index index))
                (cond
                 ((equal 0 (replique/count locals))
-                 (message "No captured environment for %s" symbol session-ns))
+                 (message "No captured environment for %s" symbol ns))
                 (t (let ((minibuffer-setup-hook (cons 'replique/omniscient-setup-hook
                                                       minibuffer-setup-hook)))
                      (ivy-read
@@ -105,7 +105,7 @@
                           (setq replique/omniscient-prev-index
                                 (aref replique/omniscient-indexes ivy--index)))
                         (replique/send-tooling-msg
-                         tooling-repl (replique/omniscient-filter-query session-ns symbol filter))
+                         tooling-repl (replique/omniscient-filter-query ns symbol filter))
                         (replique-async/<!
                          tooling-chan
                          (lambda (resp)
@@ -116,7 +116,7 @@
                                      (message "%s" (replique-edn/pr-str err))
                                      (message
                                       "omniscient failed with symbol: %s, ns: %s, filter term: %s"
-                                      symbol session-ns filter)
+                                      symbol ns filter)
                                      (setq replique/omniscient-candidates '())
                                      (setq replique/omniscient-indexes [])
                                      (ivy--set-candidates '())
@@ -133,7 +133,7 @@
                                      (ivy--exhibit))))))))
                         replique/omniscient-candidates)
                       :dynamic-collection t
-                      :action (apply-partially 'replique/select-environment repl symbol)
+                      :action (apply-partially 'replique/select-environment repl ns symbol)
                       :keymap replique/omniscient-minibuffer-map))))))))))))
 
 (comment
@@ -150,33 +150,33 @@
              :keymap replique/omniscient-minibuffer-map))
  )
 
-(defun replique/omniscient* (symbol tooling-repl repl)
+(defun replique/omniscient* (ns symbol tooling-repl repl)
   (setq replique/omniscient-candidates nil)
   (setq replique/omniscient-indexes nil)
   (setq replique/omniscient-prev-index nil)
   (setq ivy--index 0)
-  (let ((session-ns (symbol-name (replique/get repl :ns))))
-    (setq replique/omniscient-symbol symbol)
-    (setq replique/omniscient-repl repl)
-    (replique/omniscient-filter session-ns symbol tooling-repl repl)))
+  (setq replique/omniscient-symbol symbol)
+  (setq replique/omniscient-repl repl)
+  (replique/omniscient-filter ns symbol tooling-repl repl))
 
 (defun replique/omniscient-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (replique/omniscient* symbol tooling-repl clj-repl)))
+    (replique/omniscient* (clojure-find-ns) symbol tooling-repl clj-repl)))
 
 (defun replique/omniscient-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (replique/omniscient* symbol tooling-repl cljs-repl)))
+    (replique/omniscient* (clojure-find-ns) symbol tooling-repl cljs-repl)))
 
 (defun replique/omniscient-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (replique/omniscient* symbol tooling-repl repl)))
+    (replique/omniscient* (clojure-find-ns) symbol tooling-repl repl)))
 
 (defun replique/omniscient-session (symbol repl)
-  (replique/omniscient* symbol (replique/active-repl :tooling) repl))
+  (replique/omniscient* (symbol-name (replique/get repl :ns)) symbol
+                        (replique/active-repl :tooling) repl))
 
 (defun replique/omniscient (symbol)
   "Start a REPL in which the locals of the environment of the function/mutlimethod/protocol at point are bound. Clears all captured environments when called with a prefix argument"
