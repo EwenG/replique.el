@@ -1,6 +1,6 @@
 # Version 0.0.8
 
-- Remove ansi colors from messages printing in the *Messages* buffer
+- Remove ansi colors from messages printed in the *Messages* buffer
 - replique/eval-defn now unwraps the top level (comment ...) block, if any
 - Fix jump to definition when used in the REPL buffer
 - REPLs not belonging to the active process can no longer be considered as active
