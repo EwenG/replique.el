@@ -1508,7 +1508,9 @@ The following commands are available:
                                         (setq proc-out))
                                     (setq proc-out (concat proc-out string)))
                                   (when (not (accept-process-output proc 0 0 t))
-                                    (message "%s" proc-out)
+                                    ;; when printing in the *Messages* buffer with (message ...),
+                                    ;; ansi colors are not handled
+                                    (message "%s" (ansi-color-filter-apply proc-out))
                                     (setq proc-out nil))))
        (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
               (network-proc (open-network-stream directory nil host port))
@@ -1575,7 +1577,7 @@ minibuffer"
     (when (and (eq active-proc process)
                (not (seq-contains (replique/visible-buffers) active-buffer))
                replique/display-output-in-minibuffer)
-      (replique/message-nolog string))
+      (replique/message-nolog (ansi-color-filter-apply string)))
     (comint-output-filter process string)))
 
 (defun replique/make-comint (proc buffer)
@@ -1704,7 +1706,7 @@ minibuffer"
            (message "%s - Thread: %s - Exception: %s"
                     (propertize "Uncaught exception" 'face '(:foreground "red"))
                     (replique/get msg :thread)
-                    (replique-edn/pr-str (replique/get msg :value))))
+                    (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
           ((equal :repl-meta (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
@@ -1816,12 +1818,9 @@ minibuffer"
 ;; jump-to-definition for ns -> list all files
 ;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
 ;; document remove-var
-;; omniscient no capured environment when executing replique/omniscient omniscient from a different namespace than the var
-;; load-file when an omniscient REPL causes issues ? executed with bindings in place ?
-;; cljs REPL broken pipe exception when reloading the browser
 
-;; min versions -> clojure 1.8.0, clojurescript 1.9.183
-
+;; min versions -> clojure 1.8.0, clojurescript 1.9.473
+;; load-file for files in jar in order to revert the ns var values
 
 (comment
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
