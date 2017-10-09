@@ -627,44 +627,51 @@ This allows you to temporarily modify read-only buffers too."
              (concat "(replique.omniscient/with-redefs " expr ")")
            expr))))))
 
-(defun replique/load-file-clj (file-path p props clj-repl)
+(defun replique/load-url-clj (url p props clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
      (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
-               "(replique.interactive/load-file \"%s\")")
-             file-path)
+                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
+               "(replique.interactive/load-url \"%s\")")
+             url)
      props clj-repl)))
 
-(defun replique/load-file-cljs (file-path p props cljs-repl)
+(defun replique/load-url-cljs (url p props cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
      (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
-               "(replique.interactive/load-file \"%s\")")
-             file-path)
+                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
+               "(replique.interactive/load-url \"%s\")")
+             url)
      props cljs-repl)))
 
-(defun replique/load-file-cljc (file-path p props repl)
+(defun replique/load-url-cljc (url p props repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique/send-input-from-source-cljc
      (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-file \"%s\"))"
-               "(replique.interactive/load-file \"%s\")")
-             file-path)
+                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
+               "(replique.interactive/load-url \"%s\")")
+             url)
      props repl)))
 
-(defun replique/load-file (file-path p)
-  "Load a file in a replique REPL"
+(defun replique/buffer-url (file-name)
+  (if (string-match "^\\(.*\\.jar\\):\\(.+\\)" file-name)
+      (format "jar:file:%s!/%s" (match-string 1 file-name) (match-string 2 file-name))
+    (format "file://%s" file-name)))
+
+(defun replique/load-url (file-path p)
   (interactive (list (buffer-file-name) current-prefix-arg))
   (comint-check-source file-path)
   (replique/with-modes-dispatch
-   (clojure-mode . (apply-partially 'replique/load-file-clj file-path p))
-   (clojurescript-mode . (apply-partially 'replique/load-file-cljs file-path p))
-   (clojurec-mode . (apply-partially 'replique/load-file-cljc file-path p))
+   (clojure-mode . (apply-partially 'replique/load-url-clj
+                                    (replique/buffer-url file-path) p))
+   (clojurescript-mode . (apply-partially 'replique/load-url-cljs
+                                          (replique/buffer-url file-path) p))
+   (clojurec-mode . (apply-partially 'replique/load-url-cljc
+                                     (replique/buffer-url file-path) p))
    (css-mode . (apply-partially 'replique/load-css file-path))
    (js2-mode . (apply-partially 'replique/load-js file-path))
    (stylus-mode . (apply-partially 'replique/load-stylus file-path))
@@ -1279,7 +1286,7 @@ unwrapping a top level comment block "
     (define-key map "\C-x\C-r" 'replique/eval-region)
     (define-key map "\C-x\C-e" 'replique/eval-last-sexp)
     (define-key map "\C-\M-x" 'replique/eval-defn)
-    (define-key map "\C-c\C-l" 'replique/load-file)
+    (define-key map "\C-c\C-l" 'replique/load-url)
     (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
@@ -1292,7 +1299,7 @@ unwrapping a top level comment block "
         ["Eval last sexp" replique/eval-last-sexp t]
         ["Eval defn" replique/eval-defn t]
         "--"
-        ["Load file" replique/load-file t]
+        ["Load file" replique/load-url t]
         "--"
         ["Set REPL ns" replique/in-ns t]
         "--"
@@ -1806,7 +1813,7 @@ minibuffer"
 ;; cljs repl server hangs on serving assets on a broken connection ?
 
 ;; restore print-namespaced-maps somewhere
-;; copy html / css on load-file (problem: override or not (web app context))
+;; copy html / css on load-url (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 ;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
@@ -1818,9 +1825,9 @@ minibuffer"
 ;; jump-to-definition for ns -> list all files
 ;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
 ;; document remove-var
+;; replique README load-file -> load-url
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
-;; load-file for files in jar in order to revert the ns var values
 
 (comment
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
