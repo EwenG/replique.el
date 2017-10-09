@@ -662,7 +662,7 @@ This allows you to temporarily modify read-only buffers too."
       (format "jar:file:%s!/%s" (match-string 1 file-name) (match-string 2 file-name))
     (format "file://%s" file-name)))
 
-(defun replique/load-url (file-path p)
+(defun replique/load-file (file-path p)
   (interactive (list (buffer-file-name) current-prefix-arg))
   (comint-check-source file-path)
   (replique/with-modes-dispatch
@@ -1286,7 +1286,7 @@ unwrapping a top level comment block "
     (define-key map "\C-x\C-r" 'replique/eval-region)
     (define-key map "\C-x\C-e" 'replique/eval-last-sexp)
     (define-key map "\C-\M-x" 'replique/eval-defn)
-    (define-key map "\C-c\C-l" 'replique/load-url)
+    (define-key map "\C-c\C-l" 'replique/load-file)
     (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
@@ -1299,7 +1299,7 @@ unwrapping a top level comment block "
         ["Eval last sexp" replique/eval-last-sexp t]
         ["Eval defn" replique/eval-defn t]
         "--"
-        ["Load file" replique/load-url t]
+        ["Load file" replique/load-file t]
         "--"
         ["Set REPL ns" replique/in-ns t]
         "--"
