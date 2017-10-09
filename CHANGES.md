@@ -1,6 +1,6 @@
 # Version 0.0.8
 
-- Replace load-file by load-url. clj/cljs/cljc files can now be loaded from files or from files in jar archives
+- clj/cljs/cljc files can now be loaded from files or from files in jar archives
 - Remove ansi colors from messages printed in the *Messages* buffer
 - replique/eval-defn now unwraps the top level (comment ...) block, if any
 - Fix jump to definition when used in the REPL buffer
