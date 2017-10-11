@@ -1197,6 +1197,18 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
+(comment
+ (defun replique/install-node-deps ()
+   "Install Clojurescript :npm-deps"
+   (interactive)
+   (let* ((tooling-repl (replique/active-repl :tooling t))
+          (active-repl (replique/active-repl '(:clj :cljs))))
+     (when (not active-repl)
+       (user-error "No active Clojure REPL"))
+     (replique/send-input-from-source-session "(replique.interactive/install-node-deps!)"
+                                              active-repl)))
+ )
+
 (defconst replique/client-version "0.0.8-SNAPSHOT")
 
 (defcustom replique/version "0.0.8-SNAPSHOT"
