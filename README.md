@@ -204,6 +204,8 @@ The Clojurescript compiler is preconfigured for development builds (optimization
 - To update the *:repl-verbose* REPL options, **from a cljs REPL**: `(replique.interactive/set-cljs-repl-verbose true)`. Note that `set-cljs-repl-verbose` is a macro.
 - To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings :checked-arrays}* compiler options, **from a clj REPL**: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
 
+Replique does not yet support the :npm-deps Clojurescript compiler options. It will be supported when the npm dependencies feature of the Clojurescript compiler gets more stable.
+
 Replique only manages development builds. For production builds, I would recommend using a custom script, a lein plugin (such as [lein-cljsbuild](https://github.com/emezeske/lein-cljsbuild)) or any other existing solution.
 
 ### Using external javascript libraries
