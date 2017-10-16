@@ -1,3 +1,5 @@
+Also see [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
+
 # Version 0.0.9
 
 # Version 0.0.8
@@ -46,5 +48,3 @@ from any environment, even non clojurescript ones
 
 - Implement stylus, less, sass files reloading
 - Update the installation process to use [package.el](https://www.emacswiki.org/emacs/ELPA)
-
-- Also see [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
