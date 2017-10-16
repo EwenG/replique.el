@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.8-SNAPSHOT
+;; Version 0.0.8
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
 
 ;; Commentary:
@@ -1209,9 +1209,9 @@ This allows you to temporarily modify read-only buffers too."
                                               active-repl)))
  )
 
-(defconst replique/client-version "0.0.8-SNAPSHOT")
+(defconst replique/client-version "0.0.8")
 
-(defcustom replique/version "0.0.8-SNAPSHOT"
+(defcustom replique/version "0.0.8"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
@@ -1833,11 +1833,9 @@ minibuffer"
 ;; omniscient -> capture the stacktrace if possible
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
-;; eval-top-level form -> ignore (comment ...) form -> unwrap top level comment | clojure.core/comment
 ;; jump-to-definition for ns -> list all files
 ;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
-;; document remove-var
-;; replique README load-file -> load-url
+;; jump to definition for protocol methods -> jump to the protocol line
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 

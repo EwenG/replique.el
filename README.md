@@ -21,7 +21,7 @@ An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a d
 
 ## Installation
 
-Replique is compatible with clojure 1.8.0+, clojurescript 1.8.40+ and requires emacs 25+.
+Replique is compatible with clojure 1.8.0+, clojurescript 1.9.473+ and requires emacs 25+.
 
 ### Emacs mode
 
@@ -110,6 +110,7 @@ Enable [code evaluation in org-mode](#using-replique-with-org-mode)
 - [Stylus](http://stylus-lang.com/), [less](http://lesscss.org/), [sass](http://sass-lang.com/) file reloading
 - Javascript file reloading
 - Omniscient debugger
+- Var undefinition/removal
 - Org-mode integration
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
@@ -345,7 +346,11 @@ A function with one or multiple captured environments can be debugged by placing
 
 Upon environment selection, Relique starts an special REPL in which the environment bindings are set. Type `:omniscient/quit` to quit the omniscient REPL.
 
-All code evaluation happening in an omniscient REPL is executed with the bindings of the selected environment, except for the `replique.omniscient/with-redefs` macro (and its body) which escapes the environment bindings. 
+All code evaluation happening in an omniscient REPL is executed with the bindings of the selected environment, except for the `replique.omniscient/with-redefs` macro (and its body) which escapes the environment bindings.
+
+## Undefining / removing a var
+
+Clojure and Clojurescript vars can be removed using the `replique/remove-var`. The `replique/remove-var` command prompts for the var to be removed amongs all the vars of the current buffer's namespace or the current REPL namespace if the current buffer is the REPL. Removing a var also remove all the mappings (ie. :require :refer) to the var from all namespaces. 
 
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
@@ -447,9 +452,11 @@ Functions                        | Description
 Macros                           | Description
 ---------------------------------|----------------------------------
 `load-file`                      | Loads a clj/cljs/cljc file in the REPL
+`load-url`                       | Loads a clj/cljs/cljc URL in the REPL. The URL can be a file or a file in a jar 
 `cljs-in-ns`                     | Change the cljs REPL namespace
 `set-cljs-repl-verbose`          | Set the verbose option of the Clojurescript REPL
-`set-cljs-compiler-opt`          | Customize a Clojurescript compiler option. See the `compiler-opts` var for availbable options
+`set-cljs-compiler-opt`          | Customize a Clojurescript compiler option. See the `compiler-opts` var for available options
+`remove-var`                     | Remove a var from its namespace. Also remove all mappings to this var from any namespace
 
 Vars                             | Description
 ---------------------------------|----------------------------------
