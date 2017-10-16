@@ -1,4 +1,4 @@
-Also see [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
+See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.9
 
