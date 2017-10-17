@@ -46,10 +46,13 @@
   ()
   :abstract t)
 
+(defun replique-edn/object-slots (o)
+  (mapcar 'eieio-slot-descriptor-name (eieio-class-slots (eieio-object-class o))))
+
 (defmethod replique-edn/print-method ((o replique-edn/printable))
   (let ((slots (mapcar (lambda (s)
                          (intern (concat ":" (symbol-name s))))
-                       (object-slots o)))
+                       (replique-edn/object-slots o)))
         (l nil)
         (m (make-hash-table :test 'equal)))
     (dolist (s slots)
@@ -60,7 +63,7 @@
         (puthash (car data-rest) (cadr data-rest) m)
         (setq data-rest (cddr data-rest))))
     (format "#%s %s"
-            (object-class o)
+            (eieio-object-class-name o)
             (replique-edn/pr-str m))))
 
 (defclass replique-edn/with-face (replique-edn/printable)
@@ -77,7 +80,7 @@
 (defun replique-edn/pr-str (data)
   (cond ((null data) "nil")
         ((equal t data) "true")
-        ((replique-edn/printable-child-p data)
+        ((cl-typep data 'replique-edn/printable)
          (replique-edn/print-method data))
         ((numberp data) (format "%s" data))
         ((stringp data) (if replique-edn/print-readably
