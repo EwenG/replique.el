@@ -1809,8 +1809,6 @@ minibuffer"
 
 ;; autocomplete using the spec first, compliment next if no candidates
 
-;; elisp: defclass is deprecated
-
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
 
@@ -1835,9 +1833,12 @@ minibuffer"
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
 ;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
+;; reload a file + all its dependencies, is it even possible?
+;; reload a file + all files that depend on it, is it even possible?
 ;; jump to definition for protocol methods -> jump to the protocol line
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
+;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
 
 (comment
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
