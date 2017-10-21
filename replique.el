@@ -1197,6 +1197,17 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
+(defun replique/offline-mode ()
+  "Toggle the Replique offline mode. When offline mode is enabled, leiningen is started index
+offline mode"
+  (interactive)
+  (if replique/offline-mode-flag
+      (progn
+        (message "Offline mode disabled")
+        (setq replique/offline-mode-flag nil))
+    (message "Offline mode enabled")
+    (setq replique/offline-mode-flag t)))
+
 (comment
  (defun replique/install-node-deps ()
    "Install Clojurescript :npm-deps"
@@ -1263,6 +1274,11 @@ is not visible"
   "The symbols considered to be starting a clojure comment block. Used by replique/eval-defn when
 unwrapping a top level comment block "
   :type 'list
+  :group 'replique)
+
+(defcustom replique/offline-mode-flag nil
+  "Whether to run leiningen in offline mode or not"
+  :type 'boolean
   :group 'replique)
 
 (defvar replique/mode-hook '()
@@ -1342,7 +1358,8 @@ The following commands are available:
 
 (defun replique/lein-command (host port directory)
   `(,(or replique/lein-script (executable-find replique/default-lein-script))
-    "update-in" ":plugins" "conj" 
+    ,@(when replique/offline-mode-flag '("-o"))
+    "update-in" ":plugins" "conj"
     ,(format "[replique/replique \"%s\"]" replique/version)
     "--"
     "trampoline" "replique"
@@ -1836,6 +1853,8 @@ minibuffer"
 ;; reload a file + all its dependencies, is it even possible?
 ;; reload a file + all files that depend on it, is it even possible?
 ;; jump to definition for protocol methods -> jump to the protocol line
+;; in-ns list namespaces
+;; new target directory for assets resources
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
