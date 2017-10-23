@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.9
 
+- Add the replique/reload-all command to reload a Clojure/Clojurescript file and all its dependencies
 - Add the replique/offline-mode command to switch leiningen into offline mode (-o flag)
 
 # Version 0.0.8
