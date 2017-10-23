@@ -679,6 +679,38 @@ This allows you to temporarily modify read-only buffers too."
    (sass-mode . (apply-partially 'replique/load-sass file-path))
    (less-css-mode . (apply-partially 'replique/load-less file-path))))
 
+(defun replique/reload-all-clj (props clj-repl)
+  (if (not clj-repl)
+      (user-error "No active Clojure REPL")
+    (replique/send-input-from-source-clj
+     (format "(require '%s :reload-all)" (clojure-find-ns))
+     props clj-repl)))
+
+(defun replique/reload-all-cljs (props cljs-repl)
+  (if (not cljs-repl)
+      (user-error "No active Clojurescript REPL")
+    (replique/send-input-from-source-cljs
+     (format "(replique.interactive/load-url \"%s\" :reload-all)"
+             (replique/buffer-url (buffer-file-name)))
+     props cljs-repl)))
+
+(defun replique/reload-all-cljc (props repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
+    (let ((form (if (equal :cljs (replique/get repl :repl-type))
+                    (format "(replique.interactive/load-url \"%s\" :reload-all)"
+                            (replique/buffer-url (buffer-file-name)))
+                  (format "(require '%s :reload-all)" (clojure-find-ns)))))
+      (replique/send-input-from-source-cljc form props repl))))
+
+(defun replique/reload-all ()
+  (interactive)
+  (comint-check-source (buffer-file-name))
+  (replique/with-modes-dispatch
+   (clojure-mode . 'replique/reload-all-clj)
+   (clojurescript-mode . 'replique/reload-all-cljs)
+   (clojurec-mode . 'replique/reload-all-cljc)))
+
 (defun replique/browser ()
   "Open a browser tab on the port the REPL is listening to"
   (interactive)
