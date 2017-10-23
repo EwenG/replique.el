@@ -2,6 +2,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.9
 
+- Add the replique/offline-mode command to switch leiningen into offline mode (-o flag)
+
 # Version 0.0.8
 
 - clj/cljs/cljc files can now be loaded from files or from files in jar archives
