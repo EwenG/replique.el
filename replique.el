@@ -1302,6 +1302,11 @@ is not visible"
   :type 'boolean
   :group 'replique)
 
+(defface replique/minibuffer-output-repl-name-face
+  '((t :slant italic :height 110 :overline t))
+  "Face for displaying the name of the REPL the output being displayed came from"
+  :group 'replique )
+
 (defcustom replique/clj-comment '("comment" "clojure.core/comment")
   "The symbols considered to be starting a clojure comment block. Used by replique/eval-defn when
 unwrapping a top level comment block "
@@ -1636,16 +1641,39 @@ The following commands are available:
          (port (replique/get tooling-repl :port)))
     (replique/close-repls host port t)))
 
+(defun replique/is-recent-output (now output)
+  (let* ((time (car output))
+         (diff (time-subtract now time)))
+    (< (float-time diff) 1)))
+
+;;seq-take-while
+(defun replique/concat-recent-output (recent-output)
+  (let* ((recent-elements (thread-last (ring-elements recent-output)
+                            (seq-take-while (apply-partially 'replique/is-recent-output
+                                                             (current-time)))
+                            (mapcar 'cadr)
+                            reverse))
+         (recent-elements (mapcar 'ansi-color-filter-apply recent-elements)))
+    (apply 'concat recent-elements)))
+
 (defun replique/comint-output-filter (process string)
   "Wrap comint-output-filter in order to display the output of hidden active REPLs in the 
 minibuffer"
-  (let* ((active-repl (replique/active-repl '(:clj :cljs)))
-         (active-buffer (replique/get active-repl :buffer))
-         (active-proc (get-buffer-process active-buffer)))
-    (when (and (eq active-proc process)
-               (not (seq-contains (replique/visible-buffers) active-buffer))
+  (let* ((buffer (process-buffer process))
+         (repl (replique/repl-by :buffer buffer))
+         (recent-output (replique/get repl :recent-output))
+         (active-repl-clj (replique/active-repl :clj))
+         (active-repl-cljs (replique/active-repl :cljs)))
+    (ring-insert recent-output (list (current-time) string))
+    (when (and (or (eq active-repl-clj repl)
+                   (eq active-repl-cljs repl))
+               (not (seq-contains (replique/visible-buffers) buffer))
                replique/display-output-in-minibuffer)
-      (replique/message-nolog (ansi-color-filter-apply string)))
+      (replique/message-nolog
+       (format "%s\n%s"
+               (replique/concat-recent-output recent-output)
+               (propertize (buffer-name buffer)
+                           'face 'replique/minibuffer-output-repl-name-face))))
     (comint-output-filter process string)))
 
 (defun replique/make-comint (proc buffer)
@@ -1687,7 +1715,8 @@ minibuffer"
                                           :repl-env :replique/clj
                                           :session session
                                           :ns 'user
-                                          :buffer buff)))
+                                          :buffer buff
+                                          :recent-output (make-ring 10))))
              (push repl replique/repls)
              (display-buffer buff))))))))
 
@@ -1881,12 +1910,11 @@ minibuffer"
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
-;; clojurescript require :reload does not detect invalid namespace declarations (use of non existing vars)
-;; reload a file + all its dependencies, is it even possible?
-;; reload a file + all files that depend on it, is it even possible?
 ;; jump to definition for protocol methods -> jump to the protocol line
 ;; in-ns list namespaces
 ;; new target directory for assets resources
+;; elisp-printer -> escape symbols
+;; defmethod locals (parameters) autocompletion
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
