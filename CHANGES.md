@@ -2,8 +2,10 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.9
 
-- When printing REPL output in the minibuffer, consider both active Clojure and Clojurescript REPLs instead of the active REPL only
-- Use a buffer when printing the REPL output in the minibuffer
+- Automatically change the namespace of the REPL when evaluating a form from a source code buffer 
+- Do not overwrite a currently active minibuffer when printing in the echo area
+- When printing REPL output in the echo area, consider both active Clojure and Clojurescript REPLs instead of the active REPL only
+- Bufferize the REPL output printed in the echo area 
 - Add the replique/reload-all command to reload a Clojure/Clojurescript file and all its dependencies
 - Add the replique/offline-mode command to switch leiningen into offline mode (-o flag)
 

@@ -572,11 +572,24 @@ This allows you to temporarily modify read-only buffers too."
    (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
+(defun replique/maybe-change-ns ()
+  (let ((repl-type (cond ((equal major-mode 'clojure-mode) :clj)
+                         ((equal major-mode 'clojurescript-mode) :cljs)
+                         ((equal major-mode 'clojurec-mode) '(:clj :cljs))
+                         (t nil))))
+    (when repl-type
+      (let* ((active-repl (replique/active-repl repl-type))
+             (repl-ns (replique/get active-repl :ns))
+             (ns (clojure-find-ns)))
+        (when (and ns repl-ns (not (string= ns (symbol-name repl-ns))))
+          (replique/in-ns ns))))))
+
 (defun replique/eval-region (start end p)
   "Eval the currently highlighted region"
   (interactive "r\nP")
   (let ((input (filter-buffer-substring start end)))
     (when (> (length input) 0)
+      (replique/maybe-change-ns)
       (if p
           (replique/send-input-from-source-dispatch
            (concat "(replique.omniscient/with-redefs " input ")"))
@@ -622,6 +635,7 @@ This allows you to temporarily modify read-only buffers too."
   (save-excursion
     (let ((expr (replique/unwrap-comment nil)))
       (when expr
+        (replique/maybe-change-ns)
         (replique/send-input-from-source-dispatch
          (if p
              (concat "(replique.omniscient/with-redefs " expr ")")
@@ -1641,9 +1655,11 @@ The following commands are available:
          (port (replique/get tooling-repl :port)))
     (replique/close-repls host port t)))
 
+(defun replique/time-diff (t1 t2)
+  (float-time (time-subtract t1 t2)))
+
 (defun replique/is-recent-output (now output)
-  (let* ((time (car output))
-         (diff (time-subtract now time)))
+  (let ((diff (replique/time-diff now (car output))))
     (< (float-time diff) 1)))
 
 ;;seq-take-while
@@ -1667,6 +1683,8 @@ minibuffer"
     (ring-insert recent-output (list (current-time) string))
     (when (and (or (eq active-repl-clj repl)
                    (eq active-repl-cljs repl))
+               ;; do not print when a minibuffer is active
+               (null (active-minibuffer-window))
                (not (seq-contains (replique/visible-buffers) buffer))
                replique/display-output-in-minibuffer)
       (replique/message-nolog
