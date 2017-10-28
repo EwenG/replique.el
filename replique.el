@@ -1597,7 +1597,9 @@ The following commands are available:
                                   (when (not (accept-process-output proc 0 0 t))
                                     ;; when printing in the *Messages* buffer with (message ...),
                                     ;; ansi colors are not handled
-                                    (message "%s" (ansi-color-filter-apply proc-out))
+                                    ;; do not print when a minibuffer is active
+                                    (when (null (active-minibuffer-window))
+                                      (message "%s" (ansi-color-filter-apply proc-out)))
                                     (setq proc-out nil))))
        (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
               (network-proc (open-network-stream directory nil host port))
@@ -1818,10 +1820,12 @@ minibuffer"
            (message "Received invalid message while dispatching tooling messages: %s" msg))
           (;; Global error (uncaught exception)
            (equal :error (replique/get msg :type))
-           (message "%s - Thread: %s - Exception: %s"
-                    (propertize "Uncaught exception" 'face '(:foreground "red"))
-                    (replique/get msg :thread)
-                    (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
+           ;; do not print when a minibuffer is active
+           (when (null (active-minibuffer-window))
+             (message "%s - Thread: %s - Exception: %s"
+                      (propertize "Uncaught exception" 'face '(:foreground "red"))
+                      (replique/get msg :thread)
+                      (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value))))))
           ((equal :repl-meta (replique/get msg :type))
            (let* ((repl (replique/repl-by
                          :session (replique/get (replique/get msg :session) :client)
@@ -1929,10 +1933,11 @@ minibuffer"
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
 ;; jump to definition for protocol methods -> jump to the protocol line
-;; in-ns list namespaces
 ;; new target directory for assets resources
 ;; elisp-printer -> escape symbols
 ;; defmethod locals (parameters) autocompletion
+;; in-ns list namespaces
+;; make-tooling-repl -> show buffer with starting progress
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
