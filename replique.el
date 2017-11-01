@@ -491,6 +491,19 @@ This allows you to temporarily modify read-only buffers too."
   (let ((depth (car (parse-partial-sexp start limit))))
     (if (<= depth 0) t nil)))
 
+(defvar replique/eval-from-source-meta nil)
+
+(defun replique/comint-input-sender (proc string)
+  (let ((file (replique/get replique/eval-from-source-meta :file))
+        (line (replique/get replique/eval-from-source-meta :line))
+        (column (replique/get replique/eval-from-source-meta :column)))
+    (comint-simple-send
+     proc
+     (format "(do #=(replique.interactive/set-source-meta! %s %s %s) %s)"
+             (prin1-to-string file) line column string))))
+
+(setq comint-input-sender 'replique/comint-input-sender)
+
 (defun replique/comint-send-input ()
   "Send the pending comint buffer input to the comint process if the pending input is well formed and point is after the prompt"
   (interactive)
@@ -584,16 +597,41 @@ This allows you to temporarily modify read-only buffers too."
         (when (and ns repl-ns (not (string= ns (symbol-name repl-ns))))
           (replique/in-ns ns))))))
 
+(defun replique/column-number-at-pos (&optional pos)
+  (save-restriction
+    (widen)
+    (save-excursion
+      (goto-char (or pos (point)))
+      (current-column))))
+
+(defun replique/line-number-at-pos (&optional pos)
+  (save-restriction
+    (widen)
+    (let ((opoint (or pos (point))) start)
+      (save-excursion
+        (goto-char (point-min))
+        (setq start (point))
+        (goto-char opoint)
+        (forward-line 0)
+        (1+ (count-lines start (point)))))))
+
 (defun replique/eval-region (start end p)
   "Eval the currently highlighted region"
   (interactive "r\nP")
   (let ((input (filter-buffer-substring start end)))
     (when (> (length input) 0)
       (replique/maybe-change-ns)
-      (if p
-          (replique/send-input-from-source-dispatch
-           (concat "(replique.omniscient/with-redefs " input ")"))
-        (replique/send-input-from-source-dispatch input)))))
+      (let* ((line (replique/line-number-at-pos start))
+             (column (1+ (replique/column-number-at-pos start)))
+             (replique/eval-from-source-meta (replique/hash-map
+                                              :line line
+                                              :column column
+                                              :file (replique/buffer-url
+                                                     (buffer-file-name)))))
+        (if p
+            (replique/send-input-from-source-dispatch
+             (concat "(replique.omniscient/with-redefs " input ")"))
+          (replique/send-input-from-source-dispatch input))))))
 
 (defun replique/eval-last-sexp (p)
   "Eval the previous sexp"
@@ -613,33 +651,53 @@ This allows you to temporarily modify read-only buffers too."
           (thing-at-point 'sexp))
       (thing-at-point 'sexp))))
 
-(defun replique/unwrap-comment (prev-expr)
+(defun replique/bounds-of-thing-at-point ()
+  (let ((s-pps (syntax-ppss)))
+    (if (not (null (nth 3 s-pps)))
+        (save-excursion
+          (goto-char (nth 8 s-pps))
+          (bounds-of-thing-at-point 'sexp))
+      (bounds-of-thing-at-point 'sexp))))
+
+(defun replique/unwrap-comment (prev-bounds)
   (let ((sexpr-start (nth 1 (syntax-ppss))))
     (if (null sexpr-start)
-        (if (or (null prev-expr) (seq-contains replique/clj-comment prev-expr))
-            (replique/thing-at-point)
-          (if (seq-find (lambda (comment-expr)
-                          (let* ((comment-expr (concat "(" comment-expr))
-                                 (bound (+ (point) (length comment-expr))))
-                            (search-forward comment-expr bound t)))
-                        replique/clj-comment)
-              prev-expr
-            (replique/thing-at-point)))
-      (let ((expr (replique/thing-at-point)))
+        (let ((prev-expr (when prev-bounds
+                           (buffer-substring-no-properties
+                            (car prev-bounds) (cdr prev-bounds)))))
+          (if (or (null prev-expr) (seq-contains replique/clj-comment prev-expr))
+              (replique/bounds-of-thing-at-point)
+            (if (seq-find (lambda (comment-expr)
+                            (let* ((comment-expr (concat "(" comment-expr))
+                                   (bound (+ (point) (length comment-expr))))
+                              (search-forward comment-expr bound t)))
+                          replique/clj-comment)
+                prev-bounds
+              (replique/bounds-of-thing-at-point))))
+      (let ((bounds (replique/bounds-of-thing-at-point)))
         (goto-char sexpr-start)
-        (replique/unwrap-comment expr)))))
+        (replique/unwrap-comment bounds)))))
 
 (defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
   (interactive "P")
   (save-excursion
-    (let ((expr (replique/unwrap-comment nil)))
+    (let* ((expr-bounds (replique/unwrap-comment nil))
+           (expr (when expr-bounds
+                   (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
       (when expr
         (replique/maybe-change-ns)
-        (replique/send-input-from-source-dispatch
-         (if p
-             (concat "(replique.omniscient/with-redefs " expr ")")
-           expr))))))
+        (let* ((line (replique/line-number-at-pos (car expr-bounds)))
+               (column (1+ (replique/column-number-at-pos (car expr-bounds))))
+               (replique/eval-from-source-meta (replique/hash-map
+                                                :line line
+                                                :column column
+                                                :file (replique/buffer-url
+                                                       (buffer-file-name)))))
+          (replique/send-input-from-source-dispatch
+           (if p
+               (concat "(replique.omniscient/with-redefs " expr ")")
+             expr)))))))
 
 (defun replique/load-url-clj (url p props clj-repl)
   (if (not clj-repl)
