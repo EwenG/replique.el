@@ -35,6 +35,7 @@
 (require 'replique-omniscient)
 (require 'replique-lein)
 (require 'replique-remove-var)
+(require 'replique-transit)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1263,14 +1264,21 @@ This allows you to temporarily modify read-only buffers too."
                     (file (replique/get-in resp [:meta :file]))
                     (line (replique/get-in resp [:meta :line]))
                     (column (replique/get-in resp [:meta :column])))
-               (when-let (buff (replique-resources/find-file file))
-                 (xref-push-marker-stack)
-                 (pop-to-buffer-same-window buff)
-                 (goto-char (point-min))
-                 (when line
-                   (forward-line (1- line))
-                   (when column
-                     (move-to-column column))))))))))))
+               (cond ((not (replique-transit/is-small-number? line))
+                      (message "Cannot handle line number %s" line)
+                      (message "jump-to-definition failed with symbol: %s" symbol))
+                     ((not (replique-transit/is-small-number? column))
+                      (message "Cannot handle column number %s" column)
+                      (message "jump-to-definition failed with symbol: %s" symbol))
+                     (t
+                      (when-let (buff (replique-resources/find-file file))
+                        (xref-push-marker-stack)
+                        (pop-to-buffer-same-window buff)
+                        (goto-char (point-min))
+                        (when line
+                          (forward-line (1- line))
+                          (when column
+                            (move-to-column column))))))))))))))
 
 (defun replique/jump-to-definition-session (symbol repl)
   (let* ((directory (replique/get repl :directory))
@@ -1692,7 +1700,7 @@ The following commands are available:
                   (when (process-live-p proc)
                     (interrupt-process proc)))
               (let* (;; cljs compile path do not come from a read chan
-                     (cljs-compile-path (read cljs-compile-path))
+                     (cljs-compile-path (replique-transit/decode (read cljs-compile-path)))
                      (tooling-chan (thread-first tooling-chan
                                      (replique/read-chan network-proc network-proc-buff)
                                      replique/dispatch-tooling-msg))
@@ -1786,7 +1794,8 @@ minibuffer"
       (replique-async/<!
        chan
        (lambda (resp)
-         (let ((session (replique/get resp :client)))
+         (let* ((resp (replique-transit/decode resp))
+                (session (replique/get resp :client)))
            (set-process-filter proc nil)
            (replique/make-comint proc buff)
            (set-buffer buff)
@@ -1879,26 +1888,27 @@ minibuffer"
    in-chan
    (lambda (msg)
      (condition-case err
-         (cond
-          ((not (hash-table-p msg))
-           (message "Received invalid message while dispatching tooling messages: %s" msg))
-          (;; Global error (uncaught exception)
-           (equal :error (replique/get msg :type))
-           ;; do not print when a minibuffer is active
-           (when (null (active-minibuffer-window))
-             (message "%s - Thread: %s - Exception: %s"
-                      (propertize "Uncaught exception" 'face '(:foreground "red"))
-                      (replique/get msg :thread)
-                      (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value))))))
-          ((equal :repl-meta (replique/get msg :type))
-           (let* ((repl (replique/repl-by
-                         :session (replique/get (replique/get msg :session) :client)
-                         :directory (replique/get msg :process-id))))
-             (when repl
-               (let ((repl (replique/on-repl-type-change
-                            repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
-                 (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
-          (t (replique-async/put! out-chan msg)))
+         (if (not (hash-table-p msg))
+             (message "Received invalid message while dispatching tooling messages: %s" msg)
+           (let ((msg (replique-transit/decode msg)))
+             (cond
+              (;; Global error (uncaught exception)
+               (equal :error (replique/get msg :type))
+               ;; do not print when a minibuffer is active
+               (when (null (active-minibuffer-window))
+                 (message "%s - Thread: %s - Exception: %s"
+                          (propertize "Uncaught exception" 'face '(:foreground "red"))
+                          (replique/get msg :thread)
+                          (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value))))))
+              ((equal :repl-meta (replique/get msg :type))
+               (let* ((repl (replique/repl-by
+                             :session (replique/get (replique/get msg :session) :client)
+                             :directory (replique/get msg :process-id))))
+                 (when repl
+                   (let ((repl (replique/on-repl-type-change
+                                repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
+                     (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
+              (t (replique-async/put! out-chan msg)))))
        (error (message (error-message-string err))))
      (replique/dispatch-tooling-msg* in-chan out-chan))))
 
@@ -2002,6 +2012,7 @@ minibuffer"
 ;; defmethod locals (parameters) autocompletion
 ;; in-ns list namespaces
 ;; make-tooling-repl -> show buffer with starting progress
+;; emacs 26 has built-in, faster "line-number-at-pos"
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
