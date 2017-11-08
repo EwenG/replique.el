@@ -508,16 +508,16 @@ This allows you to temporarily modify read-only buffers too."
   (let ((file (replique/get replique/eval-from-source-meta :file))
         (line (replique/get replique/eval-from-source-meta :line))
         (column (replique/get replique/eval-from-source-meta :column)))
-    (comint-simple-send
-     proc
-     ;; evaluated in a reader eval form instead of a macro to be able to prevent
-     ;; the cljs form evaluation. If we were using a macro, we would have to check the compiled
-     ;; cljs form. Cljs form evaluation can have side effects like waiting for the browser
-     ;; to connect ...
-     (format "#=(replique.source-meta/set-source-meta! %s %s %s)"
-             (prin1-to-string file) line column))
-    (comint-simple-send
-     proc string)))
+    (when (not (equal (string-trim string) ""))
+      (comint-simple-send
+       proc
+       ;; evaluated in a reader eval form instead of a macro to be able to prevent
+       ;; the cljs form evaluation. If we were using a macro, we would have to check the compiled
+       ;; cljs form. Cljs form evaluation can have side effects like waiting for the browser
+       ;; to connect ...
+       (format "#=(replique.source-meta/set-source-meta! %s %s %s)"
+               (prin1-to-string file) line column)))
+    (comint-simple-send proc string)))
 
 (setq comint-input-sender 'replique/comint-input-sender)
 
