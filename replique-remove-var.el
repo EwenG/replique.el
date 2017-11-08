@@ -113,21 +113,21 @@
 (defun replique/remove-var-clj (tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (let ((var-ns (clojure-find-ns)))
+    (let ((var-ns (replique/clojure-find-ns)))
       (when var-ns
         (replique/remove-var* var-ns tooling-repl clj-repl)))))
 
 (defun replique/remove-var-cljs (tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (let ((var-ns (clojure-find-ns)))
+    (let ((var-ns (replique/clojure-find-ns)))
       (when var-ns
         (replique/remove-var* var-ns tooling-repl cljs-repl)))))
 
 (defun replique/remove-var-cljc (tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (let ((var-ns (clojure-find-ns)))
+    (let ((var-ns (replique/clojure-find-ns)))
       (when var-ns
         (replique/remove-var* var-ns tooling-repl repl)))))
 
@@ -137,7 +137,7 @@
 
 (defun replique/remove-var-get-ns ()
   (if (equal major-mode 'replique/mode)
-      (clojure-find-ns)))
+      (replique/clojure-find-ns)))
 
 (defun replique/remove-var ()
   "Unmaps all symbols that map to the var to be removed"

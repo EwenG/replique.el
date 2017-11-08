@@ -44,6 +44,16 @@
 (defun replique/keyword-to-string (k)
   (substring (symbol-name k) 1))
 
+;; clojure-find-ns does not consider (in-ns ...) forms that don't start at column 0, for
+;; example (in-ns ...) forms that are in a (comment ...) block
+(defun replique/clojure-find-ns ()
+  (let ((clojure-namespace-name-regex (if (and
+                                           clojure-namespace-name-regex
+                                           (equal ?^ (aref clojure-namespace-name-regex 0)))
+                                          (substring clojure-namespace-name-regex 1 nil)
+                                        clojure-namespace-name-regex)))
+    (clojure-find-ns)))
+
 (defun replique/message-nolog (format-string)
   (let ((message-log-max nil))
     (message "%s" format-string)))
@@ -260,19 +270,19 @@
   (when clj-repl
     (replique/auto-complete* prefix callback tooling-repl
                              (replique/get clj-repl :repl-env)
-                             (clojure-find-ns))))
+                             (replique/clojure-find-ns))))
 
 (defun replique/auto-complete-cljs (prefix callback tooling-repl cljs-repl)
   (when cljs-repl
     (replique/auto-complete* prefix callback tooling-repl
                              (replique/get cljs-repl :repl-env)
-                             (clojure-find-ns))))
+                             (replique/clojure-find-ns))))
 
 (defun replique/auto-complete-cljc (prefix callback tooling-repl repl)
   (when repl
     (replique/auto-complete* prefix callback tooling-repl
                              (replique/get repl :repl-env)
-                             (clojure-find-ns))))
+                             (replique/clojure-find-ns))))
 
 (defun replique/auto-complete (prefix callback)
   (when (not (null (replique/active-repl :tooling)))
@@ -373,17 +383,17 @@
 (defun replique/repliquedoc-clj (tooling-repl clj-repl)
   (when clj-repl
     (replique/repliquedoc*
-     tooling-repl (replique/get clj-repl :repl-env) (clojure-find-ns))))
+     tooling-repl (replique/get clj-repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/repliquedoc-cljs (tooling-repl cljs-repl)
   (when cljs-repl
     (replique/repliquedoc*
-     tooling-repl (replique/get cljs-repl :repl-env) (clojure-find-ns))))
+     tooling-repl (replique/get cljs-repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/repliquedoc-cljc (tooling-repl repl)
   (when repl
     (replique/repliquedoc*
-     tooling-repl (replique/get repl :repl-env) (clojure-find-ns))))
+     tooling-repl (replique/get repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
@@ -419,7 +429,7 @@
 
 (defun replique/in-ns (ns-name)
   "Change the active REPL namespace"
-  (interactive (replique/symprompt "Set ns to" (clojure-find-ns)))
+  (interactive (replique/symprompt "Set ns to" (replique/clojure-find-ns)))
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
    (clojurescript-mode . (apply-partially 'replique/in-ns-cljs ns-name))
@@ -600,7 +610,7 @@ This allows you to temporarily modify read-only buffers too."
     (when repl-type
       (let* ((active-repl (replique/active-repl repl-type))
              (repl-ns (replique/get active-repl :ns))
-             (ns (clojure-find-ns)))
+             (ns (replique/clojure-find-ns)))
         (when (and ns repl-ns (not (string= ns (symbol-name repl-ns))))
           (replique/in-ns ns))))))
 
@@ -762,7 +772,7 @@ This allows you to temporarily modify read-only buffers too."
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
-     (format "(require '%s :reload-all)" (clojure-find-ns))
+     (format "(require '%s :reload-all)" (replique/clojure-find-ns))
      props clj-repl)))
 
 (defun replique/reload-all-cljs (props cljs-repl)
@@ -779,7 +789,7 @@ This allows you to temporarily modify read-only buffers too."
     (let ((form (if (equal :cljs (replique/get repl :repl-type))
                     (format "(replique.interactive/load-url \"%s\" :reload-all)"
                             (replique/buffer-url (buffer-file-name)))
-                  (format "(require '%s :reload-all)" (clojure-find-ns)))))
+                  (format "(require '%s :reload-all)" (replique/clojure-find-ns)))))
       (replique/send-input-from-source-cljc form props repl))))
 
 (defun replique/reload-all ()
@@ -1291,19 +1301,19 @@ This allows you to temporarily modify read-only buffers too."
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get clj-repl :repl-env) (clojure-find-ns))))
+     symbol tooling-repl (replique/get clj-repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get cljs-repl :repl-env) (clojure-find-ns))))
+     symbol tooling-repl (replique/get cljs-repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get repl :repl-env) (clojure-find-ns))))
+     symbol tooling-repl (replique/get repl :repl-env) (replique/clojure-find-ns))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
