@@ -1654,8 +1654,27 @@ The following commands are available:
         (buffer-substring-no-properties 1 (point-max))))
     (message "Refreshing main js files ... %s files refreshed" (length main-js-files))))
 
-;; Used to regroup output from the process standard output
-(defvar-local proc-out nil)
+;; We do not use (message ...) because messages may be received splitted and the message fn
+;; always prints a new line. Instead we set a text property on the last char printed in the
+;; messages buffer in order to detect two messages coming from the same process. When necessary,
+;; messages are concatenated by direclty inserting them in the messages buffer
+(defun replique/proc-message-fn (proc string)
+  (when (not (eq "" string))
+    (with-current-buffer (messages-buffer)
+      (let ((inhibit-read-only t)
+            (pname (process-name proc)))
+        (save-excursion
+          (goto-char (point-max))
+          (if (and (> (point) 1)
+                   (equal (get-text-property (1- (point)) 'replique/proc-out) pname))
+              (insert string)
+            (insert (format "\nProcess %s:\n%s" pname string)))
+          (add-text-properties (1- (point)) (point) `(replique/proc-out
+                                                      ,pname rear-nonsticky ,t)))))
+    (replique/message-nolog
+     (format
+      "%s\n%s" string
+      (propertize (process-name proc) 'face 'replique/minibuffer-output-repl-name-face)))))
 
 (defun replique/make-tooling-repl (host port directory)
   (let* ((out-chan (replique-async/chan))
@@ -1667,22 +1686,7 @@ The following commands are available:
      proc-chan
      (lambda (port)
        ;; Print process messages
-       (set-process-filter proc (lambda (proc string)
-                                  ;; We avoid to split the standard process output in multiple
-                                  ;; messages (because of buffering)
-                                  (if (null proc-out)
-                                      (thread-last string
-                                        (format "Process %s: %s" (process-name proc))
-                                        (concat proc-out)
-                                        (setq proc-out))
-                                    (setq proc-out (concat proc-out string)))
-                                  (when (not (accept-process-output proc 0 0 t))
-                                    ;; when printing in the *Messages* buffer with (message ...),
-                                    ;; ansi colors are not handled
-                                    ;; do not print when a minibuffer is active
-                                    (when (null (active-minibuffer-window))
-                                      (message "%s" (ansi-color-filter-apply proc-out)))
-                                    (setq proc-out nil))))
+       (set-process-filter proc 'replique/proc-message-fn)
        (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
               (network-proc (open-network-stream directory nil host port))
               (tooling-chan (replique/process-filter-chan network-proc))
@@ -1904,12 +1908,10 @@ minibuffer"
              (cond
               (;; Global error (uncaught exception)
                (equal :error (replique/get msg :type))
-               ;; do not print when a minibuffer is active
-               (when (null (active-minibuffer-window))
-                 (message "%s - Thread: %s - Exception: %s"
-                          (propertize "Uncaught exception" 'face '(:foreground "red"))
-                          (replique/get msg :thread)
-                          (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value))))))
+               (message "%s - Thread: %s - Exception: %s"
+                        (propertize "Uncaught exception" 'face '(:foreground "red"))
+                        (replique/get msg :thread)
+                        (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
               ((equal :repl-meta (replique/get msg :type))
                (let* ((repl (replique/repl-by
                              :session (replique/get (replique/get msg :session) :client)
@@ -1996,16 +1998,12 @@ minibuffer"
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
 
-;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
-
 ;; Document the use of cljsjs to use js libs
 ;; Customization var for excluded folders when refreshing main js files
 ;; completion for strings that match a path and are in a (File.) / (file) form
-
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
-
 ;; restore print-namespaced-maps somewhere
 ;; copy html / css on load-url (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
@@ -2023,9 +2021,16 @@ minibuffer"
 ;; in-ns list namespaces
 ;; make-tooling-repl -> show buffer with starting progress
 ;; emacs 26 has built-in, faster "line-number-at-pos"
+;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
+;; check the infer-externs cljs option
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
+
+;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
+
+;; Several tooling message do not work when inside a verylarge form because the clojure compiler
+;; reaches the method size limit - limit around 65000
 
 (comment
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
