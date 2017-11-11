@@ -21,6 +21,15 @@
 
 ;; Code:
 
+(defclass replique/with-meta (replique-edn/printable)
+  ((value :initarg :value)
+   (meta :initarg :meta)))
+
+(defmethod replique-edn/print-method ((o replique/with-meta))
+  (format "^%s %s"
+          (replique-edn/pr-str (oref o meta))
+          (replique-edn/pr-str (oref o value))))
+
 (defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))

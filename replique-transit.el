@@ -50,11 +50,15 @@
         n
       (replique-transit/tagged-value :tag tag :value rep))))
 
+(defun replique-transit/decode-with-meta (tag rep)
+  (replique/with-meta :meta (aref rep 0) :value (aref rep 1)))
+
 (defvar replique-transit/default-read-handlers
   (replique/hash-map ?\? 'replique-transit/decode-boolean
                      ?z 'replique-transit/decode-special-number
                      ;; do not decode big decimal since we may loose precision
-                     ?n 'replique-transit/decode-bigint))
+                     ?n 'replique-transit/decode-bigint
+                     (replique-transit/tag :tag "with-meta") 'replique-transit/decode-with-meta))
 
 ;; Tagged values
 
@@ -119,9 +123,9 @@
                                                maybe-tagged-value)))
                 (if tag-handler
                     (funcall tag-handler maybe-tagged-value (replique-transit/decode (aref a 1)))
-                    (replique-transit/tagged-value
-                     :tag maybe-tagged-value
-                     :value (replique-transit/decode (aref a 1)))))
+                  (replique-transit/tagged-value
+                   :tag maybe-tagged-value
+                   :value (replique-transit/decode (aref a 1)))))
             (replique-transit/decode-array* a a-length)))
       (replique-transit/decode-array* a a-length))))
 
