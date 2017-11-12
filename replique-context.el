@@ -159,11 +159,30 @@
      (replique/get context-state :namespace)))
  )
 
+;; clojure-find-ns does not consider (in-ns ...) forms that don't start at column 0, for
+;; example (in-ns ...) forms that are in a (comment ...) block
+(defun replique-context/clojure-find-ns (tooling-repl repl-env ns)
+  (let ((tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/hash-map :type :context
+                        :repl-env repl-env
+                        :ns ns
+                        :contexts [:in-ns]))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (if err
+               (progn
+                 (message "%s" (replique-edn/pr-str err))
+                 (message "context failed"))
+             (print (replique-edn/pr-str resp)))))))))
+
 (comment
- 
- (parse-partial-sexp (point) p nil t replique-context/sample-state)
- 
- (goto-char (syntax-ppss-toplevel-pos (syntax-ppss (point))))
+ (let ((tooling-repl (replique/active-repl :tooling t)))
+   (replique-context/clojure-find-ns tooling-repl :replique/clj))
  )
 
 (provide 'replique-context)
