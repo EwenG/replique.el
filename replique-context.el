@@ -182,7 +182,7 @@
 
 (comment
  (let ((tooling-repl (replique/active-repl :tooling t)))
-   (replique-context/clojure-find-ns tooling-repl :replique/clj))
+   (replique-context/clojure-find-ns tooling-repl :replique/clj "replique.tooling"))
  )
 
 (provide 'replique-context)
