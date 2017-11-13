@@ -499,8 +499,10 @@ This allows you to temporarily modify read-only buffers too."
    ((equal command 'annotation) (replique/auto-complete-annotation arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
-  (let ((depth (car (parse-partial-sexp start limit))))
-    (if (<= depth 0) t nil)))
+  (let* ((parser-state (parse-partial-sexp start limit))
+         (depth (car parser-state))
+         (in-string? (nth 3 parser-state)))
+    (and (equal depth 0) (null in-string?))))
 
 (defvar replique/eval-from-source-meta nil)
 
@@ -2023,6 +2025,7 @@ minibuffer"
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
+;; use replique-context to avoid sending invalid forms (pending dispatch macro)
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
