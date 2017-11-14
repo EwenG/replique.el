@@ -504,24 +504,27 @@ This allows you to temporarily modify read-only buffers too."
          (in-string? (nth 3 parser-state)))
     (and (equal depth 0) (null in-string?))))
 
-(defvar replique/eval-from-source-meta nil)
+(defvar replique/eval-from-source-meta (replique/hash-map :url nil
+                                                          :line nil
+                                                          :column nil))
 
 (defun replique/comint-input-sender (proc string)
-  (let ((file (replique/get replique/eval-from-source-meta :file))
-        (line (replique/get replique/eval-from-source-meta :line))
-        (column (replique/get replique/eval-from-source-meta :column)))
-    (when (not (equal (string-trim string) ""))
-      (comint-simple-send
-       proc
-       ;; evaluated in a reader eval form instead of a macro to be able to prevent
-       ;; the cljs form evaluation. If we were using a macro, we would have to check the compiled
-       ;; cljs form. Cljs form evaluation can have side effects like waiting for the browser
-       ;; to connect ...
-       (format "#=(replique.source-meta/set-source-meta! %s %s %s)"
-               (prin1-to-string file) line column)))
-    (comint-simple-send proc string)))
-
-(setq comint-input-sender 'replique/comint-input-sender)
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan)))
+    (replique/send-tooling-msg
+     tooling-repl
+     (replique/assoc replique/eval-from-source-meta
+                     :type :source-meta
+                     :repl-env :replique/clj))
+    (replique-async/<!
+     tooling-chan
+     (lambda (resp)
+       (when resp
+         (let ((err (replique/get resp :error)))
+           (when err
+             (message "%s" (replique-edn/pr-str err))
+             (message "source-meta failed"))
+           (comint-simple-send proc string)))))))
 
 (defun replique/comint-send-input ()
   "Send the pending comint buffer input to the comint process if the pending input is well formed and point is after the prompt"
@@ -530,7 +533,8 @@ This allows you to temporarily modify read-only buffers too."
          (proc (get-buffer-process buff)))
     (if (not proc) (user-error "Current buffer has no process")
       (widen)
-      (let* ((pmark (process-mark proc)))
+      (let* ((pmark (process-mark proc))
+             (comint-input-sender 'replique/comint-input-sender))
         (cond (;; Point is at the end of the line and the sexpr is
                ;; terminated
                (and (equal (point) (point-max))
@@ -637,7 +641,9 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/eval-region (start end p)
   "Eval the currently highlighted region"
   (interactive "r\nP")
-  (let ((input (filter-buffer-substring start end)))
+  (let* ((tooling-repl (replique/active-repl :tooling t))
+         (tooling-chan (replique/get tooling-repl :chan))
+         (input (filter-buffer-substring start end)))
     (when (> (length input) 0)
       (replique/maybe-change-ns)
       (let* ((line (replique/line-number-at-pos start))
@@ -645,8 +651,8 @@ This allows you to temporarily modify read-only buffers too."
              (replique/eval-from-source-meta (replique/hash-map
                                               :line line
                                               :column column
-                                              :file (replique/buffer-url
-                                                     (buffer-file-name)))))
+                                              :url (replique/buffer-url
+                                                    (buffer-file-name)))))
         (if p
             (replique/send-input-from-source-dispatch
              (concat "(replique.omniscient/with-redefs " input ")"))
@@ -711,8 +717,8 @@ This allows you to temporarily modify read-only buffers too."
                (replique/eval-from-source-meta (replique/hash-map
                                                 :line line
                                                 :column column
-                                                :file (replique/buffer-url
-                                                       (buffer-file-name)))))
+                                                :url (replique/buffer-url
+                                                      (buffer-file-name)))))
           (replique/send-input-from-source-dispatch
            (if p
                (concat "(replique.omniscient/with-redefs " expr ")")
@@ -2025,7 +2031,7 @@ minibuffer"
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
-;; use replique-context to avoid sending invalid forms (pending dispatch macro)
+;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
