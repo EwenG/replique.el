@@ -21,104 +21,108 @@
 
 ;; Code:
 
-(defvar replique-context/parser-state nil)
-(defvar replique-context/context-state nil)
+(defvar replique-context/forward-context nil)
+(defvar replique-context/dispatch-macro nil)
+(defvar replique-context/quoted nil)
+(defvar replique-context/global-quoted nil)
+(defvar replique-context/namespace nil)
 
 (defvar replique-context/in-ns-forms '(in-ns clojure.core/in-ns))
 
 (defun replique-context/init-state ()
-  (setq replique-context/parser-state nil)
-  (setq replique-context/context-state (replique/hash-map)))
+  (setq replique-context/forward-context nil)
+  (setq replique-context/dispatch-macro nil)
+  (setq replique-context/quoted nil)
+  (setq replique-context/global-quoted nil)
+  (setq replique-context/namespace nil))
 
-(defun replique-context/state-depth (parser-state)
-  (car parser-state))
+(defun replique-context/delimited? (open close from &optional to)
+  (let ((to (or to (ignore-errors (scan-sexps from 1)))))
+    (when to
+      (and (eq (char-after from) open)
+           (eq (char-before to) close)))))
 
-(defun replique-context/quote-char ()
-  (let ((char-b (char-before (point))))
-    (when (or (eq ?' char-b) (eq ?` char-b))
-      char-b)))
+(defun replique-context/forward-comment ()
+   (forward-comment (buffer-size))
+   (while (> (skip-chars-forward ",") 0)
+     (forward-comment (buffer-size))))
 
-(defun replique-context/after-unquote? ()
-  (let ((char1- (char-before (point)))
-        (char2- (char-before (1- (point)))))
-    (or (eq ?~ char1-) (and (eq ?~ char2-) (eq ?@ char1-)))))
-
-(defun replique-context/after-read-comment? ()
-  (let ((char1- (char-before (point)))
-        (char2- (char-before (1- (point)))))
-    (or (eq ?~ char1-) (and (eq ?~ char2-) (eq ?@ char1-)))))
-
-(defun replique-context/init-state ()
+;; # followed more than one whitespaces are ignored even though this is valid clojure
+(defun replique-context/maybe-at-dispatch-macro ()
   (let* ((p (point))
-         (parser-state (syntax-ppss p)))
-    (replique/hash-map
-     :point p
-     :depth (replique-context/state-depth parser-state)
-     :toplevel (syntax-ppss-toplevel-pos parser-state))))
+         (p1+ (+ 1 p))
+         (p2+ (+ 2 p))
+         (p3+ (+ 3 p))
+         (char1+ (char-before p1+))
+         (char2+ (char-before p2+))
+         (char3+ (char-before p3+)))
+    (cond ((eq ?# char1+)
+           (cond ((eq ?: char2+)
+                  (setq replique-context/dispatch-macro :namespaced-map)
+                  p1+)
+                 ((and (eq ?? char2+) (eq ?@ char3+) (replique-context/delimited? ?\( ?\) p3+))
+                  (setq replique-context/dispatch-macro :reader-conditional)
+                  p3+)
+                 ((and (eq ?? char2+) (replique-context/delimited? ?\( ?\) p2+))
+                  (setq replique-context/dispatch-macro :reader-conditional)
+                  p2+)
+                 ;; allow zero or multiple spaces after the symbolic value reader
+                 ((eq ?# char2+)
+                  (goto-char p2+)
+                  (replique-context/forward-comment)
+                  (let ((forward-p (point)))
+                    (goto-char p)
+                    (setq replique-context/dispatch-macro :symbolic-value)
+                    forward-p))
+                 ((eq ?' char2+)
+                  (setq replique-context/dispatch-macro :var)
+                  p2+)
+                 ((eq ?_ char2+)
+                  (setq replique-context/dispatch-macro :discard)
+                  p2+)
+                 ((eq ?= char2+)
+                  (setq replique-context/dispatch-macro :eval)
+                  p2+)
+                 ((eq ?^ char2+)
+                  (setq replique-context/dispatch-macro :meta)
+                  p2+)
+                 ((replique-context/delimited? ?\( ?\) p1+)
+                  (setq replique-context/dispatch-macro :fn)
+                  p1+)
+                 ((replique-context/delimited? ?\{ ?\} p1+)
+                  (setq replique-context/dispatch-macro :set)
+                  p1+)
+                 ((replique-context/delimited? ?\" ?\" p1+)
+                  (setq replique-context/dispatch-macro :regex)
+                  p1+)
+                 ;; allow zero or multiple spaces after the tagged literal value reader
+                 (t (goto-char p1+)
+                    (replique-context/forward-comment)
+                    (let ((forward-p (point)))
+                      (goto-char p)
+                      (setq replique-context/dispatch-macro :tagged-literal)
+                      forward-p))))
+          ((eq ?^ char1+)
+           (setq replique-context/dispatch-macro :meta)
+           p1+)
+          (t nil))))
 
-(defun replique-context/at-delimited? (forward-p open close)
-  (and (eq (char-after (point)) open)
-       (eq (char-before forward-p) close)))
-
-(defun replique-context/at-vector? (forward-p)
-  (replique-context/maybe-at-delimited forward-p ?\[ ?\]))
-
-(defun replique-context/symbol-at (from to &optional quote-char)
-  (let ((symbol-s (buffer-substring-no-properties from to)))
-    (if quote-char
-        (make-symbol (concat (string quote-char) symbol-s))
-      (make-symbol symbol-s))))
-
-(defun replique-context/maybe-at-dispatch-macro (forward-p)
-  ;; We already have read the dispatch macro, it will be cleared by the next read
-  (when (and (null (replique/get replique-context/context-state :dispatch-macro))
-             (null (replique/get replique-context/context-state :quoted)))
-    (let ((char1- (char-before (point)))
-          (char2- (char-before (1- (point))))
-          (char3- (char-before (- (point) 2)))
-          (char1+ (char-after (point))))
-      (cond ((and (eq ?# char1-) (eq ?: char1+))
-             (goto-char forward-p)
-             :namespaced-map)
-            ((or (and (eq ?# char2-) (eq ?? char1-))
-                 (and (eq ?# char3-) (eq ?? char2-) (eq ?@ char1-)))
-             :reader-conditional)
-            ((and (eq ?# char2-) (eq ?# char1-))
-             :symbolic-value)
-            ((and (eq ?# char2-) (eq ?' char1-))
-             :var)
-            ((and (eq ?# char1-) (eq ?_ char1+))
-             (goto-char forward-p)
-             :discard)
-            ((and (eq ?# char1-) (eq ?= char1+))
-             (goto-char forward-p)
-             :eval)
-            ((eq ?^ char1-)
-             :meta)
-            ((and (eq ?# char1-) (replique-context/at-delimited? forward-p ?\( ?\)))
-             :fn)
-            ((and (eq ?# char1-) (replique-context/at-delimited? forward-p ?\{ ?\}))
-             :set)
-            ((and (eq ?# char1-) (replique-context/at-delimited? forward-p ?\< ?\>))
-             :throwing)
-            ((and (eq ?# char1-) (replique-context/at-delimited? forward-p ?\" ?\"))
-             :regex)
-            ((and (eq ?# char1-) (replique-context/at-delimited? forward-p ?\[ ?\]))
-             nil)
-            (t nil)))))
-
-(defun replique-context/maybe-at-quoted (forward-p)
-  ;; We already have read the quoted-state, it will be cleared by the next read
-  (when (and (null (replique/get replique-context/context-state :quoted))
-             (null (replique/get replique-context/context-state :dispatch-macro)))
-    (let ((char1- (char-before (point)))
-          (char2- (char-before (1- (point)))))
-      (cond ((or (and (eq ?~ char2-) (eq ?@ char1-))
-                 (eq ?~ char1-))
-             :unquote)
-            ((or (eq ?' char1-) (eq ?` char1-))
-             :quote)
-            (t nil)))))
+(defun replique-context/maybe-at-quoted ()
+  (let* ((p (point))
+         (p1+ (+ 1 p))
+         (p2+ (+ 2 p))
+         (char1+ (char-before p1+))
+         (char2+ (char-before p2+)))
+    (if (eq ?~ char1+)
+        (if (eq ?@ char2+)
+            (progn
+              (setq replique-context/quoted :unquote)
+              p2+)
+          (setq replique-context/quoted :unquote)
+          p1+)
+      (when (or (eq ?' char1+) (eq ?` char1+))
+        (setq replique-context/quoted :quote)
+        p1+))))
 
 ;; #: #:: #::alias -> namespaced map
 ;; #?() #?@() -> reader conditional
@@ -126,7 +130,7 @@
 ;; #' -> var
 ;; #_ -> discard
 ;; #= eval
-;; #< throwing
+;; #< throwing -- here considered as a tag reader
 ;; #^ -> meta
 ;; ^ -> meta
 ;; #() -> anonymous fn
@@ -134,61 +138,93 @@
 ;; #"" -> regexp
 
 (comment
- (let ((forward-p (ignore-errors (scan-sexps (point) 1))))
-   (when forward-p
-     (replique-context/init-state)
-     (replique-context/maybe-at-dispatch-macro forward-p)))
+ (replique-context/maybe-at-dispatch-macro)
  )
 
-(defun replique-context/maybe-at-symbol (forward-p symbol)
-  (let* ((quote-char (replique-context/quote-char))
-         (before-p (point))
-         (after-p (ignore-errors (scan-sexps before-p 1))))
-    (if after-p
-        (if symbol
-            (let ((symbol-at-p (replique-context/symbol-at before-p after-p quote-char)))
-              (if (if (consp symbol)
-                      (seq-find (lambda (sym)
-                                  (equal (symbol-name symbol-at-p) (symbol-name sym)))
-                                symbol)
-                    (equal (symbol-name symbol-at-p) (symbol-name symbol)))
-                  (progn (goto-char after-p)
-                         (parse-partial-sexp (point) forward-p nil t)
-                         symbol-at-p)
-                (goto-char (1+ forward-p))
-                nil))
-          (goto-char after-p)
-          (parse-partial-sexp (point) forward-p nil t)
-          (replique-context/symbol-at before-p after-p quote-char))
-      (goto-char (1+ forward-p))
-      nil)))
+(defun replique-context/scan-forward ()
+  (let* ((p (point))
+         (char1+ (char-after (point))))
+    (cond ((eq char1+ ?\()
+           (let ((forward-p (ignore-errors (scan-sexps p 1))))
+             (when (and forward-p (eq ?\) (char-before forward-p)))
+               (setq replique-context/forward-context :list)
+               forward-p)))
+          ((eq char1+ ?\[)
+           (let ((forward-p (ignore-errors (scan-sexps p 1))))
+             (when (and forward-p (eq ?\] (char-before forward-p)))
+               (setq replique-context/forward-context :vector)
+               forward-p)))
+          ((eq char1+ ?\{)
+           (let ((forward-p (ignore-errors (scan-sexps p 1))))
+             (when (and forward-p (eq ?\} (char-before forward-p)))
+               (setq replique-context/forward-context :map)
+               forward-p)))
+          ((eq char1+ ?\")
+           (let ((forward-p (ignore-errors (scan-sexps p 1))))
+             (when (and forward-p (eq ?\" (char-before forward-p)))
+               (setq replique-context/forward-context :string)
+               forward-p)))
+          (t (let ((forward-dispatch-macro (replique-context/maybe-at-dispatch-macro)))
+               (if forward-dispatch-macro
+                   (progn
+                     (setq replique-context/forward-context :dispatch-macro)
+                     forward-dispatch-macro)
+                 (let ((forward-quoted (replique-context/maybe-at-quoted)))
+                   (if forward-quoted
+                       (progn
+                         (setq replique-context/forward-context :quoted)
+                         forward-quoted)
+                     (setq replique-context/forward-context :symbol)
+                     (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]*")
+                     (let ((forward-p (point)))
+                       (goto-char p)
+                       forward-p)))))))))
 
-(defun replique-context/maybe-at-function (forward-p)
-  (let ((dispatch-macro (replique/get replique-context/context-state :dispatch-macro))
-        (local-quoted (replique/get replique-context/context-state :quoted))
-        (global-quoted (replique/get replique-context/context-state :global-quoted)))
-    (if (and (null dispatch-macro)
-             (or (equal local-quoted :unquote)
-                 (and (null local-quoted) (null global-quoted)))
-             (eq (char-after (point)) ?\()
-             (eq (char-after forward-p) ?\)))
-        (progn
-          (parse-partial-sexp (point) forward-p 1 nil)
-          (parse-partial-sexp (point) forward-p nil t)
-          t)
-      (goto-char (1+ forward-p))
-      nil)))
+(defun replique-context/delimited-forward-context? ()
+  (or (eq :list replique-context/forward-context)
+      (eq :vector replique-context/forward-context)
+      (eq :map replique-context/forward-context)))
 
-(defun replique-context/maybe-at-in-ns (forward-p)
-  (when (replique-context/maybe-at-function forward-p)
-    (when (replique-context/maybe-at-symbol forward-p replique-context/in-ns-forms)
-      (let ((namespace (replique-context/maybe-at-symbol forward-p nil)))
-        (if namespace
-            (progn
-              (goto-char (1+ forward-p))
-              namespace)
-          (goto-char (1+ forward-p))
-          nil)))))
+(defmacro replique-context/scan-forward-with-quote (forward-point-sym &rest body)
+  `(let ((,forward-point-sym (replique-context/scan-forward)))
+     (if (and ,forward-point-sym
+              (eq :quoted replique-context/forward-context)
+              (eq :quote replique-context/quoted))
+         (progn
+           (goto-char ,forward-point-sym)
+           (let ((,forward-point-sym (replique-context/scan-forward)))
+             ,@body))
+       (setq replique-context/quoted nil)
+       ,@body)))
+
+(defun replique-context/maybe-at-in-ns (end-point)
+  (when (and (or (null replique-context/dispatch-macro)
+                 (eq replique-context/dispatch-macro :tagged-literal))
+             (or (equal replique-context/quoted :unquote)
+                 (and (null replique-context/quoted)
+                      (null replique-context/global-quoted))))
+    (forward-char)
+    (replique-context/forward-comment)
+    (let ((forward-point (replique-context/scan-forward)))
+      (when (and forward-point (eq :symbol replique-context/forward-context))
+        (let ((symbol-at-p (buffer-substring-no-properties (point) forward-point)))
+          (when (seq-find (lambda (sym)
+                            (equal symbol-at-p (symbol-name sym)))
+                          replique-context/in-ns-forms)
+            (goto-char forward-point)
+            (replique-context/forward-comment)
+            (replique-context/scan-forward-with-quote
+             forward-point
+             (let ((quote-char (when (eq :quote replique-context/quoted)
+                                 (char-before (point)))))
+               (when (and forward-point
+                          (eq :symbol replique-context/forward-context)
+                          (not (eq (point) forward-point)))
+                 (let ((symbol-at-point (buffer-substring-no-properties
+                                         (point) forward-point)))
+                   (if quote-char
+                       (make-symbol (concat (string quote-char) symbol-at-point))
+                     (make-symbol symbol-at-point))))))))))))
 
 (comment
  (let ((forward-p (ignore-errors (scan-sexps (point) 1))))
@@ -198,80 +234,72 @@
  )
 
 (defun replique-context/update-global-quoted-state ()
-  (let ((local-quoted (replique/get replique-context/context-state :quoted)))
-    (cond ((equal local-quoted :quote)
-           (puthash :global-quoted t replique-context/context-state))
-          ((equal local-quoted :unquote)
-           (puthash :global-quoted nil replique-context/context-state))
-          (t nil))))
+  (cond ((equal replique-context/quoted :quote)
+         (setq replique-context/global-quoted t))
+        ((equal replique-context/quoted :unquote)
+         (setq replique-context/global-quoted nil))
+        (t nil)))
 
 (defun replique-context/walk-in-ns (target-point)
   (while (< (point) target-point)
-    (let* ((forward-point (ignore-errors (scan-sexps (point) 1))))
+    (let* ((forward-point (replique-context/scan-forward)))
       (if forward-point
-          (let* ((dispatch-macro (replique-context/maybe-at-dispatch-macro forward-point))
-                 (quoted (replique-context/maybe-at-quoted forward-point)))
-            (cond (dispatch-macro
-                   (puthash :dispatch-macro dispatch-macro replique-context/context-state))
-                  (quoted
-                   (puthash :quoted quoted replique-context/context-state))
-                  (t
-                   (let ((before-target? (< forward-point target-point)))
-                     (if before-target?
+          (cond ((replique-context/delimited-forward-context?)
+                 (if (< (1- forward-point) target-point)
+                     (progn
+                       ;; Before target point
+                       (when (eq :list replique-context/forward-context)
                          (let ((namespace (replique-context/maybe-at-in-ns (1- forward-point))))
                            (when namespace
-                             (puthash :namespace namespace replique-context/context-state)))
-                       (replique-context/update-global-quoted-state)
-                       (parse-partial-sexp (point) target-point 1 nil))
-                     (puthash :dispatch-macro nil replique-context/context-state)
-                     (puthash :quoted nil replique-context/context-state))))
-            (parse-partial-sexp (point) target-point nil t))
+                             (setq replique-context/namespace namespace))))
+                       ;; Before target point but not a list
+                       (goto-char forward-point))
+                   ;; After target point
+                   (replique-context/update-global-quoted-state)
+                   (forward-char))
+                 (setq replique-context/dispatch-macro nil)
+                 (setq replique-context/quoted nil)
+                 (replique-context/forward-comment))
+                ((eq :string replique-context/forward-context)
+                 (goto-char forward-point)
+                 (setq replique-context/dispatch-macro nil)
+                 (setq replique-context/quoted nil)
+                 (replique-context/forward-comment))
+                ((eq :dispatch-macro replique-context/forward-context)
+                 (goto-char forward-point))
+                ((eq :quoted replique-context/forward-context)
+                 ;; clear the dispatch-macro
+                 (setq replique-context/dispatch-macro nil)
+                 (goto-char forward-point))
+                ((eq :symbol replique-context/forward-context)
+                 (setq replique-context/dispatch-macro nil)
+                 (setq replique-context/quoted nil)
+                 (goto-char forward-point)
+                 (replique-context/forward-comment)))
         (goto-char target-point))))
-  replique-context/context-state)
-
-(defun replique-context/walk (target-point)
-  (parse-partial-sexp (point) target-point nil t)
-  (if (>= (point) target-point)
-      replique-context/context-state
-    (let* ((forward-point (scan-sexps (point) 1)))
-      (if (< forward-point target-point)
-          (cond ((and (equal :function (replique/get replique-context/context-state :wrapper))
-                      (equal 0 (replique/get replique-context/context-state :position)))
-                 t)
-                ((and (equal :function (replique/get replique-context/context-state :wrapper))
-                      (replique-context/at-vector? forward-point))
-                 t))
-        nil))))
+  replique-context/namespace)
 
 (defun replique-context/walk-init ()
   (let* ((target-point (point))
          (top-level (syntax-ppss-toplevel-pos (syntax-ppss target-point))))
     (when top-level
       (goto-char top-level)
-      (parse-partial-sexp (point) target-point nil t)
+      (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]*")
+      (replique-context/forward-comment)
       (replique-context/init-state)
       target-point)))
 
 (comment
- (let* ((forward-point (replique-context/walk-init))
-        (context-state (replique-context/walk-in-ns forward-point)))
-   (when context-state
-     (replique/get context-state :namespace)))
+ (let* ((forward-point (replique-context/walk-init)))
+   (replique-context/walk-in-ns forward-point))
  )
 
-;; clojure-find-ns does not consider (in-ns ...) forms that don't start at column 0, for
-;; example (in-ns ...) forms that are in a (comment ...) block
+;; find in-ns calls in the current form. If no namespace is found, use clojure-find-ns
 (defun replique-context/clojure-find-ns ()
-  (let ((forward-point (replique-context/walk-init)))
-    (when forward-point
-      (let ((context-state (replique-context/walk-in-ns forward-point)))
-        (when context-state
-          (replique/get context-state :namespace))))))
-
-(comment
- (let ((tooling-repl (replique/active-repl :tooling t)))
-   (replique-context/clojure-find-ns tooling-repl :replique/clj "replique.tooling"))
- )
+  (save-excursion
+    (let* ((forward-point (replique-context/walk-init))
+           (namespace (when forward-point (replique-context/walk-in-ns forward-point))))
+      (or namespace (clojure-find-ns)))))
 
 (provide 'replique-context)
 
@@ -294,4 +322,5 @@
                 (message "%s" (replique-edn/pr-str err))
                 (message "context failed"))
             (print (replique-edn/pr-str resp))))))))
+ 
  )
