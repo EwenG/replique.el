@@ -29,6 +29,10 @@
 
 (defvar replique-context/in-ns-forms '(in-ns clojure.core/in-ns))
 
+(defmacro comment (&rest body)
+  "Comment out one or more s-expressions."
+  nil)
+
 (defun replique-context/init-state ()
   (setq replique-context/forward-context nil)
   (setq replique-context/dispatch-macro nil)
@@ -222,9 +226,7 @@
                           (not (eq (point) forward-point)))
                  (let ((symbol-at-point (buffer-substring-no-properties
                                          (point) forward-point)))
-                   (if quote-char
-                       (make-symbol (concat (string quote-char) symbol-at-point))
-                     (make-symbol symbol-at-point))))))))))))
+                   symbol-at-point))))))))))
 
 (comment
  (let ((forward-p (ignore-errors (scan-sexps (point) 1))))
