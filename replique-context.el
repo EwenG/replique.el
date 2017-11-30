@@ -21,6 +21,10 @@
 
 ;; Code:
 
+(require 'replique-hashmap)
+
+(defvar replique-context/context nil)
+
 (defvar replique-context/forward-context nil)
 (defvar replique-context/dispatch-macro nil)
 (defvar replique-context/quoted nil)
@@ -38,7 +42,15 @@
   (setq replique-context/dispatch-macro nil)
   (setq replique-context/quoted nil)
   (setq replique-context/global-quoted nil)
-  (setq replique-context/namespace nil))
+  (setq replique-context/namespace nil)
+
+  (setq replique-context/wrapper-context nil)
+  (setq replique-context/wrapper-context-position nil)
+  (setq replique-context/fn-context nil)
+  (setq replique-context/fn-context-position nil)
+  (setq replique-context/binding-context nil)
+  (setq replique-context/locals (replique/hash-map))
+  (setq replique-context/in-string? nil))
 
 (defun replique-context/delimited? (open close from &optional to)
   (let ((to (or to (ignore-errors (scan-sexps from 1)))))
@@ -63,7 +75,7 @@
     (cond ((eq ?# char1+)
            (cond ((eq ?: char2+)
                   (setq replique-context/dispatch-macro :namespaced-map)
-                  (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]*")
+                  (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
                   (point))
                  ((and (eq ?? char2+) (eq ?@ char3+))
                   (setq replique-context/dispatch-macro :reader-conditional)
@@ -171,7 +183,7 @@
                          (setq replique-context/forward-context :quoted)
                          forward-quoted)
                      (setq replique-context/forward-context :symbol)
-                     (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]*")
+                     (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
                      (let ((forward-p (point)))
                        (goto-char p)
                        forward-p)))))))))
@@ -364,84 +376,284 @@
         (goto-char target-point))))
   replique-context/namespace)
 
+(defun replique-context/convert-namespaced-keyword (object)
+  (if (cl-typep object 'replique-context/object-symbol)
+      (let ((name (save-match-data
+                    (when (string-match "^\\(:\\|::\\)[^:/]+/\\([^/]+\\)$" (oref object :symbol))
+                      (match-string-no-properties 2 (oref object :symbol))))))
+        (if name
+            (oset object :symbol name)
+          object))
+    object))
+
+(comment
+ (let ((s ":e/ff"))
+   (when (string-match "^\\(:\\|::\\)[^:/]+/\\([^/]+\\)$" s)
+     (match-string-no-properties 2 s)))
+ )
+
+(defun replique-context/extract-bindings-vector (target-point
+                                                 bindings
+                                                 &optional namespaced-keys)
+  (while (< (point) target-point)
+    (let* ((object (replique-context/meta-value (replique-context/read-one)))
+           (object (if namespaced-keys
+                       (replique-context/convert-namespaced-keyword object)
+                     object)))
+      (if object
+          (progn
+            (when (not (and (cl-typep object 'replique-context/object-symbol)
+                            (equal "&" (oref object :symbol))))
+              (replique-context/extract-bindings object bindings))
+            (replique-context/forward-comment))
+        (goto-char (+ 1 target-point)))))
+  (goto-char (+ 1 target-point)))
+
+(defun replique-context/extract-bindings-map (target-point bindings)
+  (while (< (point) target-point)
+    (let* ((object-k (replique-context/read-one))
+           (object-k-without-meta (replique-context/meta-value object-k))
+           (object-k-without-meta (replique-context/convert-namespaced-keyword
+                                   object-k-without-meta))
+           (_ (replique-context/forward-comment))
+           (object-v (replique-context/read-one))
+           (object-v-without-meta (replique-context/meta-value object-v)))
+      (if (and object-k object-v)
+          (let ((p (point)))
+            (cond ((and (cl-typep object-k-without-meta 'replique-context/object-symbol)
+                        (or (equal ":keys" (oref object-k-without-meta :symbol))
+                            (equal ":strs" (oref object-k-without-meta :symbol))
+                            (equal ":syms" (oref object-k-without-meta :symbol)))
+                        (cl-typep object-v-without-meta 'replique-context/object-delimited)
+                        (eq :vector (oref object-v-without-meta :delimited)))
+                   (goto-char (+ 1 (oref object-v-without-meta :start)))
+                   (replique-context/extract-bindings-vector
+                    (- (oref object-v-without-meta :end) 1) bindings t))
+                  ((and (cl-typep object-k-without-meta 'replique-context/object-symbol)
+                        (equal ":or" (oref object-k-without-meta :symbol))
+                        (cl-typep object-v-without-meta 'replique-context/object-delimited)
+                        (eq :map (oref object-v-without-meta :delimited)))
+                   (goto-char (+ 1 (oref object-v-without-meta :start)))
+                   (replique-context/extract-bindings-map
+                    (- (oref object-v-without-meta :end) 1) bindings))
+                  (t (replique-context/extract-bindings object-k bindings)))
+            (goto-char p)
+            (replique-context/forward-comment))
+        (goto-char (+ 1 target-point)))))
+  (goto-char (+ target-point 1)))
+
+(defun replique-context/extract-bindings (object bindings)
+  (let ((object-without-meta (replique-context/meta-value object)))
+    (cond ((and (cl-typep object-without-meta 'replique-context/object-delimited)
+                (eq :vector (oref object-without-meta :delimited)))
+           (goto-char (+ 1 (oref object-without-meta :start)))
+           (replique-context/forward-comment)
+           (replique-context/extract-bindings-vector (- (oref object :end) 1) bindings))
+          ((and (cl-typep object-without-meta 'replique-context/object-delimited)
+                (eq :map (oref object-without-meta :delimited)))
+           (goto-char (+ 1 (oref object-without-meta :start)))
+           (replique-context/forward-comment)
+           (replique-context/extract-bindings-map
+            (- (oref object-without-meta :end) 1) bindings))
+          ((cl-typep object-without-meta 'replique-context/object-symbol)
+           (let ((sym (oref object-without-meta :symbol))
+                 (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
+                                  (eq :meta (oref object :dispatch-macro)))
+                         (oref object :data))))
+             (when (and sym (not (string-prefix-p ":" sym)))
+               (puthash sym `[,(oref object :start) ,(oref object :end) ,meta] bindings))))))
+  bindings)
+
 ;; fn context
 ;; binding context
 (defvar replique-context/wrapper-context nil)
 (defvar replique-context/wrapper-context-position nil)
 (defvar replique-context/fn-context nil)
+(defvar replique-context/fn-context-position nil)
 (defvar replique-context/binding-context nil)
+(defvar replique-context/locals nil)
+(defvar replique-context/in-string? nil)
 
-(defun replique-context/collect-locals (target-point)
-  (when (and (or (null replique-context/dispatch-macro)
-                 (eq replique-context/dispatch-macro :tagged-literal))
-             (or (equal replique-context/quoted :unquote)
-                 (and (null replique-context/quoted)
-                      (null replique-context/global-quoted))))
-    ))
+(defun replique-context/object-leaf (object)
+  (when object
+    (while (or (cl-typep object 'replique-context/object-dispatch-macro)
+               (cl-typep object 'replique-context/object-quoted))
+      (setq object (oref object :value)))
+    object))
 
-(defun replique-context/scan-backward-symbol ()
-  (let ((backward-p (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]*")))
-    (goto-char p)))
+(defun replique-context/at-for-like-let? (object-k-meta-value object-v-meta-value)
+  (and (eq :for-like replique-context/binding-context)
+       (cl-typep object-k-meta-value 'replique-context/object-symbol)
+       (equal ":let" (oref object-k-meta-value :symbol))
+       (cl-typep object-v-meta-value 'replique-context/object-delimited)
+       (eq :vector (oref object-v-meta-value :delimited))))
 
-;; fn-like let-like for-like letfn-like
+(defun replique-context/collect-locals1 (target-point)
+  (let ((exit nil))
+    (while (and (< (point) target-point) (null exit))
+      (let* ((start-p (point))
+             (object-k (replique-context/read-one))
+             (object-k-meta-value (replique-context/meta-value object-k))
+             (_ (replique-context/forward-comment))
+             (object-v (replique-context/read-one))
+             (object-v-meta-value (replique-context/meta-value object-v))
+             (object-v-leaf (replique-context/object-leaf object-v)))
+        (if (and object-k object-v-meta-value)
+            (cond ((replique-context/at-for-like-let? object-k-meta-value object-v-meta-value)
+                   (cond ((<= target-point (oref object-v-meta-value :start))
+                          (goto-char start-p)
+                          (setq exit t))
+                         ((>= target-point (oref object-v-meta-value :end))
+                          (let ((binding-context replique-context/binding-context))
+                            (goto-char (+ 1 (oref object-v-meta-value :start)))
+                            (replique-context/forward-comment)
+                            (setq replique-context/binding-context :let-like)
+                            (replique-context/collect-locals2 (- (oref object-v-meta-value :end) 1))
+                            (setq replique-context/wrapper-context-position
+                                  (+ 2 replique-context/wrapper-context-position))
+                            (goto-char (oref object-v-meta-value :end))
+                            (setq replique-context/binding-context binding-context)
+                            (replique-context/forward-comment)))
+                         (t
+                          (setq replique-context/wrapper-context-position 0)
+                          (setq replique-context/binding-context :let-like)
+                          (goto-char (+ 1 (oref object-v-meta-value :start)))
+                          (replique-context/forward-comment)
+                          (replique-context/collect-locals1 target-point)
+                          (setq exit t))))
+                  ((< (oref object-v-leaf :end) target-point)
+                   (replique-context/extract-bindings object-k replique-context/locals)
+                   (setq replique-context/wrapper-context-position
+                         (+ 2 replique-context/wrapper-context-position))
+                   (goto-char (oref object-v-leaf :end))
+                   (replique-context/forward-comment))
+                  (t (goto-char start-p)
+                     (setq exit t)))
+          (replique-context/init-state)
+          (goto-char target-point))))))
 
-;; collect-locals-includes-points
-
-(defun replique-context/walk (target-point)
+(defun replique-context/collect-locals2 (target-point)
   (while (< (point) target-point)
-    (let* ((forward-point (replique-context/scan-forward)))
-      (if forward-point
-          (cond ((replique-context/delimited-forward-context?)
-                 (let ((before-target-point? (< (1- forward-point) target-point)))
-                   (if before-target-point?
-                       (progn
-                         (when (and (eq :vector replique-context/forward-context)
-                                    (or (eq :fn-like replique-context/binding-context)
-                                        (eq :let-like replique-context/binding-context)
-                                        (eq :for-like replique-context/binding-context)
-                                        ;; (eq :letfn-like replique-context/binding-context)
-                                        ))
-                           (replique-context/collect-locals (1- forward-point))
-                           (setq replique-context/binding-context nil))
-                         (setq replique-context/wrapper-context-position
-                               (+ 1 replique-context/wrapper-context-position))
-                         (goto-char forward-point))
-                     (replique-context/update-global-quoted-state)
-                     (setq replique-context/wrapper-context replique-context/forward-context)
-                     (cond ((and (eq :vector replique-context/forward-context)
-                                 (or (eq :fn-like replique-context/binding-context)
-                                     (eq :let-like replique-context/binding-context)
-                                     (eq :for-like replique-context/binding-context)
-                                     ;; (eq :letfn-like replique-context/binding-context)
-                                     ))
-                            (replique-context/collect-locals-includes-point target-point))
-                           ((eq :list replique-context/forward-context)
-                            (if (eq :fn-like replique-context/binding-context)
-                                (setq replique-context/binding-context :let-like)
-                              (setq replique-context/binding-context nil)))
-                           (t (setq replique-context/binding-context nil))))))
-                ((eq :symbol replique-context/forward-context)
-                 (cond ((and (eq replique-context/wrapper-context :list)
-                             (eq replique-context/wrapper-context-position 0)
-                             ;; check quoted, dispatch-macro
-                             )
-                        ;;(setq replique-context/fn-context ...)
-                        ))))
+    (let* ((object-k (replique-context/read-one))
+           (object-k-meta-value (replique-context/meta-value object-k))
+           (_ (replique-context/forward-comment))
+           (object-v-meta-value (replique-context/meta-value (replique-context/read-one)))
+           (p (point)))
+      (if (and object-k object-v-meta-value)
+          (if (replique-context/at-for-like-let? object-k-meta-value object-v-meta-value)
+              (let ((binding-context replique-context/binding-context))
+                (goto-char (+ 1 (oref object-v-meta-value :start)))
+                (replique-context/forward-comment)
+                (setq replique-context/binding-context :let-like)
+                (replique-context/collect-locals2 (- (oref object-v-meta-value :end) 1))
+                (goto-char (oref object-v-meta-value :end))
+                (setq replique-context/binding-context binding-context)
+                (replique-context/forward-comment))
+            (replique-context/extract-bindings object-k replique-context/locals)
+            (goto-char p)
+            (replique-context/forward-comment))
+        (goto-char target-point)))))
+
+(defun replique-context/set-binding-context (fn-context binding-forms)
+  (let ((binding-context (replique/get binding-forms fn-context)))
+    (when binding-context
+      (setq replique-context/binding-context binding-context))))
+
+(defun replique-context/at-binding-context? (object)
+  (and (cl-typep object 'replique-context/object-delimited)
+       (eq :vector (oref object :delimited))
+       (or (and (eq 1 replique-context/wrapper-context-position)
+                (or (eq :fn-like replique-context/binding-context)
+                    (eq :let-like replique-context/binding-context)
+                    (eq :for-like replique-context/binding-context)))
+           (and (eq :method-like replique-context/binding-context)
+                (eq 0 replique-context/wrapper-context-position)))))
+
+;; fn-like let-like for-like method-like letfn-like
+
+;; Errors (read-one returning nil) may prevent the computation of some contextual values
+;; such as the fn-context. In such a case, we reset the contextual states and go
+;; to the target-point
+(defun replique-context/walk (target-point binding-forms)
+  (while (< (point) target-point)
+    (let* ((object (replique-context/read-one))
+           (object-meta-value (replique-context/meta-value object))
+           (object-leaf (replique-context/object-leaf object)))
+      (if object-leaf
+          (progn
+            (cond ((and (replique-context/at-binding-context? object-meta-value)
+                        (> target-point (oref object-meta-value :start))
+                        (< target-point (oref object-meta-value :end)))
+                   (setq replique-context/wrapper-context nil)
+                   (setq replique-context/wrapper-context-position 0)
+                   (goto-char (+ 1 (oref object-meta-value :start)))
+                   (replique-context/forward-comment)
+                   (replique-context/collect-locals1 target-point)
+                   (setq replique-context/binding-context nil))
+                  ((and (replique-context/at-binding-context? object-meta-value)
+                        (>= target-point (oref object-meta-value :end)))
+                   (goto-char (+ 1 (oref object-meta-value :start)))
+                   (replique-context/forward-comment)
+                   (replique-context/collect-locals2 (- (oref object-meta-value :end) 1))
+                   (goto-char (oref object-meta-value :end)))
+                  ((and (cl-typep object-leaf 'replique-context/object-delimited)
+                        (eq :list (oref object-leaf :delimited))
+                        (> target-point (oref object-leaf :start))
+                        (< target-point (oref object-leaf :end)))
+                   (setq replique-context/wrapper-context :list)
+                   (setq replique-context/wrapper-context-position 0)
+                   (if (eq replique-context/binding-context :fn-like)
+                       (setq replique-context/binding-context :method-like)
+                     (setq replique-context/binding-context nil))
+                   (goto-char (+ (oref object-leaf :start) 1)))
+                  ((and (cl-typep object-leaf 'replique-context/object-delimited)
+                        (> target-point (oref object-leaf :start))
+                        (< target-point (oref object-leaf :end)))
+                   (setq replique-context/wrapper-context nil)
+                   (setq replique-context/wrapper-context-position 0)
+                   (setq replique-context/binding-context nil)
+                   (goto-char (+ (oref object-leaf :start) 1)))
+                  ((and (cl-typep object-meta-value 'replique-context/object-symbol)
+                        (not (string-prefix-p ":" (oref object-meta-value :symbol)))
+                        (eq :list replique-context/wrapper-context)
+                        (eq 0 replique-context/wrapper-context-position)
+                        (>= target-point (oref object-meta-value :start)))
+                   (setq replique-context/wrapper-context :fn)
+                   (setq replique-context/fn-context (oref object-meta-value :symbol))
+                   (replique-context/set-binding-context
+                    (oref object-meta-value :symbol) binding-forms)
+                   (setq replique-context/fn-context-position 0)))
+            (when (> target-point (oref object-leaf :end))
+              (setq replique-context/wrapper-context-position
+                    (+ 1 replique-context/wrapper-context-position))
+              (when (eq :fn replique-context/wrapper-context)
+                (setq replique-context/fn-context-position
+                      (+ 1 replique-context/fn-context-position))))
+            (replique-context/forward-comment))
+        (replique-context/init-state)
         (goto-char target-point)))))
 
 (defun replique-context/walk-init ()
   (let* ((target-point (point))
-         (top-level (syntax-ppss-toplevel-pos (syntax-ppss target-point))))
+         (ppss (syntax-ppss target-point))
+         (top-level (syntax-ppss-toplevel-pos ppss)))
     (when top-level
       (goto-char top-level)
-      (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]*")
+      (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
       (replique-context/forward-comment)
       (replique-context/init-state)
+      (setq replique-context/in-string? (not (null (nth 3 ppss))))
       target-point)))
 
 (comment
  (let* ((forward-point (replique-context/walk-init)))
    (replique-context/walk-in-ns forward-point))
+
+ (let* ((forward-point (replique-context/walk-init)))
+   (replique-context/walk forward-point nil)
+   replique-context/locals
+   replique-context/fn-context
+   replique-context/fn-context-position)
  )
 
 ;; find in-ns calls in the current form. If no namespace is found, use clojure-find-ns
@@ -451,89 +663,55 @@
            (namespace (when forward-point (replique-context/walk-in-ns forward-point))))
       (or namespace (clojure-find-ns)))))
 
-(comment
- (let ((tooling-chan (replique/get tooling-repl :chan)))
-   (replique/send-tooling-msg
-    tooling-repl
-    (replique/hash-map :type :context
-                       :repl-env repl-env
-                       :ns ns
-                       :contexts [:in-ns]))
-   (replique-async/<!
-    tooling-chan
-    (lambda (resp)
-      (when resp
-        (let ((err (replique/get resp :error)))
-          (if err
-              (progn
-                (message "%s" (replique-edn/pr-str err))
-                (message "context failed"))
-            (print (replique-edn/pr-str resp))))))))
- 
- )
+(defun replique-context/build-context ()
+  (replique/hash-map
+   :locals replique-context/locals
+   :in-string? replique-context/in-string?))
+
+(defun replique-context/get-context (callback)
+  (if replique-context/context
+      (callback replique-context/context)
+    (let* ((tooling-repl (replique/active-repl :tooling))
+           (tooling-chan (replique/get tooling-repl :chan))
+           (active-repl (replique/active-repl '(:clj :cljs)))
+           (repl-env (replique/get active-repl :repl-env)))
+      (replique/send-tooling-msg
+       tooling-repl
+       (replique/hash-map :type :context
+                          :repl-env repl-env
+                          :ns (replique-context/clojure-find-ns)
+                          :contexts [:let-like :fn-like :for-like]))
+      (replique-async/<!
+       tooling-chan
+       (lambda (resp)
+         (when resp
+           (let ((err (replique/get resp :error)))
+             (if err
+                 (progn
+                   (message "%s" (replique-edn/pr-str err))
+                   (message "context failed"))
+               (save-excursion
+                 (let ((forward-point (replique-context/walk-init)))
+                   (replique-context/walk forward-point (replique/get resp :sym->category))
+                   (setq replique-context/context (replique-context/build-context))
+                   (funcall callback replique-context/context)))))))))))
+
+(defun replique-context/reset-state ()
+  (setq replique-context/context nil))
+
+(add-hook 'post-command-hook 'replique-context/reset-state)
 
 (comment
- (defvar replique/extracted-bindings (replique/hash-map))
- (defvar replique/extract-bindings-done nil)
-
- (defun replique-context/extract-bindings-vector (target-point bindings)
-   (while (< (point) target-point)
-     (let ((object (replique-context/meta-value (replique-context/read-one))))
-       (when (not (and (cl-typep object 'replique-context/object-symbol)
-                       (eq "&" (oref object :symbol))))
-         (replique-context/extract-bindings object bindings)))
-     (replique-context/forward-comment)))
-
- (defun replique-context/namspaced-keyword-name (object))
  
- (defun replique-context/extract-bindings-map (target-point bindings)
-   (while (< (point) target-point)
-     (let* ((object-k (replique-context/read-one))
-            (object-k-without-meta (replique-context/meta-value object-k))
-            (object-v (replique-context/read-one))
-            (object-v-without-meta (replique-context/meta-value (replique-context/read-one)))
-            (namespaced-keyword-name (replique-context/namespaced-keyword-name
-                                      object-k-without-meta)))
-       (cond ((and (cl-typep object-k-without-meta 'replique-context/object-symbol)
-                   (or (equal ":keys" (oref object-k-without-meta :symbol))
-                       (equal ":strs" (oref object-k-without-meta :symbol))
-                       (equal ":syms" (oref object-k-without-meta :symbol)))
-                   (cl-typep object-v-without-meta 'replique-context/object-delimited)
-                   (eq :vector (oref object-v-without-meta :delimited)))
-              nil)
-             (namespaced-keyword-name nil)
-             (t (replique-context/extract-bindings object-k bindings))))
-     (replique-context/forward-comment)))
+ (setq oo (replique-context/read-one))
+ (replique-context/extract-bindings oo (replique/hash-map))
  
- (defun replique-context/extract-bindings (object bindings)
-   (cond ((and (cl-typep object 'replique-context/object-delimited)
-               (eq :vector (oref object :delimited)))
-          (goto-char (+ 1 (oref object :start)))
-          (replique-context/forward-comment)
-          (replique-context/extract-bindings-vector (- (oref object :end) 1) bindings))
-         ((and (cl-typep object 'replique-context/object-delimited)
-               (eq :map (oref object :delimited)))
-          (goto-char (+ 1 (oref object :start)))
-          (replique-context/forward-comment)
-          (replique-context/extract-bindings-map (- (oref object :end) 1) bindings))
-         ((cl-typep object 'replique-context/object-symbol)
-          (let ((sym (oref object :symbol)))
-            (when sym
-              (puthash sym [(oref object :start) (oref object :end) nil] bindings))))
-         ((and (cl-typep object 'replique-context/object-dispatch-macro)
-               (eq :meta (oref object :dispatch-macro)))
-          (let ((meta-value (replique-context/meta-value object)))
-            (cond ((cl-typep meta-value 'replique-context/object-symbol)
-                   (let ((sym (oref meta-value :symbol)))
-                     (when sym
-                       (puthash sym [(oref meta-value :start) (oref meta-value :end)
-                                     (oref object :data)]
-                                bindings))))
-                  ((cl-typep meta-value 'replique-context/object-delimited)
-                   )))))
-   bindings)
+ (replique-context/get-context)
+ (replique-edn/pr-str replique-context/locals)
  )
 
 (provide 'replique-context)
 
 
+;; method-like
+;; check if inside (ns ...)
