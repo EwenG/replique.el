@@ -198,6 +198,8 @@
 (defclass replique-context/object-dispatch-macro ()
   ((dispatch-macro :initarg :dispatch-macro)
    (data :initarg :data)
+   (data-start :initarg :data-start)
+   (data-end :initarg :data-end)
    (value :initarg :value)))
 
 (defclass replique-context/object-quoted ()
@@ -234,12 +236,16 @@
                     (goto-char forward-point)
                     (replique-context/forward-comment)
                     (let ((dispatch-macro replique-context/dispatch-macro)
+                          (data-start (point))
                           (data (replique-context/read-one))
+                          (data-end (point))
                           (_ (replique-context/forward-comment))
                           (value (replique-context/read-one)))
                       (replique-context/object-dispatch-macro
                        :dispatch-macro dispatch-macro
                        :data data
+                       :data-start data-start
+                       :data-end data-end
                        :value value)))
                    ((or (eq :eval replique-context/dispatch-macro)
                         (eq :fn replique-context/dispatch-macro)
@@ -449,9 +455,13 @@
            (let ((sym (oref object-without-meta :symbol))
                  (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
                                   (eq :meta (oref object :dispatch-macro)))
-                         (oref object :data))))
+                         (buffer-substring-no-properties (oref object :data-start)
+                                                         (oref object :data-end)))))
              (when (and sym (not (string-prefix-p ":" sym)))
-               (puthash sym `[,(oref object :start) ,(oref object :end) ,meta] bindings))))))
+               (puthash sym `[,(oref object-without-meta :start)
+                              ,(oref object-without-meta :end)
+                              ,meta]
+                        bindings))))))
   bindings)
 
 ;; fn context
@@ -701,8 +711,9 @@
 
 (defun replique-context/libspec (position-libspec-option position-namespace prefix)
   (cond ((replique-context/in-symbol)
-         (setq replique-context/dependency-context (replique/hash-map :position position-namespace
-                                                              :prefix prefix))
+         (setq replique-context/dependency-context (replique/hash-map
+                                                    :position position-namespace
+                                                    :prefix prefix))
          t)
         ((replique-context/after-symbol)
          (let* ((object-namespace replique-context/last-read)
@@ -712,10 +723,11 @@
            (replique-context/skip-until-target-point
             'replique-context/keyword-then-target-point)
            (cond ((replique-context/in-sequential)
-                  (replique-context/libspec position-libspec-option prefix))
+                  (replique-context/libspec position-libspec-option position-namespace prefix))
                  ((replique-context/in-symbol)
-                  (setq replique-context/dependency-context (replique/hash-map :position position-namespace
-                                                                       :prefix prefix))
+                  (setq replique-context/dependency-context (replique/hash-map
+                                                             :position position-namespace
+                                                             :prefix prefix))
                   t)
                  ((replique-context/in-keyword)
                   (setq replique-context/dependency-context
@@ -971,7 +983,7 @@
                               (replique-context/forward-comment)
                               (replique-context/walk-load)))))
                    (replique-context/inc-positions target-point object-meta-value))
-                  (t (replique-context/inc-positions target-point object-meta-value)))
+                  (t (replique-context/inc-positions target-point object-leaf)))
             (replique-context/forward-comment))
         (replique-context/init-state)
         (goto-char target-point)))))
@@ -1015,7 +1027,7 @@
 
 (defun replique-context/get-context (callback)
   (if replique-context/context
-      (callback replique-context/context)
+      (funcall callback replique-context/context)
     (let* ((tooling-repl (replique/active-repl :tooling))
            (tooling-chan (replique/get tooling-repl :chan))
            (active-repl (replique/active-repl '(:clj :cljs)))
@@ -1036,9 +1048,12 @@
                    (message "context failed"))
                (save-excursion
                  (let ((forward-point (replique-context/walk-init)))
-                   (replique-context/walk forward-point resp)
-                   (setq replique-context/context (replique-context/build-context))
-                   (funcall callback replique-context/context)))))))))))
+                   (if forward-point
+                       (progn
+                         (replique-context/walk forward-point resp)
+                         (setq replique-context/context (replique-context/build-context))
+                         (funcall callback replique-context/context))
+                     (funcall callback nil))))))))))))
 
 (defun replique-context/reset-state ()
   (setq replique-context/context nil))
@@ -1049,12 +1064,12 @@
  
  (setq oo (replique-context/read-one))
  (replique-context/extract-bindings oo (replique/hash-map))
- 
- (replique-context/get-context)
- (replique-edn/pr-str replique-context/locals)
+
+ (progn
+   (replique-context/get-context 'print)
+   (replique-edn/pr-str replique-context/locals))
  )
 
 (provide 'replique-context)
-
 
 ;; method-like
