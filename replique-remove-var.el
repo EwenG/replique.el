@@ -67,48 +67,43 @@
     (aref 1)))
 
 (defun replique/remove-var* (var-ns tooling-repl repl)
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
-    (replique/send-tooling-msg
-     tooling-repl (replique/hash-map :type :list-vars
-                                     :repl-env (replique/get repl :repl-env)
-                                     :ns var-ns))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "list-vars failed with ns: %s" var-ns))
-             (let* ((vars (replique/get resp :vars))
-                    (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
-               (when (> (length var-names) 0)
-                 (replique/return-nil-on-quit
-                  (ivy-read
-                   "Remove var: "
-                   var-names
-                   :require-match t
-                   :action (apply-partially 'replique/do-remove-var repl var-ns)
-                   :update-fn (lambda ()
-                                (with-ivy-window
-                                  (replique/remove-var-unhighlight)
-                                  (let ((candidate (nth ivy--index ivy--old-cands)))
-                                    (when candidate
-                                      (let* ((metas (replique/remove-var-candidate-metas
-                                                     vars candidate))
-                                             (file (replique/get metas :file))
-                                             (line (replique/get metas :line))
-                                             (column (replique/get metas :column)))
-                                        (when (and file line)
-                                          (when-let (buff (replique-resources/find-file file))
-                                            (pop-to-buffer-same-window buff)
-                                            (goto-char (point-min))
-                                            (forward-line (1- line))
-                                            (when column
-                                              (move-to-column column))
-                                            (replique/remove-var-highlight))))))))))
-                 (replique/remove-var-unhighlight))))))))))
+  (let ((resp (replique/send-tooling-msg
+               tooling-repl (replique/hash-map :type :list-vars
+                                               :repl-env (replique/get repl :repl-env)
+                                               :ns var-ns))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "list-vars failed with ns: %s" var-ns))
+        (let* ((vars (replique/get resp :vars))
+               (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
+          (when (> (length var-names) 0)
+            (replique/return-nil-on-quit
+             (ivy-read
+              "Remove var: "
+              var-names
+              :require-match t
+              :action (apply-partially 'replique/do-remove-var repl var-ns)
+              :update-fn (lambda ()
+                           (with-ivy-window
+                             (replique/remove-var-unhighlight)
+                             (let ((candidate (nth ivy--index ivy--old-cands)))
+                               (when candidate
+                                 (let* ((metas (replique/remove-var-candidate-metas
+                                                vars candidate))
+                                        (file (replique/get metas :file))
+                                        (line (replique/get metas :line))
+                                        (column (replique/get metas :column)))
+                                   (when (and file line)
+                                     (when-let (buff (replique-resources/find-file file))
+                                       (pop-to-buffer-same-window buff)
+                                       (goto-char (point-min))
+                                       (forward-line (1- line))
+                                       (when column
+                                         (move-to-column column))
+                                       (replique/remove-var-highlight))))))))))
+            (replique/remove-var-unhighlight)))))))
 
 (defun replique/remove-var-clj (tooling-repl clj-repl)
   (if (not clj-repl)

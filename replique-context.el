@@ -1084,35 +1084,27 @@
    :dependency-context replique-context/dependency-context
    :in-ns-form? replique-context/in-ns-form?))
 
-(defun replique-context/get-context (callback)
-  (if replique-context/context
-      (funcall callback replique-context/context)
-    (let* ((tooling-repl (replique/active-repl :tooling))
-           (tooling-chan (replique/get tooling-repl :chan))
-           (active-repl (replique/active-repl '(:clj :cljs)))
-           (repl-env (replique/get active-repl :repl-env)))
-      (replique/send-tooling-msg
-       tooling-repl
-       (replique/hash-map :type :context
-                          :repl-env repl-env
-                          :ns (replique-context/clojure-find-ns)))
-      (replique-async/<!
-       tooling-chan
-       (lambda (resp)
-         (when resp
-           (let ((err (replique/get resp :error)))
-             (if err
-                 (progn
-                   (message "%s" (replique-edn/pr-str err))
-                   (message "context failed"))
-               (save-excursion
-                 (let ((forward-point (replique-context/walk-init)))
-                   (if forward-point
-                       (progn
-                         (replique-context/walk forward-point resp)
-                         (setq replique-context/context (replique-context/build-context))
-                         (funcall callback replique-context/context))
-                     (funcall callback nil))))))))))))
+(defun replique-context/get-context ()
+  (or replique-context/context
+      (let* ((tooling-repl (replique/active-repl :tooling))
+             (active-repl (replique/active-repl '(:clj :cljs)))
+             (repl-env (replique/get active-repl :repl-env))
+             (resp (replique/send-tooling-msg
+                    tooling-repl
+                    (replique/hash-map :type :context
+                                       :repl-env repl-env
+                                       :ns (replique-context/clojure-find-ns)))))
+        (let ((err (replique/get resp :error)))
+          (if err
+              (progn
+                (message "%s" (replique-edn/pr-str err))
+                (message "context failed"))
+            (save-excursion
+              (let ((forward-point (replique-context/walk-init)))
+                (when forward-point
+                  (replique-context/walk forward-point resp)
+                  (setq replique-context/context (replique-context/build-context))
+                  replique-context/context))))))))
 
 (defun replique-context/reset-state ()
   (setq replique-context/context nil))

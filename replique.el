@@ -28,7 +28,6 @@
 (require 'comint)
 (require 'clojure-mode)
 (require 'replique-edn)
-(require 'replique-async)
 (require 'replique-hashmap)
 (require 'replique-resources)
 (require 'map)
@@ -86,9 +85,6 @@
                               repl))
                       (repl (if (replique/contains? repl :network-proc)
                                 (replique/assoc repl :network-proc '**)
-                              repl))
-                      (repl (if (replique/contains? repl :chan)
-                                (replique/assoc repl :chan '**)
                               repl)))
                  repl)))
      (mapcar 'replique-edn/pr-str))
@@ -226,63 +222,58 @@
   (map-let ((:candidate candidate) (:type type) (:package package) (:ns ns)) c
     (propertize candidate 'meta (replique/hash-map :type type :package package :ns ns))))
 
-(defun replique/auto-complete* (prefix callback tooling-repl repl-env ns)
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :completion
-                        :repl-env repl-env
-                        :context (replique/form-with-prefix)
-                        :ns ns
-                        :prefix prefix
-                        ;; whether the cursor is in a string
-                        :is-string? (not (null (nth 3 (syntax-ppss))))))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "completion failed with prefix %s" prefix))
-             (let* ((candidates (replique/get resp :candidates))
-                    (candidates (mapcar 'replique/make-candidate candidates)))
-               (funcall callback candidates)))))))))
+(defun replique/auto-complete* (prefix tooling-repl repl-env ns)
+  (let* ((resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/hash-map :type :completion
+                                   :repl-env repl-env
+                                   :context (replique/form-with-prefix)
+                                   :ns ns
+                                   :prefix prefix
+                                   ;; whether the cursor is in a string
+                                   :is-string? (not (null (nth 3 (syntax-ppss))))))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "completion failed with prefix %s" prefix)
+            nil)
+        (let* ((candidates (replique/get resp :candidates)))
+          (mapcar 'replique/make-candidate candidates))))))
 
-(defun replique/auto-complete-session (prefix callback repl)
+(defun replique/auto-complete-session (prefix repl)
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
          (repl-env (replique/get repl :repl-env))
          (ns (symbol-name (replique/get repl :ns))))
-    (replique/auto-complete* prefix callback tooling-repl repl-env ns)))
+    (replique/auto-complete* prefix tooling-repl repl-env ns)))
 
-(defun replique/auto-complete-clj (prefix callback tooling-repl clj-repl)
+(defun replique/auto-complete-clj (prefix tooling-repl clj-repl)
   (when clj-repl
-    (replique/auto-complete* prefix callback tooling-repl
+    (replique/auto-complete* prefix tooling-repl
                              (replique/get clj-repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
-(defun replique/auto-complete-cljs (prefix callback tooling-repl cljs-repl)
+(defun replique/auto-complete-cljs (prefix tooling-repl cljs-repl)
   (when cljs-repl
-    (replique/auto-complete* prefix callback tooling-repl
+    (replique/auto-complete* prefix tooling-repl
                              (replique/get cljs-repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
-(defun replique/auto-complete-cljc (prefix callback tooling-repl repl)
+(defun replique/auto-complete-cljc (prefix tooling-repl repl)
   (when repl
-    (replique/auto-complete* prefix callback tooling-repl
+    (replique/auto-complete* prefix tooling-repl
                              (replique/get repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
-(defun replique/auto-complete (prefix callback)
+(defun replique/auto-complete (prefix)
   (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
-     (replique/mode . (apply-partially 'replique/auto-complete-session prefix callback))
-     (clojure-mode . (apply-partially 'replique/auto-complete-clj prefix callback))
-     (clojurescript-mode . (apply-partially 'replique/auto-complete-cljs prefix callback))
-     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix callback))
-     (t . (funcall callback nil)))))
+     (replique/mode . (apply-partially 'replique/auto-complete-session prefix))
+     (clojure-mode . (apply-partially 'replique/auto-complete-clj prefix))
+     (clojurescript-mode . (apply-partially 'replique/auto-complete-cljs prefix))
+     (clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix))
+     (t . nil))))
 
 (defun replique/auto-complete-annotation (candidate)
   (when-let ((meta (get-text-property 0 'meta candidate)))
@@ -337,32 +328,22 @@
           (name (format "%s" name))
           (t nil))))
 
-;; Eldoc expects eldoc-documentation-function to be synchronous. In order to turn the eldoc
-;; response into an asynchronous one, we always return eldoc-last-message and call
-;; eldoc-message ourselves later
 (defun replique/repliquedoc* (tooling-repl repl-env ns)
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
-    (when tooling-chan
-      (replique/send-tooling-msg
-       tooling-repl
-       (replique/hash-map :type :repliquedoc
-                          :repl-env repl-env
-                          :context (replique/form-with-prefix)
-                          :ns ns
-                          :symbol (symbol-name (symbol-at-point))))
-      (replique-async/<!
-       tooling-chan
-       (lambda (resp)
-         (when resp
-           (let ((err (replique/get resp :error)))
-             (if err
-                 (progn
-                   (message "%s" (replique-edn/pr-str err))
-                   (message "eldoc failed"))
-               (with-demoted-errors "eldoc error: %s"
-                 (when-let ((msg (replique/repliquedoc-format (replique/get resp :doc))))
-                   (eldoc-message msg))))))))))
-  eldoc-last-message)
+  (let ((resp (replique/send-tooling-msg
+               tooling-repl
+               (replique/hash-map :type :repliquedoc
+                                  :repl-env repl-env
+                                  :context (replique/form-with-prefix)
+                                  :ns ns
+                                  :symbol (symbol-name (symbol-at-point))))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "eldoc failed")
+            nil)
+        (with-demoted-errors "eldoc error: %s"
+          (replique/repliquedoc-format (replique/get resp :doc)))))))
 
 (defun replique/repliquedoc-session (repl)
   (let* ((directory (replique/get repl :directory))
@@ -485,8 +466,7 @@ This allows you to temporarily modify read-only buffers too."
                                       (derived-mode-p 'replique/mode))
                               (replique/symbol-backward)))
    ((equal command 'sorted) t)
-   ((equal command 'candidates)
-    `(:async . ,(apply-partially 'replique/auto-complete arg)))
+   ((equal command 'candidates) (replique/auto-complete arg))
    ((equal command 'annotation) (replique/auto-complete-annotation arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
@@ -501,21 +481,16 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/comint-input-sender (proc string)
   (let* ((tooling-repl (replique/active-repl :tooling t))
-         (tooling-chan (replique/get tooling-repl :chan)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/assoc replique/eval-from-source-meta
-                     :type :source-meta
-                     :repl-env :replique/clj))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (when err
-             (message "%s" (replique-edn/pr-str err))
-             (message "source-meta failed"))
-           (comint-simple-send proc string)))))))
+         (resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/assoc replique/eval-from-source-meta
+                                :type :source-meta
+                                :repl-env :replique/clj))))
+    (let ((err (replique/get resp :error)))
+      (when err
+        (message "%s" (replique-edn/pr-str err))
+        (message "source-meta failed"))
+      (comint-simple-send proc string))))
 
 (defun replique/comint-send-input ()
   "Send the pending comint buffer input to the comint process if the pending input is well formed and point is after the prompt"
@@ -633,7 +608,6 @@ This allows you to temporarily modify read-only buffers too."
   "Eval the currently highlighted region"
   (interactive "r\nP")
   (let* ((tooling-repl (replique/active-repl :tooling t))
-         (tooling-chan (replique/get tooling-repl :chan))
          (input (filter-buffer-substring start end)))
     (when (> (length input) 0)
       (replique/maybe-change-ns)
@@ -872,24 +846,15 @@ This allows you to temporarily modify read-only buffers too."
       (setq replique/repls (push repl replique/repls)))))
 
 (defun replique/list-cljs-namespaces (tooling-repl)
-  (let ((tooling-chan (replique/get tooling-repl :chan))
-        (out-chan (replique-async/chan)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :list-namespaces
-                        :repl-env :replique/cljs))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "list-namespaces failed")
-                 (replique-async/close! out-chan))
-             (replique-async/put! out-chan resp))))))
-    out-chan))
+  (let ((resp (replique/send-tooling-msg
+               tooling-repl
+               (replique/hash-map :type :list-namespaces
+                                  :repl-env :replique/cljs))))
+    (let ((err (replique/get resp :error)))
+      (when err
+        (message "%s" (replique-edn/pr-str err))
+        (message "list-namespaces failed")))
+    resp))
 
 (defun replique/cljs-repl ()
   "Start a Clojurescript REPL in the currently active Clojure REPL"
@@ -914,8 +879,7 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/output-main-js-file (output-to &optional main-ns)
   "Write a main javascript file to disk. The main javascript file acts as an entry point to your application and contains code to connect to the Clojurescript REPL"
   (interactive (list nil))
-  (let* ((tooling-repl (replique/active-repl :tooling t))
-         (tooling-chan (replique/get tooling-repl :chan)))
+  (let ((tooling-repl (replique/active-repl :tooling t)))
     (when-let ((output-to (or
                            output-to
                            (read-file-name "Output main js file to: "
@@ -924,36 +888,29 @@ This allows you to temporarily modify read-only buffers too."
         (when (file-directory-p output-to)
           (user-error "%s is a directory" output-to))
         (when (or (not (file-exists-p output-to))
-                  (yes-or-no-p (format "Override %s?" output-to))) 
-          (replique-async/<!
-           (if main-ns
-               (replique-async/default-chan (replique/hash-map :namespaces nil))
-             (replique/list-cljs-namespaces tooling-repl))
-           (lambda (resp)
-             (when resp
-               (let* ((namespaces (replique/get resp :namespaces))
-                      (main-ns (cond (main-ns main-ns)
-                                     ((seq-empty-p namespaces) nil)
-                                     (t (replique/return-nil-on-quit
-                                         (completing-read "Main Clojurescript namespace: "
-                                                          namespaces nil t nil nil '(nil)))))))
-                 (replique/send-tooling-msg
-                  tooling-repl
-                  (replique/hash-map :type :output-main-js-files
-                                     :repl-env :replique/cljs
-                                     :output-to output-to
-                                     :main-ns main-ns))
-                 (replique-async/<!
-                  tooling-chan
-                  (lambda (resp)
-                    (when resp
-                      (let ((err (replique/get resp :error)))
-                        (if err
-                            (progn
-                              (message "%s" (replique-edn/pr-str err))
-                              (message "output-main-js-file failed"))
-                          (message "Main javascript file written to: %s" output-to)
-                          ))))))))))))))
+                  (yes-or-no-p (format "Override %s?" output-to)))
+          (let ((resp (if main-ns
+                          (replique/hash-map :namespaces nil)
+                        (replique/list-cljs-namespaces tooling-repl))))
+            (when (not (replique/get resp :error))
+              (let* ((namespaces (replique/get resp :namespaces))
+                     (main-ns (cond (main-ns main-ns)
+                                    ((seq-empty-p namespaces) nil)
+                                    (t (replique/return-nil-on-quit
+                                        (completing-read "Main Clojurescript namespace: "
+                                                         namespaces nil t nil nil '(nil))))))
+                     (resp (replique/send-tooling-msg
+                            tooling-repl
+                            (replique/hash-map :type :output-main-js-files
+                                               :repl-env :replique/cljs
+                                               :output-to output-to
+                                               :main-ns main-ns))))
+                (let ((err (replique/get resp :error)))
+                  (if err
+                      (progn
+                        (message "%s" (replique-edn/pr-str err))
+                        (message "output-main-js-file failed"))
+                    (message "Main javascript file written to: %s" output-to)))))))))))
 
 ;; I don't know why goog/deps.js is needed here but is not needed in the init script returned
 ;; by the cljs repl
@@ -988,25 +945,16 @@ This allows you to temporarily modify read-only buffers too."
     (message script)))
 
 (defun replique/list-css (tooling-repl cljs-repl)
-  (let ((tooling-chan (replique/get tooling-repl :chan))
-        (repl-env (replique/get cljs-repl :repl-env))
-        (out-chan (replique-async/chan)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :list-css
-                        :repl-env repl-env))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "list-css failed")
-                 (replique-async/close! out-chan))
-             (replique-async/put! out-chan resp))))))
-    out-chan))
+  (let* ((repl-env (replique/get cljs-repl :repl-env))
+         (resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/hash-map :type :list-css
+                                   :repl-env repl-env))))
+    (let ((err (replique/get resp :error)))
+      (when err
+        (message "%s" (replique-edn/pr-str err))
+        (message "list-css failed")))
+    resp))
 
 (defun replique/asset-url-matches? (file-name url)
   (let ((url-filename (file-name-nondirectory (url-filename (url-generic-parse-url url)))))
@@ -1026,61 +974,49 @@ This allows you to temporarily modify read-only buffers too."
 (defun replique/load-css (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let ((tooling-chan (replique/get tooling-repl :chan))
-        (repl-env (replique/get cljs-repl :repl-env)))
-    (replique-async/<!
-     (replique/list-css tooling-repl cljs-repl)
-     (lambda (resp)
-       (when resp
-         (let* ((css-urls (replique/get resp :css-urls))
-                (css-urls (seq-filter (apply-partially 'replique/asset-url-matches?
-                                                       (file-name-nondirectory file-path))
-                                      css-urls))
-                (selected-url (cond ((equal 0 (length css-urls))
-                                     ;; No stylesheet matches, do nothing
-                                     nil)
-                                    ((equal 1 (length css-urls))
-                                     ;; Reload the stylesheet that matches
-                                     (car css-urls))
-                                    (t (replique/select-css-url file-path css-urls)))))
-           (if (null selected-url)
-               (message "Could not find a css file to reload")
-             (replique/send-tooling-msg
-              tooling-repl
-              (replique/hash-map :type :load-css
-                                 :repl-env repl-env
-                                 :url selected-url))
-             (replique-async/<!
-              tooling-chan
-              (lambda (resp)
-                (when resp
-                  (let ((err (replique/get resp :error)))
-                    (if err
-                        (progn
-                          (message "%s" (replique-edn/pr-str err))
-                          (message "load-css %s: failed" file-path))
-                      (message "load-css %s: done" file-path)))))))))))))
+  (let* ((repl-env (replique/get cljs-repl :repl-env))
+         (resp (replique/list-css tooling-repl cljs-repl)))
+    (when (not (replique/get resp :error))
+      (let* ((css-urls (replique/get resp :css-urls))
+             (css-urls (seq-filter (apply-partially 'replique/asset-url-matches?
+                                                    (file-name-nondirectory file-path))
+                                   css-urls))
+             (selected-url (cond ((equal 0 (length css-urls))
+                                  ;; No stylesheet matches, do nothing
+                                  nil)
+                                 ((equal 1 (length css-urls))
+                                  ;; Reload the stylesheet that matches
+                                  (car css-urls))
+                                 (t (replique/select-css-url file-path css-urls)))))
+        (if (null selected-url)
+            (message "Could not find a css file to reload")
+          (let ((resp (replique/send-tooling-msg
+                       tooling-repl
+                       (replique/hash-map :type :load-css
+                                          :repl-env repl-env
+                                          :url selected-url))))
+            (let ((err (replique/get resp :error)))
+              (if err
+                  (progn
+                    (message "%s" (replique-edn/pr-str err))
+                    (message "load-css %s: failed" file-path))
+                (message "load-css %s: done" file-path)))))))))
 
 (defun replique/load-js (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let ((tooling-chan (replique/get tooling-repl :chan))
-        (repl-env (replique/get cljs-repl :repl-env)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :load-js
-                        :repl-env repl-env
-                        :file-path file-path))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "load-js %s: failed" file-path))
-             (message "load-js %s: done" file-path))))))))
+  (let* ((repl-env (replique/get cljs-repl :repl-env))
+         (resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/hash-map :type :load-js
+                                   :repl-env repl-env
+                                   :file-path file-path))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "load-js %s: failed" file-path))
+        (message "load-js %s: done" file-path)))))
 
 ;; {directory {css-preprocessor-type {:output-files {output-file main-source-file}
 ;;                                   {:last-selected-output-file output-file}}}}
@@ -1143,8 +1079,7 @@ This allows you to temporarily modify read-only buffers too."
     (type executable args-builder file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let* ((tooling-chan (replique/get tooling-repl :chan))
-         (directory (replique/get tooling-repl :directory))
+  (let* ((directory (replique/get tooling-repl :directory))
          (output-files (replique/get-in replique/css-preprocessors-output-files
                                         `[,directory ,type :output-files]))
          (output-files (replique/keys output-files))
@@ -1223,71 +1158,54 @@ This allows you to temporarily modify read-only buffers too."
         (format "No active %s REPL" repl-type)
       (let* ((form-s (replace-regexp-in-string "\n" " " form-s))
              (tooling-repl (replique/active-repl :tooling t))
-             (tooling-chan (replique/get tooling-repl :chan))
              (repl-env (replique/get repl :repl-env))
-             (done nil)
-             (result nil)
-             (p (start-process "eval-form-proc" nil nil)))
-        (replique/send-tooling-msg
-         tooling-repl
-         (replique/hash-map :type :eval
-                            :repl-env repl-env
-                            :form form-s))
-        (replique-async/<!
-         tooling-chan
-         (lambda (resp)
-           (when resp
-             (let ((err (replique/get resp :error)))
-               (if err
-                   (setq result (replique-edn/pr-str err))
-                 (setq result (replique/get resp :result)))))
-           (setq done t)
-           (kill-process p)))
-        ;; We are polling because accept-process-output does not work well with
-        ;; run-at-time (replique-async)
-        (while (not done)
-          (accept-process-output p 0 200))
-        result))))
+             (resp (replique/send-tooling-msg
+                    tooling-repl
+                    (replique/hash-map :type :eval
+                                       :repl-env repl-env
+                                       :form form-s))))
+        (let ((err (replique/get resp :error)))
+          (if err
+              (replique-edn/pr-str err)
+            (replique/get resp :result)))))))
+(comment
+ (replique/eval-form :clj "(+ 1 4)")
+ )
 
 (defun replique/jump-to-definition* (symbol tooling-repl repl-env ns)
-  (let ((tooling-chan (replique/get tooling-repl :chan)))
-    (replique/send-tooling-msg
-     tooling-repl
-     (replique/hash-map :type :meta
-                        :repl-env repl-env
-                        :ns ns
-                        :symbol symbol
-                        ;; whether the cursor is in a string
-                        :is-string? (not (null (nth 3 (syntax-ppss))))
-                        :context (replique/form-with-prefix)))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
+  (let* ((resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/hash-map :type :meta
+                                   :repl-env repl-env
+                                   :ns ns
+                                   :symbol symbol
+                                   ;; whether the cursor is in a string
+                                   :is-string? (not (null (nth 3 (syntax-ppss))))
+                                   :context (replique/form-with-prefix)))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "jump-to-definition failed with symbol: %s" symbol))
+        (let* ((meta (replique/get resp :meta))
+               (file (replique/get-in resp [:meta :file]))
+               (line (replique/get-in resp [:meta :line]))
+               (column (replique/get-in resp [:meta :column])))
+          (cond ((not (replique-transit/is-small-number? line))
+                 (message "Cannot handle line number %s" line)
                  (message "jump-to-definition failed with symbol: %s" symbol))
-             (let* ((meta (replique/get resp :meta))
-                    (file (replique/get-in resp [:meta :file]))
-                    (line (replique/get-in resp [:meta :line]))
-                    (column (replique/get-in resp [:meta :column])))
-               (cond ((not (replique-transit/is-small-number? line))
-                      (message "Cannot handle line number %s" line)
-                      (message "jump-to-definition failed with symbol: %s" symbol))
-                     ((not (replique-transit/is-small-number? column))
-                      (message "Cannot handle column number %s" column)
-                      (message "jump-to-definition failed with symbol: %s" symbol))
-                     (t
-                      (when-let (buff (replique-resources/find-file file))
-                        (xref-push-marker-stack)
-                        (pop-to-buffer-same-window buff)
-                        (goto-char (point-min))
-                        (when line
-                          (forward-line (1- line))
-                          (when column
-                            (move-to-column column))))))))))))))
+                ((not (replique-transit/is-small-number? column))
+                 (message "Cannot handle column number %s" column)
+                 (message "jump-to-definition failed with symbol: %s" symbol))
+                (t
+                 (when-let (buff (replique-resources/find-file file))
+                   (xref-push-marker-stack)
+                   (pop-to-buffer-same-window buff)
+                   (goto-char (point-min))
+                   (when line
+                     (forward-line (1- line))
+                     (when column
+                       (move-to-column column)))))))))))
 
 (defun replique/jump-to-definition-session (symbol repl)
   (let* ((directory (replique/get repl :directory))
@@ -1498,24 +1416,48 @@ The following commands are available:
     ,(format "%s" host) ,(format "%s" port)
     ,(format "%s" directory)))
 
-(defun replique/process-filter-chan (proc)
-  (let ((chan (replique-async/chan)))
-    (set-process-filter
-     proc (lambda (proc string)
-            (replique-async/put! chan string)))
-    chan))
-
 (defun replique/is-valid-port-nb? (port-nb)
   (< -1 port-nb 65535))
+
+(defvar replique/correlation-id 0)
+(defvar replique/synchronous-messages (replique/hash-map))
 
 (defun replique/send-tooling-msg (tooling-repl msg)
   (let* ((tooling-network-proc (replique/get tooling-repl :network-proc))
          (process-id (replique/get tooling-repl :directory))
-         (msg (replique/assoc msg :process-id process-id)))
+         (correlation-id replique/correlation-id)
+         (msg (replique/assoc msg
+                              :process-id process-id
+                              :correlation-id correlation-id)))
+    (puthash correlation-id replique/nothing replique/synchronous-messages)
+    (setq replique/correlation-id  (if (= most-positive-fixnum correlation-id)
+                                       0
+                                     (+ 1 correlation-id)))
     (process-send-string
      tooling-network-proc
-     (format "(replique.tooling-msg/tooling-msg-handle %s)\n"
-             (replique-edn/pr-str msg)))))
+     (format "(replique.tooling-msg/tooling-msg-handle %s)\n" (replique-edn/pr-str msg)))
+    ;; Synchronously wait for a response from the tooling REPL.
+    ;; accept-process-output maybe be wake up by a quit signal or some output from the network
+    ;; process. The network process output may be split into multiple incomplete messages chunks.
+    ;; Also, multiple call to replique/send-tooling-msg may happen simultaneously because of timers
+    ;; and the output received from the network process may not wake up all blocking calls to
+    ;; accept-process-output
+    (let ((inhibit-quit t)
+          (wait-output? t)
+          (result nil))
+      (while wait-output?
+        (with-local-quit (accept-process-output tooling-network-proc nil nil t))
+        (let ((sync-msg (replique/get replique/synchronous-messages correlation-id)))
+          (cond ((not (eq replique/nothing sync-msg))
+                 (remhash correlation-id replique/synchronous-messages)
+                 ;; There may be other blocking calls to accept-process-output. Try to wake up them
+                 ;; by sending a block message
+                 (process-send-string tooling-network-proc "nil\n")
+                 (setq quit-flag nil)
+                 (setq wait-output? nil)
+                 (setq result sync-msg))
+                (quit-flag (remhash correlation-id replique/synchronous-messages)))))
+      result)))
 
 (defun replique/close-tooling-repl (tooling-repl)
   (let ((tooling-proc (replique/get tooling-repl :proc)))
@@ -1591,24 +1533,18 @@ The following commands are available:
          "Error while starting the REPL. No lein script found in exec-path")
         (t nil)))
 
-(defun replique/skip-repl-starting-output* (proc-chan filtered-chan)
+(defun replique/process-filter-skip-repl-starting-output (proc callback)
   (let ((started-regexp (format "Replique version %s listening on port \\([0-9]+\\)\n"
                                 replique/version)))
-    (replique-async/<!
-     proc-chan (lambda (msg)
-                 ;; REPL is started
-                 (if (string-match started-regexp msg)
-                     (thread-last (match-string 1 msg)
-                       string-to-number
-                       (replique-async/put! filtered-chan))                   
-                   ;; REPL is still starting. Print all the init messages
-                   (message "%s" msg)
-                   (replique/skip-repl-starting-output* proc-chan filtered-chan))))))
-
-(defun replique/skip-repl-starting-output (proc-chan)
-  (let ((filtered-chan (replique-async/chan)))
-    (replique/skip-repl-starting-output* proc-chan filtered-chan)
-    filtered-chan))
+    (set-process-filter
+     proc (lambda (proc string)
+            ;; REPL is started
+            (if (string-match started-regexp string)
+                (thread-last (match-string 1 string)
+                  string-to-number
+                  (funcall callback))
+              ;; REPL is still starting. Print all the init messages
+              (message "%s" string))))))
 
 (defun replique/is-main-js-file (f)
   (let* ((first-line "//main-js-file autogenerated by replique")
@@ -1675,26 +1611,45 @@ The following commands are available:
       "%s\n%s" string
       (propertize (process-name proc) 'face 'replique/minibuffer-output-repl-name-face)))))
 
-(defun replique/make-tooling-repl (host port directory)
-  (let* ((out-chan (replique-async/chan))
-         (default-directory directory)
+(defun replique/make-tooling-repl (host port directory callback)
+  (let* ((default-directory directory)
          (repl-cmd (replique/lein-command host port directory))
-         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (proc-chan (replique/skip-repl-starting-output (replique/process-filter-chan proc))))
-    (replique-async/<!
-     proc-chan
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd))))
+    (replique/process-filter-skip-repl-starting-output
+     proc
      (lambda (port)
        ;; Print process messages
        (set-process-filter proc 'replique/proc-message-fn)
        (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
               (network-proc (open-network-stream directory nil host port))
-              (tooling-chan (replique/process-filter-chan network-proc))
-              (timeout (run-at-time 2 nil (lambda ()
-                                            (replique-async/put! tooling-chan :timeout)))))
+              (timeout (run-at-time
+                        2 nil (lambda (proc)
+                                (message "Error while starting the REPL. The port number may already be used by another process")
+                                (when (process-live-p proc)
+                                  (interrupt-process proc)))
+                        proc)))
          (set-process-sentinel
           network-proc
           (apply-partially
            'replique/on-tooling-repl-close network-proc-buff host port))
+         (replique/process-filter-read
+          network-proc network-proc-buff
+          (lambda (cljs-compile-path)
+            (cancel-timer timeout)
+            (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
+                   (tooling-repl (replique/hash-map
+                                  :directory directory
+                                  :repl-type :tooling
+                                  :proc proc
+                                  :network-proc network-proc
+                                  :host host
+                                  :port port)))
+              (replique/process-filter-read
+               network-proc network-proc-buff 'replique/dispatch-tooling-msg)
+              (push tooling-repl replique/repls)
+              (when (>= replique/main-js-files-max-depth 0)
+                (replique/refresh-main-js-files directory port cljs-compile-path))
+              (funcall callback tooling-repl))))
          ;; The REPL accept fn will read a char in order to check whether the request
          ;; is an HTTP one or not
          (process-send-string network-proc "R")
@@ -1702,34 +1657,7 @@ The following commands are available:
          ;; since it does not print anything
          (process-send-string
           network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
-         (process-send-string network-proc "replique.utils/cljs-compile-path\n")
-         (replique-async/<!
-          tooling-chan
-          (lambda (cljs-compile-path)
-            (cancel-timer timeout)
-            (if (equal :timeout cljs-compile-path)
-                (progn
-                  (message "Error while starting the REPL. The port number may already be used by another process")
-                  (when (process-live-p proc)
-                    (interrupt-process proc)))
-              (let* (;; cljs compile path do not come from a read chan
-                     (cljs-compile-path (replique-transit/decode (read cljs-compile-path)))
-                     (tooling-chan (thread-first tooling-chan
-                                     (replique/read-chan network-proc network-proc-buff)
-                                     replique/dispatch-tooling-msg))
-                     (tooling-repl (replique/hash-map
-                                    :directory directory
-                                    :repl-type :tooling
-                                    :proc proc
-                                    :network-proc network-proc
-                                    :host host
-                                    :port port
-                                    :chan tooling-chan)))
-                (push tooling-repl replique/repls)
-                (replique-async/put! out-chan tooling-repl)
-                (when (>= replique/main-js-files-max-depth 0)
-                  (replique/refresh-main-js-files directory port cljs-compile-path)))))))))
-    out-chan))
+         (process-send-string network-proc "replique.utils/cljs-compile-path\n"))))))
 
 (defun replique/close-process (directory)
   "Close all the REPL sessions associated with a JVM process"
@@ -1796,35 +1724,33 @@ minibuffer"
 (defun replique/make-repl (buffer-name directory host port)
   (let* ((buff (generate-new-buffer buffer-name))
          (proc (open-network-stream buffer-name buff host port))
-         (chan-src (replique/process-filter-chan proc))
          (repl-cmd (format "(replique.repl/repl)\n")))
     (set-process-sentinel proc (apply-partially 'replique/on-repl-close buff))
+    (replique/process-filter-read
+     proc buff
+     (lambda (resp)
+       (let* ((resp (replique-transit/decode resp))
+              (session (replique/get resp :client)))
+         (set-process-filter proc nil)
+         (replique/make-comint proc buff)
+         (set-buffer buff)
+         (replique/mode)
+         (process-send-string proc repl-cmd)
+         (let ((repl (replique/hash-map :directory directory
+                                        :host host
+                                        :port port
+                                        :repl-type :clj
+                                        :repl-env :replique/clj
+                                        :session session
+                                        :ns 'user
+                                        :buffer buff
+                                        :recent-output (make-ring 10))))
+           (push repl replique/repls)
+           (display-buffer buff)))))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
     (process-send-string proc "R")
-    (let ((chan (replique/read-chan chan-src proc buff)))
-      (process-send-string proc "replique.server/*session*\n")
-      (replique-async/<!
-       chan
-       (lambda (resp)
-         (let* ((resp (replique-transit/decode resp))
-                (session (replique/get resp :client)))
-           (set-process-filter proc nil)
-           (replique/make-comint proc buff)
-           (set-buffer buff)
-           (replique/mode)
-           (process-send-string proc repl-cmd)
-           (let ((repl (replique/hash-map :directory directory
-                                          :host host
-                                          :port port
-                                          :repl-type :clj
-                                          :repl-env :replique/clj
-                                          :session session
-                                          :ns 'user
-                                          :buffer buff
-                                          :recent-output (make-ring 10))))
-             (push repl replique/repls)
-             (display-buffer buff))))))))
+    (process-send-string proc "replique.server/*session*\n")))
 
 (defun replique/clj-buff-name (directory)
   (generate-new-buffer-name
@@ -1852,27 +1778,26 @@ minibuffer"
                 (existing-repl
                  (replique/get existing-repl :port))
                 (t (read-number "Port number: " 0))))
-         (lein-script-error (replique/check-lein-script)))
+         (lein-script-error (replique/check-lein-script))
+         (make-repl-fn (lambda (tooling-repl)
+                         (let ((directory (replique/get tooling-repl :directory))
+                               (port (replique/get tooling-repl :port))
+                               (buffer-name (or buffer-name (replique/clj-buff-name directory))))
+                           (condition-case err
+                               (replique/make-repl buffer-name directory host port)
+                             (error
+                              (replique/maybe-close-tooling-repl host port)
+                              ;; rethrow the error
+                              (signal (car err) (cdr err))))))))
     (cond
      ((not (replique/is-valid-port-nb? port))
       (user-error "Invalid port number: %d" port))
      (lein-script-error
       (user-error lein-script-error))
      (t
-      (replique-async/<!
-       (if existing-repl
-           (replique-async/default-chan existing-repl)
-         (replique/make-tooling-repl host port directory))
-       (lambda (tooling-repl)
-         (let ((directory (replique/get tooling-repl :directory))
-               (port (replique/get tooling-repl :port))
-               (buffer-name (or buffer-name (replique/clj-buff-name directory))))
-           (condition-case err
-               (replique/make-repl buffer-name directory host port)
-             (error
-              (replique/maybe-close-tooling-repl host port)
-              ;; rethrow the error
-              (signal (car err) (cdr err)))))))))))
+      (if existing-repl
+          (funcall make-repl-fn existing-repl)
+        (replique/make-tooling-repl host port directory make-repl-fn))))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
@@ -1896,86 +1821,76 @@ minibuffer"
                                                  :repl-type new-repl-type
                                                  :repl-env new-repl-env)))))
 
-(defun replique/dispatch-tooling-msg* (in-chan out-chan)
-  (replique-async/<!
-   in-chan
-   (lambda (msg)
-     (condition-case err
-         (if (not (hash-table-p msg))
-             (message "Received invalid message while dispatching tooling messages: %s" msg)
-           (let ((msg (replique-transit/decode msg)))
-             (cond
-              (;; Global error (uncaught exception)
-               (equal :error (replique/get msg :type))
-               (message "%s - Thread: %s - Exception: %s"
-                        (propertize "Uncaught exception" 'face '(:foreground "red"))
-                        (replique/get msg :thread)
-                        (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
-              ((equal :repl-meta (replique/get msg :type))
-               (let* ((repl (replique/repl-by
-                             :session (replique/get (replique/get msg :session) :client)
-                             :directory (replique/get msg :process-id))))
-                 (when repl
-                   (let ((repl (replique/on-repl-type-change
-                                repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
-                     (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
-              (t (replique-async/put! out-chan msg)))))
-       (error (message (error-message-string err))))
-     (replique/dispatch-tooling-msg* in-chan out-chan))))
+(defun replique/dispatch-async-msg (msg)
+  (let ((msg (replique-transit/decode msg)))
+    (cond
+     (;; Global error (uncaught exception)
+      (equal :error (replique/get msg :type))
+      (message "%s - Thread: %s - Exception: %s"
+               (propertize "Uncaught exception" 'face '(:foreground "red"))
+               (replique/get msg :thread)
+               (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
+     ((equal :repl-meta (replique/get msg :type))
+      (let* ((repl (replique/repl-by
+                    :session (replique/get (replique/get msg :session) :client)
+                    :directory (replique/get msg :process-id))))
+        (when repl
+          (let ((repl (replique/on-repl-type-change
+                       repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
+            (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
+     (t (message "Received unsupported message while dispatching tooling messages: %s" msg)))))
 
-(defun replique/dispatch-tooling-msg (in-chan)
-  (let ((out-chan (replique-async/chan)))
-    (replique/dispatch-tooling-msg* in-chan out-chan)
-    out-chan))
+(defun replique/with-new-dyn-context (fn &rest args)
+  (apply 'run-at-time nil nil fn args))
+
+(defun replique/dispatch-tooling-msg (msg)
+  (cond ((null msg)
+         ;; Ignore nil messages. This is only used to wake up (accept-process-output) blocking calls
+         nil)
+        ((not (hash-table-p msg))
+         (message "Received invalid message while dispatching tooling messages: %s" msg))
+        ((replique/get msg :correlation-id)
+         (let* ((tooling-repl (replique/repl-by
+                               :repl-type :tooling
+                               :directory (replique/get msg :process-id)))
+                (correlation-id (replique/get msg :correlation-id))
+                (sync-msg (replique/get replique/synchronous-messages correlation-id)))
+           (when sync-msg
+             (puthash correlation-id msg replique/synchronous-messages))))
+        (t (replique/with-new-dyn-context 'replique/dispatch-async-msg msg))))
 
 (defvar replique/parser-state)
 
-(defun replique/read-from-to (chan-out from to)
-  (goto-char from)
-  (when-let ((o (read (current-buffer))))
-    (replique-async/put! chan-out o))
-  (while (< (point) to)
+(defun replique/read-buffer* (dispatch-fn)
+  (setq replique/parser-state (parse-partial-sexp
+                               (point) (point-max) 0 nil replique/parser-state))
+  (while (and
+          ;; unbalanced expression or nothing to read
+          (= 0 (car replique/parser-state))
+          (not (null (nth 2 replique/parser-state))))
+    (goto-char (point-min))
     (when-let ((o (read (current-buffer))))
-      (replique-async/put! chan-out o))))
+      (funcall dispatch-fn o))
+    (delete-region (point-min) (point))
+    (setq replique/parser-state (parse-partial-sexp
+                                 (point) (point-max) 0 nil replique/parser-state))))
 
-(defun replique/read-buffer (chan-out)
-  (let ((new-parser-state (parse-partial-sexp
-                           (point) (point-max) 0 nil replique/parser-state)))
-    (if (not (= 0 (car new-parser-state)))
-        (setq replique/parser-state new-parser-state)
-      (setq replique/parser-state nil)
-      (condition-case err
-          (let ((to (point)))
-            (replique/read-from-to chan-out 1 to)
-            (delete-region 1 to)
-            (replique/read-buffer chan-out))
-        (end-of-file (delete-region 1 (point-max)))))))
-
-(defun replique/read-chan* (chan-in chan-out proc buffer &optional error-handler)
-  (replique-async/<!
-   chan-in
-   (lambda (string)
-     (when string
-       (condition-case err
-           (when (buffer-live-p buffer)
-             (with-current-buffer buffer
-               (let ((p (point)))
-                 (insert string)
-                 (goto-char p))
-               (replique/read-buffer chan-out))
-             (replique/read-chan* chan-in chan-out proc buffer error-handler))
-         (error
-          (if error-handler
-              (funcall error-handler string)
-            (error (error-message-string err)))))))))
-
-(defun replique/read-chan (chan-in proc buffer &optional error-handler)
-  (let ((chan-out (replique-async/chan)))
+(defun replique/read-buffer (string dispatch-fn proc buffer)
+  (when (and string (buffer-live-p buffer))
     (with-current-buffer buffer
-      (setq-local replique/parser-state nil))
-    (buffer-disable-undo buffer)
-    (replique/read-chan* chan-in chan-out proc buffer error-handler)
-    chan-out))
+      (let ((p (point)))
+        (insert string)
+        (goto-char p))
+      (replique/read-buffer* dispatch-fn))))
+
+(defun replique/process-filter-read (proc buffer dispatch-fn)
+  (with-current-buffer buffer
+    (delete-region (point-min) (point-max))
+    (setq replique/parser-state nil))
+  (buffer-disable-undo buffer)
+  (set-process-filter
+   proc (lambda (proc string)
+          (replique/read-buffer string dispatch-fn proc buffer))))
 
 (defun replique/kill-process-buffer (buffer)
   (if (not (equal (buffer-size buffer) 0))
@@ -2023,6 +1938,7 @@ minibuffer"
 ;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
+;; invalidate classpath cache on classpath refresh
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory

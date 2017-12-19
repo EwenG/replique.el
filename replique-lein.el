@@ -25,26 +25,21 @@
   (interactive)
   (message "Loading project.clj ...")
   (let* ((tooling-repl (replique/active-repl :tooling))
-         (tooling-chan (replique/get tooling-repl :chan))
          (default-directory (replique/get tooling-repl :directory))
          (classpath (shell-command-to-string (concat
                                               (or replique/lein-script
                                                   (executable-find replique/default-lein-script))
-                                              " classpath"))))
-    (replique/send-tooling-msg
-     tooling-repl (replique/hash-map :type :classpath
-                                     :repl-env :replique/clj
-                                     :classpath classpath))
-    (replique-async/<!
-     tooling-chan
-     (lambda (resp)
-       (when resp
-         (let ((err (replique/get resp :error)))
-           (if err
-               (progn
-                 (message "%s" (replique-edn/pr-str err))
-                 (message "replique/classpath failed"))
-             (message "Loading project.clj ... done"))))))))
+                                              " classpath")))
+         (resp (replique/send-tooling-msg
+                tooling-repl (replique/hash-map :type :classpath
+                                                :repl-env :replique/clj
+                                                :classpath classpath))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-edn/pr-str err))
+            (message "replique/classpath failed"))
+        (message "Loading project.clj ... done")))))
 
 (provide 'replique-lein)
 
