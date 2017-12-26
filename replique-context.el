@@ -49,6 +49,8 @@
   (setq replique-context/fn-context nil)
   (setq replique-context/named-fn-context nil)
   (setq replique-context/fn-context-position nil)
+  (setq replique-context/param nil)
+  (setq replique-context/param-meta nil)
   (setq replique-context/binding-context nil)
   (setq replique-context/locals (replique/hash-map))
   (setq replique-context/in-string? nil)
@@ -228,8 +230,6 @@
       (cond ((eq :dispatch-macro replique-context/forward-context)
              (cond ((eq :discard replique-context/dispatch-macro)
                     (goto-char forward-point)
-                    (replique-context/forward-comment)
-                    (replique-context/read-one)
                     (replique-context/forward-comment)
                     (replique-context/read-one))
                    ((or (eq :meta replique-context/dispatch-macro)
@@ -513,13 +513,13 @@
             (replique-context/forward-comment))
         (goto-char target-point)))))
 
-;; fn context
-;; binding context
 (defvar replique-context/wrapper-context nil)
 (defvar replique-context/wrapper-context-position nil)
 (defvar replique-context/fn-context nil)
 (defvar replique-context/named-fn-context nil)
 (defvar replique-context/fn-context-position nil)
+(defvar replique-context/param nil)
+(defvar replique-context/param-meta nil)
 (defvar replique-context/binding-context nil)
 (defvar replique-context/locals nil)
 (defvar replique-context/in-string? nil)
@@ -948,11 +948,12 @@
 
 (defun replique-context/inc-positions (target-point object)
   (when (> target-point (oref object :end))
-    (setq replique-context/wrapper-context-position
-          (+ 1 replique-context/wrapper-context-position))
-    (when (eq :fn replique-context/wrapper-context)
-      (setq replique-context/fn-context-position
-            (+ 1 replique-context/fn-context-position)))))
+    (when replique-context/wrapper-context
+      (setq replique-context/wrapper-context-position
+            (+ 1 replique-context/wrapper-context-position))
+      (when (eq :fn replique-context/wrapper-context)
+        (setq replique-context/fn-context-position
+              (+ 1 replique-context/fn-context-position))))))
 
 ;; fn-like let-like for-like method-like letfn-like
 
@@ -1063,7 +1064,20 @@
                   (t (replique-context/inc-positions target-point object-leaf)))
             (replique-context/forward-comment))
         (replique-context/init-state)
-        (goto-char target-point)))))
+        (goto-char target-point))))
+  (when (and replique-context/fn-context
+             (equal 0 replique-context/fn-context-position))
+    (let* ((object (replique-context/read-one))
+           (object-meta-value (replique-context/meta-value object)))
+      (when (cl-typep object-meta-value 'replique-context/object-symbol)
+        (let ((sym (oref object-meta-value :symbol))
+              (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
+                               (eq :meta (oref object :dispatch-macro)))
+                      (buffer-substring-no-properties (oref object :data-start)
+                                                      (oref object :data-end)))))
+          (when sym
+            (setq replique-context/param sym)
+            (setq replique-context/param-meta meta)))))))
 
 (defun replique-context/walk-init ()
   (let* ((target-point (point))
@@ -1102,7 +1116,9 @@
    :in-string? replique-context/in-string?
    :in-comment? replique-context/in-comment?
    :dependency-context replique-context/dependency-context
-   :in-ns-form? replique-context/in-ns-form?))
+   :in-ns-form? replique-context/in-ns-form?
+   :param replique-context/param
+   :param-meta replique-context/param-meta))
 
 (defun replique-context/get-context (repl-env)
   (or replique-context/context
@@ -1142,6 +1158,5 @@
 (provide 'replique-context)
 
 ;; method-like
-;; position of symbol to bind
 ;; unwrap comment
 ;; context for datastructures (narrowing ...)
