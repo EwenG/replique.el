@@ -1075,6 +1075,7 @@
       (replique-context/forward-comment)
       (replique-context/init-state)
       (setq replique-context/in-string? (not (null (nth 3 ppss))))
+      (setq replique-context/in-comment? (not (null (nth 4 ppss))))
       target-point)))
 
 (comment
@@ -1099,6 +1100,7 @@
   (replique/hash-map
    :locals replique-context/locals
    :in-string? replique-context/in-string?
+   :in-comment? replique-context/in-comment?
    :dependency-context replique-context/dependency-context
    :in-ns-form? replique-context/in-ns-form?))
 
