@@ -1090,16 +1090,18 @@
   (when (and replique-context/fn-context
              (equal 0 replique-context/fn-context-position))
     (let* ((object (replique-context/read-one))
-           (object-meta-value (replique-context/meta-value object)))
-      (when (cl-typep object-meta-value 'replique-context/object-symbol)
-        (let ((sym (oref object-meta-value :symbol))
-              (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
+           (object-meta-value (replique-context/meta-value object))
+           (sym (cond ((cl-typep object-meta-value 'replique-context/object-symbol)
+                       (oref object-meta-value :symbol))
+                      ((cl-typep object-meta-value 'replique-context/object-delimited)
+                       (oref object-meta-value :delimited)))))
+      (when sym
+        (let ((meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
                                (eq :meta (oref object :dispatch-macro)))
                       (buffer-substring-no-properties (oref object :data-start)
                                                       (oref object :data-end)))))
-          (when sym
-            (setq replique-context/param sym)
-            (setq replique-context/param-meta meta)))))))
+          (setq replique-context/param sym)
+          (setq replique-context/param-meta meta))))))
 
 (defun replique-context/walk-init ()
   (let* ((target-point (point))
