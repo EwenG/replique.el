@@ -1457,7 +1457,7 @@ The following commands are available:
                  (setq wait-output? nil)
                  (setq result sync-msg))
                 (quit-flag (remhash correlation-id replique/synchronous-messages)))))
-      result)))
+      (replique-transit/decode result))))
 
 (defun replique/close-tooling-repl (tooling-repl)
   (let ((tooling-proc (replique/get tooling-repl :proc)))
