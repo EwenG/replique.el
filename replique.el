@@ -216,22 +216,25 @@
    :function "f"
    :var "v"
    :resource "r"
-   :special-form "s"))
+   :special-form "s"
+   :directory "d"))
 
 (defun replique/make-candidate (c)
-  (map-let ((:candidate candidate) (:type type) (:package package) (:ns ns)) c
-    (propertize candidate 'meta (replique/hash-map :type type :package package :ns ns))))
+  (map-let
+      ((:candidate candidate) (:type type) (:package package) (:ns ns) (:match-index match-index))
+      c
+    (propertize candidate
+                'meta (replique/hash-map :type type :package package :ns ns)
+                'match-index match-index)))
 
 (defun replique/auto-complete* (prefix tooling-repl repl-env ns)
   (let* ((resp (replique/send-tooling-msg
                 tooling-repl
                 (replique/hash-map :type :completion
                                    :repl-env repl-env
-                                   :context (replique/form-with-prefix)
+                                   :context (replique-context/get-context repl-env)
                                    :ns ns
-                                   :prefix prefix
-                                   ;; whether the cursor is in a string
-                                   :is-string? (not (null (nth 3 (syntax-ppss))))))))
+                                   :prefix prefix))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -291,6 +294,9 @@
                (format "%s" package))
               (t nil))))))
 
+(defun replique/auto-complete-match-index (candidate)
+  (get-text-property 0 'match-index candidate))
+
 (defun replique/repliquedoc-format-arglist (index arglist)
   (let ((args-index 1)
         (force-highlight nil))
@@ -333,9 +339,8 @@
                tooling-repl
                (replique/hash-map :type :repliquedoc
                                   :repl-env repl-env
-                                  :context (replique/form-with-prefix)
-                                  :ns ns
-                                  :symbol (symbol-name (symbol-at-point))))))
+                                  :context (replique-context/get-context repl-env)
+                                  :ns ns))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -409,9 +414,17 @@
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/symbol-backward ()
-  (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
-    (when sym-bounds
-      (buffer-substring-no-properties (car sym-bounds) (point)))))
+  (let* ((ppss (syntax-ppss (point)))
+         (in-string? (not (null (nth 3 ppss)))))
+    (if in-string?
+        (let ((string-start (nth 8 ppss)))
+          (when (and string-start
+                     (< (+ 1 string-start) (point))
+                     (>= string-start (line-beginning-position)))
+            (buffer-substring-no-properties (+ 1 string-start) (point))))
+      (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
+        (when sym-bounds
+          (buffer-substring-no-properties (car sym-bounds) (point)))))))
 
 (defmacro replique/temporary-invisible-change (&rest forms)
   "Executes FORMS with a temporary buffer-undo-list, undoing on return.
@@ -467,7 +480,9 @@ This allows you to temporarily modify read-only buffers too."
                               (replique/symbol-backward)))
    ((equal command 'sorted) t)
    ((equal command 'candidates) (replique/auto-complete arg))
-   ((equal command 'annotation) (replique/auto-complete-annotation arg))))
+   ((equal command 'annotation) (replique/auto-complete-annotation arg))
+   ((equal command 'no-cache) t)
+   ((equal command 'match) (replique/auto-complete-match-index arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
   (let* ((parser-state (parse-partial-sexp start limit))
@@ -1179,9 +1194,7 @@ This allows you to temporarily modify read-only buffers too."
                                    :repl-env repl-env
                                    :ns ns
                                    :symbol symbol
-                                   ;; whether the cursor is in a string
-                                   :is-string? (not (null (nth 3 (syntax-ppss))))
-                                   :context (replique/form-with-prefix)))))
+                                   :context (replique-context/get-context repl-env)))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -1234,7 +1247,8 @@ This allows you to temporarily modify read-only buffers too."
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
-  (interactive (list (symbol-name (symbol-at-point))))
+  (interactive (list (let ((sym (symbol-at-point)))
+                       (when sym (symbol-name sym)))))
   (replique/with-modes-dispatch
    (replique/mode . (apply-partially 'replique/jump-to-definition-session symbol))
    (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
@@ -1928,7 +1942,6 @@ minibuffer"
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
-;; jump to definition for protocol methods -> jump to the protocol line
 ;; new target directory for assets resources
 ;; elisp-printer -> escape symbols
 ;; defmethod locals (parameters) autocompletion
@@ -1938,6 +1951,7 @@ minibuffer"
 ;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
+;; eval interruption
 ;; invalidate classpath cache on classpath refresh
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
