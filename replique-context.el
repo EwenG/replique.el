@@ -1020,14 +1020,14 @@
             (setq replique-context/namespace (clojure-find-ns)))
           replique-context/namespace))))
 
-(defun replique-context/get-context (repl-env)
+(defun replique-context/get-context (ns repl-env)
   (or replique-context/context
       (let* ((tooling-repl (replique/active-repl :tooling))
              (resp (replique/send-tooling-msg
                     tooling-repl
                     (replique/hash-map :type :context
                                        :repl-env repl-env
-                                       :ns (replique-context/clojure-find-ns)))))
+                                       :ns ns))))
         (let ((err (replique/get resp :error)))
           (if err
               (progn

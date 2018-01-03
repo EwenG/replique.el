@@ -232,7 +232,7 @@
                 tooling-repl
                 (replique/hash-map :type :completion
                                    :repl-env repl-env
-                                   :context (replique-context/get-context repl-env)
+                                   :context (replique-context/get-context ns repl-env)
                                    :ns ns
                                    :prefix prefix))))
     (let ((err (replique/get resp :error)))
@@ -339,7 +339,7 @@
                tooling-repl
                (replique/hash-map :type :repliquedoc
                                   :repl-env repl-env
-                                  :context (replique-context/get-context repl-env)
+                                  :context (replique-context/get-context ns repl-env)
                                   :ns ns))))
     (let ((err (replique/get resp :error)))
       (if err
@@ -1194,7 +1194,7 @@ This allows you to temporarily modify read-only buffers too."
                                    :repl-env repl-env
                                    :ns ns
                                    :symbol symbol
-                                   :context (replique-context/get-context repl-env)))))
+                                   :context (replique-context/get-context ns repl-env)))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -1953,14 +1953,12 @@ minibuffer"
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 ;; eval interruption
 ;; invalidate classpath cache on classpath refresh
+;; rename /etc/alternatives/java.save to /etc/alternatives/java
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
 
 ;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
-
-;; Several tooling message do not work when inside a verylarge form because the clojure compiler
-;; reaches the method size limit - limit around 65000
 
 (comment
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
