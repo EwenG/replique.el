@@ -1928,7 +1928,6 @@ minibuffer"
 
 ;; Document the use of cljsjs to use js libs
 ;; Customization var for excluded folders when refreshing main js files
-;; completion for strings that match a path and are in a (File.) / (file) form
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?
@@ -1952,7 +1951,6 @@ minibuffer"
 ;; check the infer-externs cljs option
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 ;; eval interruption
-;; invalidate classpath cache on classpath refresh
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473

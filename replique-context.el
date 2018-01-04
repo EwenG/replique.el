@@ -461,6 +461,7 @@
     (when (and (cl-typep object 'replique-context/object-delimited)
                (eq :vector (oref object :delimited)))
       (goto-char (+ 1 (oref object :start)))
+      (replique-context/forward-comment)
       (replique-context/handle-binding-vector target-point for-like?))))
 
 (defun replique-context/handle-named-fn-binding (object)
@@ -562,6 +563,51 @@
                                 (replique-context/handle-params-bindings
                                  target-point 'replique-context/maybe-at-binding-position)))))
                      (setq quit t))))))))))
+
+(defun replique-context/handle-letfn-like (target-point)
+  (let ((object (replique-context/extracted-value (replique-context/read-one))))
+    (when (and (cl-typep object 'replique-context/object-delimited)
+               (eq :vector (oref object :delimited))
+               (> target-point (oref object :start)))
+      (goto-char (+ 1 (oref object :start)))
+      (replique-context/forward-comment)
+      (let ((exit nil)
+            (fn-like-object nil))
+        (while (null exit)
+          (let ((object (replique-context/extracted-value (replique-context/read-one))))
+            (if object
+                (when (and (cl-typep object 'replique-context/object-delimited)
+                           (eq :list (oref object :delimited)))
+                  (if (< (oref object :start) target-point (oref object :end))
+                      (setq fn-like-object object)
+                    (goto-char (+ 1 (oref object :start)))
+                    (replique-context/forward-comment)        
+                    (let* ((object (replique-context/meta-value (replique-context/read-one)))
+                           (object-meta-value (replique-context/meta-value object)))
+                      (when (and object-meta-value
+                                 (cl-typep object-meta-value 'replique-context/object-symbol))
+                        (let ((sym (oref object-meta-value :symbol))
+                              (meta (when (and (cl-typep
+                                                object 'replique-context/object-dispatch-macro)
+                                               (eq :meta (oref object :dispatch-macro)))
+                                      (buffer-substring-no-properties (oref object :data-start)
+                                                                      (oref object :data-end)))))
+                          (when (and sym (not (string-prefix-p ":" sym)))
+                            (if (<= (oref object-meta-value :start)
+                                    target-point
+                                    (oref object-meta-value :end))
+                                (setq replique-context/at-binding-position? t)
+                              (replique-context/add-local-binding target-point sym
+                                                                  (oref object-meta-value :start)
+                                                                  (oref object-meta-value :end)
+                                                                  meta)))))))
+                  (goto-char (oref object :end)))
+              (setq exit t)))
+          (replique-context/forward-comment))
+        (when fn-like-object
+          (goto-char (+ 1 (oref fn-like-object :start)))
+          (replique-context/forward-comment)
+          (replique-context/handle-fn-like target-point))))))
 
 (defvar replique-context/target-point nil)
 (defvar replique-context/last-read nil)
@@ -899,6 +945,9 @@
           ((equal binding-context :fn-like)
            (replique-context/handle-fn-like target-point)
            (goto-char p))
+          ((equal binding-context :letfn-like)
+           (replique-context/handle-letfn-like target-point)
+           (goto-char p))
           ((equal ns-context :ns-like)
            (when (replique-context/walk-ns target-point)
              (setq replique-context/in-ns-form? t)))
@@ -1060,6 +1109,5 @@
 
 (provide 'replique-context)
 
-;; letfn-like
 ;; unwrap comment
 ;; context for datastructures (narrowing ...)
