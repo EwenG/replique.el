@@ -2001,7 +2001,6 @@ minibuffer"
 ;; elisp-printer -> escape symbols
 ;; defmethod locals (parameters) autocompletion
 ;; in-ns list namespaces
-;; make-tooling-repl -> show buffer with starting progress
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
