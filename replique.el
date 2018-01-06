@@ -85,6 +85,9 @@
                               repl))
                       (repl (if (replique/contains? repl :network-proc)
                                 (replique/assoc repl :network-proc '**)
+                              repl))
+                      (repl (if (replique/contains? repl :recent-output)
+                                (replique/assoc repl :recent-output '**)
                               repl)))
                  repl)))
      (mapcar 'replique-edn/pr-str))
@@ -120,9 +123,17 @@
       found)))
 
 (defun replique/repl-by (&rest args)
+  (apply 'replique/repls-or-repl-by 'seq-find 'equal replique/repls
+         `(:started? t ,@args)))
+
+(defun replique/repl-by-maybe-not-started (&rest args)
   (apply 'replique/repls-or-repl-by 'seq-find 'equal replique/repls args))
 
 (defun replique/repls-by (&rest args)
+  (apply 'replique/repls-or-repl-by 'seq-filter 'equal replique/repls
+         `(:started? t ,@args)))
+
+(defun replique/repls-by-maybe-not-started (&rest args)
   (apply 'replique/repls-or-repl-by 'seq-filter 'equal replique/repls args))
 
 (defun replique/active-repl (repl-type-or-types &optional error-on-nil)
@@ -1481,8 +1492,9 @@ The following commands are available:
       (interrupt-process tooling-proc))
     (setq replique/repls (delete tooling-repl replique/repls))))
 
-(defun replique/maybe-close-tooling-repl (host port)
-  (let ((other-repls (replique/repls-by :host host :port port)))
+;; Close all the tooling repls that have no "session" REPL
+(defun replique/maybe-close-tooling-repl (directory)
+  (let ((other-repls (replique/repls-by-maybe-not-started :directory directory)))
     (when (seq-every-p (lambda (repl)
                          (equal :tooling (replique/get repl :repl-type)))
                        other-repls)
@@ -1492,8 +1504,7 @@ The following commands are available:
 
 (defun replique/close-repl (repl kill-buffers)
   (let* ((buffer (replique/get repl :buffer))
-         (host (replique/get repl :host))
-         (port (replique/get repl :port))
+         (directory (replique/get repl :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
@@ -1508,10 +1519,10 @@ The following commands are available:
           (insert (concat "\nConnection broken by remote peer\n")))))
     (setq replique/repls (delete repl replique/repls))
     ;; If the only repl left is a tooling repl, let's close it
-    (replique/maybe-close-tooling-repl host port)))
+    (replique/maybe-close-tooling-repl directory)))
 
-(defun replique/close-repls (host port kill-buffers)
-  (let* ((repls (replique/repls-by :host host :port port))
+(defun replique/close-repls (directory kill-buffers)
+  (let* ((repls (replique/repls-by-maybe-not-started :directory directory))
          (not-tooling-repls (seq-filter (lambda (repl)
                                           (not (equal :tooling (replique/get repl :repl-type))))
                                         repls))
@@ -1524,7 +1535,7 @@ The following commands are available:
       (replique/close-tooling-repl tooling-repl))))
 
 (defun replique/on-repl-close (buffer process event)
-  (let ((closing-repl (replique/repl-by :buffer buffer)))
+  (let ((closing-repl (replique/repl-by-maybe-not-started :buffer buffer)))
     (when closing-repl
       (cond ((string= "deleted\n" event)
              (replique/close-repl closing-repl t))
@@ -1532,11 +1543,11 @@ The following commands are available:
              (replique/close-repl closing-repl nil))
             (t nil)))))
 
-(defun replique/on-tooling-repl-close (network-proc-buffer host port process event)
+(defun replique/on-tooling-repl-close (network-proc-buffer directory process event)
   (cond ((string= "deleted\n" event)
-         (replique/close-repls host port t))
+         (replique/close-repls directory t))
         ((string= "connection broken by remote peer\n" event)
-         (replique/close-repls host port nil))
+         (replique/close-repls directory nil))
         (t nil))
   (replique/kill-process-buffer network-proc-buffer))
 
@@ -1625,10 +1636,23 @@ The following commands are available:
       "%s\n%s" string
       (propertize (process-name proc) 'face 'replique/minibuffer-output-repl-name-face)))))
 
-(defun replique/make-tooling-repl (host port directory callback)
+(defun replique/make-tooling-repl (directory host port)
   (let* ((default-directory directory)
          (repl-cmd (replique/lein-command host port directory))
-         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd))))
+         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+         (tooling-repl (replique/hash-map
+                        :directory directory
+                        :repl-type :tooling
+                        :proc proc
+                        :host host
+                        :port port
+                        :started? nil)))
+    ;; Perform the starting REPLs cleaning in case of an error when starting the process
+    (set-process-sentinel
+     proc
+     (lambda (process event)
+       (replique/close-repls directory t)))
+    (push tooling-repl replique/repls)
     (replique/process-filter-skip-repl-starting-output
      proc
      (lambda (port)
@@ -1642,28 +1666,38 @@ The following commands are available:
                                 (when (process-live-p proc)
                                   (interrupt-process proc)))
                         proc)))
+         (puthash :port port tooling-repl)
+         (puthash :network-proc network-proc tooling-repl)
          (set-process-sentinel
           network-proc
-          (apply-partially
-           'replique/on-tooling-repl-close network-proc-buff host port))
+          (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
+         ;; The sentinel on the network proc already handles the cleaning of REPLs
+         (set-process-sentinel proc nil)
          (replique/process-filter-read
           network-proc network-proc-buff
           (lambda (cljs-compile-path)
             (cancel-timer timeout)
             (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
-                   (tooling-repl (replique/hash-map
-                                  :directory directory
-                                  :repl-type :tooling
-                                  :proc proc
-                                  :network-proc network-proc
-                                  :host host
-                                  :port port)))
+                   (starting-repls (replique/repls-by-maybe-not-started :directory directory))
+                   (repl-started nil))
               (replique/process-filter-read
                network-proc network-proc-buff 'replique/dispatch-tooling-msg)
-              (push tooling-repl replique/repls)
-              (when (>= replique/main-js-files-max-depth 0)
-                (replique/refresh-main-js-files directory port cljs-compile-path))
-              (funcall callback tooling-repl))))
+              (puthash :started? t tooling-repl)
+              (dolist (starting-repl starting-repls)
+                (condition-case err
+                    (when (not (eq starting-repl tooling-repl))
+                      (if (buffer-live-p (replique/get starting-repl :buffer))
+                          (progn (replique/start-repl tooling-repl starting-repl)
+                                 (setq repl-started t))
+                        (replique/close-repl starting-repl t)))
+                  (error
+                   (replique/close-repls directory t)
+                   ;; rethrow the error
+                   (signal (car err) (cdr err)))))
+              ;; Don't refresh main js files if no REPL have been successfully started
+              (when repl-started
+                (when (>= replique/main-js-files-max-depth 0)
+                  (replique/refresh-main-js-files directory port cljs-compile-path))))))
          ;; The REPL accept fn will read a char in order to check whether the request
          ;; is an HTTP one or not
          (process-send-string network-proc "R")
@@ -1676,13 +1710,11 @@ The following commands are available:
 (defun replique/close-process (directory)
   "Close all the REPL sessions associated with a JVM process"
   (interactive
-   (let* ((tooling-repls (replique/repls-by :repl-type :tooling :error-on-nil t))
+   (let* ((tooling-repls (replique/repls-by-maybe-not-started
+                          :repl-type :tooling :error-on-nil t))
           (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
      (list (completing-read "Close process: " directories nil t))))
-  (let* ((tooling-repl (replique/repl-by :repl-type :tooling :directory directory))
-         (host (replique/get tooling-repl :host))
-         (port (replique/get tooling-repl :port)))
-    (replique/close-repls host port t)))
+  (replique/close-repls directory t))
 
 (defun replique/time-diff (t1 t2)
   (float-time (time-subtract t1 t2)))
@@ -1705,7 +1737,7 @@ The following commands are available:
   "Wrap comint-output-filter in order to display the output of hidden active REPLs in the 
 minibuffer"
   (let* ((buffer (process-buffer process))
-         (repl (replique/repl-by :buffer buffer))
+         (repl (replique/repl-by-maybe-not-started :buffer buffer))
          (recent-output (replique/get repl :recent-output))
          (active-repl-clj (replique/active-repl :clj))
          (active-repl-cljs (replique/active-repl :cljs)))
@@ -1735,36 +1767,56 @@ minibuffer"
     (run-hooks 'comint-exec-hook)
     buffer))
 
-(defun replique/make-repl (buffer-name directory host port)
-  (let* ((buff (generate-new-buffer buffer-name))
-         (proc (open-network-stream buffer-name buff host port))
+(defun replique/start-repl (tooling-repl starting-repl)
+  (let* ((directory (replique/get tooling-repl :directory))
+         (host (replique/get tooling-repl :host))
+         (port (replique/get tooling-repl :port))
+         (repl-buffer (replique/get starting-repl :buffer))
+         (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
          (repl-cmd (format "(replique.repl/repl)\n")))
-    (set-process-sentinel proc (apply-partially 'replique/on-repl-close buff))
+    (set-process-sentinel proc (apply-partially 'replique/on-repl-close repl-buffer))
     (replique/process-filter-read
-     proc buff
+     proc repl-buffer
      (lambda (resp)
-       (let* ((resp (replique-transit/decode resp))
-              (session (replique/get resp :client)))
-         (set-process-filter proc nil)
-         (replique/make-comint proc buff)
-         (set-buffer buff)
-         (replique/mode)
-         (process-send-string proc repl-cmd)
-         (let ((repl (replique/hash-map :directory directory
-                                        :host host
-                                        :port port
-                                        :repl-type :clj
-                                        :repl-env :replique/clj
-                                        :session session
-                                        :ns 'user
-                                        :buffer buff
-                                        :recent-output (make-ring 10))))
-           (push repl replique/repls)
-           (display-buffer buff)))))
+       (if (buffer-live-p repl-buffer)
+           (let* ((resp (replique-transit/decode resp))
+                  (session (replique/get resp :client)))
+             (with-current-buffer repl-buffer
+               (erase-buffer))
+             (set-process-filter proc nil)
+             (replique/make-comint proc repl-buffer)
+             (comment (set-buffer repl-buffer))
+             (replique/mode)
+             (process-send-string proc repl-cmd)
+             (puthash :host host starting-repl)
+             (puthash :port port starting-repl)
+             (puthash :session session starting-repl)
+             (puthash :ns 'user starting-repl)
+             (puthash :started? t starting-repl)
+             (comment (display-buffer repl-buffer)))
+         (when (process-live-p proc)
+           (interrupt-process proc)))))
     ;; The REPL accept fn will read a char in order to check whether the request
     ;; is an HTTP one or not
     (process-send-string proc "R")
     (process-send-string proc "replique.server/*session*\n")))
+
+(defun replique/make-repl-starting (directory host port)
+  (let* ((repl-buffer (generate-new-buffer (replique/clj-buff-name directory)))
+         (repl (replique/hash-map :directory directory
+                                  :host host
+                                  :port port
+                                  :repl-type :clj
+                                  :repl-env :replique/clj
+                                  :buffer repl-buffer
+                                  :recent-output (make-ring 10)
+                                  :started? nil)))
+    (with-current-buffer repl-buffer
+      (insert (format "Directory: %s\nHost: %s\nPort: %s\n\nClojure REPL starting ..."
+                      directory host port)))
+    (push repl replique/repls)
+    (display-buffer repl-buffer)
+    repl))
 
 (defun replique/clj-buff-name (directory)
   (generate-new-buffer-name
@@ -1782,36 +1834,38 @@ minibuffer"
      ;; Normalizing the directory name is necessary in order to be able to find repls
      ;; by directory name
      (list (replique/normalize-directory-name directory))))
-  (let* ((existing-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (host (cond (host host)
+  (let* ((existing-repl (replique/repl-by-maybe-not-started
+                         :directory directory :repl-type :tooling))
+         (host (cond (existing-repl
+                      (replique/get existing-repl :host))
+                     (host host)
                      ((equal 4 (prefix-numeric-value current-prefix-arg))
                       (read-string "Hostname: "))
                      (t replique/host)))
          (port (cond
-                (port port)
                 (existing-repl
                  (replique/get existing-repl :port))
+                (port port)
                 (t (read-number "Port number: " 0))))
-         (lein-script-error (replique/check-lein-script))
-         (make-repl-fn (lambda (tooling-repl)
-                         (let ((directory (replique/get tooling-repl :directory))
-                               (port (replique/get tooling-repl :port))
-                               (buffer-name (or buffer-name (replique/clj-buff-name directory))))
-                           (condition-case err
-                               (replique/make-repl buffer-name directory host port)
-                             (error
-                              (replique/maybe-close-tooling-repl host port)
-                              ;; rethrow the error
-                              (signal (car err) (cdr err))))))))
+         (lein-script-error (replique/check-lein-script)))
     (cond
      ((not (replique/is-valid-port-nb? port))
       (user-error "Invalid port number: %d" port))
      (lein-script-error
       (user-error lein-script-error))
+     ((and existing-repl (null (replique/get existing-repl :started?)))
+      (replique/make-repl-starting directory host port))
+     (existing-repl
+      (let ((starting-repl (replique/make-repl-starting directory host port)))
+        (condition-case err
+            (replique/start-repl existing-repl starting-repl)
+          (error
+           (replique/close-repl starting-repl t)
+           ;; rethrow the error
+           (signal (car err) (cdr err))))))
      (t
-      (if existing-repl
-          (funcall make-repl-fn existing-repl)
-        (replique/make-tooling-repl host port directory make-repl-fn))))))
+      (replique/make-tooling-repl directory host port)
+      (replique/make-repl-starting directory host port)))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
@@ -1859,7 +1913,8 @@ minibuffer"
 
 (defun replique/dispatch-tooling-msg (msg)
   (cond ((null msg)
-         ;; Ignore nil messages. This is only used to wake up (accept-process-output) blocking calls
+         ;; Ignore nil messages. This is only used to wake up (accept-process-output)
+         ;; blocking calls
          nil)
         ((not (hash-table-p msg))
          (message "Received invalid message while dispatching tooling messages: %s" msg))
@@ -1879,6 +1934,7 @@ minibuffer"
   (setq replique/parser-state (parse-partial-sexp
                                (point) (point-max) 0 nil replique/parser-state))
   (while (and
+          (buffer-live-p (current-buffer))
           ;; unbalanced expression or nothing to read
           (= 0 (car replique/parser-state))
           (not (null (nth 2 replique/parser-state))))
