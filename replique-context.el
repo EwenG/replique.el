@@ -60,6 +60,67 @@
       (and (eq (char-after from) open)
            (eq (char-before to) close)))))
 
+(defvar replique-context/platform-tag nil)
+
+(defun replique-context/repl-env->platform-tag (repl-env)
+  (cond ((equal :replique/clj repl-env) ":clj")
+        ((equal :replique/cljs repl-env) ":cljs")))
+
+;; Reader conditional is more complex than others reader macros and requires special treatment
+;; We read the pairs of [platform-tag object] and return the object that match the current
+;; platform tag, or the :default platform tag
+(defun replique-context/read-conditional-reader (reader-conditional-content)
+  (let ((exit nil)
+        (reader-conditional-candidate nil))
+    (while (null exit)
+      (let* ((platform-tag-object (replique-context/read-one))
+             (platform-tag-object-meta-value (replique-context/meta-value platform-tag-object))
+             (_ (replique-context/forward-comment))
+             (object (replique-context/read-one)))
+        (if (and platform-tag-object-meta-value object)
+            (cond ((and (cl-typep platform-tag-object-meta-value 'replique-context/object-symbol)
+                        (equal replique-context/platform-tag
+                               (oref platform-tag-object-meta-value :symbol)))
+                   (setq reader-conditional-candidate object)
+                   (setq exit t))
+                  ((and (cl-typep platform-tag-object-meta-value 'replique-context/object-symbol)
+                        (equal ":default" (oref platform-tag-object-meta-value :symbol)))
+                   (setq reader-conditional-candidate object)
+                   (replique-context/forward-comment))
+                  (t (replique-context/forward-comment)))
+          (setq exit t))))
+    reader-conditional-candidate))
+
+;; When read-one reaches a splice-end, it jumps out of the wrapping form
+;; Useful to implement reader splicing forms
+(defvar replique-context/splice-ends nil)
+
+(defun replique-context/splice-end-comparator (x1 x2)
+  (> (car x1) (car x2)))
+
+(defun replique-context/find-splice-end (p)
+  (let ((splice-ends replique-context/splice-ends)
+        (candidate nil))
+    (while (and splice-ends (null candidate))
+      (let ((splice-from (caar splice-ends)))
+        (cond ((equal splice-from p)
+               (setq candidate (car splice-ends)))
+              ((> p splice-from)
+               (setq splice-ends nil))
+              (t (setq splice-ends (cdr splice-ends))))))
+    candidate))
+
+;; Keeps splice-ends sorted by decreasing order
+(defun replique-context/add-splice-end (new-splice-end)
+  (let ((splice-end (car replique-context/splice-ends)))
+    (if (or (null splice-end)
+            (> (car new-splice-end) (car splice-end)))
+        (push new-splice-end replique-context/splice-ends)
+      (push new-splice-end replique-context/splice-ends)
+      (setq replique-context/splice-ends (sort replique-context/splice-ends
+                                               'replique-context/splice-end-comparator))
+      (delete-dups replique-context/splice-ends))))
+
 (defun replique-context/read-one ()
   (let* ((p (point))
          (p1+ (+ 1 p))
@@ -111,17 +172,49 @@
                  ((and (eq ?? char2+) (eq ?@ char3+))
                   (goto-char p3+)
                   (replique-context/forward-comment)
-                  (replique-context/object-dispatch-macro
-                   :dispatch-macro :reader-conditional
-                   :data nil
-                   :value (replique-context/read-one)))
+                  (let ((reader-conditional-content (replique-context/read-one)))
+                    (if (and (cl-typep reader-conditional-content
+                                       'replique-context/object-delimited)
+                             (eq :list (oref reader-conditional-content :delimited)))
+                        (progn
+                          (goto-char (+ 1 (oref reader-conditional-content :start)))
+                          (replique-context/forward-comment)
+                          (let ((object (replique-context/read-conditional-reader
+                                         reader-conditional-content)))
+                            (print object)
+                            (cond ((null object)
+                                   (goto-char (oref reader-conditional-content :end))
+                                   (replique-context/forward-comment)
+                                   (replique-context/read-one))
+                                  ((cl-typep object 'replique-context/object-delimited)
+                                   (replique-context/add-splice-end
+                                    `(,(- (oref object :end) 1) .
+                                      ,(oref reader-conditional-content :end)))
+                                   (goto-char (+ 1 (oref object :start)))
+                                   (replique-context/forward-comment)
+                                   (replique-context/read-one))
+                                  (t
+                                   (goto-char (oref reader-conditional-content :end))
+                                   object))))
+                      reader-conditional-content)))
                  ((and (eq ?? char2+))
                   (goto-char p2+)
                   (replique-context/forward-comment)
-                  (replique-context/object-dispatch-macro
-                   :dispatch-macro :reader-conditional
-                   :data nil
-                   :value (replique-context/read-one)))
+                  (let ((reader-conditional-content (replique-context/read-one)))
+                    (if (and (cl-typep reader-conditional-content
+                                       'replique-context/object-delimited)
+                             (eq :list (oref reader-conditional-content :delimited)))
+                        (progn
+                          (goto-char (+ 1 (oref reader-conditional-content :start)))
+                          (replique-context/forward-comment)
+                          (let ((object (replique-context/read-conditional-reader
+                                         reader-conditional-content)))
+                            (goto-char (oref reader-conditional-content :end))
+                            (or object
+                                (progn
+                                  (replique-context/forward-comment)
+                                  (replique-context/read-one)))))
+                      reader-conditional-content)))
                  ((eq ?# char2+)
                   (goto-char p2+)
                   (replique-context/forward-comment)
@@ -228,12 +321,18 @@
             :quoted :quote
             :value (replique-context/read-one)))
           (t
-           (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
-           (when (> (point) p)
-             (replique-context/object-symbol
-              :symbol (buffer-substring-no-properties p (point))
-              :start p
-              :end (point)))))))
+           (let ((skip-end-at-point (replique-context/find-splice-end (point))))
+             (if skip-end-at-point
+                 (progn
+                   (goto-char (cdr skip-end-at-point))
+                   (replique-context/forward-comment)
+                   (replique-context/read-one))
+               (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
+               (when (> (point) p)
+                 (replique-context/object-symbol
+                  :symbol (buffer-substring-no-properties p (point))
+                  :start p
+                  :end (point)))))))))
 
 (defvar replique-context/locals nil)
 (defvar replique-context/at-binding-position? nil)
@@ -294,27 +393,30 @@
     (while (< (point) target-point)
       (let* ((object (replique-context/read-one))
              (object-extracted (replique-context/extracted-value object)))
-        (cond ((and (cl-typep object-extracted 'replique-context/object-delimited)
-                    (eq :list (oref object-extracted :delimited))
-                    (> target-point (oref object-extracted :end)))
-               (goto-char (+ (oref object-extracted :start) 1))
-               (replique-context/forward-comment)
-               (let* ((maybe-in-ns (replique-context/read-one))
-                      (maybe-in-ns-no-meta (replique-context/meta-value maybe-in-ns)))
-                 (when (and (cl-typep maybe-in-ns-no-meta 'replique-context/object-symbol)
-                            (seq-contains replique-context/in-ns-forms
-                                          (oref maybe-in-ns-no-meta :symbol)))
-                   (replique-context/forward-comment)
-                   (let ((maybe-ns (replique-context/extracted-value
-                                    (replique-context/read-one))))
-                     (when (cl-typep maybe-ns 'replique-context/object-symbol)
-                       (setq namespace (oref maybe-ns :symbol))))))
-               (goto-char (oref object-extracted :end)))
-              ((and (cl-typep object-extracted 'replique-context/object-delimited)
-                    (> target-point (oref object-extracted :start))
-                    (< target-point (oref object-extracted :end)))
-               (goto-char (+ (oref object-extracted :start) 1))))
-        (replique-context/forward-comment)))
+        (if object-extracted
+            (progn
+              (cond ((and (cl-typep object-extracted 'replique-context/object-delimited)
+                          (eq :list (oref object-extracted :delimited))
+                          (> target-point (oref object-extracted :end)))
+                     (goto-char (+ (oref object-extracted :start) 1))
+                     (replique-context/forward-comment)
+                     (let* ((maybe-in-ns (replique-context/read-one))
+                            (maybe-in-ns-no-meta (replique-context/meta-value maybe-in-ns)))
+                       (when (and (cl-typep maybe-in-ns-no-meta 'replique-context/object-symbol)
+                                  (seq-contains replique-context/in-ns-forms
+                                                (oref maybe-in-ns-no-meta :symbol)))
+                         (replique-context/forward-comment)
+                         (let ((maybe-ns (replique-context/extracted-value
+                                          (replique-context/read-one))))
+                           (when (cl-typep maybe-ns 'replique-context/object-symbol)
+                             (setq namespace (oref maybe-ns :symbol))))))
+                     (goto-char (oref object-extracted :end)))
+                    ((and (cl-typep object-extracted 'replique-context/object-delimited)
+                          (> target-point (oref object-extracted :start))
+                          (< target-point (oref object-extracted :end)))
+                     (goto-char (+ (oref object-extracted :start) 1)))))
+          (replique-context/forward-comment))
+        (goto-char target-point)))
     namespace))
 
 (defun replique-context/add-local-binding (target-point sym sym-start sym-end meta)
@@ -1086,7 +1188,10 @@
               (let* ((target-point (point))
                      (ppss (replique-context/walk-init target-point)))
                 (when target-point
-                  (replique-context/walk target-point resp)
+                  (let ((replique-context/platform-tag (replique-context/repl-env->platform-tag
+                                                        repl-env))
+                        (replique-context/splice-ends '()))
+                    (replique-context/walk target-point resp))
                   (setq replique-context/context
                         (replique/hash-map
                          :locals replique-context/locals
