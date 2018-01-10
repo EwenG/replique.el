@@ -437,50 +437,6 @@
         (when sym-bounds
           (buffer-substring-no-properties (car sym-bounds) (point)))))))
 
-(defmacro replique/temporary-invisible-change (&rest forms)
-  "Executes FORMS with a temporary buffer-undo-list, undoing on return.
-The changes you make within FORMS are undone before returning.
-But more importantly, the buffer's buffer-undo-list is not affected.
-This allows you to temporarily modify read-only buffers too."
-  `(let* ((buffer-undo-list)
-          (modified (buffer-modified-p))
-          (inhibit-read-only t)
-          (temporary-res nil)
-          (temporary-point (point)))
-     (unwind-protect
-         (setq temporary-res (progn ,@forms))
-       (primitive-undo (length buffer-undo-list) buffer-undo-list)
-       (set-buffer-modified-p modified)
-       (goto-char temporary-point))
-     temporary-res))
-
-(defun replique/strip-text-properties(txt)
-  (set-text-properties 0 (length txt) nil txt)
-  txt)
-
-(defun replique/form-with-prefix* ()
-  (let ((bounds (bounds-of-thing-at-point 'symbol)))
-    (replique/temporary-invisible-change
-     (progn
-       (when bounds (delete-region (car bounds) (cdr bounds)))
-       (insert "__prefix__")
-       (thing-at-point 'defun t)))))
-
-;; Execute in a temp buffer because company-mode expects the current buffer
-;; to not change at all
-(defun replique/form-with-prefix ()
-  (let ((defun-bounds (bounds-of-thing-at-point 'defun)))
-    (when defun-bounds
-      (let* ((point-offset-backward (- (cdr defun-bounds) (point)))
-             (defun-content (buffer-substring (car defun-bounds)
-                                              (cdr defun-bounds))))
-        (with-temp-buffer
-          (clojure-mode-variables)
-          (set-syntax-table clojure-mode-syntax-table)
-          (insert defun-content)
-          (backward-char point-offset-backward)
-          (replique/form-with-prefix*))))))
-
 (defun replique/company-backend (command &optional arg &rest ignored)
   (interactive (list 'interactive))
   (cond
