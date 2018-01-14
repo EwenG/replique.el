@@ -181,7 +181,6 @@
                           (replique-context/forward-comment)
                           (let ((object (replique-context/read-conditional-reader
                                          reader-conditional-content)))
-                            (print object)
                             (cond ((null object)
                                    (goto-char (oref reader-conditional-content :end))
                                    (replique-context/forward-comment)
@@ -1188,8 +1187,7 @@
               (let* ((target-point (point))
                      (ppss (replique-context/walk-init target-point)))
                 (when target-point
-                  (let ((replique-context/platform-tag (replique-context/repl-env->platform-tag
-                                                        repl-env))
+                  (let ((replique-context/platform-tag (symbol-name (replique/get resp :repl-type)))
                         (replique-context/splice-ends '()))
                     (replique-context/walk target-point resp))
                   (setq replique-context/context
