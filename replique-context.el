@@ -523,7 +523,7 @@
                         (oref object-meta-value :end)
                         meta)))))))
 
-(defun replique-context/at-for-like-let? (for-like? object-k-meta-value object-v-meta-value)
+(defun replique-context/at-for-like-let? (for-like? object-k-meta-value object-v-meta-value) ;
   (and for-like?
        (cl-typep object-k-meta-value 'replique-context/object-symbol)
        (equal ":let" (oref object-k-meta-value :symbol))
@@ -540,7 +540,7 @@
              (object-v (replique-context/read-one))
              (object-v-meta-value (replique-context/meta-value object-v))
              (object-v-leaf (replique-context/object-leaf object-v)))
-        (if (and object-k object-v-meta-value)
+        (if (and object-k object-v-leaf)
             (progn
               (cond ((replique-context/at-for-like-let?
                       for-like? object-k-meta-value object-v-meta-value)
