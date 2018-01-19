@@ -1988,6 +1988,7 @@ minibuffer"
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
+;; jump-to-definition for namespaced keywords
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option

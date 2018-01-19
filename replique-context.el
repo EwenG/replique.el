@@ -1212,5 +1212,4 @@
 
 (provide 'replique-context)
 
-;; unwrap comment
 ;; context for datastructures (narrowing ...)
