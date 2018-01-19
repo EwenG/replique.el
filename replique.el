@@ -589,16 +589,18 @@
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/maybe-change-ns ()
-  (let ((repl-type (cond ((equal major-mode 'clojure-mode) :clj)
-                         ((equal major-mode 'clojurescript-mode) :cljs)
-                         ((equal major-mode 'clojurec-mode) '(:clj :cljs))
-                         (t nil))))
-    (when repl-type
-      (let* ((active-repl (replique/active-repl repl-type))
-             (repl-ns (replique/get active-repl :ns))
-             (ns (replique-context/clojure-find-ns)))
-        (when (and ns repl-ns (not (string= ns (symbol-name repl-ns))))
-          (replique/in-ns ns))))))
+  (let ((active-repl (replique/active-repl '(:clj :cljs)))
+        (ns-name (replique-context/clojure-find-ns)))
+    (replique/with-modes-dispatch
+     (clojure-mode . (apply-partially 'replique/send-input-from-source-clj
+                                      (format "(clojure.core/in-ns '%s)" ns-name)))
+     (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs
+                            (format "(replique.interactive/cljs-in-ns '%s)" ns-name)))
+     (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc
+                       (if (equal :cljs (replique/get active-repl :repl-type))
+                           (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
+                         (format "(clojure.core/in-ns '%s)" ns-name))))
+     (t . nil))))
 
 (defun replique/column-number-at-pos (&optional pos)
   (save-restriction
@@ -1989,9 +1991,7 @@ minibuffer"
 ;; new target directory for assets resources
 ;; elisp-printer -> escape symbols
 ;; defmethod locals (parameters) autocompletion
-;; in-ns list namespaces
 ;; emacs 26 has built-in, faster "line-number-at-pos"
-;; tooling-messages context -> parsing big contexts can be slow and reach the jvm method limit
 ;; check the infer-externs cljs option
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 ;; eval interruption
