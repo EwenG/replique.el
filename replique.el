@@ -55,13 +55,6 @@
      nil 'visible)
     buffers))
 
-(defun replique/symprompt (prompt default)
-  (list (let* ((prompt (if default
-                           (format "%s (default %s): " prompt default)
-                         (concat prompt ": ")))
-               (ans (read-string prompt)))
-          (if (zerop (length ans)) default ans))))
-
 ;; completing-read uses an alphabetical order by default. This function can be used too keep
 ;; the order of the candidates
 (defun replique/presorted-completion-table (completions)
@@ -200,6 +193,8 @@
                       `((equal 'less-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
                      ((equal 'replique/mode m)
+                      ;; Don't pass the tooling-repl since the buffer currently in use may not
+                      ;; be the active one
                       `((equal 'replique/mode major-mode)
                         (funcall ,f (replique/repl-by :buffer (current-buffer)))))
                      ((equal 't m)
@@ -393,35 +388,72 @@
      (clojurec-mode . 'replique/repliquedoc-cljc)
      (t . nil))))
 
-(defun replique/in-ns-clj (ns-name tooling-repl clj-repl)
+(defun replique/in-ns-session (repl)
+  (let* ((directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (all-ns (replique/get (replique/list-namespaces
+                                tooling-repl (replique/get repl :repl-env))
+                               :namespaces))
+         (ns-name (when all-ns
+                    (completing-read "Set ns to: " all-ns))))
+    (when (> (length ns-name) 0)
+      (if (equal :clj (replique/get repl :repl-type))
+          (replique/send-input-from-source-clj
+           (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl repl)
+        (replique/send-input-from-source-cljs
+         (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl repl)))))
+
+(defun replique/in-ns-clj (tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (replique/send-input-from-source-clj
-     (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl)))
+    (let* ((all-ns (replique/get (replique/list-namespaces
+                                  tooling-repl (replique/get clj-repl :repl-env))
+                                 :namespaces))
+           (ns-name (when all-ns
+                      (completing-read
+                       "Set ns to: " all-ns nil nil (replique-context/clojure-find-ns)))))
+      (when (> (length ns-name) 0)
+        (replique/send-input-from-source-clj
+         (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl)))))
 
-(defun replique/in-ns-cljs (ns-name tooling-repl cljs-repl)
+(defun replique/in-ns-cljs (tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (replique/send-input-from-source-cljs
-     (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
-     tooling-repl cljs-repl)))
+    (let* ((all-ns (replique/get (replique/list-namespaces
+                                  tooling-repl (replique/get cljs-repl :repl-env))
+                                 :namespaces))
+           (ns-name (when all-ns
+                      (completing-read
+                       "Set ns to: " all-ns nil nil (replique-context/clojure-find-ns)))))
+      (when (> (length ns-name) 0)
+        (replique/send-input-from-source-cljs
+         (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl cljs-repl)))))
 
-(defun replique/in-ns-cljc (ns-name tooling-repl repl)
+(defun replique/in-ns-cljc (tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (replique/send-input-from-source-cljc
-     (if (equal :cljs (replique/get repl :repl-type))
-         (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
-       (format "(clojure.core/in-ns '%s)" ns-name))
-     tooling-repl repl)))
 
-(defun replique/in-ns (ns-name)
+    (let* ((all-ns (replique/get (replique/list-namespaces
+                                  tooling-repl (replique/get repl :repl-env))
+                                 :namespaces))
+           (ns-name (when all-ns
+                      (completing-read
+                       "Set ns to: " all-ns nil nil (replique-context/clojure-find-ns)))))
+      (when (> (length ns-name) 0)
+        (replique/send-input-from-source-cljc
+         (if (equal :cljs (replique/get repl :repl-type))
+             (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
+           (format "(clojure.core/in-ns '%s)" ns-name))
+         tooling-repl repl)))))
+
+(defun replique/in-ns ()
   "Change the active REPL namespace"
-  (interactive (replique/symprompt "Set ns to" (replique-context/clojure-find-ns)))
+  (interactive)
   (replique/with-modes-dispatch
-   (clojure-mode . (apply-partially 'replique/in-ns-clj ns-name))
-   (clojurescript-mode . (apply-partially 'replique/in-ns-cljs ns-name))
-   (clojurec-mode . (apply-partially 'replique/in-ns-cljc ns-name))
+   (replique/mode . 'replique/in-ns-session)
+   (clojure-mode . 'replique/in-ns-clj)
+   (clojurescript-mode . 'replique/in-ns-cljs)
+   (clojurec-mode . 'replique/in-ns-cljc)
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/symbol-backward ()
@@ -827,11 +859,11 @@
       (setq replique/repls (delete repl replique/repls))
       (setq replique/repls (push repl replique/repls)))))
 
-(defun replique/list-cljs-namespaces (tooling-repl)
+(defun replique/list-namespaces (tooling-repl repl-env)
   (let ((resp (replique/send-tooling-msg
                tooling-repl
                (replique/hash-map :type :list-namespaces
-                                  :repl-env :replique/cljs))))
+                                  :repl-env repl-env))))
     (let ((err (replique/get resp :error)))
       (when err
         (message "%s" (replique-edn/pr-str err))
@@ -873,7 +905,7 @@
                   (yes-or-no-p (format "Override %s?" output-to)))
           (let ((resp (if main-ns
                           (replique/hash-map :namespaces nil)
-                        (replique/list-cljs-namespaces tooling-repl))))
+                        (replique/list-namespaces tooling-repl :replique/cljs))))
             (when (not (replique/get resp :error))
               (let* ((namespaces (replique/get resp :namespaces))
                      (main-ns (cond (main-ns main-ns)
@@ -1319,6 +1351,7 @@ unwrapping a top level comment block "
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map comint-mode-map)
     (define-key map "\C-m" 'replique/comint-send-input)
+    (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\C-c\C-o" 'replique/omniscient)
