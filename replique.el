@@ -1989,8 +1989,6 @@ minibuffer"
 ;; document omniscient global capture / rethink global capture for multithreads
 ;; jump-to-definition for ns -> list all files
 ;; new target directory for assets resources
-;; elisp-printer -> escape symbols
-;; defmethod locals (parameters) autocompletion
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)

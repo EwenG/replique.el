@@ -2,7 +2,9 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.9
 
+- Autocompletion refactoring
 - Add metadata (line, column number, file name) to forms evaluated at the REPL from a clj/cljs buffer
+- Enable the replique/in-ns interactive command in REPL buffers
 - Automatically change the namespace of the REPL when evaluating a form from a source code buffer 
 - Do not overwrite a currently active minibuffer when printing in the echo area
 - When printing REPL output in the echo area, consider both active Clojure and Clojurescript REPLs instead of the active REPL only
