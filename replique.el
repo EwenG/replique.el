@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.9-SNAPSHOT
+;; Version 0.0.9
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
 
 ;; Commentary:
@@ -1280,9 +1280,9 @@ offline mode"
                                               active-repl)))
  )
 
-(defconst replique/client-version "0.0.9-SNAPSHOT")
+(defconst replique/client-version "0.0.9")
 
-(defcustom replique/version "0.0.9-SNAPSHOT"
+(defcustom replique/version "0.0.9"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
@@ -1995,6 +1995,7 @@ minibuffer"
 ;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 ;; eval interruption
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
+;; try under jdk7
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
