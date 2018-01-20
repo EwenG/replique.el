@@ -422,7 +422,7 @@ Keybinding              | Description
 <kbd>C-u C-x C-r</kbd>  | Evaluate region, compiling function/method definitions with the debugger
 <kbd>C-x C-e</kbd>      | Evaluate last sexp. The REPL namespace is changed to the namespace of the current buffer before the form being evaluated
 <kbd>C-u C-x C-e</kbd>  | Evaluate last sexp, compiling function/method definitions with the debugger
-<kbd>C-M-x</kbd>        | Evaluate top level sexp. If the top level for is a `(comment ...)` block, then the form evaluated is the one under the comment block
+<kbd>C-M-x</kbd>        | Evaluate top level sexp. If the top level form is a `(comment ...)` block, then the form evaluated is the one under the comment block
 <kbd>C-u C-M-x</kbd>    | Evaluate top level sexp, compiling function/method definitions with the debugger
 <kbd>C-c C-l</kbd>      | Load file
 <kbd>C-u C-c C-l</kbd>  | Load file, compiling function/method definitions with the debugger
