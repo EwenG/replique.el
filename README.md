@@ -169,7 +169,7 @@ Use `replique/close-process` to close all the REPL sessions associated with a JV
 
 ## Clojurescript support
 
-Replique supports autocompletion, [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation, and jump to definition for Clojurescript with the limitation that autocompletion does not work for interop calls.
+Replique supports autocompletion, [Eldoc](https://www.emacswiki.org/emacs/ElDoc) style documentation, and jump to definition for Clojurescript.
 
 Loading a cljs file is done by compiling it to disk and then loading it in the Clojurescript environment. By default, Replique compiles Clojurescript files in the `target/cljs` folder. The compilation output folder can be customized using the `project.clj` file:
 
