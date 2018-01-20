@@ -125,6 +125,8 @@ Replique will prompt you for a project directory and a port number. The project 
 
 Use `C-x C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
+When evaluating a form from a buffer containing Clojure or Clojurescript code, Replique automatically changes the REPL namespace to the one of this buffer.
+
 Kill the buffer to close the REPL.
 
 ### Clojurescript REPL
@@ -352,6 +354,12 @@ All code evaluation happening in an omniscient REPL is executed with the binding
 
 Clojure and Clojurescript vars can be removed using the `replique/remove-var`. The `replique/remove-var` command prompts for the var to be removed amongs all the vars of the current buffer's namespace or the current REPL namespace if the current buffer is the REPL. Removing a var also remove all the mappings (ie. :require :refer) to the var from all namespaces. 
 
+## Reloading a file and all its dependencies
+
+The `replique/reload-all` interactive command can be used to reload a file and, recursively, all its dependencies. 
+In Clojure, this is the same than using the `:reload-all` option of `clojure.core/require`.
+In Clojurescript, the `:reload-all` option of `cljs.core/require` does not work and thus Replique implements its own logic.
+
 ## Using Replique with [org-mode](http://orgmode.org/manual/Evaluating-code-blocks.html)
 
 ### Emacs setup
@@ -412,13 +420,13 @@ Keybinding              | Description
 ------------------------|----------------------------------
 <kbd>C-x C-r</kbd>      | Evaluate region
 <kbd>C-u C-x C-r</kbd>  | Evaluate region, compiling function/method definitions with the debugger
-<kbd>C-x C-e</kbd>      | Evaluate last sexp
+<kbd>C-x C-e</kbd>      | Evaluate last sexp. The REPL namespace is changed to the namespace of the current buffer before the form being evaluated
 <kbd>C-u C-x C-e</kbd>  | Evaluate last sexp, compiling function/method definitions with the debugger
-<kbd>C-M-x</kbd>        | Evaluate top level sexp
+<kbd>C-M-x</kbd>        | Evaluate top level sexp. If the top level for is a `(comment ...)` block, then the form evaluated is the one under the comment block
 <kbd>C-u C-M-x</kbd>    | Evaluate top level sexp, compiling function/method definitions with the debugger
 <kbd>C-c C-l</kbd>      | Load file
 <kbd>C-u C-c C-l</kbd>  | Load file, compiling function/method definitions with the debugger
-<kbd>C-c M-n</kbd>      | Change namespace
+<kbd>C-c M-n</kbd>      | Change the REPL namespace
 <kbd>M-.</kbd>          | Jump to symbol definition
 <kbd>C-c C-r</kbd>      | Change active REPL session
 <kbd>C-c C-o</kbd>      | Debug the var at point
@@ -438,6 +446,9 @@ Command                          | Description
 `replique/output-main-js-file`   | Write a main js file to disk
 `replique/classpath`             | Reload the classpath based on the project.clj configuration
 `replique/omniscient`            | Debug the var at point
+`replique/reload-all`            | Reload the current namespace as well as all its dependencies
+`replique/remove-var`            | Prompts for a var to be undefined. The var is also removed from all the mappings of all the namespaces
+`replique/offline-mode`          | Switch Leiningen to offline mode (-o flag)
 
 ## REPL API
 
@@ -462,11 +473,6 @@ Vars                             | Description
 ---------------------------------|----------------------------------
 `repl-port`                      | The current REPL port number
 `compiler-opts`                  | The compiler options that can be customized at the REPL
-
-
-## Acknowledgments
-
-Replique.el takes inspiration from and uses parts of [cider](https://github.com/clojure-emacs/cider). I would like to thank cider authors/contributors.
 
 # License
 
