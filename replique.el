@@ -588,18 +588,37 @@
    (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
+(defun replique/maybe-change-ns-clj (tooling-repl clj-repl)
+  (let ((ns-name (replique-context/clojure-find-ns))
+        (repl-ns (replique/get clj-repl :ns)))
+    (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
+      (replique/send-input-from-source-clj
+       (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl))))
+
+(defun replique/maybe-change-ns-cljs (tooling-repl cljs-repl)
+  (let ((ns-name (replique-context/clojure-find-ns))
+        (repl-ns (replique/get cljs-repl :ns)))
+    (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
+      (replique/send-input-from-source-cljs
+       (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl cljs-repl))))
+
+(defun replique/maybe-change-ns-cljc (tooling-repl repl)
+  (let ((ns-name (replique-context/clojure-find-ns))
+        (repl-ns (replique/get repl :ns)))
+    (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
+      (if (equal :cljs (replique/get repl :repl-type))
+          (replique/send-input-from-source-cljs
+           (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl repl)
+        (replique/send-input-from-source-clj
+         (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl repl)))))
+
 (defun replique/maybe-change-ns ()
   (let ((active-repl (replique/active-repl '(:clj :cljs)))
         (ns-name (replique-context/clojure-find-ns)))
     (replique/with-modes-dispatch
-     (clojure-mode . (apply-partially 'replique/send-input-from-source-clj
-                                      (format "(clojure.core/in-ns '%s)" ns-name)))
-     (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs
-                            (format "(replique.interactive/cljs-in-ns '%s)" ns-name)))
-     (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc
-                       (if (equal :cljs (replique/get active-repl :repl-type))
-                           (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
-                         (format "(clojure.core/in-ns '%s)" ns-name))))
+     (clojure-mode . 'replique/maybe-change-ns-clj)
+     (clojurescript-mode . 'replique/maybe-change-ns-cljs)
+     (clojurec-mode . 'replique/maybe-change-ns-cljc)
      (t . nil))))
 
 (defun replique/column-number-at-pos (&optional pos)
