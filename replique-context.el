@@ -536,11 +536,12 @@
       (let* ((start-p (point))
              (object-k (replique-context/read-one))
              (object-k-meta-value (replique-context/meta-value object-k))
+             (object-k-leaf (replique-context/object-leaf object-k))
              (_ (replique-context/forward-comment))
              (object-v (replique-context/read-one))
              (object-v-meta-value (replique-context/meta-value object-v))
              (object-v-leaf (replique-context/object-leaf object-v)))
-        (if (and object-k object-v-leaf)
+        (if (and object-k-leaf object-v-leaf)
             (progn
               (cond ((replique-context/at-for-like-let?
                       for-like? object-k-meta-value object-v-meta-value)
@@ -550,8 +551,8 @@
                     ((> target-point (oref object-v-leaf :end))
                      (replique-context/extract-bindings
                       target-point object-k 'replique-context/add-local-binding))
-                    ((and (>= target-point (oref object-k-meta-value :start))
-                          (<= target-point (oref object-k-meta-value :end)))
+                    ((and (>= target-point (oref object-k-leaf :start))
+                          (<= target-point (oref object-k-leaf :end)))
                      (replique-context/extract-bindings
                       target-point object-k 'replique-context/maybe-at-binding-position)))
               (replique-context/forward-comment))
@@ -592,6 +593,10 @@
          (named-fn-binding (when (and (cl-typep object-extracted 'replique-context/object-symbol)
                                       (> target-point (oref object-extracted :end)))
                              (replique-context/handle-named-fn-binding object))))
+    ;; If this is an anonymous function, move back before the binding vector
+    (when (and (cl-typep object-extracted 'replique-context/object-delimited)
+               (eq :vector (oref object-extracted :delimited)))
+      (goto-char (oref object-extracted :start)))
     (if (and (cl-typep object-extracted 'replique-context/object-symbol)
              (<= (oref object-extracted :start) target-point (oref object-extracted :end)))
         (setq replique-context/at-binding-position? t)
