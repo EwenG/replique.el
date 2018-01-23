@@ -413,9 +413,9 @@
                     ((and (cl-typep object-extracted 'replique-context/object-delimited)
                           (> target-point (oref object-extracted :start))
                           (< target-point (oref object-extracted :end)))
-                     (goto-char (+ (oref object-extracted :start) 1)))))
-          (replique-context/forward-comment))
-        (goto-char target-point)))
+                     (goto-char (+ (oref object-extracted :start) 1))))
+              (replique-context/forward-comment))
+          (goto-char target-point))))
     namespace))
 
 (defun replique-context/add-local-binding (target-point sym sym-start sym-end meta)
@@ -1129,14 +1129,17 @@
                           (< target-point (oref object-leaf :end)))
                      (goto-char (+ (oref object-leaf :start) 1))
                      (replique-context/forward-comment)
-                     (let* ((maybe-fn (replique-context/read-one))
+                     (let* ((p (point))
+                            (maybe-fn (replique-context/read-one))
                             (maybe-fn-no-meta (replique-context/meta-value maybe-fn)))
-                       (when (and (cl-typep maybe-fn-no-meta 'replique-context/object-symbol)
+                       (if (and (cl-typep maybe-fn-no-meta 'replique-context/object-symbol)
                                   (not (string-prefix-p ":" (oref maybe-fn-no-meta :symbol))))
-                         (replique-context/forward-comment)
-                         (replique-context/handle-contextual-call
-                          target-point context-forms (oref maybe-fn-no-meta :symbol))
-                         (setq inermost-fn-object object-leaf))))
+                           (progn
+                             (replique-context/forward-comment)
+                             (replique-context/handle-contextual-call
+                              target-point context-forms (oref maybe-fn-no-meta :symbol))
+                             (setq inermost-fn-object object-leaf))
+                         (goto-char p))))
                     ((and (cl-typep object-leaf 'replique-context/object-delimited)
                           (> target-point (oref object-leaf :start))
                           (< target-point (oref object-leaf :end)))
@@ -1174,6 +1177,17 @@
                   (setq replique-context/namespace (or namespace (clojure-find-ns)))))
             (setq replique-context/namespace (clojure-find-ns)))
           replique-context/namespace))))
+
+(defun replique-context/clojure-find-ns-no-cache ()
+  (let* ((target-point (point))
+         (ppss (syntax-ppss target-point))
+         (top-level (syntax-ppss-toplevel-pos ppss)))
+    (if top-level
+        (progn
+          (goto-char top-level)
+          (let ((namespace (replique-context/walk-in-ns target-point)))
+            (or namespace (clojure-find-ns))))
+      (clojure-find-ns))))
 
 (defun replique-context/get-context (ns repl-env)
   (or replique-context/context
