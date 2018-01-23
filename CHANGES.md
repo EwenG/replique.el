@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.10
 
+- Fix the computation of the current namespace to take into account calls to "in-ns"
 - jump-to-definition for locals
 - jump-to-definition for namespaced keywords
 - The jump-to-definition command now prompts for the file to jump to when used with a namespace which definition is split in multiple files 
