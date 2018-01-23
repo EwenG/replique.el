@@ -2,6 +2,12 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.10
 
+- jump-to-definition for locals
+- jump-to-definition for namespaced keywords
+- The jump-to-definition command now prompts for the file to jump to when used with a namespace which definition is split in multiple files 
+- Fix a potential error when analyzing local parameters
+- Fix autocompletion for parameters of named functions 
+
 # Version 0.0.9
 
 - Autocompletion refactoring - fuzzy matching, autocompletion for files and javascript interop calls
