@@ -1222,6 +1222,10 @@
             (message "jump-to-definition failed with symbol: %s" symbol))
         (let* ((meta (replique/get resp :meta))
                (file (replique/get-in resp [:meta :file]))
+               (files (replique/get-in resp [:meta :files]))
+               (keyword? (replique/get-in resp [:meta :keyword?]))
+               (local? (replique/get-in resp [:meta :local?]))
+               (point-start (replique/get-in resp [:meta :point-start]))
                (line (replique/get-in resp [:meta :line]))
                (column (replique/get-in resp [:meta :column])))
           (cond ((not (replique-transit/is-small-number? line))
@@ -1230,15 +1234,47 @@
                 ((not (replique-transit/is-small-number? column))
                  (message "Cannot handle column number %s" column)
                  (message "jump-to-definition failed with symbol: %s" symbol))
+                ((and local? point-start)
+                 (xref-push-marker-stack)
+                 (goto-char point-start))
+                (keyword?
+                 (when files
+                   (let* ((found-point nil)
+                          (found-buff nil)
+                          (kw-namespace (replique/get-in resp [:meta :namespace]))
+                          (kw-name (replique/get-in resp [:meta :name]))
+                          (kw-regexp (concat ":" kw-namespace "/" kw-name
+                                             "\\|"
+                                             "::" kw-name)))
+                     (save-match-data
+                       (save-excursion
+                         (while (and (car files) (null found-point))
+                           (let ((file-candidate (car files)))
+                             (when-let (buff (replique-resources/find-file file-candidate))
+                               (with-current-buffer buff
+                                 (goto-char (point-min))
+                                 (let ((candidate-point (search-forward-regexp kw-regexp nil t)))
+                                   (when (equal (replique-context/clojure-find-ns-no-cache)
+                                                kw-namespace)
+                                     (setq found-point candidate-point)
+                                     (setq found-buff buff)))))
+                             (setq files (cdr files))))))
+                     (when (and found-buff found-point)
+                       (xref-push-marker-stack)
+                       (pop-to-buffer-same-window found-buff)
+                       (goto-char found-point)))))
                 (t
-                 (when-let (buff (replique-resources/find-file file))
-                   (xref-push-marker-stack)
-                   (pop-to-buffer-same-window buff)
-                   (goto-char (point-min))
-                   (when line
-                     (forward-line (1- line))
-                     (when column
-                       (move-to-column column)))))))))))
+                 (let ((file (if (and files (null file))
+                                 (completing-read "Jump to file: " files nil t)
+                               file)))
+                   (when-let (buff (replique-resources/find-file file))
+                     (xref-push-marker-stack)
+                     (pop-to-buffer-same-window buff)
+                     (goto-char (point-min))
+                     (when line
+                       (forward-line (1- line))
+                       (when column
+                         (move-to-column column))))))))))))
 
 (defun replique/jump-to-definition-session (symbol repl)
   (let* ((directory (replique/get repl :directory))
@@ -2006,8 +2042,6 @@ minibuffer"
 ;; omniscient -> capture the stacktrace if possible
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
-;; jump-to-definition for ns -> list all files
-;; jump-to-definition for namespaced keywords
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
@@ -2015,6 +2049,7 @@ minibuffer"
 ;; eval interruption
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
 ;; try under jdk7
+;; "find usage" feature using replique-context
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
