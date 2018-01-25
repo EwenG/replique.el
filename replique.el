@@ -706,23 +706,22 @@
 (defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
   (interactive "P")
-  (save-excursion
-    (let* ((expr-bounds (replique/unwrap-comment nil))
-           (expr (when expr-bounds
-                   (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
-      (when expr
-        (replique/maybe-change-ns)
-        (let* ((line (replique/line-number-at-pos (car expr-bounds)))
-               (column (1+ (replique/column-number-at-pos (car expr-bounds))))
-               (replique/eval-from-source-meta (replique/hash-map
-                                                :line line
-                                                :column column
-                                                :url (replique/buffer-url
-                                                      (buffer-file-name)))))
-          (replique/send-input-from-source-dispatch
-           (if p
-               (concat "(replique.omniscient/with-redefs " expr ")")
-             expr)))))))
+  (let* ((expr-bounds (save-excursion (replique/unwrap-comment nil)))
+         (expr (when expr-bounds
+                 (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
+    (when expr
+      (replique/maybe-change-ns)
+      (let* ((line (replique/line-number-at-pos (car expr-bounds)))
+             (column (1+ (replique/column-number-at-pos (car expr-bounds))))
+             (replique/eval-from-source-meta (replique/hash-map
+                                              :line line
+                                              :column column
+                                              :url (replique/buffer-url
+                                                    (buffer-file-name)))))
+        (replique/send-input-from-source-dispatch
+         (if p
+             (concat "(replique.omniscient/with-redefs " expr ")")
+           expr))))))
 
 (defun replique/load-url-clj (url p props clj-repl)
   (if (not clj-repl)
