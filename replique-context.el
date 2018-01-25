@@ -550,7 +550,8 @@
                      (goto-char (oref object-v-meta-value :end)))
                     ((> target-point (oref object-v-leaf :end))
                      (replique-context/extract-bindings
-                      target-point object-k 'replique-context/add-local-binding))
+                      target-point object-k 'replique-context/add-local-binding)
+                     (goto-char (oref object-v-leaf :end)))
                     ((and (>= target-point (oref object-k-leaf :start))
                           (<= target-point (oref object-k-leaf :end)))
                      (replique-context/extract-bindings
@@ -567,14 +568,14 @@
       (replique-context/handle-binding-vector target-point for-like?))))
 
 (defun replique-context/handle-named-fn-binding (object)
-  (let* ((object-meta-value (replique-context/meta-value object))
-         (sym (oref object-meta-value :symbol))
+  (let* ((object-extracted (replique-context/extracted-value object))
+         (sym (oref object-extracted :symbol))
          (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
                           (eq :meta (oref object :dispatch-macro)))
                  (buffer-substring-no-properties (oref object :data-start)
                                                  (oref object :data-end)))))
     (when (and sym (not (string-prefix-p ":" sym)))
-      `[,sym [,(oref object-meta-value :start) ,(oref object-meta-value :end) ,meta]])))
+      `[,sym [,(oref object-extracted :start) ,(oref object-extracted :end) ,meta]])))
 
 (defun replique-context/handle-params-bindings (target-point binding-found-fn)
   (let ((quit nil))
