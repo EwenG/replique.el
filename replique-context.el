@@ -1154,11 +1154,11 @@
 (defun replique-context/walk-init (target-point)
   (let* ((ppss (syntax-ppss target-point))
          (top-level (syntax-ppss-toplevel-pos ppss)))
+    (replique-context/reset-state)
     (when top-level
       (goto-char top-level)
       (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
       (replique-context/forward-comment)
-      (replique-context/reset-state)
       ppss)))
 
 (defvar replique-context/context nil)
