@@ -374,7 +374,7 @@
                    (and (cl-typep maybe-value 'replique-context/object-quoted)
                         (or (eq :quote (oref maybe-value :quoted))
                             (eq :unquote (oref maybe-value :quoted)))))
-          (setq maybe-value (oref object :value)))
+          (setq maybe-value (oref maybe-value :value)))
         maybe-value)
     object))
 
