@@ -834,18 +834,18 @@
        (user-error "No started REPL"))
      (list (completing-read "Switch to REPL: " repl-names nil t))))
   ;; All windows displaying the previously active repl are set to display the newly active
-  ;; repl (repl with the same repl-type)
+  ;; repl, unless the newly active repl is already a visible buffer
   (let* ((buffer (get-buffer repl-buff-name))
          (repl (replique/repl-by :buffer buffer))
-         (repl-type (replique/get repl :repl-type))
-         (prev-active-repl (replique/repl-by :repl-type repl-type))
+         (prev-active-repl (replique/active-repl '(:clj :cljs)))
          (prev-active-buffer (replique/get prev-active-repl :buffer))
          (prev-active-windows (get-buffer-window-list prev-active-buffer)))
     (setq replique/repls (delete repl replique/repls))
     (setq replique/repls (push repl replique/repls))
-    (mapcar (lambda (window)
-              (set-window-buffer window buffer))
-            prev-active-windows)))
+    (when (not (seq-contains (replique/visible-buffers) buffer))
+      (mapcar (lambda (window)
+                (set-window-buffer window buffer))
+              prev-active-windows))))
 
 (defun replique/switch-active-process (proc-name)
   "Switch the currently active JVM process"
@@ -861,20 +861,22 @@
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
          (prev-repls (replique/repls-by :directory prev-active-directory))
          (prev-repl-types (mapcar (lambda (repl) (replique/get repl :repl-type)) prev-repls)))
-    ;; All windows displaying the previously active repls are set to display the newly active
-    ;; repls (repl with the same repl-type and same position in the replique/repls list)
-    (dolist (repl-type prev-repl-types)
-      (let* ((prev-active-repl (replique/repl-by :directory prev-active-directory
-                                                 :repl-type repl-type))
-             (prev-buffer (replique/get prev-active-repl :buffer))
-             (new-active-repl (replique/repl-by
-                               :directory proc-name
-                               :repl-type repl-type))
-             (new-buffer (replique/get new-active-repl :buffer))
-             (windows (get-buffer-window-list prev-buffer)))
-        (when new-buffer
-          (dolist (window windows)
-            (set-window-buffer window new-buffer)))))
+    ;; Buffer replacement is disabled for now, until we find a better user experience
+    (comment
+     ;; All windows displaying the previously active repls are set to display the newly active
+     ;; repls (repl with the same repl-type and same position in the replique/repls list)
+     (dolist (repl-type prev-repl-types)
+       (let* ((prev-active-repl (replique/repl-by :directory prev-active-directory
+                                                  :repl-type repl-type))
+              (prev-buffer (replique/get prev-active-repl :buffer))
+              (new-active-repl (replique/repl-by
+                                :directory proc-name
+                                :repl-type repl-type))
+              (new-buffer (replique/get new-active-repl :buffer))
+              (windows (get-buffer-window-list prev-buffer)))
+         (when new-buffer
+           (dolist (window windows)
+             (set-window-buffer window new-buffer))))))
     (dolist (repl (seq-reverse new-active-repls))
       (setq replique/repls (delete repl replique/repls))
       (setq replique/repls (push repl replique/repls)))))
