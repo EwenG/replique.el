@@ -358,7 +358,7 @@
       (let ((maybe-value (oref with-meta :value)))
         (while (and (cl-typep maybe-value 'replique-context/object-dispatch-macro)
                     (eq :meta (oref maybe-value :dispatch-macro)))
-          (setq maybe-value (oref with-meta :value)))
+          (setq maybe-value (oref maybe-value :value)))
         maybe-value)
     with-meta))
 
