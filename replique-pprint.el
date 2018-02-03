@@ -21,8 +21,8 @@
 
 ;; Code:
 
-(defvar replique-pprint/max-width 72)
-(defvar replique-pprint/miser-width 40)
+(defvar replique-pprint/max-width 98)
+(defvar replique-pprint/miser-width 54)
 
 (defvar replique-pprint/state nil)
 
@@ -438,10 +438,12 @@
    (let ((i 0)
          (l (hash-table-count m)))
      (maphash (lambda (k v)
-                (replique-pprint/print-dispatch k)
-                (replique-pprint/write " ")
-                (replique-pprint/nl :linear)
-                (replique-pprint/print-dispatch v)
+                (replique-pprint/print-logical-block
+                 ()
+                 (replique-pprint/print-dispatch k)
+                 (replique-pprint/write " ")
+                 (replique-pprint/nl :linear)
+                 (replique-pprint/print-dispatch v))
                 (setq i (+ 1 i))
                 (when (< i l)
                   (replique-pprint/write " ")
