@@ -36,6 +36,7 @@
 (require 'replique-remove-var)
 (require 'replique-transit)
 (require 'replique-context)
+(require 'replique-pprint)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -244,7 +245,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "completion failed with prefix %s" prefix)
             nil)
         (let* ((candidates (replique/get resp :candidates)))
@@ -350,7 +351,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "eldoc failed")
             nil)
         (with-demoted-errors "eldoc error: %s"
@@ -502,7 +503,7 @@
                                 :repl-env :replique/clj))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-edn/pr-str err))
+        (message "%s" (replique-pprint/pprint-str err))
         (message "source-meta failed"))
       (comint-simple-send proc string))))
 
@@ -888,7 +889,7 @@
                                   :repl-env repl-env))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-edn/pr-str err))
+        (message "%s" (replique-pprint/pprint-str err))
         (message "list-namespaces failed")))
     resp))
 
@@ -944,7 +945,7 @@
                 (let ((err (replique/get resp :error)))
                   (if err
                       (progn
-                        (message "%s" (replique-edn/pr-str err))
+                        (message "%s" (replique-pprint/pprint-str err))
                         (message "output-main-js-file failed"))
                     (message "Main javascript file written to: %s" output-to)))))))))))
 
@@ -988,7 +989,7 @@
                                    :repl-env repl-env))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-edn/pr-str err))
+        (message "%s" (replique-pprint/pprint-str err))
         (message "list-css failed")))
     resp))
 
@@ -1034,7 +1035,7 @@
             (let ((err (replique/get resp :error)))
               (if err
                   (progn
-                    (message "%s" (replique-edn/pr-str err))
+                    (message "%s" (replique-pprint/pprint-str err))
                     (message "load-css %s: failed" file-path))
                 (message "load-css %s: done" file-path)))))))))
 
@@ -1050,7 +1051,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "load-js %s: failed" file-path))
         (message "load-js %s: done" file-path)))))
 
@@ -1202,7 +1203,7 @@
                                        :form form-s))))
         (let ((err (replique/get resp :error)))
           (if err
-              (replique-edn/pr-str err)
+              (replique-pprint/pprint-str err)
             (replique/get resp :result)))))))
 (comment
  (replique/eval-form :clj "(+ 1 4)")
@@ -1219,7 +1220,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "jump-to-definition failed with symbol: %s" symbol))
         (let* ((meta (replique/get resp :meta))
                (file (replique/get-in resp [:meta :file]))
@@ -1946,10 +1947,14 @@ minibuffer"
     (cond
      (;; Global error (uncaught exception)
       (equal :error (replique/get msg :type))
-      (message "%s - Thread: %s - Exception: %s"
-               (propertize "Uncaught exception" 'face '(:foreground "red"))
-               (replique/get msg :thread)
-               (replique-edn/pr-str (ansi-color-filter-apply (replique/get msg :value)))))
+      (message
+       (with-temp-buffer
+         (insert (propertize "Uncaught exception" 'face '(:foreground "red")))
+         (insert " - Thread: ")
+         (insert (replique/get msg :thread))
+         (insert "\n")
+         (replique-pprint/pprint (replique/get msg :value))
+         (buffer-substring (point-min) (point-max)))))
      ((equal :repl-meta (replique/get msg :type))
       (let* ((repl (replique/repl-by
                     :session (replique/get (replique/get msg :session) :client)

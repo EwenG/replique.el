@@ -37,7 +37,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "replique/classpath failed"))
         (message "Loading project.clj ... done")))))
 

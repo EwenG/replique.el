@@ -22,6 +22,7 @@
 ;; Code:
 
 (require 'replique-hashmap)
+(require 'replique-pprint)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -74,7 +75,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-edn/pr-str err))
+            (message "%s" (replique-pprint/pprint-str err))
             (message "list-vars failed with ns: %s" var-ns))
         (let* ((vars (replique/get resp :vars))
                (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))

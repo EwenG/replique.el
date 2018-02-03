@@ -1201,13 +1201,14 @@
         (let ((err (replique/get resp :error)))
           (if err
               (progn
-                (message "%s" (replique-edn/pr-str err))
+                (message "%s" (replique-pprint/pprint-str err))
                 (message "context failed"))
             (save-excursion
               (let* ((target-point (point))
                      (ppss (replique-context/walk-init target-point)))
                 (when target-point
-                  (let ((replique-context/platform-tag (symbol-name (replique/get resp :repl-type)))
+                  (let ((replique-context/platform-tag
+                         (symbol-name (replique/get resp :repl-type)))
                         (replique-context/splice-ends '()))
                     (replique-context/walk target-point resp))
                   (setq replique-context/context
