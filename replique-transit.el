@@ -152,6 +152,7 @@
 (provide 'replique-transit)
 
 (comment
+ (replique-transit/decode (read "\"e\\n\""))
  (replique-transit/decode '(1 ["~#circle" 2] 3))
  (replique-transit/decode ["~#circle" 2])
  (replique-transit/decode (replique/hash-map ["~#circle" [3 4]] 1 :f "~hee"))
@@ -161,19 +162,29 @@
  (replique-transit/decode (read "[\"~#replique.elisp_printer.Rr\" #s(hash-table test equal size 0 data ())]"))
  (replique-transit/decode (read "\"~f22.4\""))
  (replique-transit/decode (read "\"~n22\""))
+ (replique-transit/decode (read "\"~n2222222222222222222222222222222222222222222222222222222\""))
  (replique-transit/decode (read "\"~ce\""))
+ (replique-transit/decode (read "\"~cspace\""))
  (replique-transit/decode (read "\"~pe\""))
+ (replique-transit/decode (read "\"~pe\\\\n\""))
  (replique-transit/decode (read "\"~zInf\""))
  (replique-transit/decode (read "\"~z-Inf\""))
  (replique-transit/decode (read "\"~z-NaN\""))
+ (replique-transit/decode (read "\"~vclojure.core/prn\""))
+ (replique-transit/decode (read "\"eee\\\"ffff\""))
  (replique-transit/decode (read "\"~bt\""))
  (replique-transit/decode (read "\"~bf\""))
  (replique-transit/decode (read "[\"~#object\" [clojure.lang.Atom 0x6506067d #s(hash-table test equal size 2 data (:status :ready :val #s(hash-table test equal size 0 data ())))]]"))
  (replique-transit/decode (read "[\"~#taggedliteral\" [e 3]]"))
  (replique-transit/decode (read "\"~ucb8acc46-b7a5-4806-9020-c737f402bc2f\""))
+ (replique-transit/decode (read "\"~i2018-02-01T22:48:40.916-00:00\""))
+ (replique-transit/decode (read "\"~i2018-02-02T17:06:25.859000000-00:00\""))
+ 
 
  (replique-transit/decode (read "[\"~#error\" #s(hash-table test equal data (:cause nil :via [#s(hash-table test equal data (:type java.lang.NullPointerException :message nil :at [replique.elisp_printer$eval4060 invokeStatic \"form-init5304808313595444657.clj\" 406]))] :trace [[replique.elisp_printer$eval4060 invokeStatic \"form-init5304808313595444657.clj\" 406] [replique.elisp_printer$eval4060 invoke \"form-init5304808313595444657.clj\" 405] [clojure.lang.Compiler eval \"Compiler.java\" 7062] [clojure.lang.Compiler eval \"Compiler.java\" 7025] [clojure.core$eval invokeStatic \"core.clj\" 3211] [clojure.core$eval invoke \"core.clj\" 3207] [clojure.main$repl$read_eval_print__8574$fn__8577 invoke \"main.clj\" 243] [clojure.main$repl$read_eval_print__8574 invoke \"main.clj\" 243] [clojure.main$repl$fn__8583 invoke \"main.clj\" 261] [clojure.main$repl invokeStatic \"main.clj\" 261] [clojure.main$repl doInvoke \"main.clj\" 177] [clojure.lang.RestFn applyTo \"RestFn.java\" 137] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$apply invoke \"core.clj\" 652] [replique.repl$repl invokeStatic \"repl.clj\" 150] [replique.repl$repl invoke \"repl.clj\" 148] [replique.repl$eval3362 invokeStatic \"form-init5304808313595444657.clj\" 2] [replique.repl$eval3362 invoke \"form-init5304808313595444657.clj\" 2] [clojure.lang.Compiler eval \"Compiler.java\" 7062] [clojure.lang.Compiler eval \"Compiler.java\" 7025] [clojure.core$eval invokeStatic \"core.clj\" 3211] [clojure.core$eval invoke \"core.clj\" 3207] [clojure.main$repl$read_eval_print__8574$fn__8577 invoke \"main.clj\" 243] [clojure.main$repl$read_eval_print__8574 invoke \"main.clj\" 243] [clojure.main$repl$fn__8583 invoke \"main.clj\" 261] [clojure.main$repl invokeStatic \"main.clj\" 261] [clojure.main$repl doInvoke \"main.clj\" 177] [clojure.lang.RestFn invoke \"RestFn.java\" 512] [replique.repl$tooling_repl invokeStatic \"repl.clj\" 21] [replique.repl$tooling_repl invoke \"repl.clj\" 20] [clojure.lang.AFn applyToHelper \"AFn.java\" 152] [clojure.lang.AFn applyTo \"AFn.java\" 144] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$with_bindings_STAR_ invokeStatic \"core.clj\" 1970] [clojure.core$with_bindings_STAR_ doInvoke \"core.clj\" 1970] [clojure.lang.RestFn invoke \"RestFn.java\" 425] [clojure.lang.AFn applyToHelper \"AFn.java\" 156] [clojure.lang.RestFn applyTo \"RestFn.java\" 132] [clojure.core$apply invokeStatic \"core.clj\" 661] [clojure.core$bound_fn_STAR_$fn__5473 doInvoke \"core.clj\" 2000] [clojure.lang.RestFn invoke \"RestFn.java\" 397] [clojure.lang.AFn applyToHelper \"AFn.java\" 152] [clojure.lang.RestFn applyTo \"RestFn.java\" 132] [clojure.lang.Var applyTo \"Var.java\" 702] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$apply invoke \"core.clj\" 652] [replique.server$accept_connection invokeStatic \"server.clj\" 57] [replique.server$accept_connection invoke \"server.clj\" 37] [replique.server$start_server$fn__419$fn__420$fn__423 invoke \"server.clj\" 154] [clojure.lang.AFn run \"AFn.java\" 22] [java.lang.Thread run \"Thread.java\" 748]]))]"))
- 
+
+ (replique-transit/decode (read "[\"~#js\" #s(hash-table test equal size 1 data (:e \"f\"))]"))
+
  )
 
 ;; check tooling-msg for omniscient
