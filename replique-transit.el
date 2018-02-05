@@ -100,8 +100,8 @@
            m)
   m)
 
-(defun replique-transit/is-tag (t)
-  (cl-typep t 'replique-transit/tag))
+(defun replique-transit/is-tag (tag)
+  (cl-typep tag 'replique-transit/tag))
 
 (defun replique-transit/decode-array* (a a-length)
   (let ((i 0))
