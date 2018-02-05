@@ -2,6 +2,9 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.10
 
+- Pretty printing for exceptions printed in the *Messages* buffer
+- Buffers are no longer switched when changing the currently active REPL and the new active REPL is already displayed
+- Buffers are no longer switched when changing the currently active process
 - Fix the computation of the current namespace to take into account calls to "in-ns"
 - jump-to-definition for locals
 - The jump-to-definition command now prompts for the file to jump to when used with a namespace which definition is split in multiple files 
