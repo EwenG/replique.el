@@ -1,5 +1,7 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.11
+
 # Version 0.0.10
 
 - Pretty printing for exceptions printed in the *Messages* buffer
