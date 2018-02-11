@@ -37,6 +37,8 @@
 
 (defclass replique-context/object-quoted ()
   ((quoted :initarg :quoted)
+   (backtick? :initarg :backtick?)
+   (splice? :initarg :splice?)
    (value :initarg :value)))
 
 (defclass replique-context/object-delimited ()
@@ -158,17 +160,18 @@
              (when (and forward-p (eq ?\" (char-before forward-p)))
                (goto-char forward-p)
                (replique-context/object-string
-                :string (buffer-substring-no-properties (+ p 1) (- forward-p 1))
+                :string (buffer-substring (+ p 1) (- forward-p 1))
                 :start p
                 :end forward-p))))
           ((eq ?# char1+)
            (cond ((eq ?: char2+)
                   (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
-                  (replique-context/forward-comment)
-                  (replique-context/object-dispatch-macro
-                   :dispatch-macro :namespaced-map
-                   :data nil
-                   :value (replique-context/read-one)))
+                  (let ((namespace (buffer-substring p1+ (point))))
+                    (replique-context/forward-comment)
+                    (replique-context/object-dispatch-macro
+                     :dispatch-macro :namespaced-map
+                     :data namespace
+                     :value (replique-context/read-one))))
                  ((and (eq ?? char2+) (eq ?@ char3+))
                   (goto-char p3+)
                   (replique-context/forward-comment)
@@ -309,15 +312,21 @@
                  (goto-char p2+)
                  (replique-context/object-quoted
                   :quoted :unquote
+                  :backtick? nil
+                  :splice? t
                   :value (replique-context/read-one)))
              (goto-char p1+)
              (replique-context/object-quoted
               :quoted :unquote
+              :backtick? nil
+              :splice? nil
               :value (replique-context/read-one))))
           ((or (eq ?' char1+) (eq ?` char1+))
            (goto-char p1+)
            (replique-context/object-quoted
             :quoted :quote
+            :backtick? (eq ?` char1+)
+            :splice? nil
             :value (replique-context/read-one)))
           (t
            (let ((skip-end-at-point (replique-context/find-splice-end (point))))
@@ -329,7 +338,7 @@
                (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
                (when (> (point) p)
                  (replique-context/object-symbol
-                  :symbol (buffer-substring-no-properties p (point))
+                  :symbol (buffer-substring p (point))
                   :start p
                   :end (point)))))))))
 
@@ -515,8 +524,8 @@
            (let ((sym (oref object-meta-value :symbol))
                  (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
                                   (eq :meta (oref object :dispatch-macro)))
-                         (buffer-substring-no-properties (oref object :data-start)
-                                                         (oref object :data-end)))))
+                         (buffer-substring (oref object :data-start)
+                                           (oref object :data-end)))))
              (when (and sym (not (string-prefix-p ":" sym)))
                (funcall binding-found-fn target-point sym
                         (oref object-meta-value :start)
@@ -571,8 +580,8 @@
          (sym (oref object-extracted :symbol))
          (meta (when (and (cl-typep object 'replique-context/object-dispatch-macro)
                           (eq :meta (oref object :dispatch-macro)))
-                 (buffer-substring-no-properties (oref object :data-start)
-                                                 (oref object :data-end)))))
+                 (buffer-substring (oref object :data-start)
+                                   (oref object :data-end)))))
     (when (and sym (not (string-prefix-p ":" sym)))
       `[,sym [,(oref object-extracted :start) ,(oref object-extracted :end) ,meta]])))
 
@@ -696,8 +705,8 @@
                               (meta (when (and (cl-typep
                                                 object 'replique-context/object-dispatch-macro)
                                                (eq :meta (oref object :dispatch-macro)))
-                                      (buffer-substring-no-properties (oref object :data-start)
-                                                                      (oref object :data-end)))))
+                                      (buffer-substring (oref object :data-start)
+                                                        (oref object :data-end)))))
                           (when (and sym (not (string-prefix-p ":" sym)))
                             (if (<= (oref object-meta-value :start)
                                     target-point
@@ -1087,17 +1096,17 @@
            (param-sym (cond ((cl-typep param-meta-value 'replique-context/object-symbol)
                              (oref param-meta-value :symbol))
                             ((cl-typep param-meta-value 'replique-context/object-string)
-                             (buffer-substring-no-properties
+                             (buffer-substring
                               (oref param-meta-value :start) (oref param-meta-value :end)))
                             ((cl-typep param-meta-value 'replique-context/object-delimited)
-                             (buffer-substring-no-properties
+                             (buffer-substring
                               (oref param-meta-value :start) (oref param-meta-value :end))))))
       (when param-sym
         (let ((param-meta (when (and
                                  (cl-typep param-object 'replique-context/object-dispatch-macro)
                                  (eq :meta (oref param-object :dispatch-macro)))
-                            (buffer-substring-no-properties (oref param-object :data-start)
-                                                            (oref param-object :data-end)))))
+                            (buffer-substring (oref param-object :data-start)
+                                              (oref param-object :data-end)))))
           (setq replique-context/fn-param param-sym)
           (setq replique-context/fn-param-meta param-meta))))
     (let ((quit nil))
