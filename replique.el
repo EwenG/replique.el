@@ -1506,36 +1506,41 @@ The following commands are available:
          (correlation-id replique/correlation-id)
          (msg (replique/assoc msg
                               :process-id process-id
-                              :correlation-id correlation-id)))
-    (puthash correlation-id replique/nothing replique/synchronous-messages)
-    (setq replique/correlation-id  (if (= most-positive-fixnum correlation-id)
-                                       0
-                                     (+ 1 correlation-id)))
-    (process-send-string
-     tooling-network-proc
-     (format "(replique.tooling-msg/tooling-msg-handle %s)\n" (replique-edn/pr-str msg)))
-    ;; Synchronously wait for a response from the tooling REPL.
-    ;; accept-process-output maybe be wake up by a quit signal or some output from the network
-    ;; process. The network process output may be split into multiple incomplete messages chunks.
-    ;; Also, multiple call to replique/send-tooling-msg may happen simultaneously because of timers
-    ;; and the output received from the network process may not wake up all blocking calls to
-    ;; accept-process-output
-    (let ((inhibit-quit t)
-          (wait-output? t)
-          (result nil))
-      (while wait-output?
-        (with-local-quit (accept-process-output tooling-network-proc nil nil t))
-        (let ((sync-msg (replique/get replique/synchronous-messages correlation-id)))
-          (cond ((not (eq replique/nothing sync-msg))
-                 (remhash correlation-id replique/synchronous-messages)
-                 ;; There may be other blocking calls to accept-process-output. Try to wake up them
-                 ;; by sending a block message
-                 (process-send-string tooling-network-proc "nil\n")
-                 (setq quit-flag nil)
-                 (setq wait-output? nil)
-                 (setq result sync-msg))
-                (quit-flag (remhash correlation-id replique/synchronous-messages)))))
-      (replique-transit/decode result))))
+                              :correlation-id correlation-id))
+         (serialized-msg (replique-edn/pr-str msg)))
+    ;; replique-context may generate large message (fn-param, fn-param-meta ...)
+    ;; We limit the size of a message because of the jvm method size limit
+    (when (< (length serialized-msg) 60000)
+      (puthash correlation-id replique/nothing replique/synchronous-messages)
+      (setq replique/correlation-id  (if (= most-positive-fixnum correlation-id)
+                                         0
+                                       (+ 1 correlation-id)))
+      (process-send-string
+       tooling-network-proc
+       (format "(replique.tooling-msg/tooling-msg-handle %s)\n" serialized-msg))
+      ;; Synchronously wait for a response from the tooling REPL.
+      ;; accept-process-output maybe be wake up by a quit signal or some output from the network
+      ;; process. The network process output may be split into multiple incomplete
+      ;; messages chunks.
+      ;; Also, multiple call to replique/send-tooling-msg may happen simultaneously because
+      ;; of timers and the output received from the network process may not wake up all
+      ;; blocking calls to accept-process-output
+      (let ((inhibit-quit t)
+            (wait-output? t)
+            (result nil))
+        (while wait-output?
+          (with-local-quit (accept-process-output tooling-network-proc nil nil t))
+          (let ((sync-msg (replique/get replique/synchronous-messages correlation-id)))
+            (cond ((not (eq replique/nothing sync-msg))
+                   (remhash correlation-id replique/synchronous-messages)
+                   ;; There may be other blocking calls to accept-process-output.
+                   ;; Try to wake up them by sending a block message
+                   (process-send-string tooling-network-proc "nil\n")
+                   (setq quit-flag nil)
+                   (setq wait-output? nil)
+                   (setq result sync-msg))
+                  (quit-flag (remhash correlation-id replique/synchronous-messages)))))
+        (replique-transit/decode result)))))
 
 (defun replique/close-tooling-repl (tooling-repl)
   (let ((tooling-proc (replique/get tooling-repl :proc)))
