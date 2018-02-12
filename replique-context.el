@@ -1158,13 +1158,48 @@
           (goto-char target-point))))
     (replique-context/handle-fn-context target-point inermost-fn-object)))
 
+(defun replique-context/comint-previous-prompt-position ()
+  (let ((p (point)))
+    (comint-previous-prompt 1)
+    (let ((comint-previous-prompt-position (point)))
+      (goto-char p)
+      comint-previous-prompt-position)))
+
+(defun replique-context/syntax-ppss (pos)
+  (if (equal major-mode 'replique/mode)
+      (parse-partial-sexp (replique-context/comint-previous-prompt-position) pos)
+    (syntax-ppss pos)))
+
+;; Skip backward the dispatch macro characters, if any
+(defun replique-context/maybe-skip-dispatch-macro-backward ()
+  (let ((p (point))
+        (spaces-skipped (skip-chars-backward "[,\s]")))
+    (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+    (let ((p-before-object (point))
+          (object (replique-context/read-one)))
+      (if (cl-typep object 'replique-context/object-dispatch-macro)
+          (let ((dispatch-macro (oref object :dispatch-macro)))
+            (if (or (and (equal 0 spaces-skipped)
+                         (or (equal dispatch-macro :fn)
+                             (equal dispatch-macro :set)
+                             (equal dispatch-macro :regexp)
+                             (equal dispatch-macro :eval)))
+                    (or (equal dispatch-macro :var)
+                        (equal dispatch-macro :discard)
+                        (equal dispatch-macro :meta)
+                        (equal dispatch-macro :symbolic-value)
+                        (equal dispatch-macro :tagged-literal)))
+                (goto-char p-before-object)
+              (goto-char p)))
+        (goto-char p)))))
+
 (defun replique-context/walk-init (target-point)
-  (let* ((ppss (syntax-ppss target-point))
+  (let* ((ppss (replique-context/syntax-ppss target-point))
          (top-level (syntax-ppss-toplevel-pos ppss)))
     (replique-context/reset-state)
     (when top-level
       (goto-char top-level)
-      (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+      (replique-context/maybe-skip-dispatch-macro-backward)
       (replique-context/forward-comment)
       ppss)))
 
@@ -1176,7 +1211,7 @@
   (or replique-context/namespace
       (save-excursion
         (let* ((target-point (point))
-               (ppss (syntax-ppss target-point))
+               (ppss (replique-context/syntax-ppss target-point))
                (top-level (syntax-ppss-toplevel-pos ppss)))
           (if top-level
               (progn
@@ -1188,7 +1223,7 @@
 
 (defun replique-context/clojure-find-ns-no-cache ()
   (let* ((target-point (point))
-         (ppss (syntax-ppss target-point))
+         (ppss (replique-context/syntax-ppss target-point))
          (top-level (syntax-ppss-toplevel-pos ppss)))
     (if top-level
         (progn
