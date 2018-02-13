@@ -23,6 +23,8 @@
 
 (require 'replique-hashmap)
 
+(defvar replique-transit/decode-for-printing nil)
+
 (defclass replique-transit/tagged-value ()
   ((tag :initarg :tag)
    (value :initarg :value)))
@@ -30,12 +32,14 @@
 (defclass replique-transit/tag ()
   ((tag :initarg :tag)))
 
-;; Decoder fns
+(defclass replique-transit/empty-list ()
+  ())
 
+;; Decoder fns
 (defun replique-transit/decode-boolean (tag rep)
-  (if (equal rep "t")
-      t
-    nil))
+  (cond ((equal rep "t") t)
+        (replique-transit/decode-for-printing (make-symbol "false"))
+        (t nil)))
 
 (defun replique-transit/decode-special-number (tag rep)
   (cond ((equal rep "Inf")
@@ -53,11 +57,15 @@
 (defun replique-transit/decode-with-meta (tag rep)
   (replique/with-meta :meta (aref rep 0) :value (aref rep 1)))
 
+(defun replique-transit/decode-more (tag type)
+  (replique/more :type type))
+
 (defvar replique-transit/default-read-handlers
   (replique/hash-map ?\? 'replique-transit/decode-boolean
                      ?z 'replique-transit/decode-special-number
                      ;; do not decode big decimal since we may loose precision
                      ?n 'replique-transit/decode-bigint
+                     ?+ 'replique-transit/decode-more
                      (replique-transit/tag :tag "with-meta") 'replique-transit/decode-with-meta))
 
 ;; Tagged values
@@ -85,7 +93,9 @@
           (setcar r decoded))
         (setq r (cdr r))
         (setq e (car r))))
-    l))
+    (if (and (eq '() l) replique-transit/decode-for-printing)
+        (replique-transit/empty-list)
+      l)))
 
 (defun replique-transit/decode-map (m)
   (maphash (lambda (k v)
@@ -149,6 +159,12 @@
    ((arrayp node) (replique-transit/decode-array node))
    (t node)))
 
+;; nil, the empty list and false are decoded into separate object types in order for the pretty
+;; printer to be able to distinguish between them
+(defun replique-transit/decode-for-printing (node)
+  (let ((replique-transit/decode-for-printing t))
+    (replique-transit/decode node)))
+
 (provide 'replique-transit)
 
 (comment
@@ -184,7 +200,7 @@
  (replique-transit/decode (read "[\"~#error\" #s(hash-table test equal data (:cause nil :via [#s(hash-table test equal data (:type java.lang.NullPointerException :message nil :at [replique.elisp_printer$eval4060 invokeStatic \"form-init5304808313595444657.clj\" 406]))] :trace [[replique.elisp_printer$eval4060 invokeStatic \"form-init5304808313595444657.clj\" 406] [replique.elisp_printer$eval4060 invoke \"form-init5304808313595444657.clj\" 405] [clojure.lang.Compiler eval \"Compiler.java\" 7062] [clojure.lang.Compiler eval \"Compiler.java\" 7025] [clojure.core$eval invokeStatic \"core.clj\" 3211] [clojure.core$eval invoke \"core.clj\" 3207] [clojure.main$repl$read_eval_print__8574$fn__8577 invoke \"main.clj\" 243] [clojure.main$repl$read_eval_print__8574 invoke \"main.clj\" 243] [clojure.main$repl$fn__8583 invoke \"main.clj\" 261] [clojure.main$repl invokeStatic \"main.clj\" 261] [clojure.main$repl doInvoke \"main.clj\" 177] [clojure.lang.RestFn applyTo \"RestFn.java\" 137] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$apply invoke \"core.clj\" 652] [replique.repl$repl invokeStatic \"repl.clj\" 150] [replique.repl$repl invoke \"repl.clj\" 148] [replique.repl$eval3362 invokeStatic \"form-init5304808313595444657.clj\" 2] [replique.repl$eval3362 invoke \"form-init5304808313595444657.clj\" 2] [clojure.lang.Compiler eval \"Compiler.java\" 7062] [clojure.lang.Compiler eval \"Compiler.java\" 7025] [clojure.core$eval invokeStatic \"core.clj\" 3211] [clojure.core$eval invoke \"core.clj\" 3207] [clojure.main$repl$read_eval_print__8574$fn__8577 invoke \"main.clj\" 243] [clojure.main$repl$read_eval_print__8574 invoke \"main.clj\" 243] [clojure.main$repl$fn__8583 invoke \"main.clj\" 261] [clojure.main$repl invokeStatic \"main.clj\" 261] [clojure.main$repl doInvoke \"main.clj\" 177] [clojure.lang.RestFn invoke \"RestFn.java\" 512] [replique.repl$tooling_repl invokeStatic \"repl.clj\" 21] [replique.repl$tooling_repl invoke \"repl.clj\" 20] [clojure.lang.AFn applyToHelper \"AFn.java\" 152] [clojure.lang.AFn applyTo \"AFn.java\" 144] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$with_bindings_STAR_ invokeStatic \"core.clj\" 1970] [clojure.core$with_bindings_STAR_ doInvoke \"core.clj\" 1970] [clojure.lang.RestFn invoke \"RestFn.java\" 425] [clojure.lang.AFn applyToHelper \"AFn.java\" 156] [clojure.lang.RestFn applyTo \"RestFn.java\" 132] [clojure.core$apply invokeStatic \"core.clj\" 661] [clojure.core$bound_fn_STAR_$fn__5473 doInvoke \"core.clj\" 2000] [clojure.lang.RestFn invoke \"RestFn.java\" 397] [clojure.lang.AFn applyToHelper \"AFn.java\" 152] [clojure.lang.RestFn applyTo \"RestFn.java\" 132] [clojure.lang.Var applyTo \"Var.java\" 702] [clojure.core$apply invokeStatic \"core.clj\" 657] [clojure.core$apply invoke \"core.clj\" 652] [replique.server$accept_connection invokeStatic \"server.clj\" 57] [replique.server$accept_connection invoke \"server.clj\" 37] [replique.server$start_server$fn__419$fn__420$fn__423 invoke \"server.clj\" 154] [clojure.lang.AFn run \"AFn.java\" 22] [java.lang.Thread run \"Thread.java\" 748]]))]"))
 
  (replique-transit/decode (read "[\"~#js\" #s(hash-table test equal size 1 data (:e \"f\"))]"))
-
+ (replique-transit/decode (read "#s(hash-table test equal size 1 data (:e \"~+level\"))"))
  )
 
 ;; check tooling-msg for omniscient
