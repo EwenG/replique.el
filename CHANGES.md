@@ -2,6 +2,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- Add the replique/pprint interactive command to pretty print the expression at point
+
 # Version 0.0.10
 
 - Pretty printing for exceptions printed in the *Messages* buffer
