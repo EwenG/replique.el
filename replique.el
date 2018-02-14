@@ -485,7 +485,7 @@
    ((equal command 'match) (replique/auto-complete-match-index arg))))
 
 (defun replique/comint-is-closed-sexpr (start limit)
-  (let* ((parser-state (parse-partial-sexp start limit))
+  (let* ((parser-state (parse-partial-sexp start limit -1))
          (depth (car parser-state))
          (in-string? (nth 3 parser-state)))
     (and (equal depth 0) (null in-string?))))
@@ -669,15 +669,6 @@
      (point))
    (point)
    p))
-
-;; if the cursor is in a string, thing-at-point 'sexp does not return the string but the symbol
-(defun replique/thing-at-point ()
-  (let ((s-pps (syntax-ppss)))
-    (if (not (null (nth 3 s-pps)))
-        (save-excursion
-          (goto-char (nth 8 s-pps))
-          (thing-at-point 'sexp))
-      (thing-at-point 'sexp))))
 
 (defun replique/bounds-of-thing-at-point ()
   (let ((s-pps (syntax-ppss)))
