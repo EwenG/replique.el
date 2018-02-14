@@ -21,14 +21,17 @@
 
 ;; Code:
 
-(defclass replique/with-meta (replique-edn/printable)
+(require 'replique-print)
+
+(defclass replique/with-meta (replique-print/printable)
   ((value :initarg :value)
    (meta :initarg :meta)))
 
-(defmethod replique-edn/print-method ((o replique/with-meta))
-  (format "^%s %s"
-          (replique-edn/pr-str (oref o meta))
-          (replique-edn/pr-str (oref o value))))
+(defclass replique/more ()
+  ((type :initarg :type)))
+
+(defmethod replique-print/print-method ((o replique/with-meta))
+  (replique-print/print-with-meta))
 
 (defun replique/hash-map (&rest data)
   (let ((l (length data)))

@@ -21,6 +21,8 @@
 
 ;; Code:
 
+(require 'replique-pprint)
+
 (defun replique/classpath ()
   (interactive)
   (message "Loading project.clj ...")

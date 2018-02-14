@@ -27,7 +27,6 @@
 (require 'subr-x)
 (require 'comint)
 (require 'clojure-mode)
-(require 'replique-edn)
 (require 'replique-hashmap)
 (require 'replique-resources)
 (require 'map)
@@ -36,6 +35,7 @@
 (require 'replique-remove-var)
 (require 'replique-transit)
 (require 'replique-context)
+(require 'replique-print)
 (require 'replique-pprint)
 
 (defmacro comment (&rest body)
@@ -84,7 +84,7 @@
                                 (replique/assoc repl :recent-output '**)
                               repl)))
                  repl)))
-     (mapcar 'replique-edn/pr-str))
+     (mapcar 'replique-pprint/pprint-str))
    "\n"))
 
 (defun replique/plist->alist (plist)
@@ -315,7 +315,7 @@
                  arg)
                 ((or force-highlight (equal index args-index))
                  (setq args-index (1+ args-index))
-                 (replique-edn/with-face :object arg :face 'eldoc-highlight-function-argument))
+                 (replique-print/with-face :object arg :face 'eldoc-highlight-function-argument))
                 (t
                  (setq args-index (1+ args-index))
                  arg)))
@@ -325,7 +325,7 @@
 (defun replique/repliquedoc-format-arglists (index arglists)
   (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
     (mapcar arglists)
-    replique-edn/print-str))
+    replique-print/print-str))
 
 (comment
  (replique/repliquedoc-format-arglists 0 '([">main-input" (replique/hash-map :keys ["uid" event data reply-fn] :as msg)]))
@@ -664,7 +664,9 @@
   (interactive "P")
   (replique/eval-region
    (save-excursion
-     (clojure-backward-logical-sexp 1) (point))
+     (backward-sexp 1)
+     (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+     (point))
    (point)
    p))
 
@@ -1419,6 +1421,7 @@ unwrapping a top level comment block "
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\C-c\C-o" 'replique/omniscient)
+    (define-key map "\C-c\C-c" 'replique/pprint)
     map))
 
 (defun replique/commons ())
@@ -1448,6 +1451,7 @@ unwrapping a top level comment block "
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'xref-pop-marker-stack)
     (define-key map "\C-c\C-o" 'replique/omniscient)
+    (define-key map "\C-c\C-c" 'replique/pprint)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -1464,6 +1468,8 @@ unwrapping a top level comment block "
         ["Jump to definition" replique/jump-to-definition t]
         "--"
         ["Omniscient action" replique/omniscient t]
+        "--"
+        ["Pretty print expression at point" replique/pprint t]
         ))
     map))
 
@@ -1507,7 +1513,7 @@ The following commands are available:
          (msg (replique/assoc msg
                               :process-id process-id
                               :correlation-id correlation-id))
-         (serialized-msg (replique-edn/pr-str msg)))
+         (serialized-msg (replique-print/print-str msg)))
     ;; replique-context may generate large message (fn-param, fn-param-meta ...)
     ;; We limit the size of a message because of the jvm method size limit
     (when (< (length serialized-msg) 60000)
@@ -1946,22 +1952,25 @@ minibuffer"
       (replique/update-repl repl (replique/assoc repl
                                                  :repl-type new-repl-type
                                                  :repl-env new-repl-env)))))
-
 (defun replique/dispatch-async-msg (msg)
-  (let ((msg (replique-transit/decode msg)))
+  (let ((msg-type (replique/get msg :type)))
     (cond
      (;; Global error (uncaught exception)
-      (equal :error (replique/get msg :type))
-      (message
-       (with-temp-buffer
-         (insert (propertize "Uncaught exception" 'face '(:foreground "red")))
-         (insert " - Thread: ")
-         (insert (replique/get msg :thread))
-         (insert "\n")
-         (replique-pprint/pprint (replique/get msg :value))
-         (buffer-substring (point-min) (point-max)))))
-     ((equal :repl-meta (replique/get msg :type))
-      (let* ((repl (replique/repl-by
+      (equal :error msg-type)
+      (let ((msg (replique-transit/decode-for-printing msg)))
+        (message
+         (with-temp-buffer
+           (insert (propertize "Uncaught exception" 'face '(:foreground "red")))
+           (insert " - Thread: ")
+           (insert (replique/get msg :thread))
+           (insert "\n")
+           (replique-print/print (replique/get msg :value))
+           (let ((replique-context/platform-tag :clj))
+             (replique-pprint/pprint*))
+           (buffer-substring (point-min) (point-max))))))
+     ((equal :repl-meta msg-type)
+      (let* ((msg (replique-transit/decode msg))
+             (repl (replique/repl-by
                     :session (replique/get (replique/get msg :session) :client)
                     :directory (replique/get msg :process-id))))
         (when repl
