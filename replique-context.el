@@ -41,6 +41,9 @@
    (splice? :initarg :splice?)
    (value :initarg :value)))
 
+(defclass replique-context/object-deref ()
+  ((value :initarg :value)))
+
 (defclass replique-context/object-delimited ()
   ((delimited :initarg :delimited)
    (start :initarg :start)
@@ -328,6 +331,11 @@
             :backtick? (eq ?` char1+)
             :splice? nil
             :value (replique-context/read-one)))
+          ((eq ?@ char1+)
+           (goto-char p1+)
+           (replique-context/forward-comment)
+           (replique-context/object-deref
+            :value (replique-context/read-one)))
           (t
            (let ((skip-end-at-point (replique-context/find-splice-end (point))))
              (if skip-end-at-point
@@ -390,7 +398,8 @@
 (defun replique-context/object-leaf (object)
   (when object
     (while (or (cl-typep object 'replique-context/object-dispatch-macro)
-               (cl-typep object 'replique-context/object-quoted))
+               (cl-typep object 'replique-context/object-quoted)
+               (cl-typep object 'replique-context/object-deref))
       (setq object (oref object :value)))
     object))
 
@@ -1037,7 +1046,7 @@
    (goto-char (+ 1 (point)))
    (replique-context/forward-comment)
    (replique-context/walk-ns forward-point)
-   (replique-edn/pr-str replique-context/dependency-context))
+   (replique-pprint/pprint-str replique-context/dependency-context))
  )
 
 (defun replique-context/handle-contextual-call (target-point context-forms symbol)
@@ -1170,27 +1179,28 @@
       (parse-partial-sexp (replique-context/comint-previous-prompt-position) pos)
     (syntax-ppss pos)))
 
-;; Skip backward the dispatch macro characters, if any
-(defun replique-context/maybe-skip-dispatch-macro-backward ()
-  (let ((p (point))
-        (spaces-skipped (skip-chars-backward "[,\s]")))
-    (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
-    (let ((p-before-object (point))
-          (object (replique-context/read-one)))
-      (if (cl-typep object 'replique-context/object-dispatch-macro)
-          (let ((dispatch-macro (oref object :dispatch-macro)))
-            (if (or (and (equal 0 spaces-skipped)
-                         (or (equal dispatch-macro :fn)
-                             (equal dispatch-macro :set)
-                             (equal dispatch-macro :regexp)
-                             (equal dispatch-macro :eval)))
-                    (or (equal dispatch-macro :var)
-                        (equal dispatch-macro :discard)
-                        (equal dispatch-macro :meta)
-                        (equal dispatch-macro :symbolic-value)
-                        (equal dispatch-macro :tagged-literal)))
-                (goto-char p-before-object)
-              (goto-char p)))
+(defun replique-context/skip-delimited-backward ()
+  (let ((p (point)))
+    (when (or (equal (char-before p) ?\})
+              (equal (char-before p) ?\))
+              (equal (char-before p) ?\]))
+      (ignore-errors (goto-char (scan-sexps p -1))))))
+
+;; Skip backward the dispatch macro characters, or quoted characters, if any
+(defun replique-context/maybe-skip-dispatch-macro-or-quoted-backward ()
+  (when (not (bobp))
+    (let ((p (point)))
+      (skip-chars-backward "[,\s]")
+      (if (not (bobp))
+          (progn
+            (replique-context/skip-delimited-backward)
+            (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+            (let ((object-start (point))
+                  (object (replique-context/read-one))
+                  (object-end (point)))
+              (if (and object (> object-end p))
+                  (goto-char object-start)
+                (goto-char p))))
         (goto-char p)))))
 
 (defun replique-context/walk-init (target-point)
@@ -1199,7 +1209,7 @@
     (replique-context/reset-state)
     (when top-level
       (goto-char top-level)
-      (replique-context/maybe-skip-dispatch-macro-backward)
+      (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
       (replique-context/forward-comment)
       ppss)))
 
