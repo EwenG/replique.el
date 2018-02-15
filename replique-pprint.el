@@ -26,8 +26,6 @@
 (defvar replique-pprint/threshold 20)
 (defvar replique-pprint/large-threshold 40)
 
-(defvar replique-pprint/insert-char )
-
 (defvar line-length nil)
 (defvar line-length-max nil)
 
@@ -417,7 +415,7 @@
 
 (defun replique-pprint/pprint-str (o)
   (with-temp-buffer
-    (replique-print/pprint o)
+    (replique-print/print o)
     (let ((replique-context/platform-tag :clj))
       (replique-pprint/pprint*))
     (buffer-substring (point-min) (point-max))))
