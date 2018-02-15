@@ -670,37 +670,18 @@
    (point)
    p))
 
-(defun replique/bounds-of-thing-at-point ()
-  (let ((s-pps (syntax-ppss)))
-    (if (not (null (nth 3 s-pps)))
-        (save-excursion
-          (goto-char (nth 8 s-pps))
-          (bounds-of-thing-at-point 'sexp))
-      (bounds-of-thing-at-point 'sexp))))
-
-(defun replique/unwrap-comment (prev-bounds)
-  (let ((sexpr-start (nth 1 (syntax-ppss))))
-    (if (null sexpr-start)
-        (let ((prev-expr (when prev-bounds
-                           (buffer-substring-no-properties
-                            (car prev-bounds) (cdr prev-bounds)))))
-          (if (or (null prev-expr) (seq-contains replique/clj-comment prev-expr))
-              (replique/bounds-of-thing-at-point)
-            (if (seq-find (lambda (comment-expr)
-                            (let* ((comment-expr (concat "(" comment-expr))
-                                   (bound (+ (point) (length comment-expr))))
-                              (search-forward comment-expr bound t)))
-                          replique/clj-comment)
-                prev-bounds
-              (replique/bounds-of-thing-at-point))))
-      (let ((bounds (replique/bounds-of-thing-at-point)))
-        (goto-char sexpr-start)
-        (replique/unwrap-comment bounds)))))
-
 (defun replique/eval-defn (p)
   "Eval the top level sexpr at point"
   (interactive "P")
-  (let* ((expr-bounds (save-excursion (replique/unwrap-comment nil)))
+  (let* ((expr-bounds (save-excursion
+                        (let ((target-point (point)))
+                          (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+                          (let ((top-level (or (syntax-ppss-toplevel-pos
+                                                (replique-context/syntax-ppss (point)))
+                                               (point))))
+                            (goto-char top-level)
+                            (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+                            (replique-context/unwrap-comment target-point)))))
          (expr (when expr-bounds
                  (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
     (when expr
@@ -2061,7 +2042,6 @@ minibuffer"
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
-;; comint-send-input -> check that depth is never negative (parse-partial-sexp)
 ;; eval interruption
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
 ;; try under jdk7
