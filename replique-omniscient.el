@@ -80,7 +80,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-str err))
+            (message "%s" (replique-pprint/pprint-error-str err))
             (message "omniscient failed with symbol: %s, ns: %s, filter term: %s"
                      symbol ns ""))
         (let ((locals (replique/get resp :locals))
@@ -105,7 +105,7 @@
                           (err (replique/get resp :error)))
                      (if err
                          (progn
-                           (message "%s" (replique-pprint/pprint-str err))
+                           (message "%s" (replique-pprint/pprint-error-str err))
                            (message
                             "omniscient failed with symbol: %s, ns: %s, filter term: %s"
                             symbol ns filter)

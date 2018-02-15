@@ -1280,7 +1280,7 @@
         (let ((err (replique/get resp :error)))
           (if err
               (progn
-                (message "%s" (replique-pprint/pprint-str err))
+                (message "%s" (replique-pprint/pprint-error-str err))
                 (message "context failed"))
             (save-excursion
               (let* ((target-point (point))

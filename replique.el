@@ -245,7 +245,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-str err))
+            (message "%s" (replique-pprint/pprint-error-str err))
             (message "completion failed with prefix %s" prefix)
             nil)
         (let* ((candidates (replique/get resp :candidates)))
@@ -351,7 +351,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-str err))
+            (message "%s" (replique-pprint/pprint-error-str err))
             (message "eldoc failed")
             nil)
         (with-demoted-errors "eldoc error: %s"
@@ -503,7 +503,7 @@
                                 :repl-env :replique/clj))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-str err))
+        (message "%s" (replique-pprint/pprint-error-str err))
         (message "source-meta failed"))
       (comint-simple-send proc string))))
 
@@ -863,7 +863,7 @@
                                   :repl-env repl-env))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-str err))
+        (message "%s" (replique-pprint/pprint-error-str err))
         (message "list-namespaces failed")))
     resp))
 
@@ -919,7 +919,7 @@
                 (let ((err (replique/get resp :error)))
                   (if err
                       (progn
-                        (message "%s" (replique-pprint/pprint-str err))
+                        (message "%s" (replique-pprint/pprint-error-str err))
                         (message "output-main-js-file failed"))
                     (message "Main javascript file written to: %s" output-to)))))))))))
 
@@ -963,7 +963,7 @@
                                    :repl-env repl-env))))
     (let ((err (replique/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-str err))
+        (message "%s" (replique-pprint/pprint-error-str err))
         (message "list-css failed")))
     resp))
 
@@ -1009,7 +1009,7 @@
             (let ((err (replique/get resp :error)))
               (if err
                   (progn
-                    (message "%s" (replique-pprint/pprint-str err))
+                    (message "%s" (replique-pprint/pprint-error-str err))
                     (message "load-css %s: failed" file-path))
                 (message "load-css %s: done" file-path)))))))))
 
@@ -1025,7 +1025,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-str err))
+            (message "%s" (replique-pprint/pprint-error-str err))
             (message "load-js %s: failed" file-path))
         (message "load-js %s: done" file-path)))))
 
@@ -1177,7 +1177,7 @@
                                        :form form-s))))
         (let ((err (replique/get resp :error)))
           (if err
-              (replique-pprint/pprint-str err)
+              (replique-pprint/pprint-error-str err)
             (replique/get resp :result)))))))
 (comment
  (replique/eval-form :clj "(+ 1 4)")
@@ -1194,7 +1194,7 @@
     (let ((err (replique/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-str err))
+            (message "%s" (replique-pprint/pprint-error-str err))
             (message "jump-to-definition failed with symbol: %s" symbol))
         (let* ((meta (replique/get resp :meta))
                (file (replique/get-in resp [:meta :file]))
@@ -2017,7 +2017,6 @@ minibuffer"
 ;; compliment keywords cljs -> missing :require ... ?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
-;; multi-process -> print directory in messages
 ;; The cljs-env makes no use of :repl-require
 
 ;; autocomplete using the spec first, compliment next if no candidates
@@ -2035,7 +2034,6 @@ minibuffer"
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 ;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
 ;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
-;; swap emacs buffers (if needed) when changing active repl from clj to cljs or cljs to clj (or not)
 ;; omniscient -> capture the stacktrace if possible
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads

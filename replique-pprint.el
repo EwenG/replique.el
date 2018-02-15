@@ -410,8 +410,7 @@
    (replique/mode . 'replique-pprint/pprint-session)
    (clojure-mode . 'replique-pprint/pprint-clj)
    (clojurescript-mode . 'replique-pprint/pprint-cljs)
-   (clojurec-mode . 'replique-pprint/pprint-cljc)
-   (t . 'nil)))
+   (clojurec-mode . 'replique-pprint/pprint-cljc)))
 
 (defun replique-pprint/pprint-str (o)
   (with-temp-buffer
@@ -419,6 +418,10 @@
     (let ((replique-context/platform-tag :clj))
       (replique-pprint/pprint*))
     (buffer-substring (point-min) (point-max))))
+
+(defun replique-pprint/pprint-error-str (o)
+  (let ((replique-pprint/threshold 80))
+    (replique-pprint/pprint-str o)))
 
 (provide 'replique-pprint)
 
