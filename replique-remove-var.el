@@ -22,89 +22,19 @@
 ;; Code:
 
 (require 'replique-hashmap)
-(require 'replique-pprint)
+(require 'replique-list-vars)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
   nil)
 
-(defvar-local replique-remove-var-line-overlay nil)
-
-(defun replique/remove-var-make-overlay ()
-  (let ((ol (make-overlay (point) (point))))
-    (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face '((t :inherit highlight)))
-    ol))
-
-(defun replique/remove-var-move-overlay (overlay)
-  (let (tmp b e)
-    (setq tmp t
-          b (line-beginning-position)
-          e (line-beginning-position 2))
-    (if tmp
-        (move-overlay overlay b e)
-      (move-overlay overlay 1 1))))
-
-(defun replique/remove-var-highlight ()
-  (progn
-    (unless replique-remove-var-line-overlay
-      (setq replique-remove-var-line-overlay (replique/remove-var-make-overlay)))
-    (overlay-put replique-remove-var-line-overlay
-                 'window (selected-window))
-    (replique/remove-var-move-overlay replique-remove-var-line-overlay)))
-
-(defun replique/remove-var-unhighlight ()
-  (when replique-remove-var-line-overlay
-    (delete-overlay replique-remove-var-line-overlay)))
-
-(defun replique/do-remove-var (repl var-ns var-name)
+(defun replique/do-remove-var (tooling-repl repl var-ns var-name)
   (replique/send-input-from-source-dispatch
    (format "(replique.interactive/remove-var %s/%s)" var-ns var-name)))
 
-(defun replique/remove-var-candidate-metas (candidates var-name)
-  (thread-first (seq-find (lambda (cand)
-                            (string= (symbol-name (aref cand 0)) var-name))
-                          candidates)
-    (aref 1)))
-
 (defun replique/remove-var* (var-ns tooling-repl repl)
-  (let ((resp (replique/send-tooling-msg
-               tooling-repl (replique/hash-map :type :list-vars
-                                               :repl-env (replique/get repl :repl-env)
-                                               :ns var-ns))))
-    (let ((err (replique/get resp :error)))
-      (if err
-          (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
-            (message "list-vars failed with ns: %s" var-ns))
-        (let* ((vars (replique/get resp :vars))
-               (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
-          (when (> (length var-names) 0)
-            (replique/return-nil-on-quit
-             (ivy-read
-              "Remove var: "
-              var-names
-              :require-match t
-              :action (apply-partially 'replique/do-remove-var repl var-ns)
-              :update-fn (lambda ()
-                           (with-ivy-window
-                             (replique/remove-var-unhighlight)
-                             (let ((candidate (nth ivy--index ivy--old-cands)))
-                               (when candidate
-                                 (let* ((metas (replique/remove-var-candidate-metas
-                                                vars candidate))
-                                        (file (replique/get metas :file))
-                                        (line (replique/get metas :line))
-                                        (column (replique/get metas :column)))
-                                   (when (and file line)
-                                     (when-let (buff (replique-resources/find-file file))
-                                       (pop-to-buffer-same-window buff)
-                                       (goto-char (point-min))
-                                       (forward-line (1- line))
-                                       (when column
-                                         (move-to-column column))
-                                       (replique/remove-var-highlight))))))))))
-            (replique/remove-var-unhighlight)))))))
+  (replique-list-vars/list-vars var-ns tooling-repl repl
+                                "Remove var: " 'replique/do-remove-var))
 
 (defun replique/remove-var-clj (tooling-repl clj-repl)
   (if (not clj-repl)
