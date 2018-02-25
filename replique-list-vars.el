@@ -68,31 +68,33 @@
             (message "list-vars failed with ns: %s" var-ns))
         (let* ((vars (replique/get resp :vars))
                (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
-          (when (> (length var-names) 0)
-            (replique/return-nil-on-quit
-             (ivy-read
-              prompt
-              var-names
-              :require-match t
-              :action (apply-partially action-fn tooling-repl repl var-ns)
-              :update-fn (lambda ()
-                           (with-ivy-window
-                             (replique-list-vars/unhighlight)
-                             (let ((candidate (nth ivy--index ivy--old-cands)))
-                               (when candidate
-                                 (let* ((metas (replique-list-vars/candidate-metas
-                                                vars candidate))
-                                        (file (replique/get metas :file))
-                                        (line (replique/get metas :line))
-                                        (column (replique/get metas :column)))
-                                   (when (and file line)
-                                     (when-let (buff (replique-resources/find-file file))
-                                       (pop-to-buffer-same-window buff)
-                                       (goto-char (point-min))
-                                       (forward-line (1- line))
-                                       (when column
-                                         (move-to-column column))
-                                       (replique-list-vars/highlight))))))))))
-            (replique-list-vars/unhighlight)))))))
+          (if (> (length var-names) 0)
+              (progn
+                (replique/return-nil-on-quit
+                 (ivy-read
+                  prompt
+                  var-names
+                  :require-match t
+                  :action (apply-partially action-fn tooling-repl repl var-ns)
+                  :update-fn (lambda ()
+                               (with-ivy-window
+                                 (replique-list-vars/unhighlight)
+                                 (let ((candidate (nth ivy--index ivy--old-cands)))
+                                   (when candidate
+                                     (let* ((metas (replique-list-vars/candidate-metas
+                                                    vars candidate))
+                                            (file (replique/get metas :file))
+                                            (line (replique/get metas :line))
+                                            (column (replique/get metas :column)))
+                                       (when (and file line)
+                                         (when-let (buff (replique-resources/find-file file))
+                                           (pop-to-buffer-same-window buff)
+                                           (goto-char (point-min))
+                                           (forward-line (1- line))
+                                           (when column
+                                             (move-to-column column))
+                                           (replique-list-vars/highlight))))))))))
+                (replique-list-vars/unhighlight))
+            (message "No var in the namespace: %s" var-ns)))))))
 
 (provide 'replique-list-vars)
