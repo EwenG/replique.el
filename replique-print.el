@@ -216,7 +216,12 @@
         (t (replique-print/print-default o))))
 
 (defun replique-print/print (o)
-  (replique-print/print-dispatch o))
+  (if font-lock-mode
+      (progn
+        (font-lock-mode -1)
+        (replique-print/print-dispatch o)
+        (font-lock-mode 1))
+    (replique-print/print-dispatch o)))
 
 (defun replique-print/print-str (o)
   (with-temp-buffer

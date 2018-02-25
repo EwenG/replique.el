@@ -374,7 +374,7 @@
       (goto-char p)
       nil)))
 
-(defun replique-pprint/pprint* ()
+(defun replique-pprint/pprint** ()
   (let ((replique-context/splice-ends '()))
     (let ((top-level (replique-pprint/walk-init)))
       (when top-level
@@ -385,6 +385,14 @@
           (replique-pprint/pprint)
           (when (equal major-mode 'replique/mode)
             (put-text-property top-level (point) 'field 'output)))))))
+
+(defun replique-pprint/pprint* ()
+  (if font-lock-mode
+      (progn
+        (font-lock-mode -1)
+        (replique-pprint/pprint**)
+        (font-lock-mode 1))
+    (replique-pprint/pprint**)))
 
 (defun replique-pprint/pprint-clj (tooling-repl clj-repl)
   (let ((replique-context/platform-tag :clj))
