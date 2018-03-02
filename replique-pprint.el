@@ -362,9 +362,7 @@
                              (point))))
           (goto-char top-level)
           (let ((object (replique-context/read-one)))
-            (if (and object
-                     (not (cl-typep object 'replique-context/object-symbol))
-                     (not (cl-typep object 'replique-context/object-string)))
+            (if object
                 (progn
                   (goto-char top-level)
                   (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
@@ -385,6 +383,20 @@
           (replique-pprint/pprint)
           (when (equal major-mode 'replique/mode)
             (put-text-property top-level (point) 'field 'output)))))))
+
+(defun replique-pprint/pprint-with-indent (indent-length)
+  (let ((replique-context/splice-ends '())
+        (line-length indent-length)
+        (line-length-max indent-length))
+    (let* ((object-start (point))
+           (object-line-length-max (replique-pprint/pprint))
+           (object-end (point))
+           (is-multi-line? (replique-pprint/is-multi-line? object-start)))
+      (when object-line-length-max
+        (replique-pprint/indent
+         object-line-length-max object-start object-end
+         is-multi-line? indent-length)
+        line-length-max))))
 
 (defun replique-pprint/pprint* ()
   (if font-lock-mode
