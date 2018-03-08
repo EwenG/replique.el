@@ -26,8 +26,8 @@
 (defvar replique-pprint/threshold 20)
 (defvar replique-pprint/large-threshold 40)
 
-(defvar line-length nil)
-(defvar line-length-max nil)
+(defvar replique-pprint/line-length nil)
+(defvar replique-pprint/line-length-max nil)
 
 (defun replique-pprint/pprint-symbol (sym)
   (goto-char (oref sym :end))
@@ -42,21 +42,22 @@
 
 (defun replique-pprint/indent
     (object-line-length-max object-start object-end is-multi-line? indent-length)
-  (let ((line-length-before-object line-length))
+  (let ((line-length-before-object replique-pprint/line-length))
     (if is-multi-line?
         (progn
           (beginning-of-line)
-          (setq line-length (+ (- object-end (point)) indent-length))
+          (setq replique-pprint/line-length (+ (- object-end (point)) indent-length))
           (while (> (point) object-start)
             (insert-char ?\s indent-length t)
             (setq object-end (+ indent-length object-end))
             (forward-line -1))
           (goto-char object-end)
-          (setq line-length-max (max
-                                 line-length-max
+          (setq replique-pprint/line-length-max (max
+                                 replique-pprint/line-length-max
                                  (+ line-length-before-object object-line-length-max))))
-      (setq line-length (+ line-length object-line-length-max))
-      (setq line-length-max (max line-length-max line-length)))))
+      (setq replique-pprint/line-length (+ replique-pprint/line-length object-line-length-max))
+      (setq replique-pprint/line-length-max (max replique-pprint/line-length-max
+                                                 replique-pprint/line-length)))))
 
 (defun replique-pprint/pprint-sequential (seq)
   (let ((continue t)
@@ -64,8 +65,8 @@
         (start (point)))
     (goto-char (+ 1 (oref seq :start)))
     (let* ((open-delimiter-length (- (point) start))
-           (line-length open-delimiter-length)
-           (line-length-max open-delimiter-length))
+           (replique-pprint/line-length open-delimiter-length)
+           (replique-pprint/line-length-max open-delimiter-length))
       (while continue
         (let ((object-start (point)))
           (replique-context/forward-comment)
@@ -81,28 +82,29 @@
                           is-multi-line? open-delimiter-length)
                          (when is-multi-line?
                            (insert-char ?\n 1 t)
-                           (setq line-length 0)))
+                           (setq replique-pprint/line-length 0)))
                        (setq first-element? nil))
-                      ((equal line-length 0)
+                      ((equal replique-pprint/line-length 0)
                        (goto-char object-start)
                        (insert-char ?\s open-delimiter-length t)
                        (setq object-start (+ open-delimiter-length object-start))
                        (setq object-end (+ open-delimiter-length object-end))
-                       (setq line-length open-delimiter-length)
+                       (setq replique-pprint/line-length open-delimiter-length)
                        (goto-char object-end)
                        (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                          (replique-pprint/indent
-                          object-line-length-max object-start
+                          replique-pprint/line-length-max object-start
                           object-end is-multi-line? open-delimiter-length)
                          (when is-multi-line?
                            (insert-char ?\n 1 t)
-                           (setq line-length 0))))
-                      ((> (+ line-length object-line-length-max 1) replique-pprint/threshold)
+                           (setq replique-pprint/line-length 0))))
+                      ((> (+ replique-pprint/line-length object-line-length-max 1)
+                          replique-pprint/threshold)
                        (goto-char object-start)
                        (insert-char ?\n 1 t) (insert-char ?\s open-delimiter-length t)
                        (setq object-start (+ 1 open-delimiter-length object-start))
                        (setq object-end (+ 1 open-delimiter-length object-end))
-                       (setq line-length open-delimiter-length)
+                       (setq replique-pprint/line-length open-delimiter-length)
                        (goto-char object-end)
                        (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                          (replique-pprint/indent
@@ -110,31 +112,31 @@
                           is-multi-line? open-delimiter-length)
                          (when is-multi-line?
                            (insert-char ?\n 1 t)
-                           (setq line-length 0))))
+                           (setq replique-pprint/line-length 0))))
                       (t
                        (goto-char object-start)
                        (insert-char ?\s 1 t)
                        (setq object-start (+ 1 object-start))
                        (setq object-end (+ 1 object-end))
-                       (setq line-length (+ 1 line-length))
+                       (setq replique-pprint/line-length (+ 1 replique-pprint/line-length))
                        (goto-char object-end)
                        (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                          (replique-pprint/indent
                           object-line-length-max object-start object-end
-                          is-multi-line? line-length)
+                          is-multi-line? replique-pprint/line-length)
                          (when is-multi-line?
                            (insert-char ?\n 1 t)
-                           (setq line-length 0))))))))))
-      (when (equal line-length 0)
+                           (setq replique-pprint/line-length 0))))))))))
+      (when (equal replique-pprint/line-length 0)
         (delete-char -1))
       (forward-char)
-      (max line-length-max (+ line-length 1)))))
+      (max replique-pprint/line-length-max (+ replique-pprint/line-length 1)))))
 
 (defun replique-pprint/pprint-map (map)
   (let ((i 0)
         (continue t)
-        (line-length 1)
-        (line-length-max 1)
+        (replique-pprint/line-length 1)
+        (replique-pprint/line-length-max 1)
         (first-element? t))
     (forward-char)
     (while continue
@@ -151,55 +153,57 @@
                         object-line-length-max object-start object-end is-multi-line? 1)
                        (when is-multi-line?
                          (insert-char ?\n 1 t)
-                         (setq line-length 0)))
+                         (setq replique-pprint/line-length 0)))
                      (setq first-element? nil))
-                    ((equal line-length 0)
+                    ((equal replique-pprint/line-length 0)
                      (goto-char object-start)
                      (insert-char ?\s 1 t)
                      (setq object-start (+ 1 object-start))
                      (setq object-end (+ 1 object-end))
-                     (setq line-length 1)
+                     (setq replique-pprint/line-length 1)
                      (goto-char object-end)
                      (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                        (replique-pprint/indent
                         object-line-length-max object-start object-end is-multi-line? 1)
                        (when is-multi-line?
                          (insert-char ?\n 1 t)
-                         (setq line-length 0))))
-                    ((> (+ line-length object-line-length-max 1) replique-pprint/large-threshold)
+                         (setq replique-pprint/line-length 0))))
+                    ((> (+ replique-pprint/line-length object-line-length-max 1)
+                        replique-pprint/large-threshold)
                      (goto-char object-start)
                      (insert-char ?\n 1 t) (insert-char ?\s 1 t)
                      (setq object-start (+ 2 object-start))
                      (setq object-end (+ 2 object-end))
-                     (setq line-length 1)
+                     (setq replique-pprint/line-length 1)
                      (goto-char object-end)
                      (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                        (replique-pprint/indent
                         object-line-length-max object-start object-end is-multi-line? 1)
                        (when is-multi-line?
                          (insert-char ?\n 1 t)
-                         (setq line-length 0))))
+                         (setq replique-pprint/line-length 0))))
                     (t
                      (goto-char object-start)
                      (insert-char ?\s 1 t)
                      (setq object-start (+ 1 object-start))
                      (setq object-end (+ 1 object-end))
-                     (setq line-length (+ 1 line-length))
+                     (setq replique-pprint/line-length (+ 1 replique-pprint/line-length))
                      (goto-char object-end)
                      (let ((is-multi-line? (replique-pprint/is-multi-line? object-start)))
                        (replique-pprint/indent
-                        object-line-length-max object-start object-end is-multi-line? line-length)
+                        object-line-length-max object-start object-end is-multi-line?
+                        replique-pprint/line-length)
                        (when is-multi-line?
                          (insert-char ?\n 1 t)
-                         (setq line-length 0)))))
-              (when (and (equal 1 (logand i 1)) (> line-length 0))
+                         (setq replique-pprint/line-length 0)))))
+              (when (and (equal 1 (logand i 1)) (> replique-pprint/line-length 0))
                 (insert-char ?\n 1 t)
-                (setq line-length 0))
+                (setq replique-pprint/line-length 0))
               (setq i (+ 1 i)))))))
-    (when (equal line-length 0)
+    (when (equal replique-pprint/line-length 0)
       (delete-char -1))
     (forward-char)
-    (max line-length-max (+ line-length 1))))
+    (max replique-pprint/line-length-max (+ replique-pprint/line-length 1))))
 
 (defun replique-pprint/pprint-dispatch-macro (dm)
   (let ((dispatch-macro (oref dm :dispatch-macro)))
@@ -219,8 +223,8 @@
                (forward-char))
              (let* ((data-start (point))
                     (dispatch-macro-length (- data-start start)))
-               (let ((line-length dispatch-macro-length)
-                     (line-length-max dispatch-macro-length))
+               (let ((replique-pprint/line-length dispatch-macro-length)
+                     (replique-pprint/line-length-max dispatch-macro-length))
                  (replique-context/forward-comment)
                  (delete-region data-start (point))
                  (let ((data-line-length-max (or (replique-pprint/pprint) 0))
@@ -245,7 +249,7 @@
                               (insert-char ?\n 1 t) (insert-char ?\s dispatch-macro-length t)
                               (setq value-start (+ 1 dispatch-macro-length value-start))
                               (setq value-end (+ 1 dispatch-macro-length value-end))
-                              (setq line-length dispatch-macro-length)
+                              (setq replique-pprint/line-length dispatch-macro-length)
                               (goto-char value-end)
                               (replique-pprint/indent
                                value-line-length-max value-start value-end
@@ -273,12 +277,12 @@
                               (insert-char ?\s 1 t)
                               (setq value-start (+ 1 value-start))
                               (setq value-end (+ 1 value-end))
-                              (setq line-length (+ 1 line-length))
+                              (setq replique-pprint/line-length (+ 1 replique-pprint/line-length))
                               (goto-char value-end)
                               (replique-pprint/indent
                                value-line-length-max value-start value-end
-                               value-is-multi-line? line-length)))
-                       line-length-max)))))))
+                               value-is-multi-line? replique-pprint/line-length)))
+                       replique-pprint/line-length-max)))))))
           ((or (equal dispatch-macro :symbolic-value)
                (equal dispatch-macro :var)
                (equal dispatch-macro :discard)
@@ -289,8 +293,8 @@
                                                 (equal dispatch-macro :regexp))
                                             1 2)))
              (forward-char dispatch-macro-length)
-             (let ((line-length dispatch-macro-length)
-                   (line-length-max dispatch-macro-length)
+             (let ((replique-pprint/line-length dispatch-macro-length)
+                   (replique-pprint/line-length-max dispatch-macro-length)
                    (object-start (point)))
                (replique-context/forward-comment)
                (delete-region object-start (point))
@@ -299,24 +303,24 @@
                  (replique-pprint/indent
                   object-line-length-max object-start (point)
                   is-multi-line? dispatch-macro-length)
-                 line-length-max)))))))
+                 replique-pprint/line-length-max)))))))
 
 (defun replique-pprint/pprint-quoted (q)
   (let ((quote-length (if (oref q :splice?) 2 1)))
-    (let ((line-length quote-length)
-          (line-length-max quote-length))
+    (let ((replique-pprint/line-length quote-length)
+          (replique-pprint/line-length-max quote-length))
       (forward-char quote-length)
       (let* ((object-start (point))
              (object-line-length-max (or (replique-pprint/pprint) 0))
              (is-multi-line? (replique-pprint/is-multi-line? object-start)))
         (replique-pprint/indent
          object-line-length-max object-start (point) is-multi-line? quote-length)
-        line-length-max))))
+        replique-pprint/line-length-max))))
 
 (defun replique-pprint/pprint-deref (deref)
   (forward-char 1)
-  (let ((line-length 1)
-        (line-length-max 1)
+  (let ((replique-pprint/line-length 1)
+        (replique-pprint/line-length-max 1)
         (object-start (point)))
     (replique-context/forward-comment)
     (delete-region object-start (point))
@@ -325,7 +329,7 @@
       (replique-pprint/indent
        object-line-length-max object-start (point)
        is-multi-line? 1)
-      line-length-max)))
+      replique-pprint/line-length-max)))
 
 (defun replique-pprint/pprint-dispatch (object)
   (cond ((cl-typep object 'replique-context/object-symbol)
@@ -386,8 +390,8 @@
 
 (defun replique-pprint/pprint-with-indent (indent-length)
   (let ((replique-context/splice-ends '())
-        (line-length indent-length)
-        (line-length-max indent-length))
+        (replique-pprint/line-length indent-length)
+        (replique-pprint/line-length-max indent-length))
     (let* ((object-start (point))
            (object-line-length-max (replique-pprint/pprint))
            (object-end (point))
@@ -396,7 +400,7 @@
         (replique-pprint/indent
          object-line-length-max object-start object-end
          is-multi-line? indent-length)
-        line-length-max))))
+        replique-pprint/line-length-max))))
 
 (defun replique-pprint/pprint* ()
   (if font-lock-mode
