@@ -666,6 +666,7 @@
    (save-excursion
      (backward-sexp 1)
      (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+     (replique-context/maybe-skip-read-discard-forward)
      (point))
    (point)
    p))
@@ -681,6 +682,7 @@
                                                (point))))
                             (goto-char top-level)
                             (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+                            (replique-context/maybe-skip-read-discard-forward)
                             (replique-context/unwrap-comment target-point)))))
          (expr (when expr-bounds
                  (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))

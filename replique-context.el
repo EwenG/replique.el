@@ -1230,6 +1230,11 @@
                 (goto-char p))))
         (goto-char p)))))
 
+(defun replique-context/maybe-skip-read-discard-forward ()
+  (when (and (equal (char-after (point)) ?#)
+             (equal (char-after (+ 1 (point))) ?_))
+    (forward-char 2)))
+
 (defun replique-context/walk-init (target-point)
   (let* ((ppss (replique-context/syntax-ppss target-point))
          (top-level (syntax-ppss-toplevel-pos ppss)))
