@@ -25,14 +25,23 @@
 
 (defvar replique-params/print-length-history nil)
 (defvar replique-params/print-level-history nil)
+(defvar replique-params/warn-on-reflection-history nil)
 
 (defun replique-params/param->history (param)
-  (cond ((equal "*print-length*" param) 'replique-params/print-length-history)
-        ((equal "*print-level*" param) 'replique-params/print-level-history)))
+  (cond ((string-suffix-p "*print-length*" param)
+         'replique-params/print-length-history)
+        ((string-suffix-p "*print-level*" param)
+         'replique-params/print-level-history)
+        ((string-suffix-p "*warn-on-reflection*" param)
+         'replique-params/warn-on-reflection-history)))
 
-(defun replique-params/param->qualified (param)
-  (cond ((equal "*print-length*" param) "clojure.core/*print-length*")
-        ((equal "*print-level*" param) "clojure.core/*print-level*")))
+(defun replique-params/unqualify (param)
+  (string-remove-prefix
+   "cljs.core/"
+   (string-remove-prefix "clojure.core/" param)))
+
+(defun replique-params/boolean->string (b)
+  (if b "true" "false"))
 
 (defun replique-params/minibuffer-numeric-inc ()
   (interactive)
@@ -59,11 +68,31 @@
                (delete-minibuffer-contents)
                (insert (number-to-string (- n 1)))))))))
 
+(defun replique-params/minibuffer-boolean-toggle ()
+  (interactive)
+  (let ((content (minibuffer-contents-no-properties)))
+    (cond ((equal "true" content)
+           (delete-minibuffer-contents)
+           (insert "false"))
+          ((equal "false" content)
+           (delete-minibuffer-contents)
+           (insert "true"))
+          (t
+           (delete-minibuffer-contents)
+           (insert "false")))))
+
 (defvar replique-params/minibuffer-map-numerical
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map minibuffer-local-map)
-    (define-key map "p" 'replique-params/minibuffer-numeric-inc)
-    (define-key map "n" 'replique-params/minibuffer-numeric-dec)
+    (define-key map "+" 'replique-params/minibuffer-numeric-inc)
+    (define-key map "-" 'replique-params/minibuffer-numeric-dec)
+    map))
+
+(defvar replique-params/minibuffer-map-boolean
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map "+" 'replique-params/minibuffer-boolean-toggle)
+    (define-key map "-" 'replique-params/minibuffer-boolean-toggle)
     map))
 
 (defun replique-params/edit-numerical (param default-val action-fn)
@@ -71,7 +100,7 @@
         (value nil)
         (history-add-new-input nil))
     (while continue
-      (setq value (read-from-minibuffer (concat param ": ")
+      (setq value (read-from-minibuffer (concat (replique-params/unqualify param) ": ")
                                         default-val
                                         replique-params/minibuffer-map-numerical
                                         nil
@@ -86,29 +115,56 @@
              (setq value value)
              (setq continue nil)))
       (when continue
-        (message "*print-length* must be nil or a positive numeric value")
+        (message (concat param " must be nil or a positive numeric value"))
+        (sit-for 1)))
+    (funcall action-fn param value)))
+
+(defun replique-params/edit-boolean (param default-val action-fn)
+  (let ((continue t)
+        (value nil)
+        (history-add-new-input nil))
+    (while continue
+      (setq value (read-from-minibuffer (concat (replique-params/unqualify param) ": ")
+                                        default-val
+                                        replique-params/minibuffer-map-boolean
+                                        nil
+                                        (replique-params/param->history param)
+                                        default-val))
+      (when (or (equal "false" value) (equal "true" value))
+        (add-to-history (replique-params/param->history param) value)
+        (setq value value)
+        (setq continue nil))
+      (when continue
+        (message (concat param " must be a boolean (true or false)"))
         (sit-for 1)))
     (funcall action-fn param value)))
 
 (defun replique-params/edit-param (params action-fn param)
-  (cond ((equal param "*print-length*")
-         (replique-params/edit-numerical
-          param (prin1-to-string (replique/get params param)) action-fn))
-        ((equal param "*print-level*")
-         (replique-params/edit-numerical
-          param (prin1-to-string (replique/get params param)) action-fn))))
+  (let ((param (cadr param)))
+    (cond ((string-suffix-p "*print-length*" param)
+           (replique-params/edit-numerical
+            param (prin1-to-string (replique/get params param)) action-fn))
+          ((string-suffix-p "*print-level*" param)
+           (replique-params/edit-numerical
+            param (prin1-to-string (replique/get params param)) action-fn))
+          ((string-suffix-p "*warn-on-reflection*" param)
+           (replique-params/edit-boolean
+            param (replique-params/boolean->string (replique/get params param)) action-fn)))))
+
+(defun replique-params/param->param-candidate (param)
+  `(,(replique-params/unqualify param) ,param))
 
 (defun replique-params/params* (params action-fn)
-  (ivy-read "Parameters: " (replique/keys params)
+  (ivy-read "Parameters: " (mapcar 'replique-params/param->param-candidate
+                                   (replique/keys params))
             :require-match t
             :action (apply-partially 'replique-params/edit-param params action-fn)))
 
 (defun replique-params/set-param (repl param param-value)
-  (let ((buff (replique/get repl :buffer))
-        (qualified-param (replique-params/param->qualified param)))
+  (let ((buff (replique/get repl :buffer)))
     (with-current-buffer buff
       (replique/comint-send-input-from-source
-       (concat "(set! " qualified-param " " param-value ")")))))
+       (concat "(set! " param " " param-value ")")))))
 
 (defun replique-params/params-session (repl)
   (replique-params/params* (replique/get repl :params)
