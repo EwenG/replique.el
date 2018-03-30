@@ -52,7 +52,8 @@ prefix and is an absolute path, it is treated as such."
     (cond ((string-match "^file:\\(.+\\)" url)
            (when-let ((file (replique-resources/url-to-file (match-string 1 url))))
              (when (file-exists-p file)
-               (find-file-noselect file))))
+               ;; No warn because otherwise, this fails when called from inside a minibuffer
+               (find-file-noselect file t))))
           ((string-match "^\\(jar\\|zip\\):\\(file:.+\\)!/\\(.+\\)" url)
            (when-let ((entry (match-string 3 url))
                       (file  (replique-resources/url-to-file (match-string 2 url)))
@@ -67,7 +68,7 @@ prefix and is an absolute path, it is treated as such."
                    (set-buffer-modified-p nil)
                    (set-auto-mode)
                    (current-buffer)))))
-          ((file-exists-p url) (find-file-noselect url))
+          ((file-exists-p url) (find-file-noselect url t))
           (t nil))))
 
 (provide 'replique-resources)
