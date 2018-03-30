@@ -37,6 +37,8 @@
 (require 'replique-context)
 (require 'replique-print)
 (require 'replique-pprint)
+(require 'replique-params)
+(require 'replique-watch)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1684,6 +1686,7 @@ The following commands are available:
                         :proc proc
                         :host host
                         :port port
+                        :ref-watchers (replique/hash-map)
                         :started? nil)))
     ;; Perform the starting REPLs cleaning in case of an error when starting the process
     (set-process-sentinel
@@ -1952,7 +1955,13 @@ minibuffer"
         (when repl
           (let ((repl (replique/on-repl-type-change
                        repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
-            (replique/update-repl repl (replique/assoc repl :ns (replique/get msg :ns)))))))
+            (replique/update-repl repl (replique/assoc repl
+                                                       :ns (replique/get msg :ns)
+                                                       :params (replique/get msg :params)))))))
+     ((equal :watch-update msg-type)
+      (let* ((directory (replique/get msg :process-id))
+             (msg (replique-transit/decode msg)))
+        (replique-watch/notify-update msg)))
      (t (message "Received unsupported message while dispatching tooling messages: %s" msg)))))
 
 (defun replique/with-new-dyn-context (fn &rest args)

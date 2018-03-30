@@ -2,6 +2,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- Add the replique/watch interactive command to visualize a watchable using a dedicated buffer
+- Add the replique/params interactive command to quickly edit the most common clojure.core/cljs.core dynamic vars (*print-length*, *print-level*, *warn-on-reflection*)
 - Add the replique/pprint interactive command to pretty print the expression at point
 
 # Version 0.0.10
