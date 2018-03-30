@@ -666,7 +666,7 @@
    (save-excursion
      (backward-sexp 1)
      (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
-     (replique-context/maybe-skip-read-discard-forward)
+     (replique-context/maybe-skip-read-discard-or-splice-forward)
      (point))
    (point)
    p))
@@ -676,13 +676,13 @@
   (interactive "P")
   (let* ((expr-bounds (save-excursion
                         (let ((target-point (point)))
-                          (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+                          (skip-chars-backward "^\s,\(\)\[\]\{\}\"\n\t")
                           (let ((top-level (or (syntax-ppss-toplevel-pos
                                                 (replique-context/syntax-ppss (point)))
                                                (point))))
                             (goto-char top-level)
                             (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
-                            (replique-context/maybe-skip-read-discard-forward)
+                            (replique-context/maybe-skip-read-discard-or-splice-forward)
                             (replique-context/unwrap-comment target-point)))))
          (expr (when expr-bounds
                  (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
@@ -1848,6 +1848,7 @@ minibuffer"
                                   :repl-env :replique/clj
                                   :buffer repl-buffer
                                   :recent-output (make-ring 10)
+                                  :params nil
                                   :started? nil)))
     (with-current-buffer repl-buffer
       (insert (format "Directory: %s\nHost: %s\nPort: %s\n\nClojure REPL starting ..."
@@ -2047,6 +2048,10 @@ minibuffer"
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
 ;; try under jdk7
 ;; "find usage" feature using replique-context
+;; autocompletion for nested classes (with a "$")
+;; cljs tagged literal should not work when defined in a cljc file (it works because it is
+;; defined in the clojure process)
+;; eldoc for interop call with multiple arities -> "&" ??
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory

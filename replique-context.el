@@ -168,7 +168,7 @@
                 :end forward-p))))
           ((eq ?# char1+)
            (cond ((eq ?: char2+)
-                  (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
+                  (skip-chars-forward "^\s,\(\)\[\]\{\}\"\n\t")
                   (let ((namespace (buffer-substring-no-properties p1+ (point))))
                     (replique-context/forward-comment)
                     (replique-context/object-dispatch-macro
@@ -343,7 +343,7 @@
                    (goto-char (cdr skip-end-at-point))
                    (replique-context/forward-comment)
                    (replique-context/read-one))
-               (skip-chars-forward "^[\s,\(\)\[\]\{\}\"\n\t]")
+               (skip-chars-forward "^\s,\(\)\[\]\{\}\"\n\t")
                (when (> (point) p)
                  (replique-context/object-symbol
                   :symbol (buffer-substring-no-properties p (point))
@@ -1217,11 +1217,11 @@
 (defun replique-context/maybe-skip-dispatch-macro-or-quoted-backward ()
   (when (not (bobp))
     (let ((p (point)))
-      (skip-chars-backward "[,\s]")
+      (skip-chars-backward ",\s")
       (if (not (bobp))
           (progn
             (replique-context/skip-delimited-backward)
-            (skip-chars-backward "^[\s,\(\)\[\]\{\}\"\n\t]")
+            (skip-chars-backward "^\s,\(\)\[\]\{\}\"\n\t")
             (let ((object-start (point))
                   (object (replique-context/read-one))
                   (object-end (point)))
@@ -1230,9 +1230,11 @@
                 (goto-char p))))
         (goto-char p)))))
 
-(defun replique-context/maybe-skip-read-discard-forward ()
-  (when (and (equal (char-after (point)) ?#)
-             (equal (char-after (+ 1 (point))) ?_))
+(defun replique-context/maybe-skip-read-discard-or-splice-forward ()
+  (while (or (and (equal (char-after (point)) ?#)
+                  (equal (char-after (+ 1 (point))) ?_))
+             (and (equal (char-after (point)) ?~)
+                  (equal (char-after (+ 1 (point))) ?@)))
     (forward-char 2)))
 
 (defun replique-context/walk-init (target-point)
