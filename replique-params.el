@@ -22,6 +22,7 @@
 ;; Code:
 
 (require 'replique-hashmap)
+(require 'replique-watch)
 
 (defvar replique-params/print-length-history nil)
 (defvar replique-params/print-level-history nil)
@@ -166,6 +167,15 @@
       (replique/comint-send-input-from-source
        (concat "(set! " param " " param-value ")")))))
 
+(defun replique-params/set-param-watch (tooling-repl param param-value)
+  (cond ((string-suffix-p "*print-length*" param)
+         (setq replique-watch/print-length (when (not (equal "nil" param-value))
+                                             (string-to-number param-value))))
+        ((string-suffix-p "*print-level*" param)
+         (setq replique-watch/print-level (when (not (equal "nil" param-value))
+                                            (string-to-number param-value)))))
+  (replique-watch/refresh))
+
 (defun replique-params/params-session (repl)
   (replique-params/params* (replique/get repl :params)
                            (apply-partially 'replique-params/set-param repl)))
@@ -185,13 +195,27 @@
     (replique-params/params* (replique/get repl :params)
                              (apply-partially 'replique-params/set-param repl))))
 
+(defun replique-params/params-watch ()
+  (let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                        :directory replique-watch/directory))
+        (ns-prefix (if (equal replique-watch/repl-type :replique/cljs)
+                       "cljs.core"
+                     "clojure.core")))
+    (when tooling-repl
+      (replique-params/params* (replique/hash-map
+                                (concat ns-prefix "/*print-length*") replique-watch/print-length
+                                (concat ns-prefix "/*print-level*") replique-watch/print-level)
+                               (apply-partially 'replique-params/set-param-watch tooling-repl)))))
+
 (defun replique/params ()
   (interactive)
-  (replique/with-modes-dispatch
-   (replique/mode . 'replique-params/params-session)
-   (clojure-mode . 'replique-params/params-clj)
-   (clojurescript-mode . 'replique-params/params-cljs)
-   (clojurec-mode . 'replique-params/params-cljc)
-   (t . (user-error "Unsupported major mode: %s" major-mode))))
+  (if (bound-and-true-p replique-watch/minor-mode)
+      (replique-params/params-watch)
+    (replique/with-modes-dispatch
+     (replique/mode . 'replique-params/params-session)
+     (clojure-mode . 'replique-params/params-clj)
+     (clojurescript-mode . 'replique-params/params-cljs)
+     (clojurec-mode . 'replique-params/params-cljc)
+     (t . (user-error "Unsupported major mode: %s" major-mode)))))
 
 (provide 'replique-params)

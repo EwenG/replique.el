@@ -26,8 +26,11 @@
 
 (defvar-local replique-watch/directory nil)
 (defvar-local replique-watch/repl-env nil)
+(defvar-local replique-watch/repl-type nil)
 (defvar-local replique-watch/var-name nil)
 (defvar-local replique-watch/buffer-id nil)
+(defvar-local replique-watch/print-length nil)
+(defvar-local replique-watch/print-level nil)
 (defvar buffer-id-generator 0)
 
 (defun replique-watch/new-buffer-id ()
@@ -52,6 +55,7 @@
   (let* ((var-name (format "%s/%s" var-ns var-name))
          (buffer-id (replique-watch/new-buffer-id))
          (repl-env (replique/get repl :repl-env))
+         (repl-type (replique/get repl :repl-type))
          (watch-buffer (generate-new-buffer (format "*watch*%s*" var-name)))
          (resp (replique/send-tooling-msg
                 tooling-repl
@@ -67,24 +71,35 @@
             (message "watch failed with var %s" var-name)
             nil)
         (let* ((var-value (replique/get resp :var-value))
-               (ref-watchers (replique/get tooling-repl :ref-watchers)))
+               (ref-watchers (replique/get tooling-repl :ref-watchers))
+               (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
+               (print-length (thread-first repl
+                               (replique/get :params)
+                               (replique/get (concat ns-prefix "/*print-length*"))))
+               (print-level (thread-first repl
+                              (replique/get :params)
+                              (replique/get (concat ns-prefix "/*print-level*")))))
           (with-current-buffer watch-buffer
             (buffer-disable-undo watch-buffer)
             (clojure-mode)
-            (replique/minor-mode)
             (replique-watch/minor-mode)
             (setq buffer-read-only t)
             (setq replique-watch/directory (replique/get resp :process-id))
             (setq replique-watch/repl-env repl-env)
+            (setq replique-watch/repl-type repl-type)
             (setq replique-watch/var-name var-name)
-            (setq replique-watch/buffer-id buffer-id))
+            (setq replique-watch/buffer-id buffer-id)
+            (setq replique-watch/print-length print-length)
+            (setq replique-watch/print-level print-level))
           (puthash buffer-id watch-buffer ref-watchers)
           (let ((resp (replique/send-tooling-msg
                        tooling-repl
                        (replique/hash-map :type :update-watch
                                           :repl-env repl-env
                                           :var-sym (make-symbol (format "'%s" var-name))
-                                          :buffer-id buffer-id))))
+                                          :buffer-id buffer-id
+                                          :print-length print-length
+                                          :print-level print-level))))
             (let ((err (replique/get resp :error)))
               (if err
                   (if (replique/get resp :undefined)
@@ -169,7 +184,9 @@
                                           :repl-env replique-watch/repl-env
                                           :var-sym (make-symbol
                                                     (format "'%s" replique-watch/var-name))
-                                          :buffer-id replique-watch/buffer-id))))
+                                          :buffer-id replique-watch/buffer-id
+                                          :print-length replique-watch/print-length
+                                          :print-level replique-watch/print-level))))
             (let ((err (replique/get resp :error)))
               (if err
                   (if (replique/get resp :undefined)
