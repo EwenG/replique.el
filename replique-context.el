@@ -688,6 +688,71 @@
                                  target-point 'replique-context/maybe-at-binding-position)))))
                      (setq quit t))))))))))
 
+(defun replique-context/handle-deftype-like (target-point)
+  (let* ((object (replique-context/read-one))
+         (object-extracted (replique-context/extracted-value object))
+         (named-fn-binding (when (and (cl-typep object-extracted 'replique-context/object-symbol)
+                                      (> target-point (oref object-extracted :end)))
+                             (replique-context/handle-named-fn-binding object))))
+    ;; If the name of the deftype-like object could not be found, move back to the beginning of
+    ;; the vector
+    (when (and (cl-typep object-extracted 'replique-context/object-delimited)
+               (eq :vector (oref object-extracted :delimited)))
+      (goto-char (oref object-extracted :start)))
+    (if (and (cl-typep object-extracted 'replique-context/object-symbol)
+             (<= (oref object-extracted :start) target-point (oref object-extracted :end)))
+        (setq replique-context/at-binding-position? t)
+      (let ((quit nil))
+        ;; looking for the deftype-like fields
+        (while (null quit)
+          (replique-context/forward-comment)
+          (let* ((object (replique-context/read-one))
+                 (object-extracted (replique-context/extracted-value object)))
+            (if (null object-extracted)
+                (setq quit t)
+              (cond ((and (cl-typep object-extracted 'replique-context/object-delimited)
+                          (eq :vector (oref object-extracted :delimited))
+                          (>= target-point (oref object-extracted :end)))
+                     ;; point is after the fields vector
+                     (goto-char (+ 1 (oref object-extracted :start)))
+                     (replique-context/forward-comment)
+                     (when named-fn-binding
+                       (puthash (aref named-fn-binding 0)
+                                (aref named-fn-binding 1)
+                                replique-context/locals))
+                     (replique-context/handle-params-bindings
+                      target-point 'replique-context/add-local-binding)
+                     (goto-char (+ 1 (oref object-extracted :end)))
+                     (setq quit t))
+                    ((and (cl-typep object-extracted 'replique-context/object-delimited)
+                          (eq :vector (oref object-extracted :delimited))
+                          (< (oref object-extracted :start)
+                             target-point
+                             (oref object-extracted :end)))
+                     ;; point is in the fields vector
+                     (goto-char (+ 1 (oref object-extracted :start)))
+                     (replique-context/forward-comment)
+                     (replique-context/handle-params-bindings
+                      target-point 'replique-context/maybe-at-binding-position)
+                     (setq quit t))))))
+        (let ((quit (<= target-point (point))))
+          ;; looking for the deftype-like methods
+          (while (null quit)
+            (replique-context/forward-comment)
+            (let* ((object (replique-context/read-one))
+                   (object-extracted (replique-context/extracted-value object)))
+              (if (null object-extracted)
+                  (setq quit t)
+                (cond ((and (cl-typep object-extracted 'replique-context/object-delimited)
+                            (eq :list (oref object-extracted :delimited))
+                            (< (oref object-extracted :start)
+                               target-point
+                               (oref object-extracted :end)))
+                       ;; method body
+                       (goto-char (+ 1 (oref object-extracted :start)))
+                       (replique-context/handle-fn-like target-point)
+                       (setq quit t)))))))))))
+
 (defun replique-context/handle-letfn-like (target-point)
   (let ((object (replique-context/extracted-value (replique-context/read-one))))
     (when (and (cl-typep object 'replique-context/object-delimited)
@@ -1095,6 +1160,11 @@
            (goto-char p))
           ((equal binding-context :fn-like)
            (replique-context/handle-fn-like target-point)
+           (goto-char p))
+          ((equal binding-context :deftype-like)
+           ;; deftype-like methods are not closures
+           (setq replique-context/locals (replique/hash-map))
+           (replique-context/handle-deftype-like target-point)
            (goto-char p))
           ((equal binding-context :letfn-like)
            (replique-context/handle-letfn-like target-point)
