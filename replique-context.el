@@ -753,6 +753,21 @@
                        (replique-context/handle-fn-like target-point)
                        (setq quit t)))))))))))
 
+(defun replique-context/handle-defmethod-like (target-point)
+  (let* ((object (replique-context/read-one))
+         (object-extracted (replique-context/extracted-value object)))
+    ;; If the defmethod name could not be found, we already are passed the dispatch val,
+    ;; else read forward the dispatch val
+    (cond ((and (cl-typep object-extracted 'replique-context/object-symbol)
+                (<= (oref object-extracted :start) target-point (oref object-extracted :end)))
+           (setq replique-context/at-binding-position? t))
+          ((not (cl-typep object-extracted 'replique-context/object-symbol))
+           (replique-context/forward-comment))
+          (t (replique-context/forward-comment)
+             (replique-context/read-one)
+             (replique-context/forward-comment)))
+    (replique-context/handle-fn-like target-point)))
+
 (defun replique-context/handle-letfn-like (target-point)
   (let ((object (replique-context/extracted-value (replique-context/read-one))))
     (when (and (cl-typep object 'replique-context/object-delimited)
@@ -1165,6 +1180,9 @@
            ;; deftype-like methods are not closures
            (setq replique-context/locals (replique/hash-map))
            (replique-context/handle-deftype-like target-point)
+           (goto-char p))
+          ((equal binding-context :defmethod-like)
+           (replique-context/handle-defmethod-like target-point)
            (goto-char p))
           ((equal binding-context :letfn-like)
            (replique-context/handle-letfn-like target-point)
