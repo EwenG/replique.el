@@ -26,13 +26,14 @@
   nil)
 
 (defun replique-print/print-list (l)
-  (insert "(")
-  (while (car l)
-    (replique-print/print-dispatch (car l))
-    (setq l (cdr l))
-    (when (car l)
-      (insert-char ?\s)))
-  (insert ")"))
+  (let ((first-element? t))
+    (insert "(")
+    (dolist (x l)
+      (if first-element?
+          (setq first-element? nil)
+        (insert-char ?\s))
+      (replique-print/print-dispatch x))
+    (insert ")")))
 
 (defun replique-print/print-vector (v)
   (insert "[")
