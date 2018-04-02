@@ -558,14 +558,16 @@
              (object-v (replique-context/read-one))
              (object-v-meta-value (replique-context/meta-value object-v))
              (object-v-leaf (replique-context/object-leaf object-v)))
-        (if (and object-k-leaf object-v-leaf)
+        (if object-k-leaf
             (progn
-              (cond ((replique-context/at-for-like-let?
-                      for-like? object-k-meta-value object-v-meta-value)
+              (cond ((and object-v-leaf
+                          (replique-context/at-for-like-let?
+                           for-like? object-k-meta-value object-v-meta-value))
                      (goto-char (+ 1 (oref object-v-meta-value :start)))
                      (replique-context/handle-binding-vector target-point)
                      (goto-char (oref object-v-meta-value :end)))
-                    ((> target-point (oref object-v-leaf :end))
+                    ((and object-v-leaf
+                          (> target-point (oref object-v-leaf :end)))
                      (replique-context/extract-bindings
                       target-point object-k 'replique-context/add-local-binding)
                      (goto-char (oref object-v-leaf :end)))
