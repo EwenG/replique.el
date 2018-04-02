@@ -31,6 +31,7 @@
 (defvar-local replique-watch/buffer-id nil)
 (defvar-local replique-watch/print-length nil)
 (defvar-local replique-watch/print-level nil)
+(defvar-local replique-watch/browse-path nil)
 (defvar buffer-id-generator 0)
 
 (defun replique-watch/new-buffer-id ()
@@ -90,22 +91,25 @@
             (setq replique-watch/var-name var-name)
             (setq replique-watch/buffer-id buffer-id)
             (setq replique-watch/print-length print-length)
-            (setq replique-watch/print-level print-level))
+            (setq replique-watch/print-level print-level)
+            (setq replique-watch/browse-path '()))
           (puthash buffer-id watch-buffer ref-watchers)
           (let ((resp (replique/send-tooling-msg
                        tooling-repl
-                       (replique/hash-map :type :update-watch
+                       (replique/hash-map :type :refresh-watch
+                                          :update? t
                                           :repl-env repl-env
                                           :var-sym (make-symbol (format "'%s" var-name))
                                           :buffer-id buffer-id
                                           :print-length print-length
-                                          :print-level print-level))))
+                                          :print-level print-level
+                                          :browse-path `(quote ,replique-watch/browse-path)))))
             (let ((err (replique/get resp :error)))
               (if err
                   (if (replique/get resp :undefined)
                       (message "%s is undefined" var-name)
                     (message "%s" (replique-pprint/pprint-error-str err))
-                    (message "update watch failed with var %s" var-name))
+                    (message "refresh watch failed with var %s" var-name))
                 (with-current-buffer watch-buffer
                   (replique-watch/pprint (replique/get resp :var-value)))
                 (display-buffer watch-buffer)))))))))
@@ -147,12 +151,18 @@
       (when var-ns
         (replique-watch/watch* var-ns tooling-repl cljs-repl)))))
 
+(defun replique-watch/watch-cljc (tooling-repl repl)
+  (if (not repl)
+      (user-error "No active Clojure or Clojurescript REPL")
+    (let ((var-ns (replique-context/clojure-find-ns)))
+      (when var-ns
+        (replique-watch/watch* var-ns tooling-repl repl)))))
+
 (defun replique/watch ()
   (interactive)
   (if (not (featurep 'ivy))
       (user-error "replique-watch requires ivy-mode")
     (replique/with-modes-dispatch
-     (replique/mode . 'replique-watch/watch-session)
      (clojure-mode . 'replique-watch/watch-clj)
      (clojurescript-mode . 'replique-watch/watch-cljs)
      (clojurec-mode . 'replique-watch/watch-cljc)
@@ -170,7 +180,7 @@
         (with-current-buffer watch-buffer
           (set-buffer-modified-p t))))))
 
-(defun replique-watch/refresh ()
+(defun replique-watch/refresh (&optional no-update?)
   (interactive)
   (if (not (seq-contains minor-mode-list 'replique-watch/minor-mode))
       (user-error "replique-watch/refresh can only be used in a watch buffer")
@@ -180,30 +190,107 @@
         (when tooling-repl
           (let ((resp (replique/send-tooling-msg
                        tooling-repl
-                       (replique/hash-map :type :update-watch
+                       (replique/hash-map :type :refresh-watch
+                                          :update? (null no-update?)
                                           :repl-env replique-watch/repl-env
                                           :var-sym (make-symbol
                                                     (format "'%s" replique-watch/var-name))
                                           :buffer-id replique-watch/buffer-id
                                           :print-length replique-watch/print-length
-                                          :print-level replique-watch/print-level))))
+                                          :print-level replique-watch/print-level
+                                          :browse-path `(quote ,replique-watch/browse-path)))))
             (let ((err (replique/get resp :error)))
               (if err
                   (if (replique/get resp :undefined)
                       (message "%s is undefined" replique-watch/var-name)
                     (message "%s" (replique-pprint/pprint-error-str err))
-                    (message "update watch failed with var %s" var-name))
+                    (message "refresh watch failed with var %s" var-name))
                 (message "Refreshing ...")
                 (replique-watch/pprint (replique/get resp :var-value))
                 (message "Refreshing ... done")))))))))
 
+(defun replique-watch/do-browse (candidate)
+  (setq replique-watch/browse-path replique-watch/temporary-browse-path)
+  (replique-watch/refresh t))
+
+(defun replique-watch/browse-backward-delete-char ()
+  (interactive)
+  (if (equal "" ivy-text)
+      (let ((new-browse-path (cdr replique-watch/temporary-browse-path)))
+        (ivy-quit-and-run
+         (let ((replique-watch/temporary-browse-path new-browse-path))
+           (replique-watch/browse*))))
+    (ivy-backward-delete-char)))
+
+(defun replique-watch/browse-alt-done ()
+  (interactive)
+  (when-let (candidate (nth ivy--index ivy--all-candidates))
+    (let ((new-browse-path (cons candidate replique-watch/temporary-browse-path)))
+      (ivy-quit-and-run
+       (let ((replique-watch/temporary-browse-path new-browse-path))
+         (replique-watch/browse*))))))
+
+(defvar replique-watch/browse-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "<backspace>") 'replique-watch/browse-backward-delete-char)
+    (define-key map (kbd "C-j") 'replique-watch/browse-alt-done)
+    map))
+
+(defun replique-watch/browse-path->string (browse-path)
+  (if (eq '() browse-path)
+      ""
+    (concat (string-join (reverse browse-path) " ") " ")))
+
+(defun replique-watch/browse-candidates (user-input)
+  (with-ivy-window
+    (let* ((tooling-repl (replique/repl-by :repl-type :tooling
+                                           :directory replique-watch/directory))
+           (resp (replique/send-tooling-msg
+                  tooling-repl
+                  (replique/hash-map :type :browse-candidates
+                                     :repl-env replique-watch/repl-env
+                                     :var-sym (make-symbol (format "'%s" replique-watch/var-name))
+                                     :buffer-id replique-watch/buffer-id
+                                     :browse-path `(quote ,replique-watch/temporary-browse-path)
+                                     :prefix user-input))))
+      (let ((err (replique/get resp :error)))
+        (if err
+            (progn
+              (message "%s" (replique-pprint/pprint-error-str err))
+              (error "Browse failed while requesting browse candidates"))
+          (replique/get resp :candidates))))))
+
+(defvar replique-watch/temporary-browse-path nil)
+
+(defun replique-watch/browse* ()
+  (ivy-read (concat "Browse path: "
+                    (replique-watch/browse-path->string
+                     replique-watch/temporary-browse-path))
+            'replique-watch/browse-candidates
+            :dynamic-collection t
+            :action 'replique-watch/do-browse
+            :require-match nil
+            :keymap replique-watch/browse-map
+            :caller 'replique-watch/browse))
+
+(defun replique-watch/browse ()
+  (interactive)
+  (cond ((not (featurep 'ivy))
+         (user-error "replique-watch/browse requires ivy-mode"))
+        ((not (bound-and-true-p replique-watch/minor-mode))
+         (user-error "replique-watch/browse can only be used from a watch buffer"))
+        (t (let ((replique-watch/temporary-browse-path replique-watch/browse-path))
+             (replique-watch/browse*)))))
+
 (defvar replique-watch/minor-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map "g" 'replique-watch/refresh)
+    (define-key map "b" 'replique-watch/browse)
     (easy-menu-define replique-watch/minor-mode-menu map
       "Replique-watch Minor Mode Menu"
       '("Replique-watch"
-        ["Refresh watch" replique-watch/refresh t]))
+        ["Refresh watch" replique-watch/refresh t]
+        ["Browse" replique-watch/browse t]))
     map))
 
 (define-minor-mode replique-watch/minor-mode
@@ -211,3 +298,5 @@
   :lighter "Replique-watch" :keymap replique-watch/minor-mode-map)
 
 (provide 'replique-watch)
+
+;; hide non public interactive commands
