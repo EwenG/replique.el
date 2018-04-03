@@ -180,6 +180,11 @@
         (with-current-buffer watch-buffer
           (set-buffer-modified-p t))))))
 
+(defun replique-watch/check-orphan-buffer (tooling-repl buffer-id buffer)
+  (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+    (when (not (replique/contains? ref-watchers buffer-id))
+      (puthash buffer-id buffer ref-watchers)))) 
+
 (defun replique-watch/refresh (&optional no-update?)
   (interactive)
   (if (not (seq-contains minor-mode-list 'replique-watch/minor-mode))
@@ -188,6 +193,8 @@
       (let ((tooling-repl (replique/repl-by :repl-type :tooling
                                             :directory replique-watch/directory)))
         (when tooling-repl
+          (replique-watch/check-orphan-buffer
+           tooling-repl replique-watch/buffer-id (current-buffer))
           (let ((resp (replique/send-tooling-msg
                        tooling-repl
                        (replique/hash-map :type :refresh-watch
@@ -255,7 +262,8 @@
                                      :prefix user-input))))
       (let ((err (replique/get resp :error)))
         (if err
-            (progn
+            (if (replique/get resp :undefined)
+                (error "%s is undefined" replique-watch/var-name)
               (message "%s" (replique-pprint/pprint-error-str err))
               (error "Browse failed while requesting browse candidates"))
           (replique/get resp :candidates))))))
