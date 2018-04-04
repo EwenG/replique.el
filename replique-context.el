@@ -1337,34 +1337,101 @@
       (replique-context/forward-comment)
       ppss)))
 
-(defvar replique-context/context nil)
-(defvar replique-context/namespace nil)
+;; Same as clojure-namespace-name-regex but without the start-line check
+(defconst replique-context/clojure-namespace-name-regex
+  (rx "("
+      (zero-or-one (group (regexp "clojure.core/")))
+      (zero-or-one (submatch "in-"))
+      "ns"
+      (zero-or-one "+")
+      (one-or-more (any whitespace "\n"))
+      (zero-or-more (or (submatch (zero-or-one "#")
+                                  "^{"
+                                  (zero-or-more (not (any "}")))
+                                  "}")
+                        (zero-or-more "^:"
+                                      (one-or-more (not (any whitespace)))))
+                    (one-or-more (any whitespace "\n")))
+      (zero-or-one (any ":'")) ;; (in-ns 'foo) or (ns+ :user)
+      (group (one-or-more (not (any "()\"" whitespace))) symbol-end)))
 
-;; find in-ns calls in the current form. If no namespace is found, use clojure-find-ns
-(defun replique-context/clojure-find-ns ()
-  (or replique-context/namespace
-      (save-excursion
-        (let* ((target-point (point))
-               (ppss (replique-context/syntax-ppss target-point))
-               (top-level (syntax-ppss-toplevel-pos ppss)))
-          (if top-level
-              (progn
-                (goto-char top-level)
-                (let ((namespace (replique-context/walk-in-ns target-point)))
-                  (setq replique-context/namespace (or namespace (clojure-find-ns)))))
-            (setq replique-context/namespace (clojure-find-ns)))
-          replique-context/namespace))))
 
-(defun replique-context/clojure-find-ns-no-cache ()
-  (let* ((target-point (point))
-         (ppss (replique-context/syntax-ppss target-point))
-         (top-level (syntax-ppss-toplevel-pos ppss)))
-    (if top-level
+(defvar-local replique-context/ns-starts nil)
+(defvar-local replique-context/buffer-ns-starts-modified-tick nil)
+
+(defun replique-context/clojure-find-ns-handle-ns-form (the-ns ns-start-pos)
+  (let ((depth (car (syntax-ppss (point)))))
+    (when (eq 0 depth)
+      (setq replique-context/ns-starts
+            (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts)))
+    (goto-char ns-start-pos)
+    (replique-context/clojure-find-ns-starts* nil)))
+
+(defun replique-context/clojure-find-ns-handle-in-ns-form (the-ns ns-start-pos)
+  (let ((depth (car (syntax-ppss (point)))))
+    (if (eq 0 depth)
         (progn
-          (goto-char top-level)
-          (let ((namespace (replique-context/walk-in-ns target-point)))
-            (or namespace (clojure-find-ns))))
-      (clojure-find-ns))))
+          (setq replique-context/ns-starts
+                (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
+          (goto-char ns-start-pos)
+          (replique-context/clojure-find-ns-starts* nil))
+      (parse-partial-sexp (point) (point-max) -1)
+      (let ((ns-end-pos (point))
+            (previous-ns (caar replique-context/ns-starts)))
+        (setq replique-context/ns-starts
+              (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
+        (goto-char ns-start-pos)
+        (replique-context/clojure-find-ns-starts* ns-end-pos)
+        (setq replique-context/ns-starts
+              (cons `(,previous-ns . ,ns-end-pos)
+                    replique-context/ns-starts))
+        (replique-context/clojure-find-ns-starts* nil)))))
+
+(defun replique-context/clojure-find-ns-starts* (bound)
+  (let ((ns-start-pos (re-search-forward
+                       replique-context/clojure-namespace-name-regex bound t)))
+    (when ns-start-pos
+      (let ((the-ns (match-string-no-properties 4))
+            (in-ns? (match-string-no-properties 2))
+            (form (match-string-no-properties 0)))
+        (when the-ns
+          (backward-char (length form))
+          (if in-ns?
+              (replique-context/clojure-find-ns-handle-in-ns-form the-ns ns-start-pos)
+            (replique-context/clojure-find-ns-handle-ns-form the-ns ns-start-pos)))))))
+
+;; save the classpath on client side
+;; keep track of all clj/s/c files on the classpath with their ns entries and
+;; last modification time
+(defun replique-context/clojure-find-ns-starts ()
+  (let ((modified-tick (buffer-chars-modified-tick)))
+    (if (equal modified-tick replique-context/buffer-ns-starts-modified-tick)
+        replique-context/ns-starts
+      (save-excursion
+        (save-restriction
+          (widen)
+          (goto-char (point-min))
+          (setq replique-context/ns-starts nil)
+          (replique-context/clojure-find-ns-starts* nil)
+          (setq replique-context/ns-starts (nreverse replique-context/ns-starts))
+          (setq replique-context/buffer-ns-starts-modified-tick modified-tick)
+          replique-context/ns-starts)))))
+
+(defun replique-context/clojure-find-ns ()
+  (let ((ns-starts (replique-context/clojure-find-ns-starts))
+        (continue t)
+        (ns-candidate nil))
+    (while continue
+      (let ((ns-start (car ns-starts)))
+        (if (and ns-start (>= (point) (cdr ns-start)))
+            (progn
+              (setq ns-candidate (car ns-start))
+              (setq ns-starts (cdr ns-starts)))
+          (setq continue nil)
+          ns-candidate)))
+    ns-candidate))
+
+(defvar replique-context/context nil)
 
 (defun replique-context/get-context (ns repl-env)
   (or replique-context/context
@@ -1402,7 +1469,6 @@
                   replique-context/context))))))))
 
 (defun replique-context/reset-cache ()
-  (setq replique-context/namespace nil)
   (setq replique-context/context nil))
 
 (add-hook 'post-command-hook 'replique-context/reset-cache)
