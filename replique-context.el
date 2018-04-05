@@ -1367,9 +1367,6 @@
               (replique-context/clojure-find-ns-handle-in-ns-form the-ns ns-start-pos)
             (replique-context/clojure-find-ns-handle-ns-form the-ns ns-start-pos)))))))
 
-;; save the classpath on client side
-;; keep track of all clj/s/c files on the classpath with their ns entries and
-;; last modification time
 (defun replique-context/clojure-find-ns-starts ()
   (let ((modified-tick (buffer-chars-modified-tick)))
     (if (equal modified-tick replique-context/buffer-ns-starts-modified-tick)
