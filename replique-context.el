@@ -403,39 +403,6 @@
       (setq object (oref object :value)))
     object))
 
-(defvar replique-context/in-ns-forms '("in-ns" "clojure.core/in-ns"))
-
-(defun replique-context/walk-in-ns (target-point)
-  (let ((namespace nil))
-    (while (< (point) target-point)
-      (let* ((object (replique-context/read-one))
-             (object-extracted (replique-context/extracted-value object)))
-        (if object-extracted
-            (progn
-              (cond ((and (cl-typep object-extracted 'replique-context/object-delimited)
-                          (eq :list (oref object-extracted :delimited))
-                          (> target-point (oref object-extracted :end)))
-                     (goto-char (+ (oref object-extracted :start) 1))
-                     (replique-context/forward-comment)
-                     (let* ((maybe-in-ns (replique-context/read-one))
-                            (maybe-in-ns-no-meta (replique-context/meta-value maybe-in-ns)))
-                       (when (and (cl-typep maybe-in-ns-no-meta 'replique-context/object-symbol)
-                                  (seq-contains replique-context/in-ns-forms
-                                                (oref maybe-in-ns-no-meta :symbol)))
-                         (replique-context/forward-comment)
-                         (let ((maybe-ns (replique-context/extracted-value
-                                          (replique-context/read-one))))
-                           (when (cl-typep maybe-ns 'replique-context/object-symbol)
-                             (setq namespace (oref maybe-ns :symbol))))))
-                     (goto-char (oref object-extracted :end)))
-                    ((and (cl-typep object-extracted 'replique-context/object-delimited)
-                          (> target-point (oref object-extracted :start))
-                          (< target-point (oref object-extracted :end)))
-                     (goto-char (+ (oref object-extracted :start) 1))))
-              (replique-context/forward-comment))
-          (goto-char target-point))))
-    namespace))
-
 (defun replique-context/add-local-binding (target-point sym sym-start sym-end meta)
   (puthash sym `[,sym-start ,sym-end ,meta] replique-context/locals))
 
