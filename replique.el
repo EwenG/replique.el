@@ -31,7 +31,7 @@
 (require 'replique-resources)
 (require 'map)
 (require 'replique-omniscient)
-(require 'replique-lein)
+(require 'replique-classpath)
 (require 'replique-remove-var)
 (require 'replique-transit)
 (require 'replique-context)
@@ -2061,6 +2061,8 @@ minibuffer"
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is
 ;; defined in the clojure process)
 ;; eldoc for interop call with multiple arities -> "&" ??
+;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
+;; replique-context -> add locals computation for extend-type/extend-protocol
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory

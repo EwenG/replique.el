@@ -1,4 +1,4 @@
-;; replique-omniscient.el ---   -*- lexical-binding: t; -*-
+;; replique-classpath.el ---   -*- lexical-binding: t; -*-
 
 ;; Copyright © 2016 Ewen Grosjean
 
@@ -43,6 +43,6 @@
             (message "replique/classpath failed"))
         (message "Loading project.clj ... done")))))
 
-(provide 'replique-lein)
+(provide 'replique-classpath)
 
-;;; replique-omniscient.el ends here
+;;; replique-classpath.el ends here
