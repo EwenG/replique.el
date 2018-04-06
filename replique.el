@@ -1993,7 +1993,9 @@ minibuffer"
           (buffer-live-p (current-buffer))
           ;; unbalanced expression or nothing to read
           (= 0 (car replique/parser-state))
-          (not (null (nth 2 replique/parser-state))))
+          (not (null (nth 2 replique/parser-state)))
+          ;; "#s" is the prefix of a hashtable
+          (not (and (equal ?\# (char-before (- (point) 1))) (equal ?s (char-before)))))
     (goto-char (point-min))
     (when-let ((o (read (current-buffer))))
       (funcall dispatch-fn o))
