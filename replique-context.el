@@ -1332,7 +1332,7 @@
       (setq replique-context/ns-starts
             (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts)))
     (goto-char ns-start-pos)
-    (replique-context/clojure-find-ns-starts* nil)))
+    (replique-context/clojure-find-ns-starts** nil)))
 
 (defun replique-context/clojure-find-ns-handle-in-ns-form (the-ns ns-start-pos)
   (let ((depth (car (syntax-ppss (point)))))
@@ -1341,20 +1341,20 @@
           (setq replique-context/ns-starts
                 (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
           (goto-char ns-start-pos)
-          (replique-context/clojure-find-ns-starts* nil))
+          (replique-context/clojure-find-ns-starts** nil))
       (parse-partial-sexp (point) (point-max) -1)
       (let ((ns-end-pos (point))
             (previous-ns (caar replique-context/ns-starts)))
         (setq replique-context/ns-starts
               (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
         (goto-char ns-start-pos)
-        (replique-context/clojure-find-ns-starts* ns-end-pos)
+        (replique-context/clojure-find-ns-starts** ns-end-pos)
         (setq replique-context/ns-starts
               (cons `(,previous-ns . ,ns-end-pos)
                     replique-context/ns-starts))
-        (replique-context/clojure-find-ns-starts* nil)))))
+        (replique-context/clojure-find-ns-starts** nil)))))
 
-(defun replique-context/clojure-find-ns-starts* (bound)
+(defun replique-context/clojure-find-ns-starts** (bound)
   (let ((ns-start-pos (re-search-forward
                        replique-context/clojure-namespace-name-regex bound t)))
     (when ns-start-pos
@@ -1367,6 +1367,13 @@
               (replique-context/clojure-find-ns-handle-in-ns-form the-ns ns-start-pos)
             (replique-context/clojure-find-ns-handle-ns-form the-ns ns-start-pos)))))))
 
+(defun replique-context/clojure-find-ns-starts* (bound)
+  (replique-context/clojure-find-ns-starts** bound)
+  (setq replique-context/ns-starts (nreverse replique-context/ns-starts))
+  (when (car replique-context/ns-starts)
+    (setcdr (car replique-context/ns-starts) 0))
+  replique-context/ns-starts)
+
 (defun replique-context/clojure-find-ns-starts ()
   (let ((modified-tick (buffer-chars-modified-tick)))
     (if (equal modified-tick replique-context/buffer-ns-starts-modified-tick)
@@ -1376,8 +1383,7 @@
           (widen)
           (goto-char (point-min))
           (setq replique-context/ns-starts nil)
-          (replique-context/clojure-find-ns-starts* nil)
-          (setq replique-context/ns-starts (nreverse replique-context/ns-starts))
+          (setq replique-context/ns-starts (replique-context/clojure-find-ns-starts* nil))
           (setq replique-context/buffer-ns-starts-modified-tick modified-tick)
           replique-context/ns-starts)))))
 
