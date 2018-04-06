@@ -211,7 +211,7 @@
                   (if (replique/get resp :undefined)
                       (message "%s is undefined" replique-watch/var-name)
                     (message "%s" (replique-pprint/pprint-error-str err))
-                    (message "refresh watch failed with var %s" var-name))
+                    (message "refresh watch failed with var %s" replique-watch/var-name))
                 (message "Refreshing ...")
                 (replique-watch/pprint (replique/get resp :var-value))
                 (message "Refreshing ... done")))))))))
