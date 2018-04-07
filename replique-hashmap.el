@@ -163,6 +163,13 @@
 (defun replique/count (coll)
   (if (hash-table-p coll)
       (hash-table-count coll)
-      (length coll)))
+    (length coll)))
+
+(defun replique/merge (hash &rest xs)
+  (let ((merged (replique/copy-hash-table hash)))
+    (dolist (x xs)
+      (when x
+        (maphash (lambda (k v) (puthash k v merged)) x)))
+    merged))
 
 (provide 'replique-hashmap)
