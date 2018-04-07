@@ -352,6 +352,7 @@
 
 (defvar replique-context/locals nil)
 (defvar replique-context/at-binding-position? nil)
+(defvar replique-context/at-local-binding-position? nil)
 (defvar replique-context/in-ns-form? nil)
 (defvar replique-context/dependency-context nil)
 (defvar replique-context/fn-context nil)
@@ -362,6 +363,7 @@
 (defun replique-context/reset-state ()
   (setq replique-context/locals (replique/hash-map))
   (setq replique-context/at-binding-position? nil)
+  (setq replique-context/at-local-binding-position? nil)
   (setq replique-context/in-ns-form? nil)
   (setq replique-context/dependency-context nil)
   (setq replique-context/fn-context nil)
@@ -409,6 +411,10 @@
 (defun replique-context/maybe-at-binding-position (target-point sym sym-start sym-end meta)
   (when (<= sym-start target-point sym-end)
     (setq replique-context/at-binding-position? t)))
+
+(defun replique-context/maybe-at-local-binding-position (target-point sym sym-start sym-end meta)
+  (when (<= sym-start target-point sym-end)
+    (setq replique-context/at-local-binding-position? t)))
 
 (defun replique-context/convert-namespaced-keyword (object)
   (if (cl-typep object 'replique-context/object-symbol)
@@ -541,7 +547,7 @@
                     ((and (>= target-point (oref object-k-leaf :start))
                           (<= target-point (oref object-k-leaf :end)))
                      (replique-context/extract-bindings
-                      target-point object-k 'replique-context/maybe-at-binding-position)))
+                      target-point object-k 'replique-context/maybe-at-local-binding-position)))
               (replique-context/forward-comment))
           (setq exit t))))))
 
@@ -617,7 +623,7 @@
                      (goto-char (+ 1 (oref object-extracted :start)))
                      (replique-context/forward-comment)
                      (replique-context/handle-params-bindings
-                      target-point 'replique-context/maybe-at-binding-position)
+                      target-point 'replique-context/maybe-at-local-binding-position)
                      (setq quit t))
                     ((and (cl-typep object-extracted 'replique-context/object-delimited)
                           (eq :list (oref object-extracted :delimited))
@@ -654,7 +660,8 @@
                                 (goto-char (+ 1 (oref object-extracted :start)))
                                 (replique-context/forward-comment)
                                 (replique-context/handle-params-bindings
-                                 target-point 'replique-context/maybe-at-binding-position)))))
+                                 target-point
+                                 'replique-context/maybe-at-local-binding-position)))))
                      (setq quit t))))))))))
 
 (defun replique-context/handle-deftype-like (target-point)
@@ -702,7 +709,7 @@
                      (goto-char (+ 1 (oref object-extracted :start)))
                      (replique-context/forward-comment)
                      (replique-context/handle-params-bindings
-                      target-point 'replique-context/maybe-at-binding-position)
+                      target-point 'replique-context/maybe-at-local-binding-position)
                      (setq quit t))))))
         (let ((quit (<= target-point (point))))
           ;; looking for the deftype-like methods
@@ -769,7 +776,7 @@
                             (if (<= (oref object-meta-value :start)
                                     target-point
                                     (oref object-meta-value :end))
-                                (setq replique-context/at-binding-position? t)
+                                (setq replique-context/at-local-binding-position? t)
                               (replique-context/add-local-binding target-point sym
                                                                   (oref object-meta-value :start)
                                                                   (oref object-meta-value :end)
@@ -1542,6 +1549,7 @@
                         (replique/hash-map
                          :locals replique-context/locals
                          :at-binding-position? replique-context/at-binding-position?
+                         :at-local-binding-position? replique-context/at-local-binding-position?
                          :in-string? (not (null (nth 3 ppss)))
                          :in-comment? (not (null (nth 4 ppss)))
                          :in-ns-form? replique-context/in-ns-form?
