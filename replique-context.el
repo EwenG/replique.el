@@ -1125,6 +1125,117 @@
       (when (> p-end p-start)
         `(,p-start . ,p-end)))))
 
+(defvar replique-context/default-binding-context-forms
+  (replique/hash-map "let" :let-like
+                     "if-let" :let-like
+                     "when-let" :let-like
+                     "if-some" :let-like
+                     "when-some" :let-like
+                     "loop" :let-like
+                     "dotimes" :let-like
+                     "defn" :fn-like
+                     "defn-" :fn-like
+                     "fn" :fn-like
+                     "defmacro" :fn-like
+                     "deftype" :deftype-like
+                     "defrecord" :deftype-like
+                     "defmethod" :defmethod-like
+                     "for" :for-like
+                     "doseq" :for-like
+                     "letfn" :letfn-like))
+
+(defvar replique-context/default-binding-context-forms-clj
+  (replique/hash-map "clojure.core/let" :let-like
+                     "clojure.core/if-let" :let-like
+                     "clojure.core/when-let" :let-like
+                     "clojure.core/if-some" :let-like
+                     "clojure.core/when-some" :let-like
+                     "clojure.core/loop" :let-like
+                     "with-open" :let-like
+                     "clojure.core/with-open" :let-like
+                     "clojure.core/dotimes" :let-like
+                     "with-local-vars" :let-like
+                     "clojure.core/with-local-vars" :let-like
+                     "clojure.core/defn" :fn-like
+                     "clojure.core/defn-" :fn-like
+                     "clojure.core/fn" :fn-like
+                     "clojure.core/defmacro" :fn-like
+                     "clojure.core/deftype" :deftype-like
+                     "clojure.core/defrecord" :deftype-like
+                     "clojure.core/defmethod" :defmethod-like
+                     "clojure.core/for" :for-like
+                     "clojure.core/doseq" :for-like
+                     "clojure.core/letfn" :letfn-like))
+
+(defvar replique-context/default-binding-context-forms-cljs
+  (replique/hash-map "cljs.core/let" :let-like
+                     "cljs.core/if-let" :let-like
+                     "cljs.core/when-let" :let-like
+                     "cljs.core/if-some" :let-like
+                     "cljs.core/when-some" :let-like
+                     "cljs.core/loop" :let-like
+                     "cljs.core/dotimes" :let-like
+                     "cljs.core/defn" :fn-like
+                     "cljs.core/defn-" :fn-like
+                     "cljs.core/fn" :fn-like
+                     "cljs.core/defmacro" :fn-like
+                     "cljs.core/deftype" :deftype-like
+                     "cljs.core/defrecord" :deftype-like
+                     "cljs.core/defmethod" :defmethod-like
+                     "cljs.core/for" :for-like
+                     "cljs.core/doseq" :for-like
+                     "cljs.core/letfn" :letfn-like))
+
+(defvar replique-context/default-dependency-context-forms
+  (replique/hash-map "require" :require-like
+                     "use" :use-like
+                     "import" :import-like
+                     "refer-clojure" :refer-clojure-like))
+
+(defvar replique-context/default-dependency-context-forms-clj
+  (replique/hash-map "clojure.core/require" :require-like
+                     "clojure.core/use" :use-like
+                     "clojure.core/import" :import-like
+                     "refer" :refer-like
+                     "clojure.core/refer" :refer-like
+                     "clojure.core/refer-clojure" :refer-clojure-like
+                     "load" :load-like
+                     "clojure.core/load" :load-like))
+
+(defvar replique-context/default-dependency-context-forms-cljs
+  (replique/hash-map "cljs.core/require" :require-like
+                     "cljs.core/use" :use-like
+                     "require-macros" :require-macros-like
+                     "cljs.core/require-macros" :require-macros-like
+                     "cljs.core/import" :import-like
+                     "cljs.core/refer-clojure" :refer-clojure-like))
+
+(defvar replique-context/default-ns-context-forms
+  (replique/hash-map "ns" :ns-like))
+
+(defvar replique-context/default-ns-context-forms-clj
+  (replique/hash-map "clojure.core/ns" :ns-like))
+
+(defun replique-context/context-forms-with-overrides (repl-type overrides)
+  (if (equal repl-type :cljs)
+      (replique/hash-map
+       :binding-context (replique/merge replique-context/default-binding-context-forms
+                                        replique-context/default-binding-context-forms-cljs
+                                        (replique/get overrides :binding-context))
+       :dependency-context (replique/merge replique-context/default-dependency-context-forms
+                                           replique-context/default-dependency-context-forms-cljs
+                                           (replique/get overrides :dependency-context))
+       :ns-context replique-context/default-ns-context-forms)
+    (replique/hash-map
+     :binding-context (replique/merge replique-context/default-binding-context-forms
+                                      replique-context/default-binding-context-forms-clj
+                                      (replique/get overrides :binding-context))
+     :dependency-context (replique/merge replique-context/default-dependency-context-forms
+                                         replique-context/default-dependency-context-forms-clj
+                                         (replique/get overrides :dependency-context))
+     :ns-context (replique/merge replique-context/default-ns-context-forms
+                                 replique-context/default-ns-context-forms-clj))))
+
 (defun replique-context/handle-contextual-call (target-point context-forms symbol)
   (let ((p (point))
         (binding-context (replique/get
@@ -1418,12 +1529,15 @@
                 (message "context failed"))
             (save-excursion
               (let* ((target-point (point))
-                     (ppss (replique-context/walk-init target-point)))
+                     (ppss (replique-context/walk-init target-point))
+                     (repl-type (replique/get resp :repl-type)))
                 (when target-point
                   (let ((replique-context/platform-tag
-                         (symbol-name (replique/get resp :repl-type)))
+                         (symbol-name repl-type))
                         (replique-context/splice-ends '()))
-                    (replique-context/walk target-point resp))
+                    (replique-context/walk target-point
+                                           (replique-context/context-forms-with-overrides
+                                            repl-type resp)))
                   (setq replique-context/context
                         (replique/hash-map
                          :locals replique-context/locals
