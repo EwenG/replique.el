@@ -28,6 +28,8 @@
   (while (> (skip-chars-forward ",") 0)
     (forward-comment (buffer-size))))
 
+(defvar replique-context/symbol-separator-re "^\s,\(\)\[\]\{\}\"\n\t~@")
+
 (defclass replique-context/object-dispatch-macro ()
   ((dispatch-macro :initarg :dispatch-macro)
    (data :initarg :data)
@@ -168,7 +170,7 @@
                 :end forward-p))))
           ((eq ?# char1+)
            (cond ((eq ?: char2+)
-                  (skip-chars-forward "^\s,\(\)\[\]\{\}\"\n\t")
+                  (skip-chars-forward replique-context/symbol-separator-re)
                   (let ((namespace (buffer-substring-no-properties p1+ (point))))
                     (replique-context/forward-comment)
                     (replique-context/object-dispatch-macro
@@ -343,7 +345,7 @@
                    (goto-char (cdr skip-end-at-point))
                    (replique-context/forward-comment)
                    (replique-context/read-one))
-               (skip-chars-forward "^\s,\(\)\[\]\{\}\"\n\t")
+               (skip-chars-forward replique-context/symbol-separator-re)
                (when (> (point) p)
                  (replique-context/object-symbol
                   :symbol (buffer-substring-no-properties p (point))
@@ -1396,7 +1398,7 @@
       (if (not (bobp))
           (progn
             (replique-context/skip-delimited-backward)
-            (skip-chars-backward "^\s,\(\)\[\]\{\}\"\n\t")
+            (skip-chars-backward replique-context/symbol-separator-re)
             (let ((object-start (point))
                   (object (replique-context/read-one))
                   (object-end (point)))

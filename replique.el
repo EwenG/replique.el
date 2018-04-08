@@ -678,7 +678,7 @@
   (interactive "P")
   (let* ((expr-bounds (save-excursion
                         (let ((target-point (point)))
-                          (skip-chars-backward "^\s,\(\)\[\]\{\}\"\n\t")
+                          (skip-chars-backward replique-context/symbol-separator-re)
                           (let ((top-level (or (syntax-ppss-toplevel-pos
                                                 (replique-context/syntax-ppss (point)))
                                                (point))))
@@ -2064,7 +2064,10 @@ minibuffer"
 ;; defined in the clojure process)
 ;; eldoc for interop call with multiple arities -> "&" ??
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
+;; var autocompletion should be hidden by locals
 ;; replique-context -> add locals computation for extend-type/extend-protocol
+;; compile the file of main js namespaces when starting a cljs-repl, if it is not already loaded
+;; in the nalysis env
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory

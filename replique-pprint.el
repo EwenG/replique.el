@@ -64,7 +64,7 @@
 (defun replique-pprint/pprint-symbol ()
   (setq replique-pprint/is-multi-line? nil)
   (let ((start (point)))
-    (skip-chars-forward "^\s,\(\)\[\]\{\}\"\n\t")
+    (skip-chars-forward replique-context/symbol-separator-re)
     (when (> (point) start)
       (- (point) start))))
 
@@ -394,7 +394,7 @@
             (equal ?\} (char-before p))
             (equal ?\] (char-before p)))
         (forward-char -1)
-      (skip-chars-backward "^\s,\(\)\[\]\{\}\"\n\t"))
+      (skip-chars-backward replique-context/symbol-separator-re))
     (if (or (not (equal major-mode 'replique/mode))
             (and (equal (get-char-property (point) 'field) 'output)
                  (>= p (comint-line-beginning-position))))
