@@ -26,7 +26,7 @@
 (defun replique-list-vars/make-overlay ()
   (let ((ol (make-overlay (point) (point))))
     (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face '((t :inherit highlight)))
+    (overlay-put ol 'face 'highlight)
     ol))
 
 (defun replique-list-vars/move-overlay (overlay)
