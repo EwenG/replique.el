@@ -28,7 +28,8 @@
   (while (> (skip-chars-forward ",") 0)
     (forward-comment (buffer-size))))
 
-(defvar replique-context/symbol-separator-re "^\s,\(\)\[\]\{\}\"\n\t~@")
+(defvar replique-context/symbol-separators "][\s,\(\)\{\}\"\n\t~@^`;")
+(defvar replique-context/symbol-separator-re (concat "^" replique-context/symbol-separators))
 
 (defclass replique-context/object-dispatch-macro ()
   ((dispatch-macro :initarg :dispatch-macro)
