@@ -1353,7 +1353,7 @@ be searched in exec-path."
   :type 'string
   :group 'replique)
 
-(defcustom replique/main-js-files-max-depth 5
+(defcustom replique/main-js-files-max-depth 10
   "Maximum directory nesting when search for main js files. Set to a negative value to
 disable main js files refreshing."
   :type 'integer
@@ -2066,8 +2066,9 @@ minibuffer"
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
 ;; var autocompletion should be hidden by locals
 ;; replique-context -> add locals computation for extend-type/extend-protocol
-;; compile the file of main js namespaces when starting a cljs-repl, if it is not already loaded
-;; in the nalysis env
+;; compile the file of main js namespaces when starting a cljs-repl, if it is not already loaded in the analysis env
+;; Error when printing very large (too much ?) things from the cljs runtime
+;; Nashorn tooling message should use the nashorn repl-env
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
