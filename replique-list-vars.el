@@ -21,34 +21,7 @@
 
 ;; Code:
 
-(defvar-local replique-list-vars/line-overlay nil)
-
-(defun replique-list-vars/make-overlay ()
-  (let ((ol (make-overlay (point) (point))))
-    (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face 'highlight)
-    ol))
-
-(defun replique-list-vars/move-overlay (overlay)
-  (let (tmp b e)
-    (setq tmp t
-          b (line-beginning-position)
-          e (line-beginning-position 2))
-    (if tmp
-        (move-overlay overlay b e)
-      (move-overlay overlay 1 1))))
-
-(defun replique-list-vars/unhighlight ()
-  (when replique-list-vars/line-overlay
-    (delete-overlay replique-list-vars/line-overlay)))
-
-(defun replique-list-vars/highlight ()
-  (progn
-    (unless replique-list-vars/line-overlay
-      (setq replique-list-vars/line-overlay (replique-list-vars/make-overlay)))
-    (overlay-put replique-list-vars/line-overlay
-                 'window (selected-window))
-    (replique-list-vars/move-overlay replique-list-vars/line-overlay)))
+(require 'replique-highlight)
 
 (defun replique-list-vars/candidate-metas (candidates var-name)
   (thread-first (seq-find (lambda (cand)
@@ -78,7 +51,7 @@
                   :action (apply-partially action-fn tooling-repl repl var-ns)
                   :update-fn (lambda ()
                                (with-ivy-window
-                                 (replique-list-vars/unhighlight)
+                                 (replique-highlight/unhighlight)
                                  (let ((candidate (nth ivy--index ivy--old-cands)))
                                    (when candidate
                                      (let* ((metas (replique-list-vars/candidate-metas
@@ -93,8 +66,8 @@
                                            (forward-line (1- line))
                                            (when column
                                              (move-to-column column))
-                                           (replique-list-vars/highlight))))))))))
-                (replique-list-vars/unhighlight))
+                                           (replique-highlight/highlight))))))))))
+                (replique-highlight/unhighlight))
             (message "No var in the namespace: %s" var-ns)))))))
 
 (provide 'replique-list-vars)
