@@ -1624,6 +1624,7 @@ The following commands are available:
 (defvar replique/directory-max-depth-reached nil)
 
 (defun replique/directory-files-recursively (dir regexp dir-predicate max-depth)
+  (setq replique/directory-max-depth-reached nil)
   (let ((result nil)
         (files nil))
     (if (< max-depth 0)
