@@ -1621,9 +1621,8 @@ The following commands are available:
                (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
-(defun replique/directory-files-recursively (dir regexp exclude-dir max-depth)
-  (let ((exclude-dir (expand-file-name exclude-dir dir))
-        (result nil)
+(defun replique/directory-files-recursively (dir regexp dir-predicate max-depth)
+  (let ((result nil)
         (files nil))
     (unless (< max-depth 0)
       (dolist (file (file-name-all-completions "" dir))
@@ -1632,18 +1631,25 @@ The following commands are available:
               (let* ((leaf (substring file 0 (1- (length file))))
                      (full-file (expand-file-name leaf dir)))
                 ;; Don't follow symlinks to other directories.
-                (unless (or (file-symlink-p full-file) (equal full-file exclude-dir))
+                (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
                   (setq result
                         (nconc result (replique/directory-files-recursively
-                                       full-file regexp exclude-dir (1- max-depth))))))
+                                       full-file regexp dir-predicate (1- max-depth))))))
             (when (string-match-p regexp file)
               (push (expand-file-name file dir) files))))))
     (nconc result files)))
 
-(defun replique/refresh-main-js-files (directory port cljs-compile-path)
+(defun replique/refresh-main-js-files-dir-predicate (d)
+  (and
+   (not (string-prefix-p "." d))
+   (not (file-exists-p (expand-file-name ".repliqueignore" d)))))
+
+(defun replique/refresh-main-js-files (directory port)
   (message "Refreshing main js files ...")
   (let* ((js-files (replique/directory-files-recursively
-                    directory "\\.js$" cljs-compile-path replique/main-js-files-max-depth))
+                    directory "\\.js$"
+                    'replique/refresh-main-js-files-dir-predicate
+                    replique/main-js-files-max-depth))
          (main-js-files (seq-filter 'replique/is-main-js-file js-files)))
     (dolist (f main-js-files)
       (with-temp-file f
@@ -1716,6 +1722,8 @@ The following commands are available:
          (set-process-sentinel proc nil)
          (replique/process-filter-read
           network-proc network-proc-buff
+          ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
+          ;; informations about the clojure process at init time
           (lambda (cljs-compile-path)
             (cancel-timer timeout)
             (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
@@ -1738,7 +1746,7 @@ The following commands are available:
               ;; Don't refresh main js files if no REPL have been successfully started
               (when repl-started
                 (when (>= replique/main-js-files-max-depth 0)
-                  (replique/refresh-main-js-files directory port cljs-compile-path))))))
+                  (replique/refresh-main-js-files directory port))))))
          ;; The REPL accept fn will read a char in order to check whether the request
          ;; is an HTTP one or not
          (process-send-string network-proc "R")
@@ -2040,7 +2048,6 @@ minibuffer"
 ;; spec autocomplete for macros -> specized macros
 
 ;; Document the use of cljsjs to use js libs
-;; Customization var for excluded folders when refreshing main js files
 ;; direct linking not supported because of alter-var-root! calls
 ;; Binding to the loopback address prevents connecting from the outside (mobile device ...)
 ;; cljs repl server hangs on serving assets on a broken connection ?

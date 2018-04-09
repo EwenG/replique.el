@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- A .repliquedoc file can be added to directories to exclude from the Replique search based features (find-usage, main js file refreshing, ...)
 - Fix autocompletion for locals introduced by deftype/defrecord and defmethod forms
 - Add the replique/watch interactive command to visualize a watchable using a dedicated buffer
 - Add the replique/params interactive command to quickly edit the most common clojure.core/cljs.core dynamic vars (*print-length*, *print-level*, *warn-on-reflection*)
