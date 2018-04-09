@@ -1621,25 +1621,28 @@ The following commands are available:
                (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
+(defvar replique/directory-max-depth-reached nil)
+
 (defun replique/directory-files-recursively (dir regexp dir-predicate max-depth)
   (let ((result nil)
         (files nil))
-    (unless (< max-depth 0)
-      (dolist (file (file-name-all-completions "" dir))
-        (unless (member file '("./" "../"))
-          (if (directory-name-p file)
-              (let* ((leaf (substring file 0 (1- (length file))))
-                     (full-file (expand-file-name leaf dir)))
-                ;; Don't follow symlinks to other directories.
-                (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
-                  (setq result
-                        (nconc result (replique/directory-files-recursively
-                                       full-file regexp dir-predicate (1- max-depth))))))
-            (when (string-match-p regexp file)
-              (push (expand-file-name file dir) files))))))
+    (if (< max-depth 0)
+        (dolist (file (file-name-all-completions "" dir))
+          (unless (member file '("./" "../"))
+            (if (directory-name-p file)
+                (let* ((leaf (substring file 0 (1- (length file))))
+                       (full-file (expand-file-name leaf dir)))
+                  ;; Don't follow symlinks to other directories.
+                  (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
+                    (setq result
+                          (nconc result (replique/directory-files-recursively
+                                         full-file regexp dir-predicate (1- max-depth))))))
+              (when (string-match-p regexp file)
+                (push (expand-file-name file dir) files)))))
+      (setq replique/directory-max-depth-reached t))
     (nconc result files)))
 
-(defun replique/refresh-main-js-files-dir-predicate (d)
+(defun replique/default-dir-predicate (d)
   (and
    (not (string-prefix-p "." d))
    (not (file-exists-p (expand-file-name ".repliqueignore" d)))))
@@ -1648,7 +1651,7 @@ The following commands are available:
   (message "Refreshing main js files ...")
   (let* ((js-files (replique/directory-files-recursively
                     directory "\\.js$"
-                    'replique/refresh-main-js-files-dir-predicate
+                    'replique/default-dir-predicate
                     replique/main-js-files-max-depth))
          (main-js-files (seq-filter 'replique/is-main-js-file js-files)))
     (dolist (f main-js-files)
