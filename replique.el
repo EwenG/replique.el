@@ -1627,19 +1627,19 @@ The following commands are available:
   (let ((result nil)
         (files nil))
     (if (< max-depth 0)
-        (dolist (file (file-name-all-completions "" dir))
-          (unless (member file '("./" "../"))
-            (if (directory-name-p file)
-                (let* ((leaf (substring file 0 (1- (length file))))
-                       (full-file (expand-file-name leaf dir)))
-                  ;; Don't follow symlinks to other directories.
-                  (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
-                    (setq result
-                          (nconc result (replique/directory-files-recursively
-                                         full-file regexp dir-predicate (1- max-depth))))))
-              (when (string-match-p regexp file)
-                (push (expand-file-name file dir) files)))))
-      (setq replique/directory-max-depth-reached t))
+        (setq replique/directory-max-depth-reached t)
+      (dolist (file (file-name-all-completions "" dir))
+        (unless (member file '("./" "../"))
+          (if (directory-name-p file)
+              (let* ((leaf (substring file 0 (1- (length file))))
+                     (full-file (expand-file-name leaf dir)))
+                ;; Don't follow symlinks to other directories.
+                (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
+                  (setq result
+                        (nconc result (replique/directory-files-recursively
+                                       full-file regexp dir-predicate (1- max-depth))))))
+            (when (string-match-p regexp file)
+              (push (expand-file-name file dir) files))))))
     (nconc result files)))
 
 (defun replique/default-dir-predicate (d)
