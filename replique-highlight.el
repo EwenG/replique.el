@@ -24,13 +24,13 @@
 (defun replique-highlight/make-overlay ()
   (let ((ol (make-overlay (point) (point))))
     (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face 'ivy-minibuffer-match-face-2)
+    (overlay-put ol 'face 'region)
     ol))
 
 (defun replique-highlight/make-line-overlay ()
   (let ((ol (make-overlay (point) (point))))
     (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face 'ivy-minibuffer-match-highlight)
+    (overlay-put ol 'face 'highlight)
     ol))
 
 (defvar replique-highlight/overlay (replique-highlight/make-overlay))
