@@ -39,6 +39,7 @@
 (require 'replique-pprint)
 (require 'replique-params)
 (require 'replique-watch)
+(require 'replique-find-usage)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1428,6 +1429,7 @@ unwrapping a top level comment block "
     (define-key map "\M-," 'xref-pop-marker-stack)
     (define-key map "\C-c\C-o" 'replique/omniscient)
     (define-key map "\C-c\C-c" 'replique/pprint)
+    (define-key map "\C-c\C-u" 'replique/find-usage)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -1446,6 +1448,8 @@ unwrapping a top level comment block "
         ["Omniscient action" replique/omniscient t]
         "--"
         ["Pretty print expression at point" replique/pprint t]
+        "--"
+        ["Find usage of thing at point" replique/find-usage t]
         ))
     map))
 
