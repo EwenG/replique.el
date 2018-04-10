@@ -24,7 +24,7 @@
 (defun replique-highlight/make-overlay ()
   (let ((ol (make-overlay (point) (point))))
     (overlay-put ol 'priority -50)           ;(bug#16192)
-    (overlay-put ol 'face 'region)
+    (overlay-put ol 'face 'isearch)
     ol))
 
 (defun replique-highlight/make-line-overlay ()
