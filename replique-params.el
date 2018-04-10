@@ -29,11 +29,11 @@
 (defvar replique-params/warn-on-reflection-history nil)
 
 (defun replique-params/param->history (param)
-  (cond ((string-suffix-p "*print-length*" param)
+  (cond ((equal "*print-length*" param)
          'replique-params/print-length-history)
-        ((string-suffix-p "*print-level*" param)
+        ((equal "*print-level*" param)
          'replique-params/print-level-history)
-        ((string-suffix-p "*warn-on-reflection*" param)
+        ((equal "*warn-on-reflection*" param)
          'replique-params/warn-on-reflection-history)))
 
 (defun replique-params/unqualify (param)
@@ -96,23 +96,26 @@
     (define-key map "-" 'replique-params/minibuffer-boolean-toggle)
     map))
 
-(defun replique-params/edit-numerical (param default-val action-fn)
+(defun replique-params/edit-numerical (param action-fn)
   (let ((continue t)
         (value nil)
-        (history-add-new-input nil))
+        (history-add-new-input nil)
+        (param-history (get-text-property 0 'replique-params/history param))
+        (default-val (prin1-to-string
+                      (get-text-property 0 'replique-params/default-val param))))
     (while continue
-      (setq value (read-from-minibuffer (concat (replique-params/unqualify param) ": ")
+      (setq value (read-from-minibuffer (concat param ": ")
                                         default-val
                                         replique-params/minibuffer-map-numerical
                                         nil
-                                        (replique-params/param->history param)
+                                        param-history
                                         default-val))
       (cond ((equal "nil" value)
-             (add-to-history (replique-params/param->history param) value)
+             (add-to-history param-history value)
              (setq value value)
              (setq continue nil))
             ((string-match-p "^[0-9]+$" value)
-             (add-to-history (replique-params/param->history param) value)
+             (add-to-history param-history value)
              (setq value value)
              (setq continue nil)))
       (when continue
@@ -120,19 +123,22 @@
         (sit-for 1)))
     (funcall action-fn param value)))
 
-(defun replique-params/edit-boolean (param default-val action-fn)
+(defun replique-params/edit-boolean (param action-fn)
   (let ((continue t)
         (value nil)
-        (history-add-new-input nil))
+        (history-add-new-input nil)
+        (param-history (get-text-property 0 'replique-params/history param))
+        (default-val (replique-params/boolean->string
+                      (get-text-property 0 'replique-params/default-val param))))
     (while continue
-      (setq value (read-from-minibuffer (concat (replique-params/unqualify param) ": ")
+      (setq value (read-from-minibuffer (concat param ": ")
                                         default-val
                                         replique-params/minibuffer-map-boolean
                                         nil
-                                        (replique-params/param->history param)
+                                        param-history
                                         default-val))
       (when (or (equal "false" value) (equal "true" value))
-        (add-to-history (replique-params/param->history param) value)
+        (add-to-history param-history value)
         (setq value value)
         (setq continue nil))
       (when continue
@@ -140,41 +146,46 @@
         (sit-for 1)))
     (funcall action-fn param value)))
 
-(defun replique-params/edit-param (params action-fn param)
-  (let ((param (cadr param)))
-    (cond ((string-suffix-p "*print-length*" param)
-           (replique-params/edit-numerical
-            param (prin1-to-string (replique/get params param)) action-fn))
-          ((string-suffix-p "*print-level*" param)
-           (replique-params/edit-numerical
-            param (prin1-to-string (replique/get params param)) action-fn))
-          ((string-suffix-p "*warn-on-reflection*" param)
-           (replique-params/edit-boolean
-            param (replique-params/boolean->string (replique/get params param)) action-fn)))))
+(defun replique-params/edit-param (action-fn param)
+  (cond ((equal "*print-length*" param)
+         (replique-params/edit-numerical param action-fn))
+        ((equal "*print-level*" param)
+         (replique-params/edit-numerical param action-fn))
+        ((equal "*warn-on-reflection*" param)
+         (replique-params/edit-boolean param action-fn))))
 
-(defun replique-params/param->param-candidate (param)
-  `(,(replique-params/unqualify param) ,param))
+(defun replique-params/param->param-candidate (k v)
+  (propertize (replique-params/unqualify k)
+              'replique-params/param k
+              'replique-params/default-val v
+              'replique-params/history (replique-params/param->history k)))
+
+(defun replique-params/params->params-candidate (params)
+  (let ((candidates nil))
+    (maphash (lambda (k v)
+               (push (replique-params/param->param-candidate k v) candidates))
+             params)
+    candidates))
 
 (defun replique-params/params* (params action-fn)
-  (ivy-read "Parameters: " (mapcar 'replique-params/param->param-candidate
-                                   (replique/keys params))
+  (ivy-read "Parameters: " (replique-params/params->params-candidate params)
             :require-match t
-            :action (apply-partially 'replique-params/edit-param params action-fn)))
+            :action (apply-partially 'replique-params/edit-param action-fn)))
 
 (defun replique-params/set-param (repl param param-value)
   (let ((buff (replique/get repl :buffer)))
     (with-current-buffer buff
       (replique/comint-send-input-from-source
-       (concat "(set! " param " " param-value ")")))))
+       (concat "(set! " (get-text-property 0 'replique-params/param param) " " param-value ")")))))
 
 (defun replique-params/set-param-watch (tooling-repl param param-value)
-  (cond ((string-suffix-p "*print-length*" param)
+  (cond ((equal "*print-length*" param)
          (setq replique-watch/print-length (when (not (equal "nil" param-value))
                                              (string-to-number param-value))))
-        ((string-suffix-p "*print-level*" param)
+        ((equal "*print-level*" param)
          (setq replique-watch/print-level (when (not (equal "nil" param-value))
                                             (string-to-number param-value)))))
-  (replique-watch/refresh))
+  (replique-watch/refresh t))
 
 (defun replique-params/params-session (repl)
   (replique-params/params* (replique/get repl :params)
