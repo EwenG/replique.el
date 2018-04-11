@@ -158,7 +158,8 @@
   (propertize (replique-params/unqualify k)
               'replique-params/param k
               'replique-params/default-val v
-              'replique-params/history (replique-params/param->history k)))
+              'replique-params/history (replique-params/param->history
+                                        (replique-params/unqualify k))))
 
 (defun replique-params/params->params-candidate (params)
   (let ((candidates nil))
