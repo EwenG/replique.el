@@ -1663,8 +1663,7 @@ The following commands are available:
               (replique/directory-files-recursively*
                full-file regexp dir-predicate warning-type)))
         (when (string-match-p regexp file)
-          (push (expand-file-name file dir) replique/directory-files-recursively-files)
-          (print replique/directory-files-recursively-files)))))
+          (push (expand-file-name file dir) replique/directory-files-recursively-files)))))
   replique/directory-files-recursively-files)
 
 (defun replique/directory-files-recursively (dir regexp dir-predicate warning-type)
