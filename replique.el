@@ -530,12 +530,23 @@
               ;; Point is before the prompt. Do nothing.
               (t nil))))))
 
-(defmacro replique/return-nil-on-quit (&rest body)
+(defmacro replique/return-value-on-quit (value &rest body)
   (let ((ret-sym (make-symbol "ret-sym")))
     `(let ((inhibit-quit t))
        (let ((,ret-sym (with-local-quit ,@body)))
-         (setq quit-flag nil)
-         ,ret-sym))))
+         (if (null quit-flag)
+             ,ret-sym
+           (setq quit-flag nil)
+           ,value)))))
+
+(defun replique/with-interrupt-warning (fn &rest params)
+  (let ((maybe-interrupted (replique/return-value-on-quit
+                            :interrupted
+                            (apply fn params))))
+    (if (not (equal maybe-interrupted :interrupted))
+        maybe-interrupted
+      (display-warning "Replique" (format "%s was interrupted. If it took too long to complete, consider adding a .repliqueignore file to the directories you want to be ignored" fn))
+      nil)))
 
 (defun replique/comint-kill-input ()
   (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
@@ -879,8 +890,19 @@
          (clj-repl (replique/active-repl :clj)))
     (when (not clj-repl)
       (user-error "No active Clojure REPL"))
-    (replique/send-input-from-source-clj
-     "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
+    (let* ((main-cljs-namespaces (replique/get tooling-repl :main-cljs-namespaces))
+           (main-cljs-namespace (when main-cljs-namespaces
+                                  (replique/return-value-on-quit
+                                   nil
+                                   (completing-read "Main Clojurescript namespace: "
+                                                    main-cljs-namespaces
+                                                    nil t)))))
+      (if main-cljs-namespace
+          (replique/send-input-from-source-clj
+           (format "(replique.interactive/cljs-repl '%s)" main-cljs-namespace)
+           tooling-repl clj-repl)
+        (replique/send-input-from-source-clj
+         "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))))
 
 (defun replique/cljs-repl-nashorn ()
   "Start a Clojurescript Nashorn REPL in the currently active Clojure REPL"
@@ -912,7 +934,8 @@
               (let* ((namespaces (replique/get resp :namespaces))
                      (main-ns (cond (main-ns main-ns)
                                     ((seq-empty-p namespaces) nil)
-                                    (t (replique/return-nil-on-quit
+                                    (t (replique/return-value-on-quit
+                                        nil
                                         (completing-read "Main Clojurescript namespace: "
                                                          namespaces nil t nil nil '(nil))))))
                      (resp (replique/send-tooling-msg
@@ -926,7 +949,14 @@
                       (progn
                         (message "%s" (replique-pprint/pprint-error-str err))
                         (message "output-main-js-file failed"))
-                    (message "Main javascript file written to: %s" output-to)))))))))))
+                    (message "Main javascript file written to: %s" output-to)
+                    (when main-ns
+                      (if-let ((main-cljs-namescapes
+                                (replique/get tooling-repl :main-cljs-namespaces)))
+                          (puthash :main-cljs-namespaces
+                                   (add-to-list main-cljs-namescapes main-ns)
+                                   tooling-repl)
+                        (puthash :main-cljs-namespaces (list main-ns) tooling-repl)))))))))))))
 
 ;; I don't know why goog/deps.js is needed here but is not needed in the init script returned
 ;; by the cljs repl
@@ -1354,12 +1384,6 @@ be searched in exec-path."
   :type 'string
   :group 'replique)
 
-(defcustom replique/main-js-files-max-depth 10
-  "Maximum directory nesting when search for main js files. Set to a negative value to
-disable main js files refreshing."
-  :type 'integer
-  :group 'replique)
-
 (defcustom replique/company-tooltip-align-annotations t
   "See company-tooltip-align-annotations"
   :type 'boolean
@@ -1625,48 +1649,64 @@ The following commands are available:
                (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
-(defvar replique/directory-max-depth-reached nil)
-
-(defun replique/directory-files-recursively (dir regexp dir-predicate max-depth)
-  (setq replique/directory-max-depth-reached nil)
+(defun replique/directory-files-recursively (dir regexp dir-predicate warning-type)
   (let ((result nil)
         (files nil))
-    (if (< max-depth 0)
-        (setq replique/directory-max-depth-reached t)
-      (dolist (file (file-name-all-completions "" dir))
-        (unless (member file '("./" "../"))
-          (if (directory-name-p file)
-              (let* ((leaf (substring file 0 (1- (length file))))
-                     (full-file (expand-file-name leaf dir)))
-                ;; Don't follow symlinks to other directories.
-                (unless (or (file-symlink-p full-file) (null (funcall dir-predicate full-file)))
-                  (setq result
-                        (nconc result (replique/directory-files-recursively
-                                       full-file regexp dir-predicate (1- max-depth))))))
-            (when (string-match-p regexp file)
-              (push (expand-file-name file dir) files))))))
+    (dolist (file (file-name-all-completions "" dir))
+      (unless (member file '("./" "../"))
+        (if (directory-name-p file)
+            (let* ((leaf (substring file 0 (1- (length file))))
+                   (full-file (expand-file-name leaf dir)))
+              ;; Don't follow symlinks to other directories.
+              (unless (or (file-symlink-p full-file)
+                          (null (funcall dir-predicate full-file warning-type)))
+                (setq result
+                      (nconc result (replique/directory-files-recursively
+                                     full-file regexp dir-predicate
+                                     warning-type)))))
+          (when (string-match-p regexp file)
+            (push (expand-file-name file dir) files)))))
     (nconc result files)))
 
-(defun replique/default-dir-predicate (d)
-  (and
-   (not (string-prefix-p "." d))
-   (not (file-exists-p (expand-file-name ".repliqueignore" d)))))
+(defun replique/default-dir-predicate (d warning-type)
+  (when (not (string-prefix-p "." (file-name-base d)))
+    (if (file-readable-p d)        
+        (not (file-exists-p (expand-file-name ".repliqueignore" d)))
+      (when warning-type
+        (display-warning warning-type (format "%s is not a readable directory" d)))
+      nil)))
 
-(defun replique/refresh-main-js-files (directory port)
+(defun replique/find-main-js-files (directory)
+  (message "Looking for main js files ...")
+  (let ((js-files (replique/directory-files-recursively
+                   directory "\\.js$"
+                   'replique/default-dir-predicate
+                   "replique/refresh-main-js-file"))
+        (main-js-files nil))
+    (dolist (f js-files)
+      (when (and (file-readable-p f) (replique/is-main-js-file f))
+        (setq main-js-files (cons f main-js-files))))
+    (message "Looking for main js files ... %s file(s) found" (length main-js-files))
+    main-js-files))
+
+(defun replique/refresh-main-js-files (main-js-files port)
   (message "Refreshing main js files ...")
-  (let* ((js-files (replique/directory-files-recursively
-                    directory "\\.js$"
-                    'replique/default-dir-predicate
-                    replique/main-js-files-max-depth))
-         (main-js-files (seq-filter 'replique/is-main-js-file js-files)))
+  (let ((namespaces nil)
+        (nb-refreshed 0))
     (dolist (f main-js-files)
-      (with-temp-file f
-        (insert-file-contents f)
-        (save-match-data
-          (when (re-search-forward "var port = \'[0-9]+\';" nil t)
-            (replace-match (format "var port = \'%s\';" port))))
-        (buffer-substring-no-properties 1 (point-max))))
-    (message "Refreshing main js files ... %s files refreshed" (length main-js-files))))
+      (when (and (file-readable-p f) (file-writable-p f))
+        (setq nb-refreshed (+ nb-refreshed 1))
+        (with-temp-file f
+          (insert-file-contents f)
+          (save-match-data
+            (when (re-search-forward "var port = \'[0-9]+\';" nil t)
+              (replace-match (format "var port = \'%s\';" port)))
+            (when (re-search-forward "var mainNs = \'\\(.*\\)\';$" nil t)
+              (when (match-string-no-properties 1)
+                (setq namespaces (cons (match-string-no-properties 1) namespaces)))))
+          (buffer-substring-no-properties 1 (point-max)))))
+    (message "Refreshing main js files ... %s file(s) refreshed" nb-refreshed)
+    namespaces))
 
 ;; We do not use (message ...) because messages may be received splitted and the message fn
 ;; always prints a new line. Instead we set a text property on the last char printed in the
@@ -1701,6 +1741,7 @@ The following commands are available:
                         :host host
                         :port port
                         :ref-watchers (replique/hash-map)
+                        :main-cljs-namespaces nil
                         :started? nil)))
     ;; Perform the starting REPLs cleaning in case of an error when starting the process
     (set-process-sentinel
@@ -1708,61 +1749,62 @@ The following commands are available:
      (lambda (process event)
        (replique/close-repls directory t)))
     (push tooling-repl replique/repls)
-    (replique/process-filter-skip-repl-starting-output
-     proc
-     (lambda (port)
-       ;; Print process messages
-       (set-process-filter proc 'replique/proc-message-fn)
-       (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
-              (network-proc (open-network-stream directory nil host port))
-              (timeout (run-at-time
-                        2 nil (lambda (proc)
-                                (message "Error while starting the REPL. The port number may already be used by another process")
-                                (when (process-live-p proc)
-                                  (interrupt-process proc)))
-                        proc)))
-         (puthash :port port tooling-repl)
-         (puthash :network-proc network-proc tooling-repl)
-         (set-process-sentinel
-          network-proc
-          (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
-         ;; The sentinel on the network proc already handles the cleaning of REPLs
-         (set-process-sentinel proc nil)
-         (replique/process-filter-read
-          network-proc network-proc-buff
-          ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
-          ;; informations about the clojure process at init time
-          (lambda (cljs-compile-path)
-            (cancel-timer timeout)
-            (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
-                   (starting-repls (replique/repls-by-maybe-not-started :directory directory))
-                   (repl-started nil))
-              (replique/process-filter-read
-               network-proc network-proc-buff 'replique/dispatch-tooling-msg)
-              (puthash :started? t tooling-repl)
-              (dolist (starting-repl starting-repls)
-                (condition-case err
-                    (when (not (eq starting-repl tooling-repl))
-                      (if (buffer-live-p (replique/get starting-repl :buffer))
-                          (progn (replique/start-repl tooling-repl starting-repl)
-                                 (setq repl-started t))
-                        (replique/close-repl starting-repl t)))
-                  (error
-                   (replique/close-repls directory t)
-                   ;; rethrow the error
-                   (signal (car err) (cdr err)))))
-              ;; Don't refresh main js files if no REPL have been successfully started
-              (when repl-started
-                (when (>= replique/main-js-files-max-depth 0)
-                  (replique/refresh-main-js-files directory port))))))
-         ;; The REPL accept fn will read a char in order to check whether the request
-         ;; is an HTTP one or not
-         (process-send-string network-proc "R")
-         ;; No need to wait for the return value of shared-tooling-repl
-         ;; since it does not print anything
-         (process-send-string
-          network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
-         (process-send-string network-proc "replique.utils/cljs-compile-path\n"))))))
+    (replique/make-repl-starting directory host port)
+    (let (;; Search for the main js files while the process is starting
+          (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
+      (replique/process-filter-skip-repl-starting-output
+       proc
+       (lambda (port)
+         ;; Print process messages
+         (set-process-filter proc 'replique/proc-message-fn)
+         (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+                (network-proc (open-network-stream directory nil host port))
+                (timeout (run-at-time
+                          2 nil (lambda (proc)
+                                  (message "Error while starting the REPL. The port number may already be used by another process")
+                                  (when (process-live-p proc)
+                                    (interrupt-process proc)))
+                          proc)))
+           (puthash :port port tooling-repl)
+           (puthash :network-proc network-proc tooling-repl)
+           (set-process-sentinel
+            network-proc
+            (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
+           ;; The sentinel on the network proc already handles the cleaning of REPLs
+           (set-process-sentinel proc nil)
+           (replique/process-filter-read
+            network-proc network-proc-buff
+            ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
+            ;; informations about the clojure process at init time
+            (lambda (cljs-compile-path)
+              (cancel-timer timeout)
+              (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
+                     (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
+                (replique/process-filter-read
+                 network-proc network-proc-buff 'replique/dispatch-tooling-msg)
+                (puthash :started? t tooling-repl)
+                (dolist (starting-repl starting-repls)
+                  (condition-case err
+                      (when (not (eq starting-repl tooling-repl))
+                        (if (buffer-live-p (replique/get starting-repl :buffer))
+                            (replique/start-repl tooling-repl starting-repl)
+                          (replique/close-repl starting-repl t)))
+                    (error
+                     (replique/close-repls directory t)
+                     ;; rethrow the error
+                     (signal (car err) (cdr err))))))))
+           ;; The REPL accept fn will read a char in order to check whether the request
+           ;; is an HTTP one or not
+           (process-send-string network-proc "R")
+           ;; No need to wait for the return value of shared-tooling-repl
+           ;; since it does not print anything
+           (process-send-string
+            network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
+           (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+           ;; Refresh main js files as soon as we know the port number
+           (when main-js-files
+             (when-let ((main-cljs-namespaces (replique/refresh-main-js-files main-js-files port)))
+               (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl)))))))))
 
 (defun replique/close-process (directory)
   "Close all the REPL sessions associated with a JVM process"
@@ -1874,6 +1916,7 @@ minibuffer"
                       directory host port)))
     (push repl replique/repls)
     (display-buffer repl-buffer)
+    (redisplay)
     repl))
 
 (defun replique/clj-buff-name (directory)
@@ -1922,8 +1965,7 @@ minibuffer"
            ;; rethrow the error
            (signal (car err) (cdr err))))))
      (t
-      (replique/make-tooling-repl directory host port)
-      (replique/make-repl-starting directory host port)))))
+      (replique/make-tooling-repl directory host port)))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
@@ -2073,17 +2115,13 @@ minibuffer"
 ;; eval interruption
 ;; rename /etc/alternatives/java.save to /etc/alternatives/java
 ;; try under jdk7
-;; "find usage" feature using replique-context
 ;; autocompletion for nested classes (with a "$")
-;; cljs tagged literal should not work when defined in a cljc file (it works because it is
-;; defined in the clojure process)
+;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
 ;; eldoc for interop call with multiple arities -> "&" ??
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
 ;; var autocompletion should be hidden by locals
 ;; replique-context -> add locals computation for extend-type/extend-protocol
-;; compile the file of main js namespaces when starting a cljs-repl, if it is not already loaded in the analysis env
 ;; Error when printing very large (too much ?) things from the cljs runtime
-;; Nashorn tooling message should use the nashorn repl-env
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
