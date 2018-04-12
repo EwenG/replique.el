@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- Add the possibility to load a cljs namespace and its dependencies in the cljs environment when starting a cljs REPL 
 - Add the replique/find-usage interactive command
 - A .repliquedoc file can be added to directories to exclude from the Replique search based features (find-usage, main js file refreshing, ...)
 - Fix autocompletion for locals introduced by deftype/defrecord and defmethod forms
