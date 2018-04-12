@@ -75,29 +75,39 @@
       (goto-char position))))
 
 (defun replique-find-usage/show-results (tooling-repl prompt results)
-  (replique/return-nil-on-quit
-   (ivy-read
-    prompt
-    results
-    :require-match t
-    :action 'replique-find-usage/jump-to-result
-    :update-fn (lambda ()
-                 (with-ivy-window
-                   (replique-highlight/unhighlight)
-                   (let ((candidate (nth ivy--index ivy--old-cands)))
-                     (when candidate
-                       (let ((file (get-text-property
-                                    0 'replique-find-usage/file candidate))
-                             (beginning (get-text-property
-                                         0 'replique-find-usage/match-beginning candidate))
-                             (end (get-text-property
-                                         0 'replique-find-usage/match-end candidate)))
-                         (when (and file beginning end)
-                           (when-let (buff (replique-resources/find-file file))
-                             (pop-to-buffer-same-window buff)
-                             (goto-char beginning)
-                             (replique-highlight/highlight beginning end))))))))))
-  (replique-highlight/unhighlight))
+  (let (;; Used to restore the moved positions in the visited buffers
+        (previous-point nil)
+        (previous-buffer nil))
+    (ivy-read
+     prompt
+     results
+     :require-match t
+     :action 'replique-find-usage/jump-to-result
+     :update-fn (lambda ()
+                  (with-ivy-window
+                    (when previous-point
+                      (goto-char previous-point))
+                    (replique-highlight/unhighlight)
+                    (let ((candidate (nth ivy--index ivy--old-cands)))
+                      (when candidate
+                        (let ((file (get-text-property
+                                     0 'replique-find-usage/file candidate))
+                              (beginning (get-text-property
+                                          0 'replique-find-usage/match-beginning candidate))
+                              (end (get-text-property
+                                    0 'replique-find-usage/match-end candidate)))
+                          (when (and file beginning end)
+                            (when-let (buff (replique-resources/find-file file))
+                              (pop-to-buffer-same-window buff)
+                              (setq previous-buffer buff)
+                              (setq previous-point (point))
+                              (goto-char beginning)
+                              (replique-highlight/highlight beginning end))))))))
+     :unwind (lambda ()
+               (when previous-buffer
+                 (with-current-buffer previous-buffer
+                   (goto-char previous-point)))
+               (replique-highlight/unhighlight)))))
 
 (defun replique-find-usage/select-directories (tooling-repl)
   (let* ((default (or (replique/guess-project-root-dir) (replique/get tooling-repl :directory)))
@@ -163,41 +173,43 @@
                        replique-find-usage/cljs-file-re
                      replique-find-usage/clj-file-re)))
       (dolist (d directories)
-        (let ((files (replique/directory-files-recursively
-                      d file-re 'replique/default-dir-predicate
-                      "replique/find-usage")))
-          (dolist (f files)
-            (when (file-readable-p f)
-              (insert-file-contents-literally f nil nil nil t)
-              (replique-find-usage/variables)
-              (goto-char (point-min))
-              (let ((replique-context/ns-starts nil))
-                (replique-context/clojure-find-ns-starts* nil)
-                (when (null replique-context/ns-starts)
-                  (setq replique-context/ns-starts `((,default-ns . 0))))
-                (while replique-context/ns-starts
-                  (let* ((ns-start (car replique-context/ns-starts))
-                         (ns (car ns-start))
-                         (start-pos (cdr ns-start))
-                         (stop-pos (cdr (cadr replique-context/ns-starts))))
-                    (when (replique/contains? symbols-in-namespaces ns)
-                      (let ((symbols (cons global-symbol (replique/get symbols-in-namespaces ns))))
-                        (goto-char start-pos)
-                        (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
-                                                  stop-pos t)
-                          ;; move back, otherwise we may miss the next match
-                          (goto-char (match-end replique-find-usage/symbol-group-index))
-                          ;; when this is not a tag reader
-                          (when (null (match-string-no-properties
-                                       replique-find-usage/tag-reader-group-index))
-                            (let ((ppss (when (not include-string-and-comments?)
-                                          (with-syntax-table clojure-mode-syntax-table
-                                            (syntax-ppss)))))
-                              ;; Not in a string or a comment
-                              (when (null (nth 8 ppss))
-                                (let ((result (replique-find-usage/make-result d f)))
-                                  (setq results (cons result results)))))))))
-                    (setq replique-context/ns-starts (cdr replique-context/ns-starts)))))))))
+        (let ((replique/directory-files-recursively-files nil))
+          (replique/directory-files-recursively*
+           d file-re 'replique/default-dir-predicate "replique/find-usage")
+          (let ((files replique/directory-files-recursively-files))
+            (dolist (f files)
+              (when (file-readable-p f)
+                (insert-file-contents-literally f nil nil nil t)
+                (replique-find-usage/variables)
+                (goto-char (point-min))
+                (let ((replique-context/ns-starts nil))
+                  (replique-context/clojure-find-ns-starts* nil)
+                  (when (null replique-context/ns-starts)
+                    (setq replique-context/ns-starts `((,default-ns . 0))))
+                  (while replique-context/ns-starts
+                    (let* ((ns-start (car replique-context/ns-starts))
+                           (ns (car ns-start))
+                           (start-pos (cdr ns-start))
+                           (stop-pos (cdr (cadr replique-context/ns-starts))))
+                      (when (replique/contains? symbols-in-namespaces ns)
+                        (let ((symbols (cons global-symbol
+                                             (replique/get symbols-in-namespaces ns))))
+                          (goto-char start-pos)
+                          (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
+                                                    stop-pos t)
+                            ;; move back, otherwise we may miss the next match
+                            (goto-char (match-end replique-find-usage/symbol-group-index))
+                            ;; when this is not a tag reader
+                            (when (null (match-string-no-properties
+                                         replique-find-usage/tag-reader-group-index))
+                              (let ((ppss (when (not include-string-and-comments?)
+                                            (with-syntax-table clojure-mode-syntax-table
+                                              (syntax-ppss)))))
+                                ;; Not in a string or a comment
+                                (when (null (nth 8 ppss))
+                                  (let ((result (replique-find-usage/make-result d f)))
+                                    (setq results (cons result results)))))))))
+                      (setq replique-context/ns-starts (cdr replique-context/ns-starts))))))))))
       results)))
 
 (defun replique-find-usage/find-usage* (symbol tooling-repl repl-type repl-env ns)
