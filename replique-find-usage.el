@@ -29,8 +29,6 @@
         (match-string-no-properties 1))
  )
 
-(defvar replique-find-usage/directory-max-depth 20
-  "The maximum directory depth used when searching for Clojure/Clojurescript files during the `replique/find-usage' command")
 (defvar replique-find-usage/search-in-strings-and-comments nil
   "Whether the replique/find-usage should display matches found in strings or comments")
 (defvar replique-find-usage/read-discard-re "#_")
@@ -44,6 +42,9 @@
 (defvar replique-find-usage/symbol-separator-re
   (concat "\\(?:^\\|" "[" replique-context/symbol-separators "]" "\\|$\\)"))
 
+(defun replique-find-usage/escaped-symbol-name (sym)
+  (regexp-quote (symbol-name sym)))
+
 (defun replique-find-usage/symbols-regexp (symbols)
   (concat replique-find-usage/symbol-separator-re
           ;; Detect tag reader
@@ -52,7 +53,7 @@
           "\\(?:#_\\)*"
           ;; Handle quoted symbols
           "\\(?:'\\)?"
-          "\\(" (mapconcat 'symbol-name symbols "\\|") "\\)"
+          "\\(" (mapconcat 'replique-find-usage/escaped-symbol-name symbols "\\|") "\\)"
           replique-find-usage/symbol-separator-re))
 
 (defun replique-find-usage/variables ()
@@ -113,6 +114,33 @@
            (when-let (dir (read-directory-name "Search in directory: " nil nil t))
              (list dir))))))
 
+(defun replique-find-usage/subdirectory? (dir base)
+  (when (and dir base (file-directory-p dir) (file-directory-p base))
+    (string-prefix-p base dir)))
+
+(defun replique-find-usage/subdirectory-dirs? (dir bases)
+  (seq-some (apply-partially 'replique-find-usage/subdirectory? dir) bases))
+
+(defun replique-find-usage/unset-subdirectory-dirs (bases dir)
+  (while bases
+    (when (and (car bases) (replique-find-usage/subdirectory? (car bases) dir))
+      (setcar bases nil))
+    (setq bases (cdr bases))))
+
+;; Ensure no directory is the subdirectory of another in order to avoid duplicate files
+;; We expect both paths to be absolute and canonicalized
+(defun replique-find-usage/filter-subdirectories (dirs)
+  (let ((filtered-dirs nil))
+    (while dirs
+      (cond ((null (car dirs)) nil)
+            ((not (file-directory-p (car dirs)))
+             (setq filtered-dirs (cons (car dirs) filtered-dirs)))
+            ((not (replique-find-usage/subdirectory-dirs? (car dirs) (cdr dirs)))
+             (setq filtered-dirs (cons (car dirs) filtered-dirs))
+             (replique-find-usage/unset-subdirectory-dirs (cdr dirs) (car dirs))))
+      (setq dirs (cdr dirs)))
+    filtered-dirs))
+
 (defun replique-find-usage/make-result (d f)
   (let* ((f (propertize f
                         'face 'compilation-info
@@ -137,42 +165,39 @@
       (dolist (d directories)
         (let ((files (replique/directory-files-recursively
                       d file-re 'replique/default-dir-predicate
-                      replique-find-usage/directory-max-depth)))
-          (when replique/directory-max-depth-reached
-            (display-warning
-             "replique/find-usage"
-             "The maximum directory depth has been reached. One or multiple files may have been skipped. See replique-find-usage/directory-max-depth"))
+                      "replique/find-usage")))
           (dolist (f files)
-            (insert-file-contents-literally f nil nil nil t)
-            (replique-find-usage/variables)
-            (goto-char (point-min))
-            (let ((replique-context/ns-starts nil))
-              (replique-context/clojure-find-ns-starts* nil)
-              (when (null replique-context/ns-starts)
-                (setq replique-context/ns-starts `((,default-ns . 0))))
-              (while replique-context/ns-starts
-                (let* ((ns-start (car replique-context/ns-starts))
-                       (ns (car ns-start))
-                       (start-pos (cdr ns-start))
-                       (stop-pos (cdr (cadr replique-context/ns-starts))))
-                  (when (replique/contains? symbols-in-namespaces ns)
-                    (let ((symbols (cons global-symbol (replique/get symbols-in-namespaces ns))))
-                      (goto-char start-pos)
-                      (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
-                                                stop-pos t)
-                        ;; move back, otherwise we may miss the next match
-                        (goto-char (match-end replique-find-usage/symbol-group-index))
-                        ;; when this is not a tag reader
-                        (when (null (match-string-no-properties
-                                     replique-find-usage/tag-reader-group-index))
-                          (let ((ppss (when (not include-string-and-comments?)
-                                        (with-syntax-table clojure-mode-syntax-table
+            (when (file-readable-p f)
+              (insert-file-contents-literally f nil nil nil t)
+              (replique-find-usage/variables)
+              (goto-char (point-min))
+              (let ((replique-context/ns-starts nil))
+                (replique-context/clojure-find-ns-starts* nil)
+                (when (null replique-context/ns-starts)
+                  (setq replique-context/ns-starts `((,default-ns . 0))))
+                (while replique-context/ns-starts
+                  (let* ((ns-start (car replique-context/ns-starts))
+                         (ns (car ns-start))
+                         (start-pos (cdr ns-start))
+                         (stop-pos (cdr (cadr replique-context/ns-starts))))
+                    (when (replique/contains? symbols-in-namespaces ns)
+                      (let ((symbols (cons global-symbol (replique/get symbols-in-namespaces ns))))
+                        (goto-char start-pos)
+                        (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
+                                                  stop-pos t)
+                          ;; move back, otherwise we may miss the next match
+                          (goto-char (match-end replique-find-usage/symbol-group-index))
+                          ;; when this is not a tag reader
+                          (when (null (match-string-no-properties
+                                       replique-find-usage/tag-reader-group-index))
+                            (let ((ppss (when (not include-string-and-comments?)
+                                          (with-syntax-table clojure-mode-syntax-table
                                             (syntax-ppss)))))
-                            ;; Not in a string or a comment
-                            (when (null (nth 8 ppss))
-                              (let ((result (replique-find-usage/make-result d f)))
-                                (setq results (cons result results)))))))))
-                  (setq replique-context/ns-starts (cdr replique-context/ns-starts))))))))
+                              ;; Not in a string or a comment
+                              (when (null (nth 8 ppss))
+                                (let ((result (replique-find-usage/make-result d f)))
+                                  (setq results (cons result results)))))))))
+                    (setq replique-context/ns-starts (cdr replique-context/ns-starts)))))))))
       results)))
 
 (defun replique-find-usage/find-usage* (symbol tooling-repl repl-type repl-env ns)
@@ -190,7 +215,8 @@
             (message "find-usage failed with symbol: %s" symbol))
         (let* ((type (replique/get resp :find-usage-type))
                (global-symbol (replique/get resp type))
-               (directories (when type (replique-find-usage/select-directories tooling-repl))))
+               (directories (when type (replique-find-usage/select-directories tooling-repl)))
+               (directories (replique-find-usage/filter-subdirectories directories)))
           (cond ((equal :var type)
                  (let ((results (replique-find-usage/do-find-usage
                                  directories
@@ -258,13 +284,10 @@
      (clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
      (t . (user-error "Unsupported major mode: %s" major-mode)))))
 
-(defvar replique-find-usage/directory-max-depth-history nil)
 (defvar replique-find-usage/search-in-strings-and-comments-history nil)
 
 (defun replique-find-usage/param->history (param)
-  (cond ((equal "directory-max-depth" param)
-         'replique-find-usage/directory-max-depth-history)
-        ((equal "search-in-strings-and-comments" param)
+  (cond ((equal "search-in-strings-and-comments" param)
          'replique-find-usage/search-in-strings-and-comments-history)))
 
 (defun replique-find-usage/param->param-candidate (k v)
@@ -281,9 +304,7 @@
     candidates))
 
 (defun replique-find-usage/edit-param (action-fn param)
-  (cond ((equal "directory-max-depth" param)
-         (replique-params/edit-numerical param action-fn))
-        ((equal "search-in-strings-and-comments" param)
+  (cond ((equal "search-in-strings-and-comments" param)
          (replique-params/edit-boolean param action-fn))))
 
 (defun replique-find-usage/set-param (param param-value)
@@ -297,7 +318,6 @@
   (if (not (featurep 'ivy))
       (user-error "replique-find-usage/parameters requires ivy-mode")
     (let ((params (replique/hash-map
-                   "directory-max-depth" 'replique-find-usage/directory-max-depth
                    "search-in-strings-and-comments" 'replique-find-usage/search-in-strings-and-comments)))
       (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)
                 :require-match t
