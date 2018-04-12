@@ -1649,24 +1649,28 @@ The following commands are available:
                (equal (buffer-substring-no-properties 1 (+ 1 check-length)) first-line))
            (error nil)))))
 
+(defvar replique/directory-files-recursively-files nil)
+
+(defun replique/directory-files-recursively* (dir regexp dir-predicate warning-type)
+  (dolist (file (file-name-all-completions "" dir))
+    (unless (member file '("./" "../"))
+      (if (directory-name-p file)
+          (let* ((leaf (substring file 0 (1- (length file))))
+                 (full-file (expand-file-name leaf dir)))
+            ;; Don't follow symlinks to other directories.
+            (unless (or (file-symlink-p full-file)
+                        (null (funcall dir-predicate full-file warning-type)))
+              (replique/directory-files-recursively*
+               full-file regexp dir-predicate warning-type)))
+        (when (string-match-p regexp file)
+          (push (expand-file-name file dir) replique/directory-files-recursively-files)
+          (print replique/directory-files-recursively-files)))))
+  replique/directory-files-recursively-files)
+
 (defun replique/directory-files-recursively (dir regexp dir-predicate warning-type)
-  (let ((result nil)
-        (files nil))
-    (dolist (file (file-name-all-completions "" dir))
-      (unless (member file '("./" "../"))
-        (if (directory-name-p file)
-            (let* ((leaf (substring file 0 (1- (length file))))
-                   (full-file (expand-file-name leaf dir)))
-              ;; Don't follow symlinks to other directories.
-              (unless (or (file-symlink-p full-file)
-                          (null (funcall dir-predicate full-file warning-type)))
-                (setq result
-                      (nconc result (replique/directory-files-recursively
-                                     full-file regexp dir-predicate
-                                     warning-type)))))
-          (when (string-match-p regexp file)
-            (push (expand-file-name file dir) files)))))
-    (nconc result files)))
+  (let ((replique/directory-files-recursively-files nil))
+    (replique/directory-files-recursively* dir regexp dir-predicate warning-type)
+    replique/directory-files-recursively-files))
 
 (defun replique/default-dir-predicate (d warning-type)
   (when (not (string-prefix-p "." (file-name-base d)))
