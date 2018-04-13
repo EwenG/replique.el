@@ -33,7 +33,7 @@
                                                   (executable-find replique/default-lein-script))
                                               " classpath")))
          (resp (replique/send-tooling-msg
-                tooling-repl (replique/hash-map :type :classpath
+                tooling-repl (replique/hash-map :type :update-classpath
                                                 :repl-env :replique/clj
                                                 :classpath classpath))))
     (let ((err (replique/get resp :error)))
