@@ -667,7 +667,7 @@
                                  'replique-context/maybe-at-local-binding-position)))))
                      (setq quit t))))))))))
 
-(defun replique-context/handle-deftype-like (target-point)
+(defun replique-context/handle-type-forms-family (target-point fields?)
   (let* ((object (replique-context/read-one))
          (object-extracted (replique-context/extracted-value object))
          (named-fn-binding (when (and (cl-typep object-extracted 'replique-context/object-symbol)
@@ -680,10 +680,13 @@
       (goto-char (oref object-extracted :start)))
     (if (and (cl-typep object-extracted 'replique-context/object-symbol)
              (<= (oref object-extracted :start) target-point (oref object-extracted :end)))
-        (setq replique-context/at-binding-position? t)
+        (when fields?
+          (setq replique-context/at-binding-position? t))
       (let ((quit nil))
         ;; looking for the deftype-like fields
-        (while (null quit)
+        ;; when fields is null (extend-type, extend-protocol ...), the named-fn-binding is not
+        ;; added to the local. That's the behavior we want
+        (while (and fields? (null quit))
           (replique-context/forward-comment)
           (let* ((object (replique-context/read-one))
                  (object-extracted (replique-context/extracted-value object)))
@@ -731,6 +734,12 @@
                        (goto-char (+ 1 (oref object-extracted :start)))
                        (replique-context/handle-fn-like target-point)
                        (setq quit t)))))))))))
+
+(defun replique-context/handle-deftype-like (target-point)
+  (replique-context/handle-type-forms-family target-point t))
+
+(defun replique-context/handle-extend-type-like (target-point)
+  (replique-context/handle-type-forms-family target-point nil))
 
 (defun replique-context/handle-defmethod-like (target-point)
   (let* ((object (replique-context/read-one))
@@ -1149,6 +1158,9 @@
                      "defmacro" :fn-like
                      "deftype" :deftype-like
                      "defrecord" :deftype-like
+                     "extend-type" :extend-type-like
+                     "extend-protocol" :extend-type-like
+                     "reify" :extend-type-like
                      "defmethod" :defmethod-like
                      "for" :for-like
                      "doseq" :for-like
@@ -1172,6 +1184,11 @@
                      "clojure.core/defmacro" :fn-like
                      "clojure.core/deftype" :deftype-like
                      "clojure.core/defrecord" :deftype-like
+                     "clojure.core/extend-type" :extend-type-like
+                     "clojure.core/extend-protocol" :extend-type-like
+                     "clojure.core/reify" :extend-type-like
+                     "proxy" :extend-type-like
+                     "clojure.core/proxy" :extend-type-like
                      "clojure.core/defmethod" :defmethod-like
                      "clojure.core/for" :for-like
                      "clojure.core/doseq" :for-like
@@ -1191,6 +1208,11 @@
                      "cljs.core/defmacro" :fn-like
                      "cljs.core/deftype" :deftype-like
                      "cljs.core/defrecord" :deftype-like
+                     "cljs.core/extend-type" :extend-type-like
+                     "cljs.core/extend-protocol" :extend-type-like
+                     "cljs.core/reify" :extend-type-like
+                     "specify" :extend-type-like
+                     "cljs.core/specify" :extend-type-like
                      "cljs.core/defmethod" :defmethod-like
                      "cljs.core/for" :for-like
                      "cljs.core/doseq" :for-like
@@ -1270,6 +1292,9 @@
            ;; deftype-like methods are not closures
            (setq replique-context/locals (replique/hash-map))
            (replique-context/handle-deftype-like target-point)
+           (goto-char p))
+          ((equal binding-context :extend-type-like)
+           (replique-context/handle-extend-type-like target-point)
            (goto-char p))
           ((equal binding-context :defmethod-like)
            (replique-context/handle-defmethod-like target-point)
@@ -1569,5 +1594,3 @@
 (add-hook 'post-command-hook 'replique-context/reset-cache)
 
 (provide 'replique-context)
-
-;; context for datastructures (narrowing ...)

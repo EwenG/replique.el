@@ -2123,7 +2123,6 @@ minibuffer"
 ;; eldoc for interop call with multiple arities -> "&" ??
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
 ;; var autocompletion should be hidden by locals
-;; replique-context -> add locals computation for extend-type/extend-protocol
 ;; Error when printing very large (too much ?) things from the cljs runtime
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
