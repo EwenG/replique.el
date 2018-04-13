@@ -110,7 +110,8 @@
                (replique-highlight/unhighlight)))))
 
 (defun replique-find-usage/select-directories (tooling-repl)
-  (let* ((default (or (replique/guess-project-root-dir) (replique/get tooling-repl :directory)))
+  (let* ((default (or (replique/guess-project-root-dir)
+                      (replique/get tooling-repl :directory)))
          (dir (completing-read "Search in directory: "
                                `(,default
                                   "Classpath"
@@ -119,7 +120,16 @@
     (cond ((equal dir default)
            (list dir))
           ((equal "Classpath" dir)
-           '())
+           (let ((resp (replique/send-tooling-msg
+                        tooling-repl
+                        (replique/hash-map :type :classpath-for-sources
+                                           :repl-env :replique/clj))))
+             (let ((err (replique/get resp :error)))
+               (if err
+                   (progn
+                     (message "%s" (replique-pprint/pprint-error-str err))
+                     (message "classpath "))
+                 (replique/get resp :paths)))))
           ((equal "Other directory" dir)
            (when-let (dir (read-directory-name "Search in directory: " nil nil t))
              (list dir))))))
@@ -151,18 +161,47 @@
       (setq dirs (cdr dirs)))
     filtered-dirs))
 
-(defun replique-find-usage/make-result (d f)
-  (let* ((f (propertize f
-                        'face 'compilation-info
-                        'replique-find-usage/file f
-                        'replique-find-usage/match-beginning
-                        (match-beginning replique-find-usage/symbol-group-index)
-                        'replique-find-usage/match-end (point)))
+(defun replique-find-usage/make-result (f-display f)
+  (let* ((f-display (propertize f-display
+                                'face 'compilation-info
+                                'replique-find-usage/file f
+                                'replique-find-usage/match-beginning
+                                (match-beginning replique-find-usage/symbol-group-index)
+                                'replique-find-usage/match-end (point)))
          (line-number (propertize (number-to-string (line-number-at-pos (point)))
                                   'face 'compilation-line-number)))
-    (concat (file-relative-name f d) ":"
+    (concat f-display ":"
             line-number ": "
             (buffer-substring (line-beginning-position) (line-end-position)))))
+
+(defun replique-find-usage/jar-reducer (jar-file file-re files jar-entry)
+  (if (and jar-entry (string-match-p file-re (aref jar-entry 0)))
+      (cons (aref jar-entry 0) files)
+    files))
+
+(defun replique-find-usage/list-directory-files (file-re directory)
+  (let ((replique/directory-files-recursively-files nil))
+    (when (equal
+           (replique/return-value-on-quit
+            :interrupted
+            (replique/directory-files-recursively*
+             directory file-re
+             'replique/default-dir-predicate "replique/find-usage"))
+           :interrupted)
+      (display-warning
+       "replique/find-usage"
+       "The listing of source files was interruted. replique/find-usage may return a partial result"))
+    replique/directory-files-recursively-files))
+
+(defvar replique-find-usage/jar-entries-cache (replique/hash-map))
+
+(defun replique-find-usage/list-jar-entries (file-re jar-file)
+  (with-temp-buffer
+    (insert-file-contents-literally jar-file)
+    (nreverse
+     (seq-reduce (apply-partially 'replique-find-usage/jar-reducer jar-file file-re)
+                 (archive-zip-summarize)
+                 '()))))
 
 (defun replique-find-usage/do-find-usage
     (directories repl-type default-ns symbols-in-namespaces
@@ -173,50 +212,56 @@
                        replique-find-usage/cljs-file-re
                      replique-find-usage/clj-file-re)))
       (dolist (d directories)
-        (let ((replique/directory-files-recursively-files nil))
-          (when (equal
-                 (replique/return-value-on-quit
-                  :interrupted
-                  (replique/directory-files-recursively*
-                   d file-re 'replique/default-dir-predicate "replique/find-usage"))
-                 :interrupted)
-            (display-warning
-             "replique/find-usage"
-             "The listing of source files was interruted. replique/find-usage may return a partial result"))
-          (let ((files replique/directory-files-recursively-files))
-            (dolist (f files)
-              (when (file-readable-p f)
-                (insert-file-contents-literally f nil nil nil t)
-                (replique-find-usage/variables)
-                (goto-char (point-min))
-                (let ((replique-context/ns-starts nil))
-                  (replique-context/clojure-find-ns-starts* nil)
-                  (when (null replique-context/ns-starts)
-                    (setq replique-context/ns-starts `((,default-ns . 0))))
-                  (while replique-context/ns-starts
-                    (let* ((ns-start (car replique-context/ns-starts))
-                           (ns (car ns-start))
-                           (start-pos (cdr ns-start))
-                           (stop-pos (cdr (cadr replique-context/ns-starts))))
-                      (when (replique/contains? symbols-in-namespaces ns)
-                        (let ((symbols (cons global-symbol
-                                             (replique/get symbols-in-namespaces ns))))
-                          (goto-char start-pos)
-                          (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
-                                                    stop-pos t)
-                            ;; move back, otherwise we may miss the next match
-                            (goto-char (match-end replique-find-usage/symbol-group-index))
-                            ;; when this is not a tag reader
-                            (when (null (match-string-no-properties
-                                         replique-find-usage/tag-reader-group-index))
-                              (let ((ppss (when (not include-string-and-comments?)
-                                            (with-syntax-table clojure-mode-syntax-table
-                                              (syntax-ppss)))))
-                                ;; Not in a string or a comment
-                                (when (null (nth 8 ppss))
-                                  (let ((result (replique-find-usage/make-result d f)))
-                                    (setq results (cons result results)))))))))
-                      (setq replique-context/ns-starts (cdr replique-context/ns-starts))))))))))
+        (let* ((dir-or-jar (cond ((file-directory-p d) :dir)
+                                 ((and (file-exists-p d) (string-suffix-p ".jar" d)) :jar)))
+               (files (cond ((equal dir-or-jar :dir)
+                             (replique-find-usage/list-directory-files file-re d))
+                            ((equal dir-or-jar :jar)
+                             (replique-find-usage/list-jar-entries file-re d)))))
+          (dolist (f files)
+            (when (or (equal dir-or-jar :jar) (file-readable-p f))
+              (cond ((equal dir-or-jar :dir)
+                     (insert-file-contents-literally f nil nil nil t))
+                    ((equal dir-or-jar :jar)
+                     (erase-buffer)
+                     (archive-zip-extract d f)))
+              (replique-find-usage/variables)
+              (goto-char (point-min))
+              (let ((replique-context/ns-starts nil))
+                (replique-context/clojure-find-ns-starts* nil)
+                (when (null replique-context/ns-starts)
+                  (setq replique-context/ns-starts `((,default-ns . 0))))
+                (while replique-context/ns-starts
+                  (let* ((ns-start (car replique-context/ns-starts))
+                         (ns (car ns-start))
+                         (start-pos (cdr ns-start))
+                         (stop-pos (cdr (cadr replique-context/ns-starts))))
+                    (when (replique/contains? symbols-in-namespaces ns)
+                      (let ((symbols (cons global-symbol
+                                           (replique/get symbols-in-namespaces ns))))
+                        (goto-char start-pos)
+                        (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
+                                                  stop-pos t)
+                          ;; move back, otherwise we may miss the next match
+                          (goto-char (match-end replique-find-usage/symbol-group-index))
+                          ;; when this is not a tag reader
+                          (when (null (match-string-no-properties
+                                       replique-find-usage/tag-reader-group-index))
+                            (let ((ppss (when (not include-string-and-comments?)
+                                          (with-syntax-table clojure-mode-syntax-table
+                                            (syntax-ppss)))))
+                              ;; Not in a string or a comment
+                              (when (null (nth 8 ppss))
+                                (let ((result (cond ((equal dir-or-jar :dir)
+                                                     (replique-find-usage/make-result
+                                                      (file-relative-name f d) f))
+                                                    ((equal dir-or-jar :jar)
+                                                     (let ((jar-file
+                                                            (format "jar:file:%s!/%s" d f)))
+                                                       (replique-find-usage/make-result
+                                                        jar-file jar-file))))))
+                                  (setq results (cons result results)))))))))
+                    (setq replique-context/ns-starts (cdr replique-context/ns-starts)))))))))
       results)))
 
 (defun replique-find-usage/find-usage* (symbol tooling-repl repl-type repl-env ns)
@@ -337,7 +382,8 @@
   (if (not (featurep 'ivy))
       (user-error "replique-find-usage/parameters requires ivy-mode")
     (let ((params (replique/hash-map
-                   "search-in-strings-and-comments" 'replique-find-usage/search-in-strings-and-comments)))
+                   "search-in-strings-and-comments"
+                   'replique-find-usage/search-in-strings-and-comments)))
       (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)
                 :require-match t
                 :action (apply-partially 'replique-find-usage/edit-param
@@ -347,6 +393,5 @@
 
 ;; Warning + exclusion for too large file
 ;; Analyze locals for results symbols with no namespace. Ignore locals on quoted forms
-;; Search in jars
 
 ;; Find usage does not find definitions generated by macros such as deftype/defrecord
