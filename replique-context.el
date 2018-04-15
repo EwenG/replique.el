@@ -740,11 +740,11 @@
 (defun replique-context/handle-defmethod-like (target-point)
   (let* ((object (replique-context/read-one))
          (object-extracted (replique-context/extracted-value object)))
-    ;; If the defmethod name could not be found, we already are passed the dispatch val,
+    ;; If the defmethod name could not be found, we already are after the dispatch val,
     ;; else read forward the dispatch val
     (cond ((and (cl-typep object-extracted 'replique-context/object-symbol)
                 (<= (oref object-extracted :start) target-point (oref object-extracted :end)))
-           (setq replique-context/at-binding-position? t))
+           nil)
           ((not (cl-typep object-extracted 'replique-context/object-symbol))
            (replique-context/forward-comment))
           (t (replique-context/forward-comment)
