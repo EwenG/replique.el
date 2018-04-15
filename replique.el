@@ -1215,7 +1215,7 @@
               (replique-pprint/pprint-error-str err)
             (replique/get resp :result)))))))
 (comment
- (replique/eval-form :clj "(+ 1 4)")
+ (replique/eval-form :cljs "(+ 1 4)")
  )
 
 (defun replique/jump-to-definition* (symbol tooling-repl repl-env ns)
@@ -2108,7 +2108,6 @@ minibuffer"
 ;; copy html / css on load-url (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 ;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
-;; defmethod tooling-msg/tooling-msg-handle :eval-cljs -> opts are wrong (not enough things)
 ;; omniscient -> capture the stacktrace if possible
 ;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
 ;; document omniscient global capture / rethink global capture for multithreads
@@ -2120,10 +2119,9 @@ minibuffer"
 ;; try under jdk7
 ;; autocompletion for nested classes (with a "$")
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
-;; eldoc for interop call with multiple arities -> "&" ??
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
-;; var autocompletion should be hidden by locals
 ;; Error when printing very large (too much ?) things from the cljs runtime
+;; dependency on ivy-mode
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
