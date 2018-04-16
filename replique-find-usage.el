@@ -109,8 +109,18 @@
                    (goto-char previous-point)))
                (replique-highlight/unhighlight)))))
 
+(defun replique-find-usage/maybe-visited-jar ()
+  (let ((file-name (buffer-file-name)))
+    (when (string-match "^\\(.*\\.jar\\)" file-name)
+      (match-string-no-properties 0 file-name))))
+
+(defun replique-find-usage/directory-or-jar? (f)
+  (or (file-directory-p f)
+      (string-suffix-p ".jar" f)))
+
 (defun replique-find-usage/select-directories (tooling-repl)
-  (let* ((default (or (replique/guess-project-root-dir)
+  (let* ((default (or (replique-find-usage/maybe-visited-jar)
+                      (replique/guess-project-root-dir)
                       (replique/get tooling-repl :directory)))
          (dir (completing-read "Search in directory: "
                                `(,default
@@ -131,7 +141,8 @@
                      (message "classpath "))
                  (replique/get resp :paths)))))
           ((equal "Other directory" dir)
-           (when-let (dir (read-directory-name "Search in directory: " nil nil t))
+           (when-let (dir (read-file-name "Search in directory: " nil nil t nil
+                                          'replique-find-usage/directory-or-jar?))
              (list dir))))))
 
 (defun replique-find-usage/subdirectory? (dir base)
