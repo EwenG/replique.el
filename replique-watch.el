@@ -217,8 +217,11 @@
                 (message "Refreshing ... done")))))))))
 
 (defun replique-watch/do-browse (candidate)
-  (setq replique-watch/browse-path replique-watch/temporary-browse-path)
-  (replique-watch/refresh t))
+  (let ((new-browse-path (if (equal candidate "")
+                             replique-watch/temporary-browse-path
+                           (cons candidate replique-watch/temporary-browse-path))))
+    (setq replique-watch/browse-path new-browse-path)
+    (replique-watch/refresh t)))
 
 (defun replique-watch/browse-backward-delete-char ()
   (interactive)
@@ -266,7 +269,9 @@
                 (error "%s is undefined" replique-watch/var-name)
               (message "%s" (replique-pprint/pprint-error-str err))
               (error "Browse failed while requesting browse candidates"))
-          (replique/get resp :candidates))))))
+          (if (equal 0 (length user-input))
+              (cons "" (replique/get resp :candidates))
+            (replique/get resp :candidates)))))))
 
 (defvar replique-watch/temporary-browse-path nil)
 
@@ -277,7 +282,7 @@
             'replique-watch/browse-candidates
             :dynamic-collection t
             :action 'replique-watch/do-browse
-            :require-match nil
+            :require-match t
             :keymap replique-watch/browse-map
             :caller 'replique-watch/browse))
 
