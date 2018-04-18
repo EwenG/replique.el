@@ -30,6 +30,13 @@
 (defvar replique-pprint/line-length-max nil)
 (defvar replique-pprint/is-multi-line? nil)
 
+;; Different then the replique-context symbol separators since the pretty printer is intended
+;; at printing data, not code entered by the user
+;; For example (symbol "ee~ee") prints ee~ee
+;; Although we cannot handle all cases, for example, (symbol "ee ee") prints ee ee
+(defvar replique-pprint/symbol-separators "][\s,\(\)\{\}\n\t")
+(defvar replique-pprint/symbol-separator-re (concat "^" replique-pprint/symbol-separators))
+
 (defun replique-pprint/read-one ()
   (let* ((p (point))
          (p1+ (+ 1 p))
@@ -64,7 +71,7 @@
 (defun replique-pprint/pprint-symbol ()
   (setq replique-pprint/is-multi-line? nil)
   (let ((start (point)))
-    (skip-chars-forward replique-context/symbol-separator-re)
+    (skip-chars-forward replique-pprint/symbol-separator-re)
     (when (> (point) start)
       (- (point) start))))
 
@@ -394,7 +401,7 @@
             (equal ?\} (char-before p))
             (equal ?\] (char-before p)))
         (forward-char -1)
-      (skip-chars-backward replique-context/symbol-separator-re))
+      (skip-chars-backward replique-pprint/symbol-separator-re))
     (if (or (not (equal major-mode 'replique/mode))
             (and (equal (get-char-property (point) 'field) 'output)
                  (>= p (comint-line-beginning-position))))
