@@ -29,6 +29,18 @@
                           candidates)
     (aref 1)))
 
+(defun replique-list-vars/vars-sorter (line-number-ref v1 v2)
+  (let ((l1 (replique/get (aref v1 1) :line))
+        (l2 (replique/get (aref v2 1) :line)))
+    (if (or (and (< l1 line-number-ref) (< l2 line-number-ref))
+            (and (>= l1 line-number-ref) (>= l2 line-number-ref)))
+        (<= l1 l2)
+      (> l1 l2))))
+
+(defun replique-list-vars/sort-vars (vars)
+  (let ((line-number (line-number-at-pos)))
+    (sort vars (apply-partially 'replique-list-vars/vars-sorter line-number))))
+
 (defun replique-list-vars/list-vars (var-ns tooling-repl repl prompt action-fn)
   (let ((resp (replique/send-tooling-msg
                tooling-repl (replique/hash-map :type :list-vars
@@ -40,6 +52,7 @@
             (message "%s" (replique-pprint/pprint-str err))
             (message "list-vars failed with ns: %s" var-ns))
         (let* ((vars (replique/get resp :vars))
+               (vars (replique-list-vars/sort-vars vars))
                (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
           (if (> (length var-names) 0)
               (ivy-read
