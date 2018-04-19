@@ -441,21 +441,27 @@
     (replique-pprint/pprint**)))
 
 (defun replique-pprint/pprint-clj (tooling-repl clj-repl)
-  (let ((replique-context/platform-tag ":clj"))
+  ;; platform-tag /splice end is only needed for replique-context/read-one. It is only used
+  ;; during walk-init
+  (let ((replique-context/platform-tag ":clj")
+        (replique-context/splice-ends '()))
     (replique-pprint/pprint*)))
 
 (defun replique-pprint/pprint-cljs (tooling-repl cljs-repl)
-  (let ((replique-context/platform-tag ":cljs"))
+  (let ((replique-context/platform-tag ":cljs")
+        (replique-context/splice-ends '()))
     (replique-pprint/pprint*)))
 
 (defun replique-pprint/pprint-cljc (tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (let ((replique-context/platform-tag (symbol-name (replique/get repl :repl-type))))
+    (let ((replique-context/platform-tag (symbol-name (replique/get repl :repl-type)))
+          (replique-context/splice-ends '()))
       (replique-pprint/pprint*))))
 
 (defun replique-pprint/pprint-session (repl)
-  (let ((replique-context/platform-tag (symbol-name (replique/get repl :repl-type))))
+  (let ((replique-context/platform-tag (symbol-name (replique/get repl :repl-type)))
+        (replique-context/splice-ends '()))
     (replique-pprint/pprint*)))
 
 (defun replique/pprint ()
