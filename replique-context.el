@@ -70,10 +70,6 @@
 
 (defvar replique-context/platform-tag nil)
 
-(defun replique-context/repl-env->platform-tag (repl-env)
-  (cond ((equal :replique/clj repl-env) ":clj")
-        ((equal :replique/cljs repl-env) ":cljs")))
-
 ;; Reader conditional is more complex than others reader macros and requires special treatment
 ;; We read the pairs of [platform-tag object] and return the object that match the current
 ;; platform tag, or the :default platform tag
