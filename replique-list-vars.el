@@ -63,7 +63,7 @@
                :update-fn (lambda ()
                             (with-ivy-window
                               (replique-highlight/unhighlight)
-                              (let ((candidate (nth ivy--index ivy--old-cands)))
+                              (let ((candidate (nth ivy--index ivy--all-candidates)))
                                 (when candidate
                                   (let* ((metas (replique-list-vars/candidate-metas
                                                  vars candidate))
