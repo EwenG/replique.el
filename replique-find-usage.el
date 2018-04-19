@@ -88,7 +88,7 @@
                     (when previous-point
                       (goto-char previous-point))
                     (replique-highlight/unhighlight)
-                    (let ((candidate (nth ivy--index ivy--old-cands)))
+                    (let ((candidate (nth ivy--index ivy--all-candidates)))
                       (when candidate
                         (let ((file (get-text-property
                                      0 'replique-find-usage/file candidate))
