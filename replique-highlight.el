@@ -45,17 +45,14 @@
       (move-overlay replique-highlight/overlay b e (current-buffer))
     (delete-overlay replique-highlight/overlay)))
 
+(defun replique-highlight/highlight-no-line (&optional b e)
+  (delete-overlay replique-highlight/line-overlay)
+  (if (and b e)
+      (move-overlay replique-highlight/overlay b e (current-buffer))
+    (delete-overlay replique-highlight/overlay)))
+
 (defun replique-highlight/unhighlight ()
   (delete-overlay replique-highlight/overlay)
   (delete-overlay replique-highlight/line-overlay))
-
-(comment
- (defun replique-list-vars/highlight ()
-   (progn
-     (unless replique-list-vars/line-overlay
-       (setq replique-list-vars/line-overlay (replique-list-vars/make-overlay)))
-     (overlay-put replique-list-vars/line-overlay
-                  'window (selected-window))
-     (replique-list-vars/move-overlay replique-list-vars/line-overlay))))
 
 (provide 'replique-highlight)
