@@ -545,20 +545,19 @@
 
 (defun replique-watch/compute-init-candidate-sequential (target-point seq)
   (let ((continue t)
-        (candidate nil))
+        (index 0))
     (goto-char (+ 1 (oref seq :start)))
     (while continue
       (replique-context/forward-comment)
       (let* ((object-start (point))
              (object (replique-watch/read-one)))
         (cond ((null object)
+               (setq index (max 0 (- index 1)))
                (setq continue nil))
               ((>= (point) target-point)
-               (setq candidate (buffer-substring-no-properties object-start (point)))
                (setq continue nil))
-              (t
-               (setq candidate (buffer-substring-no-properties object-start (point)))))))
-    candidate))
+              (t (setq index (+ 1 index))))))
+    index))
 
 (defun replique-watch/compute-init-candidate-map (target-point map)
   (let ((continue t)
