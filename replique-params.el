@@ -26,6 +26,7 @@
 
 (defvar replique-params/print-length-history nil)
 (defvar replique-params/print-level-history nil)
+(defvar replique-params/print-meta-history nil)
 (defvar replique-params/warn-on-reflection-history nil)
 
 (defun replique-params/param->history (param)
@@ -33,6 +34,8 @@
          'replique-params/print-length-history)
         ((equal "*print-level*" param)
          'replique-params/print-level-history)
+        ((equal "*print-meta*" param)
+         'replique-params/print-meta-history)
         ((equal "*warn-on-reflection*" param)
          'replique-params/warn-on-reflection-history)))
 
@@ -151,6 +154,8 @@
          (replique-params/edit-numerical param action-fn))
         ((equal "*print-level*" param)
          (replique-params/edit-numerical param action-fn))
+        ((equal "*print-meta*" param)
+         (replique-params/edit-boolean param action-fn))
         ((equal "*warn-on-reflection*" param)
          (replique-params/edit-boolean param action-fn))))
 
@@ -185,7 +190,11 @@
                                              (string-to-number param-value))))
         ((equal "*print-level*" param)
          (setq replique-watch/print-level (when (not (equal "nil" param-value))
-                                            (string-to-number param-value)))))
+                                            (string-to-number param-value))))
+        ((equal "*print-meta*" param)
+         (setq replique-watch/print-meta (if (equal "true" param-value)
+                                             t
+                                           nil))))
   (replique-watch/refresh t))
 
 (defun replique-params/params-session (repl)
@@ -216,7 +225,8 @@
     (when tooling-repl
       (replique-params/params* (replique/hash-map
                                 (concat ns-prefix "/*print-length*") replique-watch/print-length
-                                (concat ns-prefix "/*print-level*") replique-watch/print-level)
+                                (concat ns-prefix "/*print-level*") replique-watch/print-level
+                                (concat ns-prefix "/*print-meta*") replique-watch/print-meta)
                                (apply-partially 'replique-params/set-param-watch tooling-repl)))))
 
 (defun replique/params ()
