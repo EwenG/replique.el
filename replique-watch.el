@@ -311,26 +311,29 @@
       ""
     (concat (string-join (reverse browse-path) " ") " ")))
 
+(defun replique-watch/browse-candidates* (user-input)
+  (let* ((tooling-repl (replique/repl-by :repl-type :tooling
+                                         :directory replique-watch/directory))
+         (resp (replique/send-tooling-msg
+                tooling-repl
+                (replique/hash-map :type :browse-candidates
+                                   :repl-env replique-watch/repl-env
+                                   :var-sym (make-symbol (format "'%s" replique-watch/var-name))
+                                   :buffer-id replique-watch/buffer-id
+                                   :browse-path `(quote ,replique-watch/temporary-browse-path)
+                                   :prefix user-input
+                                   :print-meta replique-watch/print-meta))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (if (replique/get resp :undefined)
+              (error "%s is undefined" replique-watch/var-name)
+            (message "%s" (replique-pprint/pprint-error-str err))
+            (error "Browse failed while requesting browse candidates"))
+        (replique/get resp :candidates)))))
+
 (defun replique-watch/browse-candidates (user-input)
   (with-ivy-window
-    (let* ((tooling-repl (replique/repl-by :repl-type :tooling
-                                           :directory replique-watch/directory))
-           (resp (replique/send-tooling-msg
-                  tooling-repl
-                  (replique/hash-map :type :browse-candidates
-                                     :repl-env replique-watch/repl-env
-                                     :var-sym (make-symbol (format "'%s" replique-watch/var-name))
-                                     :buffer-id replique-watch/buffer-id
-                                     :browse-path `(quote ,replique-watch/temporary-browse-path)
-                                     :prefix user-input
-                                     :print-meta replique-watch/print-meta))))
-      (let ((err (replique/get resp :error)))
-        (if err
-            (if (replique/get resp :undefined)
-                (error "%s is undefined" replique-watch/var-name)
-              (message "%s" (replique-pprint/pprint-error-str err))
-              (error "Browse failed while requesting browse candidates"))
-          (replique/get resp :candidates))))))
+    (replique-watch/browse-candidates* user-input)))
 
 (defun replique-watch/read-one ()
   (let ((replique-context/splice-ends '())
@@ -540,6 +543,77 @@
       (replique-watch/compute-browse-indexes-dispatch candidate->index))
     candidate->index))
 
+(defun replique-watch/compute-init-candidate-sequential (target-point seq)
+  (let ((continue t)
+        (candidate nil))
+    (goto-char (+ 1 (oref seq :start)))
+    (while continue
+      (replique-context/forward-comment)
+      (let* ((object-start (point))
+             (object (replique-watch/read-one)))
+        (cond ((null object)
+               (setq continue nil))
+              ((>= (point) target-point)
+               (setq candidate (buffer-substring-no-properties object-start (point)))
+               (setq continue nil))
+              (t
+               (setq candidate (buffer-substring-no-properties object-start (point)))))))
+    candidate))
+
+(defun replique-watch/compute-init-candidate-map (target-point map)
+  (let ((continue t)
+        (candidate nil)
+        (index 0))
+    (goto-char (+ 1 (oref map :start)))
+    (while continue
+      (replique-context/forward-comment)
+      (let* ((object-start (point))
+             (object (replique-watch/read-one)))
+        (cond ((null object)
+               (setq continue nil))
+              ((>= (point) target-point)
+               (when (equal 0 (logand index 1))
+                 (setq candidate (buffer-substring-no-properties object-start (point))))
+               (setq continue nil))
+              (t (when (equal 0 (logand index 1))
+                   (setq candidate (buffer-substring-no-properties object-start (point))))))
+        (setq index (+ 1 index))))
+    candidate))
+
+(defun replique-watch/compute-init-candidate-dispatch-macro (target-point dm)
+  (let ((dm-type (oref dm :dispatch-macro))
+        (dm-value (replique-context/meta-value (oref dm :value))))
+    (cond ((and (eq :set dm-type)
+                (cl-typep dm-value 'replique-context/object-delimited))
+           (replique-watch/compute-init-candidate-map target-point dm-value))
+          ((and (or (eq :tagged-literal dm-type) (eq :namespaced-map dm-type))
+                (cl-typep dm-value 'replique-context/object-delimited))
+           (if (equal :map (oref dm-value :delimited))
+               (replique-watch/compute-init-candidate-map target-point dm-value)
+             (replique-watch/compute-init-candidate-sequential target-point dm-value))))))
+
+(defun replique-watch/compute-init-candidate-dispatch (target-point)
+  (let* ((object (replique-watch/read-one))
+         (object-meta-value (replique-context/meta-value object)))
+    (when object-meta-value
+      (cond ((and (cl-typep object-meta-value 'replique-context/object-delimited)
+                  (equal :map (oref object-meta-value :delimited)))
+             (replique-watch/compute-init-candidate-map target-point object-meta-value))
+            ((cl-typep object-meta-value 'replique-context/object-delimited)
+             (replique-watch/compute-init-candidate-sequential target-point
+                                                               object-meta-value))
+            ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
+             (replique-watch/compute-browse-indexes-dispatch-macro
+              target-point object-meta-value))))))
+
+(defun replique-watch/compute-init-candidate ()
+  (save-excursion
+    (save-restriction
+      (widen)
+      (let ((target-point (point)))
+        (goto-char (point-min))
+        (replique-watch/compute-init-candidate-dispatch target-point)))))
+
 (defun replique-watch/compute-path-indexes ()
   (let ((browse-path (reverse replique-watch/browse-path))
         (temporary-browse-path (reverse replique-watch/temporary-browse-path)))
@@ -558,7 +632,7 @@
 (defvar replique-watch/candidate->index nil)
 (defvar replique-watch/index->pos nil)
 
-(defun replique-watch/browse* ()
+(defun replique-watch/browse* (&optional init-candidate)
   (let* ((printed-raw (get-text-property (point-min) 'replique-watch/raw-printed))
          (path-indexes (replique-watch/compute-path-indexes))
          (replique-watch/candidate->index (when (not (equal :negative-path path-indexes))
@@ -567,7 +641,12 @@
                                               (replique-watch/compute-browse-indexes
                                                path-indexes))))
          (replique-watch/index->pos (when (not (equal :negative-path path-indexes))
-                                      (replique-watch/compute-browse-positions path-indexes))))
+                                      (replique-watch/compute-browse-positions path-indexes)))
+         ;; for whatever reason :preset with :dynamic-collection does not work when :preselect
+         ;; is a string, but its works if it is a number
+         ;; Thus we start be prefectching the candidates to find the index of the init-candidate
+         (initial-candidates (replique-watch/browse-candidates* ""))
+         (preselect (when init-candidate (seq-position initial-candidates init-candidate))))
     (ivy-read
      (concat "Browse path: "
              (replique-watch/browse-path->string
@@ -575,6 +654,7 @@
      'replique-watch/browse-candidates
      :dynamic-collection t
      :action 'replique-watch/do-browse
+     :preselect preselect
      :update-fn (lambda ()
                   (with-ivy-window
                     (replique-highlight/unhighlight)
@@ -601,8 +681,9 @@
          (user-error "replique-watch/browse requires ivy-mode"))
         ((not (bound-and-true-p replique-watch/minor-mode))
          (user-error "replique-watch/browse can only be used from a watch buffer"))
-        (t (let ((replique-watch/temporary-browse-path replique-watch/browse-path))
-             (replique-watch/browse*)))))
+        (t (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
+                 (init-candidate (replique-watch/compute-init-candidate)))
+             (replique-watch/browse* init-candidate)))))
 
 (defvar replique-watch/minor-mode-map
   (let ((map (make-sparse-keymap)))
@@ -620,5 +701,3 @@
   :lighter "Replique-watch" :keymap replique-watch/minor-mode-map)
 
 (provide 'replique-watch)
-
-;; hide non public interactive commands
