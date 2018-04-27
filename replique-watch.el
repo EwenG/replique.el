@@ -34,6 +34,7 @@
 (defvar-local replique-watch/print-level nil)
 (defvar-local replique-watch/print-meta nil)
 (defvar-local replique-watch/browse-path nil)
+(defvar-local replique-watch/record? nil)
 (defvar buffer-id-generator 0)
 
 (defvar replique-watch/no-candidate "")
@@ -73,7 +74,8 @@
                 (replique/hash-map :type :add-watch
                                    :repl-env repl-env
                                    :var-sym (make-symbol (format "'%s" var-name))
-                                   :buffer-id buffer-id))))
+                                   :buffer-id buffer-id
+                                   :record? replique-watch/record?))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -81,8 +83,7 @@
             (message "%s" (replique-pprint/pprint-error-str err))
             (message "watch failed with var %s" var-name)
             nil)
-        (let* ((var-value (replique/get resp :var-value))
-               (ref-watchers (replique/get tooling-repl :ref-watchers))
+        (let* ((ref-watchers (replique/get tooling-repl :ref-watchers))
                (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
                (print-length (thread-first repl
                                (replique/get :params)
@@ -200,36 +201,37 @@
     (when (not (replique/contains? ref-watchers buffer-id))
       (puthash buffer-id buffer ref-watchers)))) 
 
-(defun replique-watch/refresh (&optional no-update?)
+(defun replique-watch/refresh (&optional no-update? minibuffer?)
   (interactive)
   (if (not (seq-contains minor-mode-list 'replique-watch/minor-mode))
       (user-error "replique-watch/refresh can only be used in a watch buffer")
-    (when replique-watch/directory
-      (let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                            :directory replique-watch/directory)))
-        (when tooling-repl
-          (replique-watch/check-orphan-buffer
-           tooling-repl replique-watch/buffer-id (current-buffer))
-          (let ((resp (replique/send-tooling-msg
-                       tooling-repl
-                       (replique/hash-map :type :refresh-watch
-                                          :update? (null no-update?)
-                                          :repl-env replique-watch/repl-env
-                                          :var-sym (make-symbol
-                                                    (format "'%s" replique-watch/var-name))
-                                          :buffer-id replique-watch/buffer-id
-                                          :print-length replique-watch/print-length
-                                          :print-level replique-watch/print-level
-                                          :print-meta replique-watch/print-meta
-                                          :browse-path `(quote ,replique-watch/browse-path)))))
-            (let ((err (replique/get resp :error)))
-              (if err
-                  (if (replique/get resp :undefined)
-                      (message "%s is undefined" replique-watch/var-name)
-                    (message "%s" (replique-pprint/pprint-error-str err))
-                    (message "refresh watch failed with var %s" replique-watch/var-name))
-                (message "Refreshing ...")
-                (replique-watch/pprint (replique/get resp :var-value))
+    (let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                          :directory replique-watch/directory)))
+      (when tooling-repl
+        (replique-watch/check-orphan-buffer
+         tooling-repl replique-watch/buffer-id (current-buffer))
+        (let ((resp (replique/send-tooling-msg
+                     tooling-repl
+                     (replique/hash-map :type :refresh-watch
+                                        :update? (null no-update?)
+                                        :repl-env replique-watch/repl-env
+                                        :var-sym (make-symbol
+                                                  (format "'%s" replique-watch/var-name))
+                                        :buffer-id replique-watch/buffer-id
+                                        :print-length replique-watch/print-length
+                                        :print-level replique-watch/print-level
+                                        :print-meta replique-watch/print-meta
+                                        :browse-path `(quote ,replique-watch/browse-path)))))
+          (let ((err (replique/get resp :error)))
+            (if err
+                (if (replique/get resp :undefined)
+                    (message "%s is undefined" replique-watch/var-name)
+                  (message "%s" (replique-pprint/pprint-error-str err))
+                  (message "refresh watch failed with var %s" replique-watch/var-name))
+              (message "Refreshing ...")
+              (replique-watch/pprint (replique/get resp :var-value))
+              (if minibuffer?
+                  (minibuffer-message "Refreshing ... done")
                 (message "Refreshing ... done")))))))))
 
 (defun replique-watch/do-browse (candidate)
@@ -475,7 +477,7 @@
       (let* ((object (replique-watch/read-one)))
         (if (null object)
             (setq continue nil)
-          (puthash index index candidate->index)
+          (puthash (number-to-string index) index candidate->index)
           (setq index (+ 1 index)))))
     candidate->index))
 
@@ -557,7 +559,7 @@
               ((>= (point) target-point)
                (setq continue nil))
               (t (setq index (+ 1 index))))))
-    index))
+    (number-to-string index)))
 
 (defun replique-watch/compute-init-candidate-map (target-point map)
   (let ((continue t)
@@ -682,17 +684,168 @@
          (user-error "replique-watch/browse can only be used from a watch buffer"))
         (t (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
                  (init-candidate (replique-watch/compute-init-candidate)))
-             (replique-watch/browse* init-candidate)))))
+             (when (replique/repl-by :repl-type :tooling
+                                     :directory replique-watch/directory)
+               (replique-watch/browse* init-candidate))))))
+
+(defun replique-params/param->param-candidate (k v)
+  (propertize (replique-params/unqualify k)
+              'replique-params/param k
+              'replique-params/default-val v
+              'replique-params/history (replique-params/param->history
+                                        (replique-params/unqualify k))))
+
+(defun replique-params/params->params-candidate (params)
+  (let ((candidates nil))
+    (maphash (lambda (k v)
+               (push (replique-params/param->param-candidate k v) candidates))
+             params)
+    candidates))
+
+(defvar replique-watch/record-history nil)
+
+(defun replique-watch/record ()
+  (interactive)
+  (if (not (bound-and-true-p replique-watch/minor-mode))
+      (user-error "replique-watch/record can only be used from a watch buffer")
+    (let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                          :directory replique-watch/directory)))
+      (when tooling-repl
+        (replique-params/edit-boolean
+         (propertize "record?"
+                     'replique-params/history 'replique-watch/record-history
+                     'replique-params/default-val replique-watch/record?)
+         (lambda (param value)
+           (let* ((record? (if (equal "true" value) t nil))
+                  (resp (replique/send-tooling-msg
+                         tooling-repl
+                         (replique/hash-map :type (if record? :start-recording :stop-recording)
+                                            :repl-env replique-watch/repl-env
+                                            :var-sym (make-symbol
+                                                      (format "'%s" replique-watch/var-name))
+                                            :buffer-id replique-watch/buffer-id))))
+             (let ((err (replique/get resp :error)))
+               (if err
+                   (if (replique/get resp :undefined)
+                       (message "%s is undefined" replique-watch/var-name)
+                     (message "%s" (replique-pprint/pprint-error-str err))
+                     (message "%s failed with var sym: %s"
+                              (if record? "start-recording" "stop-recording")
+                              (make-symbol (format "'%s" replique-watch/var-name))))
+                 (setq replique-watch/record? record?)
+                 (message (if record? "Recording started" "Recording stopped")))))))))))
+
+(defvar replique-watch/minibuffer-map-record-menu
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map "p" 'replique-watch/record-previous)
+    (define-key map "n" 'replique-watch/record-next)
+    map))
+
+(defvar-local replique-watch/record-index nil)
+(defvar-local replique-watch/record-count nil)
+(defvar-local replique-watch/record-refresh-timer nil)
+
+(defun replique-watch/record-position-refresh (watch-buffer)
+  (when (buffer-live-p watch-buffer)
+    (let ((minibuffer-buffer (current-buffer)))
+      (with-current-buffer watch-buffer
+        (replique-watch/refresh t t)))))
+
+(defun replique-watch/record-update-index (minibuffer-buffer new-index)
+  (with-selected-window (minibuffer-selected-window)
+    (when-let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                               :directory replique-watch/directory)))
+      (let ((resp (replique/send-tooling-msg
+                   tooling-repl
+                   (replique/hash-map :type :set-record-position
+                                      :repl-env replique-watch/repl-env
+                                      :var-sym (make-symbol
+                                                (format "'%s" replique-watch/var-name))
+                                      :buffer-id replique-watch/buffer-id
+                                      :index (- new-index 1)))))
+        (let ((err (replique/get resp :error)))
+          (if err
+              (if (replique/get resp :undefined)
+                  (error "%s is undefined" replique-watch/var-name)
+                (message "%s" (replique-pprint/pprint-error-str err))
+                (error "record-next failed with var sym: %s"
+                       (make-symbol (format "'%s" replique-watch/var-name))))
+            (let ((record-position (replique/get resp :record-position)))
+              (when replique-watch/record-refresh-timer
+                (cancel-timer replique-watch/record-refresh-timer))
+              (setq replique-watch/record-refresh-timer
+                    (run-at-time 0.5 nil
+                                 'replique-watch/record-position-refresh
+                                 (current-buffer)))
+              (with-current-buffer minibuffer-buffer
+                (setq replique-watch/record-index (replique/get record-position :index))
+                (setq replique-watch/record-count (replique/get record-position :count))
+                (let ((inhibit-read-only t))
+                  (delete-minibuffer-contents)
+                  (insert (format "%s/%s "
+                                  replique-watch/record-index
+                                  replique-watch/record-count)))))))))))
+
+(defun replique-watch/record-previous ()
+  (interactive)
+  (when (> replique-watch/record-index 1)
+    (let ((new-index (- replique-watch/record-index 1))
+          (minibuffer-buffer (current-buffer)))
+      (replique-watch/record-update-index minibuffer-buffer new-index))))
+
+(defun replique-watch/record-next ()
+  (interactive)
+  (when (< replique-watch/record-index replique-watch/record-count)
+    (let ((new-index (+ 1 replique-watch/record-index))
+          (minibuffer-buffer (current-buffer)))
+      (replique-watch/record-update-index minibuffer-buffer new-index))))
+
+(defun replique-watch/record-menu ()
+  (interactive)
+  (if (not (bound-and-true-p replique-watch/minor-mode))
+      (user-error "replique-watch/record-menu can only be used from a watch buffer")
+    (when-let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                               :directory replique-watch/directory)))
+      (let ((resp (replique/send-tooling-msg
+                   tooling-repl
+                   (replique/hash-map :type :record-position
+                                      :repl-env replique-watch/repl-env
+                                      :var-sym (make-symbol (format "'%s" replique-watch/var-name))
+                                      :buffer-id replique-watch/buffer-id))))
+        (let ((err (replique/get resp :error)))
+          (if err
+              (if (replique/get resp :undefined)
+                  (message "%s is undefined" replique-watch/var-name)
+                (message "%s" (replique-pprint/pprint-error-str err))
+                (message "record-menu failed with var sym: %s"
+                         (make-symbol (format "'%s" replique-watch/var-name))))
+            (let* ((record-position (replique/get resp :record-position))
+                   (index (replique/get record-position :index))
+                   (count (replique/get record-position :count))
+                   (minibuffer-setup-hook (lambda ()
+                                            (setq buffer-read-only t)
+                                            (setq replique-watch/record-index index)
+                                            (setq replique-watch/record-count count))))
+              (read-from-minibuffer "Record position: "
+                                    (format "%s/%s " index count)
+                                    replique-watch/minibuffer-map-record-menu))))))))
 
 (defvar replique-watch/minor-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map "g" 'replique-watch/refresh)
     (define-key map "b" 'replique-watch/browse)
+    (define-key map "r" 'replique-watch/record)
+    (define-key map "p" 'replique-watch/record-menu)
+    (define-key map "n" 'replique-watch/record-menu)
     (easy-menu-define replique-watch/minor-mode-menu map
       "Replique-watch Minor Mode Menu"
       '("Replique-watch"
         ["Refresh watch" replique-watch/refresh t]
-        ["Browse" replique-watch/browse t]))
+        ["Browse" replique-watch/browse t]
+        ["Record" replique-watch/record t]
+        ["Record menu" replique-watch/record-menu t]
+        ["Record menu" replique-watch/record-menu t]))
     map))
 
 (define-minor-mode replique-watch/minor-mode
