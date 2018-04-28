@@ -38,14 +38,17 @@
 (defvar replique-find-usage/symbol-group-index 2)
 
 ;; ?: -> shy group
-;; beginnin of line or symbol separator or end of line
+;; beginning of line or symbol separator or end of line
 (defvar replique-find-usage/symbol-separator-re
   (concat "\\(?:^\\|" "[" replique-context/symbol-separators "]" "\\|$\\)"))
+
+(defvar replique-find-usage/symbol-ns-class-separator-re
+  (concat "\\(?:^\\|" "[" replique-context/symbol-separators "/" "]" "\\|$\\)"))
 
 (defun replique-find-usage/escaped-symbol-name (sym)
   (regexp-quote (symbol-name sym)))
 
-(defun replique-find-usage/symbols-regexp (symbols)
+(defun replique-find-usage/symbols-regexp (symbols &optional ns-or-class?)
   (concat replique-find-usage/symbol-separator-re
           ;; Detect tag reader
           "\\(#+[\s\n\t]+\\)?"
@@ -54,7 +57,9 @@
           ;; Handle quoted symbols
           "\\(?:'\\)?"
           "\\(" (mapconcat 'replique-find-usage/escaped-symbol-name symbols "\\|") "\\)"
-          replique-find-usage/symbol-separator-re))
+          (if ns-or-class?
+              replique-find-usage/symbol-ns-class-separator-re
+            replique-find-usage/symbol-separator-re)))
 
 (defun replique-find-usage/variables ()
   (setq-local comment-start ";")
@@ -216,7 +221,8 @@
 
 (defun replique-find-usage/do-find-usage
     (directories repl-type default-ns symbols-in-namespaces
-                 include-string-and-comments? global-symbol)
+                 include-string-and-comments? global-symbol
+                 ns-or-class?)
   (with-temp-buffer
     (let ((results nil)
           (file-re (if (equal :cljs repl-type)
@@ -251,7 +257,8 @@
                       (let ((symbols (cons global-symbol
                                            (replique/get symbols-in-namespaces ns))))
                         (goto-char start-pos)
-                        (while (re-search-forward (replique-find-usage/symbols-regexp symbols)
+                        (while (re-search-forward (replique-find-usage/symbols-regexp
+                                                   symbols ns-or-class?)
                                                   stop-pos t)
                           ;; move back, otherwise we may miss the next match
                           (goto-char (match-end replique-find-usage/symbol-group-index))
@@ -299,7 +306,7 @@
                                  (replique/get resp :default-ns)
                                  (replique/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
-                                 global-symbol)))
+                                 global-symbol nil)))
                    (if results
                        (replique-find-usage/show-results
                         tooling-repl
@@ -313,7 +320,7 @@
                                  (replique/get resp :default-ns)
                                  (replique/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
-                                 global-symbol)))
+                                 global-symbol nil)))
                    (if results
                        (replique-find-usage/show-results
                         tooling-repl
@@ -327,7 +334,7 @@
                                  (replique/get resp :default-ns)
                                  (replique/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
-                                 global-symbol)))
+                                 global-symbol t)))
                    (if results
                        (replique-find-usage/show-results
                         tooling-repl
@@ -343,7 +350,7 @@
                                  (replique/get resp :default-ns)
                                  (replique/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
-                                 global-symbol)))
+                                 global-symbol t)))
                    (if results
                        (replique-find-usage/show-results
                         tooling-repl
