@@ -68,14 +68,12 @@
 (defun replique/remove-var ()
   "Unmaps all symbols that map to the var to be removed"
   (interactive)
-  (if (not (featurep 'ivy))
-      (user-error "replique-remove-var requires ivy-mode")
-    (replique/with-modes-dispatch
-     (replique/mode . 'replique/remove-var-session)
-     (clojure-mode . 'replique/remove-var-clj)
-     (clojurescript-mode . 'replique/remove-var-cljs)
-     (clojurec-mode . 'replique/remove-var-cljc)
-     (t . (user-error "Unsupported major mode: %s" major-mode)))))
+  (replique/with-modes-dispatch
+   (replique/mode . 'replique/remove-var-session)
+   (clojure-mode . 'replique/remove-var-clj)
+   (clojurescript-mode . 'replique/remove-var-cljs)
+   (clojurec-mode . 'replique/remove-var-cljc)
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (provide 'replique-remove-var)
 

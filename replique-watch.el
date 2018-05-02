@@ -176,13 +176,11 @@
 
 (defun replique/watch ()
   (interactive)
-  (if (not (featurep 'ivy))
-      (user-error "replique-watch requires ivy-mode")
-    (replique/with-modes-dispatch
-     (clojure-mode . 'replique-watch/watch-clj)
-     (clojurescript-mode . 'replique-watch/watch-cljs)
-     (clojurec-mode . 'replique-watch/watch-cljc)
-     (t . (user-error "Unsupported major mode: %s" major-mode)))))
+  (replique/with-modes-dispatch
+   (clojure-mode . 'replique-watch/watch-clj)
+   (clojurescript-mode . 'replique-watch/watch-cljs)
+   (clojurec-mode . 'replique-watch/watch-cljc)
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique-watch/notify-update (msg)
   (let* ((directory (replique/get msg :process-id))
@@ -678,15 +676,13 @@
 
 (defun replique-watch/browse ()
   (interactive)
-  (cond ((not (featurep 'ivy))
-         (user-error "replique-watch/browse requires ivy-mode"))
-        ((not (bound-and-true-p replique-watch/minor-mode))
-         (user-error "replique-watch/browse can only be used from a watch buffer"))
-        (t (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
-                 (init-candidate (replique-watch/compute-init-candidate)))
-             (when (replique/repl-by :repl-type :tooling
-                                     :directory replique-watch/directory)
-               (replique-watch/browse* init-candidate))))))
+  (if (not (bound-and-true-p replique-watch/minor-mode))
+      (user-error "replique-watch/browse can only be used from a watch buffer")
+    (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
+          (init-candidate (replique-watch/compute-init-candidate)))
+      (when (replique/repl-by :repl-type :tooling
+                              :directory replique-watch/directory)
+        (replique-watch/browse* init-candidate)))))
 
 (defun replique-params/param->param-candidate (k v)
   (propertize (replique-params/unqualify k)

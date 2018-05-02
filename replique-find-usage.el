@@ -388,15 +388,13 @@
 (defun replique/find-usage (symbol)
   (interactive (list (let ((sym (symbol-at-point)))
                        (when sym (symbol-name sym)))))
-  (if (not (featurep 'ivy))
-      (user-error "replique/find-usage requires ivy-mode")
-    (when (buffer-file-name)
-      (comint-check-source (buffer-file-name)))
-    (replique/with-modes-dispatch
-     (clojure-mode . (apply-partially 'replique-find-usage/find-usage-clj symbol))
-     (clojurescript-mode . (apply-partially 'replique-find-usage/find-usage-cljs symbol))
-     (clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
-     (t . (user-error "Unsupported major mode: %s" major-mode)))))
+  (when (buffer-file-name)
+    (comint-check-source (buffer-file-name)))
+  (replique/with-modes-dispatch
+   (clojure-mode . (apply-partially 'replique-find-usage/find-usage-clj symbol))
+   (clojurescript-mode . (apply-partially 'replique-find-usage/find-usage-cljs symbol))
+   (clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
+   (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defvar replique-find-usage/search-in-strings-and-comments-history nil)
 
@@ -429,15 +427,13 @@
 
 (defun replique-find-usage/parameters ()
   (interactive)
-  (if (not (featurep 'ivy))
-      (user-error "replique-find-usage/parameters requires ivy-mode")
-    (let ((params (replique/hash-map
-                   "search-in-strings-and-comments"
-                   'replique-find-usage/search-in-strings-and-comments)))
-      (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)
-                :require-match t
-                :action (apply-partially 'replique-find-usage/edit-param
-                                         'replique-find-usage/set-param)))))
+  (let ((params (replique/hash-map
+                 "search-in-strings-and-comments"
+                 'replique-find-usage/search-in-strings-and-comments)))
+    (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)
+              :require-match t
+              :action (apply-partially 'replique-find-usage/edit-param
+                                       'replique-find-usage/set-param))))
 
 (provide 'replique-find-usage)
 
