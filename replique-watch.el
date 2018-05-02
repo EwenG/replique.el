@@ -833,6 +833,13 @@
                                     (format "%s/%s " index count)
                                     replique-watch/minibuffer-map-record-menu))))))))
 
+(defun replique-watch/copy-browse-path ()
+  (interactive)
+  (let* ((browse-path (mapcar 'substring-no-properties replique-watch/browse-path))
+         (browse-path (concat "[" (string-join browse-path " ") "]")))
+    (kill-new browse-path)
+    (message "Browse path has been copied to clipboard: %s" browse-path)))
+
 (defvar replique-watch/minor-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map "g" 'replique-watch/refresh)
