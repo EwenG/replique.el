@@ -40,6 +40,7 @@
 (require 'replique-params)
 (require 'replique-watch)
 (require 'replique-find-usage)
+(require 'ivy)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
