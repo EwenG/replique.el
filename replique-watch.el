@@ -34,7 +34,7 @@
 (defvar-local replique-watch/print-level nil)
 (defvar-local replique-watch/print-meta nil)
 (defvar-local replique-watch/browse-path nil)
-(defvar-local replique-watch/record? nil)
+(defvar-local replique-watch/record-size nil)
 (defvar buffer-id-generator 0)
 
 (defvar replique-watch/no-candidate "")
@@ -74,8 +74,7 @@
                 (replique/hash-map :type :add-watch
                                    :repl-env repl-env
                                    :var-sym (make-symbol (format "'%s" var-name))
-                                   :buffer-id buffer-id
-                                   :record? replique-watch/record?))))
+                                   :buffer-id buffer-id))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -707,29 +706,36 @@
     (let ((tooling-repl (replique/repl-by :repl-type :tooling
                                           :directory replique-watch/directory)))
       (when tooling-repl
-        (replique-params/edit-boolean
-         (propertize "record?"
+        (replique-params/edit-numerical
+         (propertize "Recording size"
                      'replique-params/history 'replique-watch/record-history
-                     'replique-params/default-val replique-watch/record?)
+                     'replique-params/default-val replique-watch/record-size)
          (lambda (param value)
-           (let* ((record? (if (equal "true" value) t nil))
+           (let* ((record-size (when (not (equal "nil" value))
+                                 (string-to-number value)))
                   (resp (replique/send-tooling-msg
                          tooling-repl
-                         (replique/hash-map :type (if record? :start-recording :stop-recording)
+                         (replique/hash-map :type (if (and record-size (> record-size 1))
+                                                      :start-recording :stop-recording)
                                             :repl-env replique-watch/repl-env
                                             :var-sym (make-symbol
                                                       (format "'%s" replique-watch/var-name))
-                                            :buffer-id replique-watch/buffer-id))))
+                                            :buffer-id replique-watch/buffer-id
+                                            :record-size record-size))))
              (let ((err (replique/get resp :error)))
                (if err
                    (if (replique/get resp :undefined)
                        (message "%s is undefined" replique-watch/var-name)
                      (message "%s" (replique-pprint/pprint-error-str err))
                      (message "%s failed with var sym: %s"
-                              (if record? "start-recording" "stop-recording")
+                              (if (and record-size (> record-size 1))
+                                  "start-recording" "stop-recording")
                               (make-symbol (format "'%s" replique-watch/var-name))))
-                 (setq replique-watch/record? record?)
-                 (message (if record? "Recording started" "Recording stopped")))))))))))
+                 (setq replique-watch/record-size record-size)
+                 (message (if (and record-size (> record-size 1))
+                              (format "Recording started. Recording size: %s" record-size)
+                            "Recording stopped")))))))))))
+
 
 (defvar replique-watch/minibuffer-map-record-menu
   (let ((map (make-sparse-keymap)))
