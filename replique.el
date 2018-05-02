@@ -18,7 +18,7 @@
 ;; This file is not part of GNU Emacs.
 
 ;; Version 0.0.11-SNAPHSHOT
-;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0"))
+;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0"))
 
 ;; Commentary:
 
@@ -2121,7 +2121,7 @@ minibuffer"
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
 ;; Error when printing very large (too much ?) things from the cljs runtime
-;; dependency on ivy-mode
+;; Highlight locals
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
