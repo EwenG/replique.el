@@ -1267,7 +1267,8 @@
 
 (defun replique-context/comint-previous-prompt-position ()
   (let ((p (point)))
-    (comint-previous-prompt 1)
+    (when (null (comint-previous-prompt 1))
+      (goto-char (point-min)))
     (let ((comint-previous-prompt-position (point)))
       (goto-char p)
       comint-previous-prompt-position)))
