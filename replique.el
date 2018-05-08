@@ -1875,6 +1875,7 @@ minibuffer"
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port))
          (repl-buffer (replique/get starting-repl :buffer))
+         (repl-type (replique/get starting-repl :repl-type))
          (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
          (repl-cmd (format "(replique.repl/repl)\n")))
     (set-process-sentinel proc (apply-partially 'replique/on-repl-close repl-buffer))
@@ -1885,7 +1886,9 @@ minibuffer"
            (let* ((resp (replique-transit/decode resp))
                   (session (replique/get resp :client)))
              (with-current-buffer repl-buffer
-               (erase-buffer))
+               (erase-buffer)
+               (rename-buffer (generate-new-buffer-name
+                               (replique/buffer-name directory repl-type session))))
              (set-process-filter proc nil)
              (replique/make-comint proc repl-buffer)
              (comment (set-buffer repl-buffer))
@@ -1905,7 +1908,7 @@ minibuffer"
     (process-send-string proc "replique.server/*session*\n")))
 
 (defun replique/make-repl-starting (directory host port)
-  (let* ((repl-buffer (generate-new-buffer (replique/clj-buff-name directory)))
+  (let* ((repl-buffer (generate-new-buffer (replique/buffer-name directory :clj)))
          (repl (replique/hash-map :directory directory
                                   :host host
                                   :port port
@@ -1923,9 +1926,15 @@ minibuffer"
     (redisplay)
     repl))
 
-(defun replique/clj-buff-name (directory)
-  (generate-new-buffer-name
-   (format "*replique*%s*clj*" (file-name-nondirectory (directory-file-name directory)))))
+(defun replique/buffer-name (directory repl-type &optional session)
+  (if session
+      (format "*replique*%s*%s*%s*"
+              (file-name-nondirectory (directory-file-name directory))
+              (replique/keyword-to-string repl-type)
+              session)
+    (format "*replique*%s*%s*"
+            (file-name-nondirectory (directory-file-name directory))
+            (replique/keyword-to-string repl-type))))
 
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (expand-file-name directory)))
@@ -1974,19 +1983,15 @@ minibuffer"
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
          (repl-type (replique/get repl :repl-type))
-         (repl-type-s (replique/keyword-to-string repl-type))
          (repl-env (replique/get repl :repl-env))
-         (new-repl-type-s (replique/keyword-to-string new-repl-type))
-         (repl-buffer (replique/get repl :buffer)))
+         (repl-buffer (replique/get repl :buffer))
+         (session (replique/get repl :session)))
     (when (not (equal repl-type new-repl-type))
-      (when (string-match-p (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
-                            (buffer-name repl-buffer))
-        (let* ((new-buffer-name (replace-regexp-in-string
-                                 (format "\\*%s\\*\\(<[0-9]+>\\)?$" repl-type-s)
-                                 (format "*%s*" new-repl-type-s)
-                                 (buffer-name repl-buffer))))
-          (with-current-buffer repl-buffer
-            (rename-buffer (generate-new-buffer-name new-buffer-name))))))
+      (when (equal (replique/buffer-name directory repl-type session)
+                   (buffer-name repl-buffer))
+        (with-current-buffer repl-buffer
+          (rename-buffer (generate-new-buffer-name
+                          (replique/buffer-name directory new-repl-type session))))))
     (if (and (equal repl-type new-repl-type) (equal repl-env new-repl-env))
         repl
       (replique/update-repl repl (replique/assoc repl
