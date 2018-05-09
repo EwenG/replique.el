@@ -39,10 +39,10 @@
 
 (defvar replique-watch/no-candidate "")
 
-(defun replique-watch/new-buffer-id ()
+(defun replique-watch/new-buffer-id (watch-type)
   (let ((new-buffer-id buffer-id-generator))
     (setq buffer-id-generator (+ 1 buffer-id-generator))
-    new-buffer-id))
+    (concat watch-type "-" (number-to-string new-buffer-id))))
 
 (defun replique-watch/pprint (val)
   (let ((inhibit-read-only t)
@@ -63,11 +63,37 @@
     (goto-char p)
     (set-buffer-modified-p nil)))
 
-(defun replique-watch/do-watch (tooling-repl repl var-ns var-name)
-  (let* ((var-name (format "%s/%s" var-ns var-name))
-         (buffer-id (replique-watch/new-buffer-id))
-         (repl-env (replique/get repl :repl-env))
+(defun replique-watch/init-watch-buffer (tooling-repl repl buffer-id watch-buffer)
+  (let* ((ref-watchers (replique/get tooling-repl :ref-watchers))
          (repl-type (replique/get repl :repl-type))
+         (repl-env (replique/get repl :repl-env))
+         (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
+         (print-length (thread-first repl
+                         (replique/get :params)
+                         (replique/get (concat ns-prefix "/*print-length*"))))
+         (print-level (thread-first repl
+                        (replique/get :params)
+                        (replique/get (concat ns-prefix "/*print-level*"))))
+         (print-meta (thread-first repl
+                       (replique/get :params)
+                       (replique/get (concat ns-prefix "/*print-meta*")))))
+    (with-current-buffer watch-buffer
+      (buffer-disable-undo watch-buffer)
+      (clojure-mode)
+      (replique-watch/minor-mode)
+      (setq buffer-read-only t)
+      (setq replique-watch/directory (replique/get tooling-repl :directory))
+      (setq replique-watch/repl-env repl-env)
+      (setq replique-watch/repl-type repl-type)
+      (setq replique-watch/buffer-id buffer-id)
+      (setq replique-watch/print-length print-length)
+      (setq replique-watch/print-level print-level)
+      (setq replique-watch/print-meta print-meta)
+      (setq replique-watch/browse-path '()))
+    (puthash buffer-id watch-buffer ref-watchers)))
+
+(defun replique-watch/do-watch (tooling-repl repl buffer-id var-name)
+  (let* ((repl-env (replique/get repl :repl-env))
          (watch-buffer (generate-new-buffer (format "*watch*%s*" var-name)))
          (resp (replique/send-tooling-msg
                 tooling-repl
@@ -82,7 +108,7 @@
             (message "%s" (replique-pprint/pprint-error-str err))
             (message "watch failed with var %s" var-name)
             nil)
-        (let* ((ref-watchers (replique/get tooling-repl :ref-watchers))
+        (let* ((repl-type (replique/get repl :repl-type))
                (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
                (print-length (thread-first repl
                                (replique/get :params)
@@ -93,64 +119,40 @@
                (print-meta (thread-first repl
                              (replique/get :params)
                              (replique/get (concat ns-prefix "/*print-meta*")))))
+          (replique-watch/init-watch-buffer tooling-repl repl buffer-id watch-buffer)
           (with-current-buffer watch-buffer
-            (buffer-disable-undo watch-buffer)
-            (clojure-mode)
-            (replique-watch/minor-mode)
-            (setq buffer-read-only t)
-            (setq replique-watch/directory (replique/get resp :process-id))
-            (setq replique-watch/repl-env repl-env)
-            (setq replique-watch/repl-type repl-type)
             (setq replique-watch/var-name var-name)
-            (setq replique-watch/buffer-id buffer-id)
-            (setq replique-watch/print-length print-length)
-            (setq replique-watch/print-level print-level)
-            (setq replique-watch/print-meta print-meta)
-            (setq replique-watch/browse-path '()))
-          (puthash buffer-id watch-buffer ref-watchers)
-          (let ((resp (replique/send-tooling-msg
-                       tooling-repl
-                       (replique/hash-map :type :refresh-watch
-                                          :update? t
-                                          :repl-env repl-env
-                                          :var-sym (make-symbol (format "'%s" var-name))
-                                          :buffer-id buffer-id
-                                          :print-length print-length
-                                          :print-level print-level
-                                          :print-meta print-meta
-                                          :browse-path `(quote ,replique-watch/browse-path)))))
-            (let ((err (replique/get resp :error)))
-              (if err
-                  (if (replique/get resp :undefined)
-                      (message "%s is undefined" var-name)
-                    (message "%s" (replique-pprint/pprint-error-str err))
-                    (message "refresh watch failed with var %s" var-name))
-                (with-current-buffer watch-buffer
-                  (replique-watch/pprint (replique/get resp :var-value)))
-                (display-buffer watch-buffer)))))))))
+            (replique-watch/refresh t nil nil))
+          (display-buffer watch-buffer))))))
 
 (defun replique-watch/on-kill-buffer ()
   (when replique-watch/directory
     (when-let ((tooling-repl (replique/repl-by :repl-type :tooling
                                                :directory replique-watch/directory)))
-      (let ((resp (replique/send-tooling-msg
-                   tooling-repl
-                   (replique/hash-map :type :remove-watch
-                                      :repl-env replique-watch/repl-env
-                                      :buffer-id replique-watch/buffer-id))))
-        (let ((err (replique/get resp :error)))
-          (when err
-            (message "%s" (replique-pprint/pprint-error-str err))
-            (error "Error while removing watcher for var: %s" replique-watch/var-name)))
-        (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
-          (remhash replique-watch/buffer-id ref-watchers))))))
+      (when replique-watch/var-name
+        (let ((resp (replique/send-tooling-msg
+                     tooling-repl
+                     (replique/hash-map :type :remove-watch
+                                        :repl-env replique-watch/repl-env
+                                        :buffer-id replique-watch/buffer-id))))
+          (let ((err (replique/get resp :error)))
+            (when err
+              (message "%s" (replique-pprint/pprint-error-str err))
+              (error "Error while removing watcher for var: %s" replique-watch/var-name)))))
+      (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+        (remhash replique-watch/buffer-id ref-watchers)))))
 
 (add-hook 'kill-buffer-hook 'replique-watch/on-kill-buffer)
+
+(defun replique-watch/do-watch-var (tooling-repl repl var-ns var-name)
+  (let ((var-name (format "%s/%s" var-ns var-name))
+        (buffer-id (replique-watch/new-buffer-id "var")))
+    (replique-watch/do-watch tooling-repl repl buffer-id var-name)))
 
 (defun replique-watch/watch* (var-ns tooling-repl repl)
   (replique-list-vars/list-vars
    var-ns tooling-repl repl
-   "Watch var: " 'replique-watch/do-watch))
+   "Watch var: " 'replique-watch/do-watch-var))
 
 (defun replique-watch/watch-clj (tooling-repl clj-repl)
   (if (not clj-repl)
@@ -173,9 +175,48 @@
       (when var-ns
         (replique-watch/watch* var-ns tooling-repl repl)))))
 
+(defun replique-watch/watch-session (repl)
+  (let* ((watched-data (completing-read "Watch REPL data: "
+                                        '("printed" "results")
+                                        nil t))
+         (repl-type (replique/get repl :repl-type))
+         (directory (replique/get repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+         (session (replique/get repl :session))
+         (buffer-id (if (equal :cljs repl-type)
+                        "var-replique.cljs-env.watch/printed"
+                      (concat "printed-" session)))
+         (ref-watchers (replique/get tooling-repl :ref-watchers))
+         (existing-watch-buffer (replique/get ref-watchers buffer-id)))
+    (cond ((equal watched-data "printed")
+           (if existing-watch-buffer
+               (pop-to-buffer-same-window existing-watch-buffer)
+             (let* ((buffer-name (if (equal :cljs repl-type)
+                                     (format "*watch*printed*%s*%s*%s*"
+                                             (file-name-nondirectory (directory-file-name directory))
+                                             (replique/keyword-to-string repl-type)
+                                             session)
+                                   (format "*watch*%s*" buffer-id)))
+                    (watch-buffer (generate-new-buffer buffer-name)))
+               (replique-watch/init-watch-buffer tooling-repl repl buffer-id watch-buffer)
+               (with-current-buffer watch-buffer
+                 (replique-watch/refresh t nil nil))
+               (pop-to-buffer-same-window watch-buffer))))
+          ((equal watched-data "*results*")
+           ))))
+
+(defun replique-watch/kill-repl-watch-buffers (repl)
+  (let ((directory (replique/get repl :directory))
+        (session (replique/get repl :session)))
+    (when-let (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
+      (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+        (when-let (watch-buffer (replique/get ref-watchers (concat "printed-" session)))
+          (kill-buffer watch-buffer))))))
+
 (defun replique/watch ()
   (interactive)
   (replique/with-modes-dispatch
+   (replique/mode . 'replique-watch/watch-session)
    (clojure-mode . 'replique-watch/watch-clj)
    (clojurescript-mode . 'replique-watch/watch-cljs)
    (clojurec-mode . 'replique-watch/watch-cljc)
@@ -187,55 +228,62 @@
                                          :directory directory)))
     (when tooling-repl
       (let* ((buffer-id (replique/get msg :buffer-id))
-             (var-value (replique/get msg :var-value))
              (ref-watchers (replique/get tooling-repl :ref-watchers))
              (watch-buffer (replique/get ref-watchers buffer-id)))
-        (with-current-buffer watch-buffer
-          (set-buffer-modified-p t))))))
+        (when watch-buffer
+          (with-current-buffer watch-buffer
+            (set-buffer-modified-p t)))))))
 
 (defun replique-watch/check-orphan-buffer (tooling-repl buffer-id buffer)
   (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
     (when (not (replique/contains? ref-watchers buffer-id))
       (puthash buffer-id buffer ref-watchers)))) 
 
-(defun replique-watch/refresh (&optional no-update? minibuffer?)
+(defun replique-watch/refresh (&optional first-render? no-update? minibuffer?)
   (interactive)
   (if (not (seq-contains minor-mode-list 'replique-watch/minor-mode))
       (user-error "replique-watch/refresh can only be used in a watch buffer")
-    (let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                          :directory replique-watch/directory)))
+    (let* ((tooling-repl (replique/repl-by :repl-type :tooling
+                                           :directory replique-watch/directory))
+           (msg (replique/hash-map :type :refresh-watch
+                                   :update? (null no-update?)
+                                   :repl-env replique-watch/repl-env
+                                   :buffer-id replique-watch/buffer-id
+                                   :print-length replique-watch/print-length
+                                   :print-level replique-watch/print-level
+                                   :print-meta replique-watch/print-meta
+                                   :browse-path `(quote ,replique-watch/browse-path)))
+           (msg (if replique-watch/var-name
+                    (replique/assoc msg :var-sym
+                                    (make-symbol (format "'%s" replique-watch/var-name)))
+                  msg)))
       (when tooling-repl
         (replique-watch/check-orphan-buffer
          tooling-repl replique-watch/buffer-id (current-buffer))
-        (let ((resp (replique/send-tooling-msg
-                     tooling-repl
-                     (replique/hash-map :type :refresh-watch
-                                        :update? (null no-update?)
-                                        :repl-env replique-watch/repl-env
-                                        :var-sym (make-symbol
-                                                  (format "'%s" replique-watch/var-name))
-                                        :buffer-id replique-watch/buffer-id
-                                        :print-length replique-watch/print-length
-                                        :print-level replique-watch/print-level
-                                        :print-meta replique-watch/print-meta
-                                        :browse-path `(quote ,replique-watch/browse-path)))))
+        (let ((resp (replique/send-tooling-msg tooling-repl msg)))
           (let ((err (replique/get resp :error)))
             (if err
-                (if (replique/get resp :undefined)
-                    (message "%s is undefined" replique-watch/var-name)
+                (progn
                   (message "%s" (replique-pprint/pprint-error-str err))
-                  (message "refresh watch failed with var %s" replique-watch/var-name))
-              (message "Refreshing ...")
+                  (cond ((null replique-watch/var-name)
+                         (message "refresh watch failed"))
+                        ((replique/get resp :undefined)
+                         (message "%s is undefined" replique-watch/var-name))
+                        (t (message "refresh watch failed with var %s" replique-watch/var-name))))
+              (when (not first-render?)
+                (message "Refreshing ..."))
+              (setq replique-watch/record-size (replique/get resp :record-size))
               (replique-watch/pprint (replique/get resp :var-value))
-              (if minibuffer?
-                  (minibuffer-message "Refreshing ... done")
-                (message "Refreshing ... done")))))))))
+              (when (not first-render?)
+                (if minibuffer?
+                    (minibuffer-message "Refreshing ... done")
+                  (message "Refreshing ... done"))))))))))
 
 (defun replique-watch/do-browse (candidate)
   (if (equal replique-watch/no-candidate candidate)
       (progn
         (setq replique-watch/browse-path replique-watch/temporary-browse-path)
-        (replique-watch/refresh t)
+        (replique-watch/refresh nil t nil)
         (goto-char (point-min)))
     (let* ((tooling-repl (replique/repl-by :repl-type :tooling
                                            :directory replique-watch/directory))
@@ -256,7 +304,7 @@
                      (candidate (propertize candidate 'replique-watch/browse-index browse-index)))
                 (setq replique-watch/browse-path
                       (cons candidate replique-watch/temporary-browse-path))
-                (replique-watch/refresh t)
+                (replique-watch/refresh nil t nil)
                 (goto-char (point-min)))
             (message "Cannot browse the selected path")))))))
 
@@ -601,7 +649,7 @@
              (replique-watch/compute-init-candidate-sequential target-point
                                                                object-meta-value))
             ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
-             (replique-watch/compute-browse-indexes-dispatch-macro
+             (replique-watch/compute-init-candidate-dispatch-macro
               target-point object-meta-value))))))
 
 (defun replique-watch/compute-init-candidate ()
@@ -752,7 +800,7 @@
   (when (buffer-live-p watch-buffer)
     (let ((minibuffer-buffer (current-buffer)))
       (with-current-buffer watch-buffer
-        (replique-watch/refresh t t)))))
+        (replique-watch/refresh nil t t)))))
 
 (defun replique-watch/record-update-index (minibuffer-buffer new-index)
   (with-selected-window (minibuffer-selected-window)

@@ -1424,6 +1424,7 @@ unwrapping a top level comment block "
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\C-c\C-o" 'replique/omniscient)
     (define-key map "\C-c\C-c" 'replique/pprint)
+    (define-key map "\C-c\C-w" 'replique/watch)
     map))
 
 (defun replique/commons ())
@@ -1455,6 +1456,7 @@ unwrapping a top level comment block "
     (define-key map "\C-c\C-o" 'replique/omniscient)
     (define-key map "\C-c\C-c" 'replique/pprint)
     (define-key map "\C-c\C-u" 'replique/find-usage)
+    (define-key map "\C-c\C-w" 'replique/watch)
     (easy-menu-define replique/minor-mode-menu map
       "Replique Minor Mode Menu"
       '("Replique"
@@ -1475,6 +1477,8 @@ unwrapping a top level comment block "
         ["Pretty print expression at point" replique/pprint t]
         "--"
         ["Find usage of thing at point" replique/find-usage t]
+        "--"
+        ["Watch a var or a REPL printed-data/results using a dedicated buffer" replique/watch t]
         ))
     map))
 
@@ -1578,6 +1582,7 @@ The following commands are available:
     (when proc
       (set-process-sentinel proc nil)
       (delete-process proc))
+    (replique-watch/kill-repl-watch-buffers repl)
     (if kill-buffers
         (kill-buffer buffer)
       (with-current-buffer buffer
@@ -1877,7 +1882,7 @@ minibuffer"
          (repl-buffer (replique/get starting-repl :buffer))
          (repl-type (replique/get starting-repl :repl-type))
          (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
-         (repl-cmd (format "(replique.repl/repl)\n")))
+         (repl-cmd (format "(replique.watch/repl)\n")))
     (set-process-sentinel proc (apply-partially 'replique/on-repl-close repl-buffer))
     (replique/process-filter-read
      proc repl-buffer
@@ -2128,6 +2133,8 @@ minibuffer"
 ;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
 ;; Error when printing very large (too much ?) things from the cljs runtime
 ;; Highlight locals
+;; Dynamic slf4j reconfiguration
+;; deps.edn / tools.alpha support
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
