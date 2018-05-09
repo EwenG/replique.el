@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- Add the REPL session ID to the names of the REPL buffers
 - Add a dependency on ivy-mode
 - Handling of locals introduced by extend-type/extend-protocol/reify/specify/proxy
 - Add the possibility to load a cljs namespace and its dependencies in the cljs environment when starting a cljs REPL 
