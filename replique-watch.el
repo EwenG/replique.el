@@ -183,27 +183,47 @@
          (directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
          (session (replique/get repl :session))
-         (buffer-id (if (equal :cljs repl-type)
+         (printed-buffer-id (if (equal :cljs repl-type)
                         "var-replique.cljs-env.watch/printed"
-                      (concat "printed-" session)))
+                        (concat "printed-" session)))
+         (results-buffer-id (if (equal :cljs repl-type)
+                                "var-replique.cljs-env.watch/results"
+                              (concat "results-" session)))
          (ref-watchers (replique/get tooling-repl :ref-watchers))
-         (existing-watch-buffer (replique/get ref-watchers buffer-id)))
+         (existing-printed-watch-buffer (replique/get ref-watchers printed-buffer-id))
+         (existing-results-watch-buffer (replique/get ref-watchers results-buffer-id)))
     (cond ((equal watched-data "printed")
-           (if existing-watch-buffer
-               (pop-to-buffer-same-window existing-watch-buffer)
+           (if existing-printed-watch-buffer
+               (pop-to-buffer-same-window existing-printed-watch-buffer)
              (let* ((buffer-name (if (equal :cljs repl-type)
                                      "*watch*replique.cljs-env.watch/printed*"
                                    (format "*watch*printed*%s*%s*%s*"
-                                           (file-name-nondirectory (directory-file-name directory))
+                                           (file-name-nondirectory
+                                            (directory-file-name directory))
                                            (replique/keyword-to-string repl-type)
                                            session)))
                     (watch-buffer (generate-new-buffer buffer-name)))
-               (replique-watch/init-watch-buffer tooling-repl repl buffer-id watch-buffer)
+               (replique-watch/init-watch-buffer
+                tooling-repl repl printed-buffer-id watch-buffer)
                (with-current-buffer watch-buffer
                  (replique-watch/refresh t nil nil))
                (pop-to-buffer-same-window watch-buffer))))
-          ((equal watched-data "*results*")
-           ))))
+          ((equal watched-data "results")
+           (if existing-results-watch-buffer
+               (pop-to-buffer-same-window existing-results-watch-buffer)
+             (let* ((buffer-name (if (equal :cljs repl-type)
+                                     "*watch*replique.cljs-env.watch/results*"
+                                   (format "*watch*results*%s*%s*%s*"
+                                           (file-name-nondirectory
+                                            (directory-file-name directory))
+                                           (replique/keyword-to-string repl-type)
+                                           session)))
+                    (watch-buffer (generate-new-buffer buffer-name)))
+               (replique-watch/init-watch-buffer
+                tooling-repl repl results-buffer-id watch-buffer)
+               (with-current-buffer watch-buffer
+                 (replique-watch/refresh t nil nil))
+               (pop-to-buffer-same-window watch-buffer)))))))
 
 (defun replique-watch/kill-repl-watch-buffers (repl)
   (let ((directory (replique/get repl :directory))
@@ -211,6 +231,14 @@
     (when-let (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
       (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
         (when-let (watch-buffer (replique/get ref-watchers (concat "printed-" session)))
+          (kill-buffer watch-buffer))
+        (when-let (watch-buffer (replique/get ref-watchers (concat "results-" session)))
+          (kill-buffer watch-buffer))
+        (when-let (watch-buffer (replique/get
+                                 ref-watchers "var-replique.cljs-env.watch/printed"))
+          (kill-buffer watch-buffer))
+        (when-let (watch-buffer (replique/get
+                                 ref-watchers "var-replique.cljs-env.watch/results"))
           (kill-buffer watch-buffer))))))
 
 (defun replique/watch ()
