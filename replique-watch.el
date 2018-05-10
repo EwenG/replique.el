@@ -192,11 +192,11 @@
            (if existing-watch-buffer
                (pop-to-buffer-same-window existing-watch-buffer)
              (let* ((buffer-name (if (equal :cljs repl-type)
-                                     (format "*watch*printed*%s*%s*%s*"
-                                             (file-name-nondirectory (directory-file-name directory))
-                                             (replique/keyword-to-string repl-type)
-                                             session)
-                                   (format "*watch*%s*" buffer-id)))
+                                     "*watch*replique.cljs-env.watch/printed*"
+                                   (format "*watch*printed*%s*%s*%s*"
+                                           (file-name-nondirectory (directory-file-name directory))
+                                           (replique/keyword-to-string repl-type)
+                                           session)))
                     (watch-buffer (generate-new-buffer buffer-name)))
                (replique-watch/init-watch-buffer tooling-repl repl buffer-id watch-buffer)
                (with-current-buffer watch-buffer
