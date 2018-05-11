@@ -301,12 +301,13 @@
                 (puthash replique-watch/buffer-id (current-buffer) ref-watchers))
               (when (not first-render?)
                 (message "Refreshing ..."))
-              (setq replique-watch/record-size (replique/get resp :record-size))
-              (replique-watch/pprint (replique/get resp :var-value))
-              (when (not first-render?)
-                (if minibuffer?
-                    (minibuffer-message "Refreshing ... done")
-                  (message "Refreshing ... done"))))))))))
+              (let ((resp (replique/get resp :refresh-watch)))
+                (setq replique-watch/record-size (replique/get resp :record-size))
+                (replique-watch/pprint (replique/get resp :var-value))
+                (when (not first-render?)
+                  (if minibuffer?
+                      (minibuffer-message "Refreshing ... done")
+                    (message "Refreshing ... done")))))))))))
 
 (defun replique-watch/do-browse (candidate)
   (if (equal replique-watch/no-candidate candidate)
