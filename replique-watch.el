@@ -262,10 +262,9 @@
           (with-current-buffer watch-buffer
             (set-buffer-modified-p t)))))))
 
-(defun replique-watch/check-orphan-buffer (tooling-repl buffer-id buffer)
+(defun replique-watch/is-orphan-buffer? (tooling-repl buffer-id)
   (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
-    (when (not (replique/contains? ref-watchers buffer-id))
-      (puthash buffer-id buffer ref-watchers)))) 
+    (not (replique/contains? ref-watchers buffer-id))))
 
 (defun replique-watch/refresh (&optional first-render? no-update? minibuffer?)
   (interactive)
@@ -286,8 +285,6 @@
                                     (make-symbol (format "'%s" replique-watch/var-name)))
                   msg)))
       (when tooling-repl
-        (replique-watch/check-orphan-buffer
-         tooling-repl replique-watch/buffer-id (current-buffer))
         (let ((resp (replique/send-tooling-msg tooling-repl msg)))
           (let ((err (replique/get resp :error)))
             (if err
@@ -297,7 +294,11 @@
                          (message "refresh watch failed"))
                         ((replique/get resp :undefined)
                          (message "%s is undefined" replique-watch/var-name))
-                        (t (message "refresh watch failed with var %s" replique-watch/var-name))))
+                        (t (message "refresh watch failed with var %s"
+                                    replique-watch/var-name))))
+              ;; Ensure the buffer is not an orphan one
+              (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+                (puthash replique-watch/buffer-id (current-buffer) ref-watchers))
               (when (not first-render?)
                 (message "Refreshing ..."))
               (setq replique-watch/record-size (replique/get resp :record-size))
@@ -753,11 +754,14 @@
   (interactive)
   (if (not (bound-and-true-p replique-watch/minor-mode))
       (user-error "replique-watch/browse can only be used from a watch buffer")
-    (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
-          (init-candidate (replique-watch/compute-init-candidate)))
-      (when (replique/repl-by :repl-type :tooling
-                              :directory replique-watch/directory)
-        (replique-watch/browse* init-candidate)))))
+    (when-let (tooling-repl (replique/repl-by :repl-type :tooling
+                                              :directory replique-watch/directory))
+      (if (replique-watch/is-orphan-buffer? tooling-repl replique-watch/buffer-id)
+          (message "The buffer must be refreshed")
+        (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
+              (init-candidate (replique-watch/compute-init-candidate)))
+          (when tooling-repl
+            (replique-watch/browse* init-candidate)))))))
 
 (defun replique-params/param->param-candidate (k v)
   (propertize (replique-params/unqualify k)
@@ -779,9 +783,10 @@
   (interactive)
   (if (not (bound-and-true-p replique-watch/minor-mode))
       (user-error "replique-watch/record can only be used from a watch buffer")
-    (let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                          :directory replique-watch/directory)))
-      (when tooling-repl
+    (when-let (tooling-repl (replique/repl-by :repl-type :tooling
+                                              :directory replique-watch/directory))
+      (if (replique-watch/is-orphan-buffer? tooling-repl replique-watch/buffer-id)
+          (message "The buffer must be refreshed")
         (replique-params/edit-numerical
          (propertize "Recording size"
                      'replique-params/history 'replique-watch/record-history
@@ -832,8 +837,8 @@
 
 (defun replique-watch/record-update-index (minibuffer-buffer new-index)
   (with-selected-window (minibuffer-selected-window)
-    (when-let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                               :directory replique-watch/directory)))
+    (when-let (tooling-repl (replique/repl-by :repl-type :tooling
+                                              :directory replique-watch/directory))
       (let ((resp (replique/send-tooling-msg
                    tooling-repl
                    (replique/hash-map :type :set-record-position
@@ -883,31 +888,35 @@
   (interactive)
   (if (not (bound-and-true-p replique-watch/minor-mode))
       (user-error "replique-watch/record-menu can only be used from a watch buffer")
-    (when-let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                               :directory replique-watch/directory)))
-      (let ((resp (replique/send-tooling-msg
-                   tooling-repl
-                   (replique/hash-map :type :record-position
-                                      :repl-env replique-watch/repl-env
-                                      :var-sym (make-symbol (format "'%s" replique-watch/var-name))
-                                      :buffer-id replique-watch/buffer-id))))
-        (let ((err (replique/get resp :error)))
-          (if err
-              (if (replique/get resp :undefined)
-                  (message "%s is undefined" replique-watch/var-name)
-                (message "%s" (replique-pprint/pprint-error-str err))
-                (message "record-menu failed with var sym: %s"
-                         (make-symbol (format "'%s" replique-watch/var-name))))
-            (let* ((record-position (replique/get resp :record-position))
-                   (index (replique/get record-position :index))
-                   (count (replique/get record-position :count))
-                   (minibuffer-setup-hook (lambda ()
-                                            (setq buffer-read-only t)
-                                            (setq replique-watch/record-index index)
-                                            (setq replique-watch/record-count count))))
-              (read-from-minibuffer "Record position: "
-                                    (format "%s/%s " index count)
-                                    replique-watch/minibuffer-map-record-menu))))))))
+    (when-let (tooling-repl (replique/repl-by :repl-type :tooling
+                                              :directory replique-watch/directory))
+      (if (replique-watch/is-orphan-buffer? tooling-repl replique-watch/buffer-id)
+          (message "The buffer must be refreshed")
+        (let ((resp (replique/send-tooling-msg
+                     tooling-repl
+                     (replique/hash-map :type :record-position
+                                        :repl-env replique-watch/repl-env
+                                        :var-sym (make-symbol
+                                                  (format "'%s" replique-watch/var-name))
+                                        :buffer-id replique-watch/buffer-id))))
+          (let ((err (replique/get resp :error)))
+            (print (replique-pprint/pprint-str resp))
+            (if err
+                (if (replique/get resp :undefined)
+                    (message "%s is undefined" replique-watch/var-name)
+                  (message "%s" (replique-pprint/pprint-error-str err))
+                  (message "record-menu failed with var sym: %s"
+                           (make-symbol (format "'%s" replique-watch/var-name))))
+              (let* ((record-position (replique/get resp :record-position))
+                     (index (replique/get record-position :index))
+                     (count (replique/get record-position :count))
+                     (minibuffer-setup-hook (lambda ()
+                                              (setq buffer-read-only t)
+                                              (setq replique-watch/record-index index)
+                                              (setq replique-watch/record-count count))))
+                (read-from-minibuffer "Record position: "
+                                      (format "%s/%s " index count)
+                                      replique-watch/minibuffer-map-record-menu)))))))))
 
 (defun replique-watch/copy-browse-path ()
   (interactive)
