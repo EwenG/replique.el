@@ -243,6 +243,7 @@
                      (erase-buffer)
                      (archive-zip-extract d f)))
               (replique-find-usage/variables)
+              (setq case-fold-search nil)
               (goto-char (point-min))
               (let ((replique-context/ns-starts nil))
                 (replique-context/clojure-find-ns-starts* nil)
