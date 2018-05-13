@@ -30,7 +30,6 @@
 (require 'replique-hashmap)
 (require 'replique-resources)
 (require 'map)
-(require 'replique-omniscient)
 (require 'replique-classpath)
 (require 'replique-remove-var)
 (require 'replique-transit)
@@ -655,7 +654,7 @@
         (forward-line 0)
         (1+ (count-lines start (point)))))))
 
-(defun replique/eval-region (start end p)
+(defun replique/eval-region (start end)
   "Eval the currently highlighted region"
   (interactive "r\nP")
   (let* ((tooling-repl (replique/active-repl :tooling t))
@@ -669,26 +668,22 @@
                                               :column column
                                               :url (replique/buffer-url
                                                     (buffer-file-name)))))
-        (if p
-            (replique/send-input-from-source-dispatch
-             (concat "(replique.omniscient/with-redefs " input ")"))
-          (replique/send-input-from-source-dispatch input))))))
+        (replique/send-input-from-source-dispatch input)))))
 
-(defun replique/eval-last-sexp (p)
+(defun replique/eval-last-sexp ()
   "Eval the previous sexp"
-  (interactive "P")
+  (interactive)
   (replique/eval-region
    (save-excursion
      (backward-sexp 1)
      (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
      (replique-context/maybe-skip-read-discard-or-splice-forward)
      (point))
-   (point)
-   p))
+   (point)))
 
-(defun replique/eval-defn (p)
+(defun replique/eval-defn ()
   "Eval the top level sexpr at point"
-  (interactive "P")
+  (interactive)
   (let* ((expr-bounds (save-excursion
                         (let ((target-point (point)))
                           (skip-chars-backward replique-context/symbol-separator-re)
@@ -711,38 +706,27 @@
                                               :url (replique/buffer-url
                                                     (buffer-file-name)))))
         (replique/send-input-from-source-dispatch
-         (if p
-             (concat "(replique.omniscient/with-redefs " expr ")")
-           expr))))))
+         expr)))))
 
-(defun replique/load-url-clj (url p props clj-repl)
+(defun replique/load-url-clj (url props clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/send-input-from-source-clj
-     (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
-               "(replique.interactive/load-url \"%s\")")
-             url)
+     (format "(replique.interactive/load-url \"%s\")" url)
      props clj-repl)))
 
-(defun replique/load-url-cljs (url p props cljs-repl)
+(defun replique/load-url-cljs (url props cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/send-input-from-source-cljs
-     (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
-               "(replique.interactive/load-url \"%s\")")
-             url)
+     (format "(replique.interactive/load-url \"%s\")" url)
      props cljs-repl)))
 
-(defun replique/load-url-cljc (url p props repl)
+(defun replique/load-url-cljc (url props repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique/send-input-from-source-cljc
-     (format (if p
-                 "(replique.omniscient/with-redefs (replique.interactive/load-url \"%s\"))"
-               "(replique.interactive/load-url \"%s\")")
-             url)
+     (format "(replique.interactive/load-url \"%s\")" url)
      props repl)))
 
 (defun replique/buffer-url (file-name)
@@ -750,16 +734,16 @@
       (format "jar:file:%s!/%s" (match-string 1 file-name) (match-string 2 file-name))
     (format "file://%s" file-name)))
 
-(defun replique/load-file (file-path p)
-  (interactive (list (buffer-file-name) current-prefix-arg))
+(defun replique/load-file (file-path)
+  (interactive (list (buffer-file-name)))
   (comint-check-source file-path)
   (replique/with-modes-dispatch
    (clojure-mode . (apply-partially 'replique/load-url-clj
-                                    (replique/buffer-url file-path) p))
+                                    (replique/buffer-url file-path)))
    (clojurescript-mode . (apply-partially 'replique/load-url-cljs
-                                          (replique/buffer-url file-path) p))
+                                          (replique/buffer-url file-path)))
    (clojurec-mode . (apply-partially 'replique/load-url-cljc
-                                     (replique/buffer-url file-path) p))
+                                     (replique/buffer-url file-path)))
    (css-mode . (apply-partially 'replique/load-css file-path))
    (js2-mode . (apply-partially 'replique/load-js file-path))
    (stylus-mode . (apply-partially 'replique/load-stylus file-path))
@@ -1422,7 +1406,6 @@ unwrapping a top level comment block "
     (define-key map "\C-c\M-n" 'replique/in-ns)
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
-    (define-key map "\C-c\C-o" 'replique/omniscient)
     (define-key map "\C-c\C-c" 'replique/pprint)
     (define-key map "\C-c\C-w" 'replique/watch)
     map))
@@ -1453,7 +1436,6 @@ unwrapping a top level comment block "
     (define-key map "\C-c\C-r" 'replique/switch-active-repl)
     (define-key map "\M-." 'replique/jump-to-definition)
     (define-key map "\M-," 'xref-pop-marker-stack)
-    (define-key map "\C-c\C-o" 'replique/omniscient)
     (define-key map "\C-c\C-c" 'replique/pprint)
     (define-key map "\C-c\C-u" 'replique/find-usage)
     (define-key map "\C-c\C-w" 'replique/watch)
@@ -1471,8 +1453,6 @@ unwrapping a top level comment block "
         ["Switch active REPL" replique/switch-active-repl t]
         "--"
         ["Jump to definition" replique/jump-to-definition t]
-        "--"
-        ["Omniscient action" replique/omniscient t]
         "--"
         ["Pretty print expression at point" replique/pprint t]
         "--"
@@ -2118,10 +2098,8 @@ minibuffer"
 ;; restore print-namespaced-maps somewhere
 ;; copy html / css on load-url (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
-;; add a compliment source for omniscient (:omniscient/quit for cljs + locals)
+;; add a compliment source for omniscient (locals)
 ;; omniscient -> capture the stacktrace if possible
-;; omniscient -> keep track of redefined vars, add the possibility to clear redefined vars
-;; document omniscient global capture / rethink global capture for multithreads
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
