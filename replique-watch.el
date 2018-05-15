@@ -901,7 +901,6 @@
                                                   (format "'%s" replique-watch/var-name))
                                         :buffer-id replique-watch/buffer-id))))
           (let ((err (replique/get resp :error)))
-            (print (replique-pprint/pprint-str resp))
             (if err
                 (if (replique/get resp :undefined)
                     (message "%s is undefined" replique-watch/var-name)
