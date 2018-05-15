@@ -213,7 +213,7 @@
 
 (defun replique-find-usage/list-jar-entries (file-re jar-file)
   (with-temp-buffer
-    (insert-file-contents-literally jar-file)
+    (insert-file-contents jar-file)
     (nreverse
      (seq-reduce (apply-partially 'replique-find-usage/jar-reducer jar-file file-re)
                  (archive-zip-summarize)
@@ -238,7 +238,7 @@
           (dolist (f files)
             (when (or (equal dir-or-jar :jar) (file-readable-p f))
               (cond ((equal dir-or-jar :dir)
-                     (insert-file-contents-literally f nil nil nil t))
+                     (insert-file-contents f nil nil nil t))
                     ((equal dir-or-jar :jar)
                      (erase-buffer)
                      (archive-zip-extract d f)))
