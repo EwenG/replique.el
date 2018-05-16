@@ -2,6 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.11
 
+- The omniscient debugger has been refactored
 - Add the REPL session ID to the names of the REPL buffers
 - Add a dependency on ivy-mode
 - Handling of locals introduced by extend-type/extend-protocol/reify/specify/proxy
