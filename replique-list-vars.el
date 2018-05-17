@@ -94,4 +94,16 @@
                            (replique-highlight/unhighlight))))
             (message "No var in the namespace: %s" var-ns)))))))
 
+(defun replique-list-vars/list-namespaces (tooling-repl repl &optional default-ns)
+  (let ((resp (replique/send-tooling-msg
+               tooling-repl (replique/hash-map :type :list-namespaces
+                                               :repl-env (replique/get repl :repl-env)))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-pprint/pprint-str err))
+            (message "list-namespaces failed"))
+        (let ((namespaces (replique/get resp :namespaces)))
+          (completing-read "Namespace: " namespaces nil t default-ns))))))
+
 (provide 'replique-list-vars)
