@@ -57,30 +57,41 @@
                (vars (replique-list-vars/sort-vars vars))
                (var-names (mapcar (lambda (var-arr) (aref var-arr 0)) vars)))
           (if (> (length var-names) 0)
-              (ivy-read
-               prompt
-               var-names
-               :require-match t
-               :action (apply-partially action-fn tooling-repl repl var-ns)
-               :update-fn (lambda ()
-                            (with-ivy-window
-                              (replique-highlight/unhighlight)
-                              (let ((candidate (nth ivy--index ivy--all-candidates)))
-                                (when candidate
-                                  (let* ((metas (replique-list-vars/candidate-metas
-                                                 vars candidate))
-                                         (file (replique/get metas :file))
-                                         (line (replique/get metas :line))
-                                         (column (replique/get metas :column)))
-                                    (when (and file line)
-                                      (when-let (buff (replique-resources/find-file file))
-                                        (pop-to-buffer-same-window buff)
-                                        (goto-char (point-min))
-                                        (forward-line (1- line))
-                                        (when column
-                                          (move-to-column column))
-                                        (replique-highlight/highlight))))))))
-               :unwind (lambda () (replique-highlight/unhighlight)))
+              (let (;; Used to restore the moved positions in the visited buffers
+                    (previous-point nil)
+                    (previous-buffer nil))
+                (ivy-read
+                 prompt
+                 var-names
+                 :require-match t
+                 :action (apply-partially action-fn tooling-repl repl var-ns)
+                 :update-fn (lambda ()
+                              (with-ivy-window
+                                (when previous-point
+                                  (goto-char previous-point))
+                                (replique-highlight/unhighlight)
+                                (let ((candidate (nth ivy--index ivy--old-cands)))
+                                  (when candidate
+                                    (let* ((metas (replique-list-vars/candidate-metas
+                                                   vars candidate))
+                                           (file (replique/get metas :file))
+                                           (line (replique/get metas :line))
+                                           (column (replique/get metas :column)))
+                                      (when (and file line)
+                                        (when-let (buff (replique-resources/find-file file))
+                                          (pop-to-buffer-same-window buff)
+                                          (setq previous-buffer buff)
+                                          (setq previous-point (point))
+                                          (goto-char (point-min))
+                                          (forward-line (1- line))
+                                          (when column
+                                            (move-to-column column))
+                                          (replique-highlight/highlight))))))))
+                 :unwind (lambda ()
+                           (when previous-buffer
+                             (with-current-buffer previous-buffer
+                               (goto-char previous-point)))
+                           (replique-highlight/unhighlight))))
             (message "No var in the namespace: %s" var-ns)))))))
 
 (provide 'replique-list-vars)
