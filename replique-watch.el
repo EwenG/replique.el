@@ -201,7 +201,7 @@
 
 (defun replique-watch/watch* (var-ns tooling-repl repl)
   (let* ((watched-data (completing-read "Watch REPL data: "
-                                        '("printed" "results" "var")
+                                        '("printed" "results" "captured-envs" "var")
                                         nil t)))
     (cond ((equal watched-data "var")
            (let ((var-ns (replique-list-vars/list-namespaces tooling-repl repl var-ns)))
@@ -211,7 +211,11 @@
           ((equal watched-data "printed")
            (replique-watch/watch-printed tooling-repl repl))
           ((equal watched-data "results")
-           (replique-watch/watch-results tooling-repl repl)))))
+           (replique-watch/watch-results tooling-repl repl))
+          ((equal watched-data "captured-envs")
+           (replique-watch/do-watch-var tooling-repl repl
+                                        "replique.omniscient-runtime"
+                                        "captured-env")))))
 
 (defun replique-watch/watch-clj (tooling-repl clj-repl)
   (if (not clj-repl)
