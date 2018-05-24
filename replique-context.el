@@ -793,6 +793,13 @@
           (replique-context/forward-comment)
           (replique-context/handle-fn-like target-point))))))
 
+(defun replique-context/handle-with-env-like (target-point object-symbol env-locals)
+  (dolist (local-sym env-locals)
+    (replique-context/add-local-binding target-point (symbol-name local-sym)
+                                        (oref object-symbol :start)
+                                        (oref object-symbol :end)
+                                        nil)))
+
 (defvar replique-context/target-point nil)
 (defvar replique-context/last-read nil)
 
@@ -1136,17 +1143,18 @@
       (when (> p-end p-start)
         `(,p-start . ,p-end)))))
 
-(defun replique-context/handle-contextual-call (target-point context-forms symbol)
-  (let ((p (point))
-        (binding-context (replique/get
-                          (replique/get context-forms :binding-context)
-                          symbol))
-        (dependency-context (replique/get
-                             (replique/get context-forms :dependency-context)
-                             symbol))
-        (ns-context (replique/get
-                     (replique/get context-forms :ns-context)
-                     symbol)))
+(defun replique-context/handle-contextual-call (target-point context-forms object-symbol)
+  (let* ((p (point))
+         (symbol (oref object-symbol :symbol))
+         (binding-context (replique/get
+                           (replique/get context-forms :binding-context)
+                           symbol))
+         (dependency-context (replique/get
+                              (replique/get context-forms :dependency-context)
+                              symbol))
+         (ns-context (replique/get
+                      (replique/get context-forms :ns-context)
+                      symbol)))
     (cond ((equal binding-context :let-like)
            (replique-context/handle-let-like target-point)
            (goto-char p))
@@ -1169,6 +1177,10 @@
            (goto-char p))
           ((equal binding-context :letfn-like)
            (replique-context/handle-letfn-like target-point)
+           (goto-char p))
+          ((equal binding-context :with-env-like)
+           (replique-context/handle-with-env-like
+            target-point object-symbol (replique/get context-forms :env-locals))
            (goto-char p))
           ((equal ns-context :ns-like)
            (when (replique-context/walk-ns target-point)
@@ -1252,7 +1264,7 @@
                            (progn
                              (replique-context/forward-comment)
                              (replique-context/handle-contextual-call
-                              target-point context-forms (oref maybe-fn-no-meta :symbol))
+                              target-point context-forms maybe-fn-no-meta)
                              (setq innermost-fn-object object-leaf))
                          (goto-char p))))
                     ((and (cl-typep object-leaf 'replique-context/object-delimited)
