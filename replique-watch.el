@@ -123,7 +123,7 @@
           (with-current-buffer watch-buffer
             (setq replique-watch/var-name var-name)
             (replique-watch/refresh t nil nil))
-          (display-buffer watch-buffer))))))
+          (pop-to-buffer-same-window watch-buffer))))))
 
 (defun replique-watch/on-kill-buffer ()
   (when replique-watch/directory
