@@ -74,47 +74,17 @@
   (setq-local parse-sexp-ignore-comments t))
 
 (defun replique-find-usage/jump-to-result (result)
-  (let ((file (get-text-property 0 'replique-find-usage/file result))
-        (position (get-text-property 0 'replique-find-usage/match-beginning result)))
+  (let ((file (get-text-property 0 'replique-list-vars/file result))
+        (position (get-text-property 0 'replique-list-vars/match-beginning result)))
     (when-let (buff (replique-resources/find-file file))
       (xref-push-marker-stack)
       (pop-to-buffer-same-window buff)
       (goto-char position))))
 
 (defun replique-find-usage/show-results (tooling-repl prompt results)
-  (let (;; Used to restore the moved positions in the visited buffers
-        (previous-point nil)
-        (previous-buffer nil))
-    (ivy-read
-     prompt
-     results
-     :require-match t
-     :action 'replique-find-usage/jump-to-result
-     :update-fn (lambda ()
-                  (with-ivy-window
-                    (when previous-point
-                      (goto-char previous-point))
-                    (replique-highlight/unhighlight)
-                    (let ((candidate (nth ivy--index ivy--old-cands)))
-                      (when candidate
-                        (let ((file (get-text-property
-                                     0 'replique-find-usage/file candidate))
-                              (beginning (get-text-property
-                                          0 'replique-find-usage/match-beginning candidate))
-                              (end (get-text-property
-                                    0 'replique-find-usage/match-end candidate)))
-                          (when (and file beginning end)
-                            (when-let (buff (replique-resources/find-file file))
-                              (pop-to-buffer-same-window buff)
-                              (setq previous-buffer buff)
-                              (setq previous-point (point))
-                              (goto-char beginning)
-                              (replique-highlight/highlight beginning end))))))))
-     :unwind (lambda ()
-               (when previous-buffer
-                 (with-current-buffer previous-buffer
-                   (goto-char previous-point)))
-               (replique-highlight/unhighlight)))))
+  (replique-list-vars/ivy-read-with-hightlight
+   prompt results
+   :action 'replique-find-usage/jump-to-result))
 
 (defun replique-find-usage/maybe-visited-jar ()
   (let ((file-name (buffer-file-name)))
@@ -182,10 +152,10 @@
 (defun replique-find-usage/make-result (f-display f)
   (let* ((f-display (propertize f-display
                                 'face 'compilation-info
-                                'replique-find-usage/file f
-                                'replique-find-usage/match-beginning
+                                'replique-list-vars/file f
+                                'replique-list-vars/match-beginning
                                 (match-beginning replique-find-usage/symbol-group-index)
-                                'replique-find-usage/match-end (point)))
+                                'replique-list-vars/match-end (point)))
          (line-number (propertize (number-to-string (line-number-at-pos (point)))
                                   'face 'compilation-line-number)))
     (concat f-display ":"
