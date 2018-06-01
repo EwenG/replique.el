@@ -1347,7 +1347,7 @@
                                       (one-or-more (not (any whitespace)))))
                     (one-or-more (any whitespace "\n")))
       (zero-or-one (any ":'")) ;; (in-ns 'foo) or (ns+ :user)
-      (group (one-or-more (not (any "()\"" whitespace))) symbol-end)))
+      (group (one-or-more (not (any "{}[]()\"" whitespace))) symbol-end)))
 
 
 (defvar-local replique-context/ns-starts nil)
