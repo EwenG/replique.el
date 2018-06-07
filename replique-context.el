@@ -793,12 +793,29 @@
           (replique-context/forward-comment)
           (replique-context/handle-fn-like target-point))))))
 
-(defun replique-context/handle-with-env-like (target-point object-symbol env-locals)
-  (dolist (local-sym env-locals)
-    (replique-context/add-local-binding target-point (symbol-name local-sym)
-                                        (oref object-symbol :start)
-                                        (oref object-symbol :end)
-                                        nil)))
+(defun replique-context/handle-with-env-like
+    (tooling-repl repl-env ns target-point object-symbol)
+  (let* ((object (replique-context/read-one))
+         (object-no-meta (replique-context/meta-value object)))
+    (when (and (cl-typep object-no-meta 'replique-context/object-symbol)
+               (> target-point (oref object-no-meta :end)))
+      (let* ((resp (replique/send-tooling-msg
+                    tooling-repl
+                    (replique/hash-map :type :captured-env-locals
+                                       :repl-env repl-env
+                                       :ns ns
+                                       :captured-env (oref object-no-meta :symbol))))
+             (err (replique/get resp :error)))
+        (if err
+            (progn
+              (message (replique-pprint/pprint-error-str err))
+              (message "Error while getting locals from captured env: %s"
+                       (oref object-no-meta :symbol)))
+          (dolist (local-sym (replique/get resp :captured-env-locals))
+            (replique-context/add-local-binding target-point (symbol-name local-sym)
+                                                (oref object-symbol :start)
+                                                (oref object-symbol :end)
+                                                nil)))))))
 
 (defvar replique-context/target-point nil)
 (defvar replique-context/last-read nil)
@@ -1143,7 +1160,8 @@
       (when (> p-end p-start)
         `(,p-start . ,p-end)))))
 
-(defun replique-context/handle-contextual-call (target-point context-forms object-symbol)
+(defun replique-context/handle-contextual-call
+    (tooling-repl repl-env ns target-point context-forms object-symbol)
   (let* ((p (point))
          (symbol (oref object-symbol :symbol))
          (binding-context (replique/get
@@ -1180,7 +1198,8 @@
            (goto-char p))
           ((equal binding-context :with-env-like)
            (replique-context/handle-with-env-like
-            target-point object-symbol (replique/get context-forms :env-locals))
+            tooling-repl repl-env ns
+            target-point object-symbol)
            (goto-char p))
           ((equal ns-context :ns-like)
            (when (replique-context/walk-ns target-point)
@@ -1243,7 +1262,8 @@
 ;; Errors (read-one returning nil) may prevent the computation of some contextual values
 ;; such as the fn-context. In such a case, we reset the contextual states and go
 ;; to the target-point
-(defun replique-context/walk (target-point context-forms)
+(defun replique-context/walk
+    (tooling-repl repl-env ns target-point context-forms)
   (let ((innermost-fn-object nil))
     (while (< (point) target-point)
       (let* ((object (replique-context/read-one))
@@ -1264,6 +1284,7 @@
                            (progn
                              (replique-context/forward-comment)
                              (replique-context/handle-contextual-call
+                              tooling-repl repl-env ns
                               target-point context-forms maybe-fn-no-meta)
                              (setq innermost-fn-object object-leaf))
                          (goto-char p))))
@@ -1451,7 +1472,7 @@
                   (let ((replique-context/platform-tag
                          (symbol-name repl-type))
                         (replique-context/splice-ends '()))
-                    (replique-context/walk target-point resp))
+                    (replique-context/walk tooling-repl repl-env ns target-point resp))
                   (setq replique-context/context
                         (replique/hash-map
                          :locals replique-context/locals
