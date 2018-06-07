@@ -10,7 +10,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 - Add the replique/find-usage interactive command
 - A .repliquedoc file can be added to directories to exclude from the Replique search based features (find-usage, main js file refreshing, ...)
 - Fix autocompletion for locals introduced by deftype/defrecord and defmethod forms
-- Add the replique/watch interactive command to visualize a watchable using a dedicated buffer
+- Add the replique/watch interactive command to visualize watchable referneces using a dedicated buffer
 - Add the replique/params interactive command to quickly edit the most common clojure.core/cljs.core dynamic vars (*print-length*, *print-level*, *warn-on-reflection*)
 - Add the replique/pprint interactive command to pretty print the expression at point
 
