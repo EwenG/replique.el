@@ -150,9 +150,9 @@
                replique/repls (list :repl-type repl-type-or-types))
       (replique/repl-by :repl-type repl-type-or-types :error-on-nil error-on-nil))))
 
-(defun replique/guess-project-root-dir ()
-  (or (locate-dominating-file default-directory "project.clj")
-      default-directory))
+(defun replique/guess-project-root-dir (&optional dir)
+  (or (locate-dominating-file (or dir default-directory) "project.clj")
+      (or dir default-directory)))
 
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((tooling-repl-sym (make-symbol "tooling-repl"))
@@ -2098,8 +2098,6 @@ minibuffer"
 ;; restore print-namespaced-maps somewhere
 ;; copy html / css on load-url (problem: override or not (web app context))
 ;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
-;; add a compliment source for omniscient (locals)
-;; omniscient -> capture the stacktrace if possible
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
@@ -2108,9 +2106,6 @@ minibuffer"
 ;; try under jdk7
 ;; autocompletion for nested classes (with a "$")
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
-;; repl.cljs -> use a queue for print and print-tooling. Keep message while send failed
-;; Error when printing very large (too much ?) things from the cljs runtime
-;; Highlight locals
 ;; Dynamic slf4j reconfiguration
 ;; deps.edn / tools.alpha support
 
