@@ -201,7 +201,7 @@
 
 (defun replique-watch/watch* (var-ns tooling-repl repl)
   (let* ((watched-data (completing-read "Watch REPL data: "
-                                        '("printed" "results" "captured-envs" "var")
+                                        '("printed" "results" "var")
                                         nil t)))
     (cond ((equal watched-data "var")
            (let ((var-ns (replique-list-vars/list-namespaces tooling-repl repl var-ns)))
@@ -211,32 +211,25 @@
           ((equal watched-data "printed")
            (replique-watch/watch-printed tooling-repl repl))
           ((equal watched-data "results")
-           (replique-watch/watch-results tooling-repl repl))
-          ((equal watched-data "captured-envs")
-           (replique-watch/do-watch-var tooling-repl repl
-                                        "replique.omniscient-runtime"
-                                        "captured-env")))))
+           (replique-watch/watch-results tooling-repl repl)))))
 
 (defun replique-watch/watch-clj (tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (let ((var-ns (replique-context/clojure-find-ns)))
-      (when var-ns
-        (replique-watch/watch* var-ns tooling-repl clj-repl)))))
+      (replique-watch/watch* var-ns tooling-repl clj-repl))))
 
 (defun replique-watch/watch-cljs (tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (let ((var-ns (replique-context/clojure-find-ns)))
-      (when var-ns
-        (replique-watch/watch* var-ns tooling-repl cljs-repl)))))
+      (replique-watch/watch* var-ns tooling-repl cljs-repl))))
 
 (defun replique-watch/watch-cljc (tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (let ((var-ns (replique-context/clojure-find-ns)))
-      (when var-ns
-        (replique-watch/watch* var-ns tooling-repl repl)))))
+      (replique-watch/watch* var-ns tooling-repl repl))))
 
 (defun replique-watch/watch-session (repl)
   (let* ((repl-ns (replique/get repl :ns))
