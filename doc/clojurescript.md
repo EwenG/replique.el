@@ -1,6 +1,5 @@
 # Clojurscript support
 
-
 The Clojurescript compilation pipeline involves two steps:
 
 - Compiling Clojurescript code to javascript code and writing it to disk

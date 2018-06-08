@@ -1,8 +1,8 @@
-# Debugging
+# Debugging
 
 Replique provides an API to capture a local environment (local bindings + dynamic bindings) and to evaluate some code in the context of the captured environment.
 
-## Capturing a local environment
+## Capturing a local environment
 
 Use the `replique.interactive/capture-env` macro expands to code that captures the local environment when it is executed.
 The first parameter of `replique.interactive/capture-env` is an atom where the environment must be saved.
