@@ -12,7 +12,7 @@ A captured environment is a map with the following structure:
 ```
 {;; The captured local bindings
  :locals {a-local-sym "a value"}
- ;; THe captured dynamic bindings
+ ;; The captured dynamic bindings
  :bindings {clojure.core/*default-data-reader-fn* nil
             clojure.core/*data-readers* {}}
  ;; The position where the environment was captured
