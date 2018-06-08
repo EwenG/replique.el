@@ -21,9 +21,9 @@ Just like mutable references, the REPL evaluation results / printing output can 
 The way values are printed in a watch buffer can be customized by using the `replique/params` command in a watch buffer.
 The following vars are available for customization:
 
-- **print-level**
-- **print-length**
-- **print-meta**
+- \*print-level\*
+- \*print-length\*
+- \*print-meta\*
 
 Once modified, their value is local to the watch buffer and does not affect the global REPL behavior.
 

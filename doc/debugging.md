@@ -27,9 +27,9 @@ Capturing child environments can be useful for example when debugging recursive 
 
 ## Using a captured environment
 
-Captured environments can be visualized using the watch feature of Replique (see [Watching / visualizing mutable references]()).
+Captured environments can be visualized using the watch feature of Replique (see [Watching / visualizing mutable references](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md)).
 
 The `replique.interactive/with-env` macro restores the bindings of the captured environment given as first parameter and executes its body.
 Its first parameter must be an atom which value is an environment captured by the `replique.interactive/capture-env` macro.
-The restored environment is either the value of the atom or the currently browsed value of the atom if the atom is beeing watched (see [Browsing values]()).
+The restored environment is either the value of the atom or the currently browsed value of the atom if the atom is beeing watched (see [Browsing values](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md#browsing-values)).
 Of course, the browsed value can be a child environment of the top level captured environment.
