@@ -2,7 +2,7 @@
 
 ## Using the Clojurescript REPL in the context of a web application
 
-See [the Clojurescript section](Using the REPL to build a web application).
+See [the Clojurescript section](https://github.com/EwenG/replique.el/blob/master/doc/clojurescript.md#using-the-repl-to-build-a-web-application).
 
 ## Javascript files reloading
 
