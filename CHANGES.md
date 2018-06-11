@@ -1,6 +1,6 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
-# Version 0.0.11
+# Version 0.0.12
 
 - The omniscient debugger has been refactored
 - Add the REPL session ID to the names of the REPL buffers
@@ -13,6 +13,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 - Add the replique/watch interactive command to visualize watchable referneces using a dedicated buffer
 - Add the replique/params interactive command to quickly edit the most common clojure.core/cljs.core dynamic vars (*print-length*, *print-level*, *warn-on-reflection*)
 - Add the replique/pprint interactive command to pretty print the expression at point
+
+# Version 0.0.11 - Corrupted release - see 0.0.12
 
 # Version 0.0.10
 
