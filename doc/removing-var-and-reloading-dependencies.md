@@ -2,7 +2,7 @@
 
 ## Removing vars
 
-Clojure and Clojurescript vars can be removed using the `replique/remove-var`. The `replique/remove-var` command prompts for the var to be removed amongs all the vars of the current buffer's namespace. Removing a var also removes all the mappings (ie. :require :refer) to the var from all the loaded namespaces. 
+Clojure and Clojurescript vars can be removed using the `replique/remove-var` command. The `replique/remove-var` command prompts for the var to be removed amongs all the vars of the current buffer's namespace. Removing a var also removes all the mappings (ie. :require :refer) to the var from all the loaded namespaces. 
 
 ## Reloading a file and all its dependencies
 
