@@ -22,7 +22,7 @@ All Clojure and Clojurescript REPL output is printed in the [comint](https://www
 
 ## Uncaught exceptions
 
-Replique registers a default exception handler that prints all uncaught exceptions in the emacs \*Messages* buffer. To override the default exception handler:
+Replique registers a default exception handler that prints all uncaught exceptions in the emacs \*Messages\* buffer. To override the default exception handler:
 
 ```clojure
 (Thread/setDefaultUncaughtExceptionHandler
@@ -36,7 +36,7 @@ Replique registers a default exception handler that prints all uncaught exceptio
 
 When evaluating a form from a buffer containing Clojure or Clojurescript code, Replique automatically changes the REPL namespace to the one of this buffer. The buffer namespace is determined by looking at the closest `(in-ns ...)` form above the one beeing evaluated, or, if none is found, at the top level `(ns ...)` form of the file.
 
-A useful pattern is to use the following form to evaluate some code in a different namespace than the one of the current file:
+A useful pattern is to use the following code snippet to evaluate some code in a different namespace than the one of the current file:
 
 ```
 (comment
@@ -49,7 +49,7 @@ A useful pattern is to use the following form to evaluate some code in a differe
 
 Replique provides a dedicated interface to edit some of the dynamic vars that affect the REPL behavior.
 These vars are \*print-length\*, \*print-level\* and \*warn-on-reflection\*. To edit one of them, use the `replique/params` interactive command.
-The `replique/params` interface implements two keybindings: `+` and `-` to quickly increment/decrement numerical values or to toggle boolean values.
+The `replique/params` interface provides two keybindings: `+` and `-` to quickly increment/decrement numerical values or to toggle boolean values.
 
 ## Starting a Clojure REPL programmatically
 

@@ -25,25 +25,25 @@ The following vars are available for customization:
 - \*print-length\*
 - \*print-meta\*
 
-Once modified, their value is local to the watch buffer and does not affect the global REPL behavior.
+The value of these vars is local to the watch buffer and does not affect the global REPL behavior.
 
 ## Keeping track of multiple values
 
-By default, Replique keeps track of a single value of the watched mutable references and three values of the REPL evaluation results / printing output.
-
-The value currently beeing displayed in the watch buffer can be changed by using the `p` (previous) and `n` (next) keybindings.
+By default, Replique keeps track of the last value of the watched mutable references and the last three REPL evaluation results / printing outputs.
 
 The number of values beeing kept track of can be modified by using the `replique/record` command (or `r` keybinding).
 The `+` and `-` keybindings can be used to increment and decrement the recording size value once the recording edit menu is open.
 
+The value currently beeing displayed in the watch buffer can be changed by using the `p` (previous) and `n` (next) keybindings.
+
 ## Browsing values
 
-A watch buffer can display only a subtree of a nested datastructure.
-The `replique-watch/browse` command (`b` keybinding) opens a menu showing all the top level keys (for maps) or indexes (for sequentials) of the currently displayed datastructure.
-Selecting one of the keys shrinks the printed datastructure to the value associated with this key.
-`C-j` can be used to build a path into the printed datastructure by appending the currently highlighted key to that path.
-The first entry of the menu can be selected to shrink the currently printed datastructure to the built path.
-`C-g` leaves the currently printed datastructure unmodified.
+A watch buffer can display only a subtree of a nested data structure.
+The `replique-watch/browse` command (`b` keybinding) opens a menu showing all the top level keys (for maps) or indexes (for sequentials) of the currently displayed data structure.
+Selecting one of the keys shrinks the printed data structure to the value associated with this key.
+`C-j` can be used to build a path into the printed data structure by appending the currently highlighted key to that path.
+The first entry of the menu can be selected to shrink the currently printed data structure to the built path.
+`C-g` leaves the currently printed data structure unmodified.
 
 ## Accessing the browsed value in the REPL
 
