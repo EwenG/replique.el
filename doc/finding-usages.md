@@ -9,7 +9,7 @@ It can be slow when entering a deep directory hierarchy. A file named `.replique
 
 The `replique/find-usage` does not perform static analysis and does not require the build of an index.
 
-## Shortcomings
+## Shortcomings
 
 The `replique/find-usage` command does not work with special forms.
 
