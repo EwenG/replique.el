@@ -35,7 +35,7 @@ The first thing you will need to do is to emit a javascript file that will be th
 
 `M-x replique/output-main-js-file` prompts for the output path of the main js file. If a Clojurescript REPL is started, `M-x replique/output-main-js-file` also prompts for a cljs namespace. This namespace is the the entry point of your application.
 
-Nothing prevents you from using multiple main js files. Outputting multiple main js files can be useful when using [Google closure modules](https://github.com/clojure/clojurescript/wiki/Compiler-Options#modules), in order to keep HTML markup identical between dev and production.
+Nothing prevents you from using multiple main js files. Outputting multiple main js files can be useful when using [Google closure modules](https://clojurescript.org/reference/compiler-options#modules), in order to keep HTML markup identical between dev and production.
 
 ### Cljc support
 
