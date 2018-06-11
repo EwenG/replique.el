@@ -43,7 +43,7 @@ When both a Clojure and Clojurescript REPL are started, Replique loads .cljc fil
 
 ## Clojurescript compiler configuration
 
-The Clojurescript compiler is preconfigured for development builds (optimizations at :none, sourcemaps enabled ...). A subset of the compiler options and REPL options can be updated at the REPL (see [the Clojurescript wiki](https://github.com/clojure/clojurescript/wiki) for a description of the options).
+The Clojurescript compiler is preconfigured for development builds (optimizations at :none, sourcemaps enabled ...). A subset of the compiler options and REPL options can be updated at the REPL (see [the Clojurescript reference](https://clojurescript.org/reference/compiler-options) for a description of the options).
 
 - To update the *:repl-verbose* REPL options, **from a cljs REPL**: `(replique.interactive/set-cljs-repl-verbose true)`. Note that `set-cljs-repl-verbose` is a macro.
 - To update one of *#{:verbose :warnings :compiler-stats :language-in :language-out :closure-warnings :checked-arrays}* compiler options, **from a clj REPL**: `(replique.interactive/set-cljs-compiler-opt :verbose true)`
