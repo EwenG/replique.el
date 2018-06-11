@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.13
+;; Version 0.0.12
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0"))
 
 ;; Commentary:
