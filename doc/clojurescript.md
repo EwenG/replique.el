@@ -62,7 +62,7 @@ Including `%s` will splice the `:target-path` into this value.
 
 ### Using external javascript libraries
 
-Replique does not expose the Clojurescript compiler options related to using javascript libraries ([:foreign-libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#foreign-libs) and [:libs](https://github.com/clojure/clojurescript/wiki/Compiler-Options#libs)). The recommended way to deal with external libraries when using Replique is to use a `deps.clj` file, as described in the [cljsjs](https://clojurescript.org/reference/dependencies#cljsjs) section of the Clojurescript reference.
+Replique does not expose the Clojurescript compiler options related to using javascript libraries ([:foreign-libs](https://clojurescript.org/reference/compiler-options#foreign-libs) and [:libs](https://clojurescript.org/reference/compiler-options#libs)). The recommended way to deal with external libraries when using Replique is to use a `deps.clj` file, as described in the [cljsjs](https://clojurescript.org/reference/dependencies#cljsjs) section of the Clojurescript reference.
 
 ### Watching Clojurescript vars or namespaces
 
