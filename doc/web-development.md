@@ -1,6 +1,6 @@
 # Web development
 
-## Using the Clojurescript REPL in the context of a web application
+## Using the Clojurescript REPL in the context of a web application
 
 See [the Clojurescript section](Using the REPL to build a web application).
 
