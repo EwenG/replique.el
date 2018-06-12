@@ -33,7 +33,7 @@
     (shell-command (format "rm ~/replique-%s.tar" version))))
 
 (comment
- (make-package "0.0.13")
+ (make-package "0.0.14")
  )
 
 ;; package-upload-file

@@ -1,5 +1,7 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.14
+
 # Version 0.0.13
 
 - The omniscient debugger has been refactored
