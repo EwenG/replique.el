@@ -3,9 +3,10 @@
 The `replique/find-usage` (`C-c C-u`) command searches for usages of the thing at point in either the project directory, the classpath, or a chosen directory.
 The `replique/find-usage` command can be used with vars, keywords, classes or namespaces.
 
-
 The `replique/find-usage` command works by recursively walking file system directories.
 It can be slow when entering a deep directory hierarchy. A file named `.repliqueignore` can be added to any directory to be excluded from the search.
+
+The `replique/find-usage` only searches in files that have been loaded (either directly or as a dependency) in the Clojure/Clojurescript process. It **ignores** files that have not been loaded yet. 
 
 The `replique/find-usage` does not perform static analysis and does not require the build of an index.
 
