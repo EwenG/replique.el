@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.13-SNAPSHOT
+;; Version 0.0.13
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0"))
 
 ;; Commentary:
@@ -1336,9 +1336,9 @@ offline mode"
                                               active-repl)))
  )
 
-(defconst replique/client-version "0.0.13-SNAPSHOT")
+(defconst replique/client-version "0.0.13")
 
-(defcustom replique/version "0.0.13-SNAPSHOT"
+(defcustom replique/version "0.0.13"
   "Hook for customizing the version of the replique REPL server to be used"
   :type 'string
   :group 'replique)
