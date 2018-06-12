@@ -21,18 +21,6 @@
 
 ;; Code:
 
-(require 'replique-print)
-
-(defclass replique/with-meta (replique-print/printable)
-  ((value :initarg :value)
-   (meta :initarg :meta)))
-
-(defclass replique/more ()
-  ((type :initarg :type)))
-
-(defmethod replique-print/print-method ((o replique/with-meta))
-  (replique-print/print-with-meta))
-
 (defun replique/hash-map (&rest data)
   (let ((l (length data)))
     (when (not (= 0 (logand l 1)))

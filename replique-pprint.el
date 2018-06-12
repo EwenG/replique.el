@@ -21,7 +21,10 @@
 
 ;; Code:
 
+(require 'replique-hashmap)
+(require 'replique-repls)
 (require 'replique-context)
+(require 'replique-print)
 
 (defvar replique-pprint/threshold 20)
 (defvar replique-pprint/large-threshold 40)

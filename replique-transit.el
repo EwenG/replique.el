@@ -22,18 +22,81 @@
 ;; Code:
 
 (require 'replique-hashmap)
+(require 'replique-print)
 
 (defvar replique-transit/decode-for-printing nil)
 
-(defclass replique-transit/tagged-value ()
+(defclass replique/with-meta (replique-print/printable)
+  ((value :initarg :value)
+   (meta :initarg :meta)))
+
+(defmethod replique-print/print-method ((m replique/with-meta))
+  (let ((meta (oref m :meta))
+        (value (oref m :value)))
+    (if (not (hash-table-empty-p meta))
+        (progn
+          (insert "^")
+          (replique-print/print-map meta)
+          (insert-char ?\s)
+          (replique-print/print-dispatch value))
+      (replique-print/print-dispatch value))))
+
+(defclass replique/more (replique-print/printable)
+  ((type :initarg :type)))
+
+(defmethod replique-print/print-method ((o replique/more))
+  (let ((type (oref o :type)))
+    (cond ((equal type "level")
+           (insert-char ?#))
+          ((equal type "length")
+           (insert "...")))))
+
+(defclass replique-transit/tagged-value (replique-print/printable)
   ((tag :initarg :tag)
    (value :initarg :value)))
 
 (defclass replique-transit/tag ()
   ((tag :initarg :tag)))
 
-(defclass replique-transit/empty-list ()
+(defmethod replique-print/print-method ((o replique-transit/tagged-value))
+  (let ((tag (oref o :tag))
+        (value (oref o :value)))
+    (cond ((equal tag ?n)
+           (insert value))
+          ((equal tag ?f)
+           (insert value))
+          ((equal tag ?v)
+           (insert "#'")
+           (insert value))
+          ((equal tag ?c)
+           (insert "\\")
+           (insert value))
+          ((equal tag ?p)
+           (insert "#\"")
+           (insert value)
+           (insert "\""))
+          ((equal tag ?u)
+           (insert "#uuid \"")
+           (insert value)
+           (insert "\""))
+          ((equal tag ?i)
+           (insert "#inst \"")
+           (insert value)
+           (insert "\""))
+          ((cl-typep tag 'replique-transit/tag)
+           (let ((tag (oref tag :tag)))
+             (cond ((equal tag "set")
+                    (replique-print/print-set value))
+                   (t (insert ?#)
+                      (insert tag)
+                      (insert ?\s)
+                      (replique-print/print-dispatch value))))))))
+
+(defclass replique-transit/empty-list (replique-print/printable)
   ())
+
+(defmethod replique-print/print-method ((o replique-transit/empty-list))
+  (replique-print/print-list '()))
 
 ;; Decoder fns
 (defun replique-transit/decode-boolean (tag rep)
@@ -202,8 +265,6 @@
  (replique-transit/decode (read "[\"~#js\" #s(hash-table test equal size 1 data (:e \"f\"))]"))
  (replique-transit/decode (read "#s(hash-table test equal size 1 data (:e \"~+level\"))"))
  )
-
-;; check tooling-msg for omniscient
 
 ;; In case we want to make calculations on bigdecimals:
 ;; (require 'calc)

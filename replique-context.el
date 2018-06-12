@@ -22,6 +22,9 @@
 ;; Code:
 
 (require 'replique-hashmap)
+(require 'replique-repls)
+
+(declare-function replique-pprint/pprint-error-str "replique-pprint.el")
 
 (defun replique-context/forward-comment ()
   (forward-comment (buffer-size))

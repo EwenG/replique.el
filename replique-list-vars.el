@@ -21,7 +21,10 @@
 
 ;; Code:
 
+(require 'replique-hashmap)
+(require 'replique-repls)
 (require 'replique-highlight)
+(require 'replique-resources)
 
 (defun replique-list-vars/candidate-meta (candidate)
   (replique/hash-map

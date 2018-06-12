@@ -21,8 +21,8 @@
 
 ;; Code:
 
+(require 'replique-repls)
 (require 'replique-hashmap)
-(require 'replique-watch)
 
 (defvar replique-params/print-length-history nil)
 (defvar replique-params/print-level-history nil)
@@ -184,19 +184,6 @@
       (replique/comint-send-input-from-source
        (concat "(set! " (get-text-property 0 'replique-params/param param) " " param-value ")")))))
 
-(defun replique-params/set-param-watch (tooling-repl param param-value)
-  (cond ((equal "*print-length*" param)
-         (setq replique-watch/print-length (when (not (equal "nil" param-value))
-                                             (string-to-number param-value))))
-        ((equal "*print-level*" param)
-         (setq replique-watch/print-level (when (not (equal "nil" param-value))
-                                            (string-to-number param-value))))
-        ((equal "*print-meta*" param)
-         (setq replique-watch/print-meta (if (equal "true" param-value)
-                                             t
-                                           nil))))
-  (replique-watch/refresh t))
-
 (defun replique-params/params-session (repl)
   (replique-params/params* (replique/get repl :params)
                            (apply-partially 'replique-params/set-param repl)))
@@ -216,23 +203,12 @@
     (replique-params/params* (replique/get repl :params)
                              (apply-partially 'replique-params/set-param repl))))
 
-(defun replique-params/params-watch ()
-  (let ((tooling-repl (replique/repl-by :repl-type :tooling
-                                        :directory replique-watch/directory))
-        (ns-prefix (if (equal replique-watch/repl-type :replique/cljs)
-                       "cljs.core"
-                     "clojure.core")))
-    (when tooling-repl
-      (replique-params/params* (replique/hash-map
-                                (concat ns-prefix "/*print-length*") replique-watch/print-length
-                                (concat ns-prefix "/*print-level*") replique-watch/print-level
-                                (concat ns-prefix "/*print-meta*") replique-watch/print-meta)
-                               (apply-partially 'replique-params/set-param-watch tooling-repl)))))
+(declare-function replique-watch/params-watch "replique-watch.el")
 
 (defun replique/params ()
   (interactive)
   (if (bound-and-true-p replique-watch/minor-mode)
-      (replique-params/params-watch)
+      (replique-watch/params-watch)
     (replique/with-modes-dispatch
      (replique/mode . 'replique-params/params-session)
      (clojure-mode . 'replique-params/params-clj)

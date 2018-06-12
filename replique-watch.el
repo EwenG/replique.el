@@ -21,6 +21,7 @@
 
 ;; Code:
 
+(require 'replique-repls)
 (require 'replique-list-vars)
 (require 'replique-context)
 (require 'replique-pprint)
@@ -38,6 +39,10 @@
 (defvar buffer-id-generator 0)
 
 (defvar replique-watch/no-candidate "")
+
+(defvar replique-watch/temporary-browse-path nil)
+(defvar replique-watch/candidate->index nil)
+(defvar replique-watch/index->pos nil)
 
 (defun replique-watch/new-buffer-id (watch-type)
   (let ((new-buffer-id buffer-id-generator))
@@ -716,10 +721,6 @@
                 temporary-browse-path)
       :negative-path)))
 
-(defvar replique-watch/temporary-browse-path nil)
-(defvar replique-watch/candidate->index nil)
-(defvar replique-watch/index->pos nil)
-
 (defun replique-watch/browse* (&optional init-candidate)
   (let* ((printed-raw (get-text-property (point-min) 'replique-watch/raw-printed))
          (path-indexes (replique-watch/compute-path-indexes))
@@ -789,6 +790,32 @@
                (push (replique-params/param->param-candidate k v) candidates))
              params)
     candidates))
+
+(defun replique-watch/set-param-watch (tooling-repl param param-value)
+  (cond ((equal "*print-length*" param)
+         (setq replique-watch/print-length (when (not (equal "nil" param-value))
+                                             (string-to-number param-value))))
+        ((equal "*print-level*" param)
+         (setq replique-watch/print-level (when (not (equal "nil" param-value))
+                                            (string-to-number param-value))))
+        ((equal "*print-meta*" param)
+         (setq replique-watch/print-meta (if (equal "true" param-value)
+                                             t
+                                           nil))))
+  (replique-watch/refresh t))
+
+(defun replique-watch/params-watch ()
+  (let ((tooling-repl (replique/repl-by :repl-type :tooling
+                                        :directory replique-watch/directory))
+        (ns-prefix (if (equal replique-watch/repl-type :replique/cljs)
+                       "cljs.core"
+                     "clojure.core")))
+    (when tooling-repl
+      (replique-params/params* (replique/hash-map
+                                (concat ns-prefix "/*print-length*") replique-watch/print-length
+                                (concat ns-prefix "/*print-level*") replique-watch/print-level
+                                (concat ns-prefix "/*print-meta*") replique-watch/print-meta)
+                               (apply-partially 'replique-watch/set-param-watch tooling-repl)))))
 
 (defvar replique-watch/record-history nil)
 

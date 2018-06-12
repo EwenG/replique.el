@@ -22,6 +22,8 @@
 ;; Code:
 
 (require 'ob)
+(require 'replique-repls)
+(require 'replique-pprint)
 
 (add-to-list 'org-babel-tangle-lang-exts '("clojure" . "clj"))
 (add-to-list 'org-babel-tangle-lang-exts '("clojurescript" . "cljs"))
@@ -30,6 +32,26 @@
 
 (defvar org-babel-default-header-args:clojure '())
 (defvar org-babel-default-header-args:clojurescript '())
+
+(defun replique/eval-form (repl-type form-s)
+  (let ((repl (replique/active-repl repl-type)))
+    (if (null repl)
+        (format "No active %s REPL" repl-type)
+      (let* ((form-s (replace-regexp-in-string "\n" " " form-s))
+             (tooling-repl (replique/active-repl :tooling t))
+             (repl-env (replique/get repl :repl-env))
+             (resp (replique/send-tooling-msg
+                    tooling-repl
+                    (replique/hash-map :type :eval
+                                       :repl-env repl-env
+                                       :form form-s))))
+        (let ((err (replique/get resp :error)))
+          (if err
+              (replique-pprint/pprint-error-str err)
+            (replique/get resp :result)))))))
+(comment
+ (replique/eval-form :cljs "(+ 1 4)")
+ )
 
 (defun ob-replique-expand-body
     (body params &optional processed-params)

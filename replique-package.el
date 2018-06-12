@@ -19,6 +19,10 @@
 
 (require 'package-x)
 
+(defmacro comment (&rest body)
+  "Comment out one or more s-expressions."
+  nil)
+
 (defvar local-archive
   (expand-file-name "packages/" "~/replique.el")
   "Location of the package archive.")

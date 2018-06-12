@@ -21,6 +21,11 @@
 
 ;; Code:
 
+(require 'arc-mode)
+(require 'clojure-mode)
+(require 'replique-utils)
+(require 'replique-repls)
+(require 'replique-files)
 (require 'replique-context)
 (require 'replique-highlight)
 

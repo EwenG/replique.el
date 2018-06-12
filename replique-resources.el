@@ -26,6 +26,8 @@
 ;; Theses functions are taken from cider
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(require 'arc-mode)
+
 (defun replique-resources/url-to-file (url)
   "Return the filename from the resource URL.
 Uses `url-generic-parse-url' to parse the url.  The filename is extracted and
@@ -47,7 +49,6 @@ create a valid path."
 If URL has a scheme prefix, it must represent a fully-qualified file path
 or an entry within a zip/jar archive.  If URL doesn't contain a scheme
 prefix and is an absolute path, it is treated as such."
-  (require 'arc-mode)
   (when url
     (cond ((string-match "^file:\\(.+\\)" url)
            (when-let ((file (replique-resources/url-to-file (match-string 1 url))))

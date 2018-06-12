@@ -22,6 +22,8 @@
 ;; Code:
 
 (require 'replique-hashmap)
+(require 'replique-repls)
+(require 'replique-hashmap)
 (require 'replique-list-vars)
 
 (defmacro comment (&rest body)
