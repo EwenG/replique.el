@@ -42,6 +42,7 @@
 (require 'replique-params)
 (require 'replique-watch)
 (require 'replique-find-usage)
+(require 'replique-logback)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1798,8 +1799,8 @@ minibuffer"
 ;; try under jdk7
 ;; autocompletion for nested classes (with a "$")
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
-;; Dynamic slf4j reconfiguration
 ;; deps.edn / tools.alpha support
+;; replique/classpath -> lein classpath outputs downloading messages
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
