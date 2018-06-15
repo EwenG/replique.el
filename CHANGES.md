@@ -1,6 +1,11 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.15
+
 # Version 0.0.14
+
+- Add the replique/logback-reload command to reload logback configuration
+- Compatibility with Clojurescript 1.10.312
 
 # Version 0.0.13
 
