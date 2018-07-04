@@ -95,6 +95,7 @@ Enable [code evaluation in org-mode](https://github.com/EwenG/replique.el/blob/m
 - Data visualization for mutable references
 - Support for capturing and visualizing local bindings
 - Org-mode integration
+- Logback configuration reloading
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
 
@@ -149,6 +150,7 @@ See the [default keymap](#default-keymap), the [interactive commands](#interacti
 - [Finding usages](https://github.com/EwenG/replique.el/blob/master/doc/finding-usages.md)
 - [Debugging](https://github.com/EwenG/replique.el/blob/master/doc/debugging.md)
 - [Org-mode integration](https://github.com/EwenG/replique.el/blob/master/doc/org-mode-integration.md)
+- [Logback reloading](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md)
 
 ### Default keymap
 
@@ -185,6 +187,7 @@ Command                          | Description
 `replique/pprint`                | Pretty print the expression at point
 `replique/find-usage`            | Find all the usages of the expression at point
 `replique/watch`                 | Watch a mutable reference or the stream of the REPL output
+`replique/logback-reload`        | Reload the currently loaded logback configuration 
 
 ### REPL API
 
