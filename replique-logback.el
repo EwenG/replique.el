@@ -26,17 +26,10 @@
 
 (defun replique/logback-reload ()
   (interactive)
-  (message "Reloading logback config ...")
-  (let* ((tooling-repl (replique/active-repl :tooling))
-         (default-directory (replique/get tooling-repl :directory))
-         (resp (replique/send-tooling-msg
-                tooling-repl (replique/hash-map :type :logback-reload
-                                                :repl-env :replique/clj))))
-    (let ((err (replique/get resp :error)))
-      (if err
-          (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
-            (message "replique/logback-reload failed"))
-        (message "Reloading logback config ... done")))))
+  (let* ((clj-repl (replique/active-repl :clj t))
+         (directory (replique/get clj-repl :directory))
+         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling)))
+    (replique/send-input-from-source-clj "(replique.interactive/logback-reload)"
+                                         tooling-repl clj-repl)))
 
 (provide 'replique-logback)
