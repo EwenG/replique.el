@@ -44,4 +44,13 @@
            (setq quit-flag nil)
            ,value)))))
 
+;; completing-read uses an alphabetical order by default. This function can be used too keep
+;; the order of the candidates
+(defun replique/presorted-completion-table (completions)
+  (lambda (string pred action)
+    (if (eq action 'metadata)
+        `(metadata (display-sort-function . ,'identity)
+                   (cycle-sort-function . ,'identity))
+      (complete-with-action action completions string pred))))
+
 (provide 'replique-utils)
