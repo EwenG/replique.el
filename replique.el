@@ -68,15 +68,6 @@
      (mapcar 'replique-pprint/pprint-str))
    "\n"))
 
-;; completing-read uses an alphabetical order by default. This function can be used too keep
-;; the order of the candidates
-(defun replique/presorted-completion-table (completions)
-  (lambda (string pred action)
-    (if (eq action 'metadata)
-        `(metadata (display-sort-function . ,'identity))
-      (complete-with-action action completions string pred))
-    completions))
-
 ;; Auto completion
 
 (defconst replique/annotations-map
@@ -109,7 +100,8 @@
                 tooling-repl
                 (replique/hash-map :type :completion
                                    :repl-env repl-env
-                                   :context (replique-context/get-context ns repl-env)
+                                   :context (replique-context/get-context
+                                             tooling-repl ns repl-env)
                                    :ns ns
                                    :prefix prefix))))
     (let ((err (replique/get resp :error)))
@@ -216,7 +208,8 @@
                tooling-repl
                (replique/hash-map :type :repliquedoc
                                   :repl-env repl-env
-                                  :context (replique-context/get-context ns repl-env)
+                                  :context (replique-context/get-context
+                                            tooling-repl ns repl-env)
                                   :ns ns))))
     (let ((err (replique/get resp :error)))
       (if err
@@ -568,7 +561,8 @@
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
-     (list (completing-read "Switch to REPL: " repl-names nil t))))
+     (list (completing-read "Switch to REPL: "
+                            (replique/presorted-completion-table repl-names) nil t))))
   ;; All windows displaying the previously active repl are set to display the newly active
   ;; repl, unless the newly active repl is already a visible buffer
   (let* ((buffer (get-buffer repl-buff-name))
@@ -591,7 +585,9 @@
                                tooling-repls)))
      (when (not (car directories))
        (user-error "No started REPL"))
-     (list (completing-read "Switch to process: " directories nil t))))
+     (list (completing-read "Switch to process: "
+                            (replique/presorted-completion-table directories)
+                            nil t))))
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
@@ -950,7 +946,8 @@
                                    :repl-env repl-env
                                    :ns ns
                                    :symbol symbol
-                                   :context (replique-context/get-context ns repl-env)))))
+                                   :context (replique-context/get-context
+                                             tooling-repl ns repl-env)))))
     (let ((err (replique/get resp :error)))
       (if err
           (progn
@@ -1801,6 +1798,7 @@ minibuffer"
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
 ;; deps.edn / tools.alpha support
 ;; replique/classpath -> lein classpath outputs downloading messages
+;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory

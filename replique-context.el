@@ -415,19 +415,18 @@
     (setq replique-context/at-local-binding-position? t)))
 
 (defun replique-context/convert-namespaced-keyword (object)
-  (if (cl-typep object 'replique-context/object-symbol)
-      (let ((name (save-match-data
-                    (when (string-match "^\\(:\\|::\\)[^:/]+/\\([^/]+\\)$" (oref object :symbol))
-                      (match-string-no-properties 2 (oref object :symbol))))))
-        (if name
-            (oset object :symbol name)
-          object))
-    object))
+  (when (cl-typep object 'replique-context/object-symbol)
+    (when-let (name (save-match-data
+                      (when (string-match "^\\(::?\\)\\([^:/]+/\\)?\\([^:/]+\\)$"
+                                          (oref object :symbol))
+                        (match-string-no-properties 3 (oref object :symbol)))))
+      (oset object :symbol name)))
+  object)
 
 (comment
- (let ((s ":e/ff"))
-   (when (string-match "^\\(:\\|::\\)[^:/]+/\\([^/]+\\)$" s)
-     (match-string-no-properties 2 s)))
+ (let ((s ":ee/ff"))
+   (when (string-match "^\\(::?\\)\\([^:/]+/\\)?\\([^:/]+\\)$" s)
+     (match-string-no-properties 3 s)))
  )
 
 (defun replique-context/extract-bindings-vector (target-point
@@ -452,8 +451,6 @@
     (while (null exit)
       (let* ((object-k (replique-context/read-one))
              (object-k-meta-value (replique-context/meta-value object-k))
-             (object-k-meta-value (replique-context/convert-namespaced-keyword
-                                   object-k-meta-value))
              (_ (replique-context/forward-comment))
              (object-v (replique-context/read-one))
              (object-v-extracted (replique-context/extracted-value object-v))
@@ -1454,10 +1451,9 @@
 
 (defvar replique-context/context nil)
 
-(defun replique-context/get-context (ns repl-env)
+(defun replique-context/get-context (tooling-repl ns repl-env)
   (or replique-context/context
-      (let* ((tooling-repl (replique/active-repl :tooling))
-             (resp (replique/send-tooling-msg
+      (let* ((resp (replique/send-tooling-msg
                     tooling-repl
                     (replique/hash-map :type :context
                                        :repl-env repl-env

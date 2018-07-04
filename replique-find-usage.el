@@ -105,9 +105,10 @@
                       (replique/guess-project-root-dir)
                       (replique/get tooling-repl :directory)))
          (dir (completing-read "Search in directory: "
-                               `(,default
-                                  "Classpath"
-                                  "Other directory")
+                               (replique/presorted-completion-table
+                                (list default
+                                      "Classpath"
+                                      "Other directory"))
                                nil t)))
     (cond ((equal dir default)
            (list dir))
@@ -265,7 +266,8 @@
                tooling-repl
                (replique/hash-map :type :symbols-in-namespaces
                                   :repl-env repl-env
-                                  :context (replique-context/get-context ns repl-env)
+                                  :context (replique-context/get-context
+                                            tooling-repl ns repl-env)
                                   :ns ns
                                   :symbol symbol))))
     (let ((err (replique/get resp :error)))
