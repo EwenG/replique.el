@@ -1375,34 +1375,33 @@
 (defvar-local replique-context/buffer-ns-starts-modified-tick nil)
 
 (defun replique-context/clojure-find-ns-handle-ns-form (the-ns ns-start-pos)
-  (let ((depth (car (syntax-ppss (point)))))
-    (when (eq 0 depth)
-      (setq replique-context/ns-starts
-            (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts)))
-    (goto-char ns-start-pos)
-    (replique-context/clojure-find-ns-starts** nil)))
+  (setq replique-context/ns-starts
+        (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
+  (goto-char ns-start-pos)
+  (replique-context/clojure-find-ns-starts** nil 0))
 
-(defun replique-context/clojure-find-ns-handle-in-ns-form (the-ns ns-start-pos)
+(defun replique-context/clojure-find-ns-handle-in-ns-form (the-ns ns-start-pos previous-depth)
   (let ((depth (car (syntax-ppss (point)))))
     (if (eq 0 depth)
         (progn
           (setq replique-context/ns-starts
                 (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
           (goto-char ns-start-pos)
-          (replique-context/clojure-find-ns-starts** nil))
+          (replique-context/clojure-find-ns-starts** nil previous-depth))
       (parse-partial-sexp (point) (point-max) -1)
       (let ((ns-end-pos (point))
             (previous-ns (caar replique-context/ns-starts)))
         (setq replique-context/ns-starts
               (cons `(,the-ns . ,ns-start-pos) replique-context/ns-starts))
         (goto-char ns-start-pos)
-        (replique-context/clojure-find-ns-starts** ns-end-pos)
-        (setq replique-context/ns-starts
-              (cons `(,previous-ns . ,ns-end-pos)
-                    replique-context/ns-starts))
-        (replique-context/clojure-find-ns-starts** nil)))))
+        (replique-context/clojure-find-ns-starts** ns-end-pos depth)
+        (when (> depth previous-depth)
+          (setq replique-context/ns-starts
+                (cons `(,previous-ns . ,ns-end-pos)
+                      replique-context/ns-starts))
+          (replique-context/clojure-find-ns-starts** nil previous-depth))))))
 
-(defun replique-context/clojure-find-ns-starts** (bound)
+(defun replique-context/clojure-find-ns-starts** (bound previous-depth)
   (let ((ns-start-pos (re-search-forward
                        replique-context/clojure-namespace-name-regex bound t)))
     (when ns-start-pos
@@ -1412,11 +1411,17 @@
         (when the-ns
           (backward-char (length form))
           (if in-ns?
-              (replique-context/clojure-find-ns-handle-in-ns-form the-ns ns-start-pos)
-            (replique-context/clojure-find-ns-handle-ns-form the-ns ns-start-pos)))))))
+              (replique-context/clojure-find-ns-handle-in-ns-form
+               the-ns ns-start-pos previous-depth)
+            (let ((depth (car (syntax-ppss (point)))))
+              (if (eq 0 depth)
+                  (replique-context/clojure-find-ns-handle-ns-form
+                   the-ns ns-start-pos)
+                (goto-char ns-start-pos)
+                (replique-context/clojure-find-ns-starts** bound previous-depth)))))))))
 
 (defun replique-context/clojure-find-ns-starts* (bound)
-  (replique-context/clojure-find-ns-starts** bound)
+  (replique-context/clojure-find-ns-starts** bound 0)
   (setq replique-context/ns-starts (nreverse replique-context/ns-starts))
   (when (car replique-context/ns-starts)
     (setcdr (car replique-context/ns-starts) 0))
