@@ -1787,7 +1787,6 @@ minibuffer"
 ;; cljs repl server hangs on serving assets on a broken connection ?
 ;; restore print-namespaced-maps somewhere
 ;; copy html / css on load-url (problem: override or not (web app context))
-;; implement a replique lein profile (https://github.com/technomancy/leiningen/blob/master/doc/PLUGINS.md#evaluating-in-project-context)
 ;; new target directory for assets resources
 ;; emacs 26 has built-in, faster "line-number-at-pos"
 ;; check the infer-externs cljs option
@@ -1799,6 +1798,7 @@ minibuffer"
 ;; deps.edn / tools.alpha support
 ;; replique/classpath -> lein classpath outputs downloading messages
 ;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611
+;; HTTP read-post / get -> blocking read while bytes are still coming in
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
