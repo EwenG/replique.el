@@ -982,38 +982,6 @@
                        (when column
                          (move-to-column column))))))))))))
 
-(comment
- (let ((keyword? (replique/get-in resp [:meta :keyword?])))
-   )
- 
- (when keyword?
-   (when files
-     (let* ((found-point nil)
-            (found-buff nil)
-            (kw-namespace (replique/get-in resp [:meta :namespace]))
-            (kw-name (replique/get-in resp [:meta :name]))
-            (kw-regexp (concat ":" kw-namespace "/" kw-name
-                               "\\|"
-                               "::" kw-name)))
-       (save-match-data
-         (save-excursion
-           (while (and (car files) (null found-point))
-             (let ((file-candidate (car files)))
-               (when-let (buff (replique-resources/find-file file-candidate))
-                 (with-current-buffer buff
-                   (goto-char (point-min))
-                   (let ((candidate-point (search-forward-regexp kw-regexp nil t)))
-                     (when (equal (replique-context/clojure-find-ns-no-cache)
-                                  kw-namespace)
-                       (setq found-point candidate-point)
-                       (setq found-buff buff)))))
-               (setq files (cdr files))))))
-       (when (and found-buff found-point)
-         (xref-push-marker-stack)
-         (pop-to-buffer-same-window found-buff)
-         (goto-char found-point)))))
- )
-
 (defun replique/jump-to-definition-session (symbol repl)
   (let* ((directory (replique/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
