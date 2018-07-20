@@ -2,6 +2,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.15
 
+- Replique now depends on Clojure tools.deps instead of leiningen
+
 # Version 0.0.14
 
 - Add the replique/logback-reload command to reload logback configuration
