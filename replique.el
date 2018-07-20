@@ -32,6 +32,7 @@
 (require 'replique-utils)
 (require 'replique-repls)
 (require 'replique-hashmap)
+(require 'replique-cli)
 (require 'replique-resources)
 (require 'replique-files)
 (require 'replique-remove-var)
@@ -188,10 +189,6 @@
   (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
     (mapcar arglists)
     replique-print/print-str))
-
-(comment
- (replique/repliquedoc-format-arglists 0 '([">main-input" (replique/hash-map :keys ["uid" event data reply-fn] :as msg)]))
- )
 
 (defun replique/repliquedoc-format (msg)
   (map-let ((:name name) (:arglists arglists) (:return return) (:index index)) msg
@@ -542,7 +539,9 @@
   (let ((cljs-repl (replique/active-repl :cljs)))
     (when (not cljs-repl)
       (user-error "No active Clojurescript REPL"))
-    (browse-url (format "http://localhost:%s" (replique/get cljs-repl :port)))))
+    (browse-url (format "http://%s:%s"
+                        (replique/get cljs-repl :http-host)
+                        (replique/get cljs-repl :http-port)))))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL session"
@@ -706,7 +705,8 @@
 (defun replique/cljs-repl-connection-script ()
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling t))
-         (port (replique/get tooling-repl :port))
+         (http-host (replique/get tooling-repl :http-host))
+         (http-port (replique/get tooling-repl :http-port))
          (script (format "(function() {
   var scripts = [];
   var makeScript = function() {
@@ -720,14 +720,19 @@
       document.body.appendChild(scripts.shift());
     }
   }
-  makeScript().src = \"http://localhost:%s/goog/base.js\";
-  makeScript().src = \"http://localhost:%s/goog/deps.js\";
-  makeScript().src = \"http://localhost:%s/cljs_deps.js\";
-  makeScript().src = \"http://localhost:%s/replique/cljs_env/bootstrap.js\";
+  makeScript().src = \"http://%s:%s/goog/base.js\";
+  makeScript().src = \"http://%s:%s/goog/deps.js\";
+  makeScript().src = \"http://%s:%s/cljs_deps.js\";
+  makeScript().src = \"http://%s:%s/replique/cljs_env/bootstrap.js\";
   makeScript().textContent = \"goog.require(\\\"replique.cljs_env.repl\\\"); goog.require(\\\"replique.cljs_env.browser\\\");\";
   execScripts();
-  setTimeout(function(){replique.cljs_env.repl.connect(\"http://localhost:%s\");}, 1000);
-})();" port port port port port)))
+  setTimeout(function(){replique.cljs_env.repl.connect(\"http://%s:%s\");}, 1000);
+})();"
+                         http-host http-port
+                         http-host http-port
+                         http-host http-port
+                         http-host http-port
+                         http-host http-port)))
     (kill-new script)
     (message script)))
 
@@ -1030,12 +1035,7 @@
                                               active-repl)))
  )
 
-(defconst replique/client-version "0.0.15-SNAPSHOT")
-
-(defcustom replique/version "0.0.15-SNAPSHOT"
-  "Hook for customizing the version of the replique REPL server to be used"
-  :type 'string
-  :group 'replique)
+(defconst replique/version "0.0.15-SNAPSHOT")
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
@@ -1047,19 +1047,13 @@
   :type 'boolean
   :group 'replique)
 
-(defcustom replique/lein-script nil
-  "Leiningen script path"
-  :type 'file
-  :group 'replique)
-
-(defcustom replique/default-lein-script "lein"
-  "Name of the lein script to be used when replique/lein-script is not set. The script will 
-be searched in exec-path."
+(defcustom replique/clojure-bin "clojure"
+  "Name of the clojure binary to be used. The binary will be searched in exec-path."
   :type 'string
   :group 'replique)
 
-(defcustom replique/host "localhost"
-  "Replique REPLs listening socket host"
+(defcustom replique/replique-coords "{:git/url \"git@github.com:EwenG/replique.git\" :sha \"69df51dbb18941b853a9948b84680ee70b1a6566\"}"
+  "The tools.deps coordinates of the Replique dependency."
   :type 'string
   :group 'replique)
 
@@ -1083,11 +1077,6 @@ is not visible"
   "The symbols considered to be starting a clojure comment block. Used by replique/eval-defn when
 unwrapping a top level comment block "
   :type 'list
-  :group 'replique)
-
-(defcustom replique/offline-mode-flag nil
-  "Whether to run leiningen in offline mode or not"
-  :type 'boolean
   :group 'replique)
 
 (defvar replique/mode-hook '()
@@ -1171,51 +1160,39 @@ The following commands are available:
   (add-function :before-until (local 'eldoc-documentation-function)
                 'replique/eldoc-documentation-function))
 
-(defun replique/offline-mode ()
-  "Toggle the Replique offline mode. When offline mode is enabled, leiningen is started index
-offline mode"
-  (interactive)
-  (if replique/offline-mode-flag
-      (progn
-        (message "Offline mode disabled")
-        (setq replique/offline-mode-flag nil))
-    (message "Offline mode enabled")
-    (setq replique/offline-mode-flag t)))
+(comment
+ (defun replique/classpath ()
+   (interactive)
+   (message "Loading project.clj ...")
+   (let* ((tooling-repl (replique/active-repl :tooling))
+          (default-directory (replique/get tooling-repl :directory))
+          (classpath (shell-command-to-string (concat
+                                               (or replique/lein-script
+                                                   (executable-find replique/default-lein-script))
+                                               " classpath")))
+          (resp (replique/send-tooling-msg
+                 tooling-repl (replique/hash-map :type :update-classpath
+                                                 :repl-env :replique/clj
+                                                 :classpath classpath))))
+     (let ((err (replique/get resp :error)))
+       (if err
+           (progn
+             (message "%s" (replique-pprint/pprint-error-str err))
+             (message "replique/classpath failed"))
+         (message "Loading project.clj ... done"))))))
 
-(defun replique/classpath ()
-  (interactive)
-  (message "Loading project.clj ...")
-  (let* ((tooling-repl (replique/active-repl :tooling))
-         (default-directory (replique/get tooling-repl :directory))
-         (classpath (shell-command-to-string (concat
-                                              (or replique/lein-script
-                                                  (executable-find replique/default-lein-script))
-                                              " classpath")))
-         (resp (replique/send-tooling-msg
-                tooling-repl (replique/hash-map :type :update-classpath
-                                                :repl-env :replique/clj
-                                                :classpath classpath))))
-    (let ((err (replique/get resp :error)))
-      (if err
-          (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
-            (message "replique/classpath failed"))
-        (message "Loading project.clj ... done")))))
-
+;; Not used anymore but kept just in case ...
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique localhost 9000
-
-(defun replique/lein-command (host port directory)
-  `(,(or replique/lein-script (executable-find replique/default-lein-script))
-    ,@(when replique/offline-mode-flag '("-o"))
-    "update-in" ":plugins" "conj"
-    ,(format "[replique/replique \"%s\"]" replique/version)
-    "--"
-    "trampoline" "replique"
-    ,(format "%s" host) ,(format "%s" port)
-    ,(format "%s" directory)))
-
-(defun replique/is-valid-port-nb? (port-nb)
-  (< -1 port-nb 65535))
+(comment
+ (defun replique/lein-command (host port directory)
+   `(,(executable-find replique/lein-script)
+     ,@(when replique/offline-mode-flag '("-o"))
+     "update-in" ":plugins" "conj"
+     ,(format "[replique/replique \"%s\"]" replique/version)
+     "--"
+     "trampoline" "replique"
+     ,(format "%s" host) ,(format "%s" port)
+     ,(format "%s" directory))))
 
 (defun replique/close-tooling-repl (tooling-repl)
   (let ((tooling-proc (replique/get tooling-repl :proc)))
@@ -1285,23 +1262,21 @@ offline mode"
         (t nil))
   (replique/kill-process-buffer network-proc-buffer))
 
-(defun replique/check-lein-script ()
-  (cond ((and replique/lein-script (not (executable-find replique/lein-script)))
-         (format "Error while starting the REPL. %s could not be find in exec-path. Please update replique/lein-script" replique/lein-script))
-        ((and (not replique/lein-script) (not (executable-find replique/default-lein-script)))
-         "Error while starting the REPL. No lein script found in exec-path")
-        (t nil)))
+(defun replique/check-clojure-bin (command)
+  (when (not (executable-find command))
+    "Error while starting the REPL. No clojure executable found in exec-path"))
 
 (defun replique/process-filter-skip-repl-starting-output (proc callback)
-  (let ((started-regexp (format "Replique version %s listening on port \\([0-9]+\\)\n"
-                                replique/version)))
+  (let ((started-regexp "Replique listening on host \"\\(.*\\)\" and port \\([0-9]+\\)\nHTTP server listening on host \"\\(.*\\)\" and port \\([0-9]+\\)\n"))
     (set-process-filter
      proc (lambda (proc string)
             ;; REPL is started
             (if (string-match started-regexp string)
-                (thread-last (match-string 1 string)
-                  string-to-number
-                  (funcall callback))
+                (funcall callback
+                         (match-string 1 string)
+                         (string-to-number (match-string 2 string))
+                         (match-string 3 string)
+                         (string-to-number (match-string 4 string)))
               ;; REPL is still starting. Print all the init messages
               (message "%s" string))))))
 
@@ -1336,7 +1311,7 @@ offline mode"
     (message "Looking for main js files ... %s file(s) found" (length main-js-files))
     main-js-files))
 
-(defun replique/refresh-main-js-files (main-js-files port)
+(defun replique/refresh-main-js-files (main-js-files host port)
   (message "Refreshing main js files ...")
   (let ((namespaces nil)
         (nb-refreshed 0))
@@ -1348,6 +1323,8 @@ offline mode"
           (save-match-data
             (when (re-search-forward "var port = \'[0-9]+\';" nil t)
               (replace-match (format "var port = \'%s\';" port)))
+            (when (re-search-forward "var host = \'.+\';" nil t)
+              (replace-match (format "var host = \'%s\';" host)))
             (when (re-search-forward "var mainNs = \'\\(.*\\)\';$" nil t)
               (when (match-string-no-properties 1)
                 (setq namespaces (cons (match-string-no-properties 1) namespaces)))))
@@ -1377,81 +1354,91 @@ offline mode"
       "%s\n%s" string
       (propertize (process-name proc) 'face 'replique/minibuffer-output-repl-name-face)))))
 
-(defun replique/make-tooling-repl (directory host port)
+(defun replique/make-tooling-repl (directory repl-script host port)
   (let* ((default-directory directory)
-         (repl-cmd (replique/lein-command host port directory))
-         (proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
-         (tooling-repl (replique/hash-map
-                        :directory directory
-                        :repl-type :tooling
-                        :proc proc
-                        :host host
-                        :port port
-                        :ref-watchers (replique/hash-map)
-                        :main-cljs-namespaces nil
-                        :started? nil)))
-    ;; Perform the starting REPLs cleaning in case of an error when starting the process
-    (set-process-sentinel
-     proc
-     (lambda (process event)
-       (replique/close-repls directory t)))
-    (push tooling-repl replique/repls)
-    (replique/make-repl-starting directory host port)
-    (let (;; Search for the main js files while the process is starting
-          (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
-      (replique/process-filter-skip-repl-starting-output
+         (repl-cmd (replique-cli/clojure-command
+                    replique/clojure-bin replique/replique-coords
+                    host port directory repl-script))
+         (clj-script-error (replique/check-clojure-bin (car repl-cmd))))
+    (when clj-script-error
+      (user-error clj-script-error))
+    (message "Starting REPL with Clojure command:\n%s" (string-join repl-cmd " "))
+    (let* ((proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+           (tooling-repl (replique/hash-map
+                          :directory directory
+                          :repl-type :tooling
+                          :proc proc
+                          :host host
+                          :port port
+                          :http-host nil
+                          :http-port nil
+                          :repl-cmd repl-cmd
+                          :ref-watchers (replique/hash-map)
+                          :main-cljs-namespaces nil
+                          :started? nil)))
+      ;; Perform the starting REPLs cleaning in case of an error when starting the process
+      (set-process-sentinel
        proc
-       (lambda (port)
-         ;; Print process messages
-         (set-process-filter proc 'replique/proc-message-fn)
-         (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
-                (network-proc (open-network-stream directory nil host port))
-                (timeout (run-at-time
-                          2 nil (lambda (proc)
-                                  (message "Error while starting the REPL. The port number may already be used by another process")
-                                  (when (process-live-p proc)
-                                    (interrupt-process proc)))
-                          proc)))
-           (puthash :port port tooling-repl)
-           (puthash :network-proc network-proc tooling-repl)
-           (set-process-sentinel
-            network-proc
-            (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
-           ;; The sentinel on the network proc already handles the cleaning of REPLs
-           (set-process-sentinel proc nil)
-           (replique/process-filter-read
-            network-proc network-proc-buff
-            ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
-            ;; informations about the clojure process at init time
-            (lambda (cljs-compile-path)
-              (cancel-timer timeout)
-              (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
-                     (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
-                (replique/process-filter-read
-                 network-proc network-proc-buff 'replique/dispatch-tooling-msg)
-                (puthash :started? t tooling-repl)
-                (dolist (starting-repl starting-repls)
-                  (condition-case err
-                      (when (not (eq starting-repl tooling-repl))
-                        (if (buffer-live-p (replique/get starting-repl :buffer))
-                            (replique/start-repl tooling-repl starting-repl)
-                          (replique/close-repl starting-repl t)))
-                    (error
-                     (replique/close-repls directory t)
-                     ;; rethrow the error
-                     (signal (car err) (cdr err))))))))
-           ;; The REPL accept fn will read a char in order to check whether the request
-           ;; is an HTTP one or not
-           (process-send-string network-proc "R")
-           ;; No need to wait for the return value of shared-tooling-repl
-           ;; since it does not print anything
-           (process-send-string
-            network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
-           (process-send-string network-proc "replique.utils/cljs-compile-path\n")
-           ;; Refresh main js files as soon as we know the port number
-           (when main-js-files
-             (when-let ((main-cljs-namespaces (replique/refresh-main-js-files main-js-files port)))
-               (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl)))))))))
+       (lambda (process event)
+         (replique/close-repls directory t)))
+      (push tooling-repl replique/repls)
+      (replique/make-repl-starting repl-cmd directory host port)
+      (let (;; Search for the main js files while the process is starting
+            (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
+        (replique/process-filter-skip-repl-starting-output
+         proc
+         (lambda (host port http-host http-port)
+           ;; Print process messages
+           (set-process-filter proc 'replique/proc-message-fn)
+           (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+                  (network-proc (open-network-stream directory nil host port))
+                  (timeout (run-at-time
+                            2 nil (lambda (proc)
+                                    (message "Error while starting the REPL. The port number may already be used by another process")
+                                    (when (process-live-p proc)
+                                      (interrupt-process proc)))
+                            proc)))
+             (puthash :port port tooling-repl)
+             (puthash :host host tooling-repl)
+             (puthash :http-port http-port tooling-repl)
+             (puthash :http-host http-host tooling-repl)
+             (puthash :network-proc network-proc tooling-repl)
+             (set-process-sentinel
+              network-proc
+              (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
+             ;; The sentinel on the network proc already handles the cleaning of REPLs
+             (set-process-sentinel proc nil)
+             (replique/process-filter-read
+              network-proc network-proc-buff
+              ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
+              ;; informations about the clojure process at init time
+              (lambda (cljs-compile-path)
+                (cancel-timer timeout)
+                (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
+                       (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
+                  (replique/process-filter-read
+                   network-proc network-proc-buff 'replique/dispatch-tooling-msg)
+                  (puthash :started? t tooling-repl)
+                  (dolist (starting-repl starting-repls)
+                    (condition-case err
+                        (when (not (eq starting-repl tooling-repl))
+                          (if (buffer-live-p (replique/get starting-repl :buffer))
+                              (replique/start-repl tooling-repl starting-repl)
+                            (replique/close-repl starting-repl t)))
+                      (error
+                       (replique/close-repls directory t)
+                       ;; rethrow the error
+                       (signal (car err) (cdr err))))))))
+             ;; No need to wait for the return value of shared-tooling-repl
+             ;; since it does not print anything
+             (process-send-string
+              network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
+             (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+             ;; Refresh main js files as soon as we know the http-port number
+             (when main-js-files
+               (when-let ((main-cljs-namespaces (replique/refresh-main-js-files
+                                                 main-js-files http-host http-port)))
+                 (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl))))))))))
 
 (defun replique/close-process (directory)
   "Close all the REPL sessions associated with a JVM process"
@@ -1517,6 +1504,8 @@ minibuffer"
   (let* ((directory (replique/get tooling-repl :directory))
          (host (replique/get tooling-repl :host))
          (port (replique/get tooling-repl :port))
+         (http-host (replique/get tooling-repl :http-host))
+         (http-port (replique/get tooling-repl :http-port))
          (repl-buffer (replique/get starting-repl :buffer))
          (repl-type (replique/get starting-repl :repl-type))
          (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
@@ -1539,22 +1528,23 @@ minibuffer"
              (process-send-string proc repl-cmd)
              (puthash :host host starting-repl)
              (puthash :port port starting-repl)
+             (puthash :http-host http-host starting-repl)
+             (puthash :http-port http-port starting-repl)
              (puthash :session session starting-repl)
              (puthash :ns 'user starting-repl)
              (puthash :started? t starting-repl)
              (comment (display-buffer repl-buffer)))
          (when (process-live-p proc)
            (interrupt-process proc)))))
-    ;; The REPL accept fn will read a char in order to check whether the request
-    ;; is an HTTP one or not
-    (process-send-string proc "R")
-    (process-send-string proc "replique.server/*session*\n")))
+    (process-send-string proc "clojure.core.server/*session*\n")))
 
-(defun replique/make-repl-starting (directory host port)
+(defun replique/make-repl-starting (repl-cmd directory host port)
   (let* ((repl-buffer (generate-new-buffer (replique/buffer-name directory :clj)))
          (repl (replique/hash-map :directory directory
                                   :host host
                                   :port port
+                                  :http-host nil
+                                  :http-port nil
                                   :repl-type :clj
                                   :repl-env :replique/clj
                                   :buffer repl-buffer
@@ -1562,8 +1552,8 @@ minibuffer"
                                   :params nil
                                   :started? nil)))
     (with-current-buffer repl-buffer
-      (insert (format "Directory: %s\nHost: %s\nPort: %s\n\nClojure REPL starting ..."
-                      directory host port)))
+      (insert (format "Clojure REPL starting...\n\nDirectory:\n%s\n\nCommand:\n%s"
+                      directory (string-join repl-cmd " "))))
     (push repl replique/repls)
     (display-buffer repl-buffer)
     (redisplay)
@@ -1571,10 +1561,14 @@ minibuffer"
 
 (defun replique/buffer-name (directory repl-type &optional session)
   (if session
-      (format "*replique*%s*%s*%s*"
-              (file-name-nondirectory (directory-file-name directory))
-              (replique/keyword-to-string repl-type)
-              session)
+      (let* (;; client id number 1 is used by the tooling REPL
+             (session-dec (ignore-errors (- (string-to-number session) 1)))
+             (session (or session-dec session)))
+        (format "*replique*%s*%s*%s*"
+                (file-name-nondirectory (directory-file-name directory))
+                (replique/keyword-to-string repl-type)
+                ;; session number 1 is used by the tooling REPL
+                session))
     (format "*replique*%s*%s*"
             (file-name-nondirectory (directory-file-name directory))
             (replique/keyword-to-string repl-type))))
@@ -1583,37 +1577,37 @@ minibuffer"
   (file-name-as-directory (expand-file-name directory)))
 
 ;;;###autoload
-(defun replique/repl (directory &optional host port buffer-name)
+(defun replique/repl (repl-script &optional host port)
   "Start a REPL session"
   (interactive
-   (let ((directory (read-directory-name
-                     "Project directory: " (replique/guess-project-root-dir) nil t)))
-     ;; Normalizing the directory name is necessary in order to be able to find repls
-     ;; by directory name
-     (list (replique/normalize-directory-name directory))))
-  (let* ((existing-repl (replique/repl-by-maybe-not-started
+   (let ((repl-script (read-file-name
+                       "REPL start script: " (replique/guess-project-root-dir) nil t)))
+     (list repl-script)))
+  (let* (;; Normalizing the directory name is necessary in order to be able to find repls
+         ;; by directory name
+         (directory (replique/normalize-directory-name (file-name-directory repl-script)))
+         (existing-repl (replique/repl-by-maybe-not-started
                          :directory directory :repl-type :tooling))
          (host (cond (existing-repl
                       (replique/get existing-repl :host))
                      (host host)
                      ((equal 4 (prefix-numeric-value current-prefix-arg))
-                      (read-string "Hostname: "))
-                     (t replique/host)))
+                      (read-string "Hostname: " "localhost"))
+                     (t nil)))
          (port (cond
                 (existing-repl
                  (replique/get existing-repl :port))
                 (port port)
-                (t (read-number "Port number: " 0))))
-         (lein-script-error (replique/check-lein-script)))
+                ((equal 4 (prefix-numeric-value current-prefix-arg))
+                 (read-number "Port number: " 0))
+                (t nil))))
     (cond
-     ((not (replique/is-valid-port-nb? port))
-      (user-error "Invalid port number: %d" port))
-     (lein-script-error
-      (user-error lein-script-error))
      ((and existing-repl (null (replique/get existing-repl :started?)))
-      (replique/make-repl-starting directory host port))
+      (replique/make-repl-starting (replique/get existing-repl :repl-cmd)
+                                   directory host port))
      (existing-repl
-      (let ((starting-repl (replique/make-repl-starting directory host port)))
+      (let ((starting-repl (replique/make-repl-starting (replique/get existing-repl :repl-cmd)
+                                                        directory host port)))
         (condition-case err
             (replique/start-repl existing-repl starting-repl)
           (error
@@ -1621,7 +1615,7 @@ minibuffer"
            ;; rethrow the error
            (signal (car err) (cdr err))))))
      (t
-      (replique/make-tooling-repl directory host port)))))
+      (replique/make-tooling-repl directory repl-script host port)))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (replique/get repl :directory))
@@ -1741,7 +1735,6 @@ minibuffer"
 
 ;; compliment keywords cljs -> missing :require ... ?
 ;; CSS / HTML autocompletion, with core.spec ?
-;; Customizing REPL options requires starting a new REPL (leiningen options don't work in the context of replique). Find a way to automate this process (using leiningen or not ...)
 ;; The cljs-env makes no use of :repl-require
 
 ;; autocomplete using the spec first, compliment next if no candidates
@@ -1777,3 +1770,9 @@ minibuffer"
  (local-set-key (kbd "C-c C-c") 'outline-hide-other)
  (local-set-key (kbd "C-s C-s") 'outline-show-all)
  )
+
+;; check windows
+;; check lein-todeps
+;; fix replique/classpath
+
+;; build script

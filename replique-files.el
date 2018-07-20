@@ -44,7 +44,7 @@
     replique/directory-files-recursively-files))
 
 (defun replique/guess-project-root-dir (&optional dir)
-  (or (locate-dominating-file (or dir default-directory) "project.clj")
+  (or (locate-dominating-file (or dir default-directory) "deps.edn")
       (or dir default-directory)))
 
 (provide 'replique-files)
