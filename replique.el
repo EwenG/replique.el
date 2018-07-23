@@ -44,6 +44,7 @@
 (require 'replique-watch)
 (require 'replique-find-usage)
 (require 'replique-logback)
+(require 'replique-input)
 
 (defmacro comment (&rest body)
   "Comment out one or more s-expressions."
@@ -1102,6 +1103,12 @@ unwrapping a top level comment block "
   "Commands:\\<replique/mode-map>"
   (setq-local comint-prompt-regexp replique/prompt)
   (setq-local comint-prompt-read-only replique/prompt-read-only)
+  (setq-local comint-output-filter-functions (remove 'comint-watch-for-password-prompt
+                                                     comint-output-filter-functions))
+  (setq-local comint-output-filter-functions (add-to-list
+                                              'comint-output-filter-functions
+                                              'replique-input/comint-watch-for-password-prompt
+                                              t))
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
