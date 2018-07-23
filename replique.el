@@ -1061,6 +1061,11 @@
   :type 'string
   :group 'replique)
 
+(defcustom replique/start-script-extensions '("sh" "bat")
+  "The allowed tools.deps start script extensions"
+  :type 'list
+  :group 'replique)
+
 (defcustom replique/company-tooltip-align-annotations t
   "See company-tooltip-align-annotations"
   :type 'boolean
@@ -1586,16 +1591,30 @@ minibuffer"
 (defun replique/normalize-directory-name (directory)
   (file-name-as-directory (expand-file-name directory)))
 
+(defun replique/script-file-predicate (f)
+  (seq-contains replique/start-script-extensions (file-name-extension f)))
+
 ;;;###autoload
-(defun replique/repl (repl-script &optional host port)
+(defun replique/repl (directory repl-script &optional host port)
   "Start a REPL session"
   (interactive
-   (let ((repl-script (read-file-name
-                       "REPL start script: " (replique/guess-project-root-dir) nil t)))
-     (list repl-script)))
+   (let* ((directory (read-directory-name
+                      "Project directory: " (replique/guess-project-root-dir) nil t))
+          (directory (replique/normalize-directory-name directory))
+          (existing-repl (replique/repl-by-maybe-not-started
+                          :directory directory :repl-type :tooling))
+          (repl-script (when (not existing-repl)
+                         (completing-read
+                          "REPL start script: "
+                          (thread-last (directory-files directory)
+                            (seq-filter 'replique/script-file-predicate)
+                            (cons "*default*"))
+                          nil
+                          t))))
+     (list directory (when (not (equal repl-script "*default*")) repl-script))))
   (let* (;; Normalizing the directory name is necessary in order to be able to find repls
          ;; by directory name
-         (directory (replique/normalize-directory-name (file-name-directory repl-script)))
+         (directory (replique/normalize-directory-name directory))
          (existing-repl (replique/repl-by-maybe-not-started
                          :directory directory :repl-type :tooling))
          (host (cond (existing-repl
