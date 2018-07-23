@@ -560,8 +560,9 @@
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
-     (list (completing-read "Switch to REPL: "
-                            (replique/presorted-completion-table repl-names) nil t))))
+     (let ((ivy-sort-functions-alist nil))
+       (list (completing-read "Switch to REPL: "
+                              (replique/presorted-completion-table repl-names) nil t)))))
   ;; All windows displaying the previously active repl are set to display the newly active
   ;; repl, unless the newly active repl is already a visible buffer
   (let* ((buffer (get-buffer repl-buff-name))
@@ -584,9 +585,10 @@
                                tooling-repls)))
      (when (not (car directories))
        (user-error "No started REPL"))
-     (list (completing-read "Switch to process: "
-                            (replique/presorted-completion-table directories)
-                            nil t))))
+     (let ((ivy-sort-functions-alist nil))
+       (list (completing-read "Switch to process: "
+                              (replique/presorted-completion-table directories)
+                              nil t)))))
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
@@ -882,12 +884,13 @@
          ;; We don't want ivy to sort candidates by alphabetical order
          (ivy-sort-functions-alist nil)
          (output (if output-files
-                     (completing-read "Compile to file: "
-                                      ;; All candidates are lists in order for completing-read
-                                      ;; to keep the order of the candidates
-                                      (replique/presorted-completion-table
-                                       (append output-files '("*new-file*")))
-                                      nil t)
+                     (let ((ivy-sort-functions-alist nil))
+                       (completing-read "Compile to file: "
+                                        ;; All candidates are lists in order for completing-read
+                                        ;; to keep the order of the candidates
+                                        (replique/presorted-completion-table
+                                         (append output-files '("*new-file*")))
+                                        nil t))
                    "*new-file*"))
          (is-new-file (equal output "*new-file*"))
          (output (if is-new-file
@@ -1758,7 +1761,7 @@ minibuffer"
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
 ;; deps.edn / tools.alpha support
 ;; replique/classpath -> lein classpath outputs downloading messages
-;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611
+;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611 -- setting ivy-sort-functions-alist to  nil as a temporary workaround
 ;; HTTP read-post / get -> blocking read while bytes are still coming in
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
@@ -1771,8 +1774,7 @@ minibuffer"
  (local-set-key (kbd "C-s C-s") 'outline-show-all)
  )
 
+;; badigeon - documentation
 ;; check windows
-;; check lein-todeps
 ;; fix replique/classpath
-
 ;; build script

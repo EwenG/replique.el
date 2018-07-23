@@ -104,12 +104,13 @@
   (let* ((default (or (replique-find-usage/maybe-visited-jar)
                       (replique/guess-project-root-dir)
                       (replique/get tooling-repl :directory)))
-         (dir (completing-read "Search in directory: "
-                               (replique/presorted-completion-table
-                                (list default
-                                      "Classpath"
-                                      "Other directory"))
-                               nil t)))
+         (dir (let ((ivy-sort-functions-alist nil))
+                (completing-read "Search in directory: "
+                                 (replique/presorted-completion-table
+                                  (list default
+                                        "Classpath"
+                                        "Other directory"))
+                                 nil t))))
     (cond ((equal dir default)
            (list dir))
           ((equal "Classpath" dir)
