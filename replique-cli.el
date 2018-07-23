@@ -216,8 +216,8 @@
   "-J:opt    -Sdeps  \"  {rr :deps {kk \\\"rr\\\" {:deps }}}   \"  -O")
 
  (replique-cli/cli-args-with-replique
-  "{:local/root \"path\"}"
-  "-J:opt    -Sdeps  '  {rr :deps {kk \"rr\" {:deps }}} '    -O")
+  "{:local/root \"path\"}" "localhost" 0 "dir"
+  "-J:opt    -Sdeps  '  {rr :deps {kk \"rr\" {:deps }}} '    -O ")
  )
 
 (defun replique-cli/clojure-command
