@@ -1175,26 +1175,42 @@ The following commands are available:
   (add-function :before-until (local 'eldoc-documentation-function)
                 'replique/eldoc-documentation-function))
 
-(comment
- (defun replique/classpath ()
-   (interactive)
-   (message "Loading project.clj ...")
-   (let* ((tooling-repl (replique/active-repl :tooling))
-          (default-directory (replique/get tooling-repl :directory))
-          (classpath (shell-command-to-string (concat
-                                               (or replique/lein-script
-                                                   (executable-find replique/default-lein-script))
-                                               " classpath")))
-          (resp (replique/send-tooling-msg
-                 tooling-repl (replique/hash-map :type :update-classpath
-                                                 :repl-env :replique/clj
-                                                 :classpath classpath))))
-     (let ((err (replique/get resp :error)))
-       (if err
-           (progn
-             (message "%s" (replique-pprint/pprint-error-str err))
-             (message "replique/classpath failed"))
-         (message "Loading project.clj ... done"))))))
+(defun replique/classpath ()
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling))
+         (default-directory (replique/get tooling-repl :directory))
+         (spath-script (completing-read
+                        "-Spath script: "
+                        (thread-last (directory-files default-directory)
+                          (seq-filter 'replique/script-file-predicate)
+                          (cons "*default*"))
+                        nil
+                        t))
+         (spath-script (when (not (equal spath-script "*default*")) spath-script))
+         (spath-command (replique-cli/spath-command replique/clojure-bin
+                                                    replique/replique-coords
+                                                    spath-script))
+         (_ (message "Updating the classpath with command:\n%s" (string-join spath-command " ")))
+         (classpath (with-temp-buffer
+                      (let ((exit-code (apply 'call-process (car spath-command)
+                                              nil t nil (cdr spath-command))))
+                        (if (not (equal exit-code 0))
+                            (error (buffer-substring-no-properties (point-min) (point-max)))
+                          ;; The output may includes "downloading ..." prints. Thus we
+                          ;; only keep the last line 
+                          (goto-char (point-max))
+                          (re-search-backward "^.+" nil t)
+                          (buffer-substring-no-properties (point) (point-max))))))
+         (resp (replique/send-tooling-msg
+                tooling-repl (replique/hash-map :type :update-classpath
+                                                :repl-env :replique/clj
+                                                :classpath classpath))))
+    (let ((err (replique/get resp :error)))
+      (if err
+          (progn
+            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "replique/classpath failed"))
+        (message "Classpath updated")))))
 
 ;; Not used anymore but kept just in case ...
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique localhost 9000
@@ -1802,5 +1818,4 @@ minibuffer"
 
 ;; badigeon - documentation
 ;; check windows
-;; fix replique/classpath
 ;; build script
