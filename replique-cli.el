@@ -113,7 +113,7 @@
 ;; The downside is that supporting new CLI arguments requires a replique update !
 ;; Also, we remove init-opt because we cannot control what will be evaluated (catch exceptions ...)
 (defun replique-cli/cli-args-with-replique
-    (replique-coords host port directory args-str)
+    (replique-coords host port args-str)
   (with-temp-buffer
     (insert args-str)
     ;; Insert a space to a void matching the end of buffer when calling looking-at-p
@@ -196,11 +196,8 @@
                 (t
                  (when host (push (format "-J-Dreplique.server.host=%s" host) args))
                  (when port (push (format "-J-Dreplique.server.port=%s" port) args))
-                 (push "-m" args)
-                 (push "replique.main" args)
-                 (push (format "%s" directory) args)
                  (setq continue nil)))))
-      (nreverse args))))
+      args)))
 
 (comment
  (replique-cli/cli-args-with-replique
@@ -230,9 +227,25 @@
          "-m" "replique.main" ,(format "%s" directory))
     (let* ((parsed-command (replique-cli/parse-cli-call cli-file))
            (parsed-args (replique-cli/cli-args-with-replique
-                         replique-coords host port directory
+                         replique-coords host port
                          (replique/get parsed-command :args))))
-      (cons (replique/get parsed-command :command) parsed-args))))
+      (push "-m" parsed-args)
+      (push "replique.main" parsed-args)
+      (push (format "%s" directory) parsed-args)
+      (cons (replique/get parsed-command :command) (nreverse parsed-args)))))
+
+(defun replique-cli/spath-command
+    (default-clojure-bin replique-coords cli-file)
+  (if (null cli-file)
+      `(,default-clojure-bin
+         "-Sdeps" ,(format "{:deps {replique/replique %s}}" replique-coords)
+         "-Spath")
+    (let* ((parsed-command (replique-cli/parse-cli-call cli-file))
+           (parsed-args (replique-cli/cli-args-with-replique
+                         replique-coords nil nil
+                         (replique/get parsed-command :args))))
+      (push "-Spath" parsed-args)
+      (cons (replique/get parsed-command :command) (nreverse parsed-args)))))
 
 (provide 'replique-cli)
 
