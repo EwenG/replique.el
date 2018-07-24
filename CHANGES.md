@@ -2,6 +2,9 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.15
 
+- Make comint-watch-for-password-prompt compatible with Replique
+- Add the replique/process-input and replique/process-input-password commands to send a string to the standard input of the process (by opposition of the input stream of the REPL)
+- Fix the replique/classpath command when new dependencies need to be downloaded
 - Replique now depends on Clojure tools.deps instead of leiningen
 
 # Version 0.0.14
