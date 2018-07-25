@@ -1056,7 +1056,7 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique/replique-coords "{:git/url \"git@github.com:EwenG/replique.git\" :sha \"69df51dbb18941b853a9948b84680ee70b1a6566\"}"
+(defcustom replique/replique-coords "{:git/url \"git@github.com:EwenG/replique.git\" :sha \"267c48f57334f1028b9cab28b24c801de92d5c1c\"}"
   "The tools.deps coordinates of the Replique dependency."
   :type 'string
   :group 'replique)
@@ -1816,6 +1816,5 @@ minibuffer"
  (local-set-key (kbd "C-s C-s") 'outline-show-all)
  )
 
-;; badigeon - documentation
 ;; check windows
 ;; build script
