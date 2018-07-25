@@ -120,6 +120,7 @@
     (insert " ")
     (goto-char (point-min))
     (let ((continue t)
+          (sdeps-found nil)
           (args '()))
       (while continue
         (skip-chars-forward "\s\t")
@@ -135,6 +136,7 @@
                    (skip-chars-forward "^\s\t")
                    (push (buffer-substring-no-properties p (point)) args)))
                 ((looking-at-p "-Sdeps[\s\t]")
+                 (setq sdeps-found t)
                  (push "-Sdeps" args)
                  (forward-char 6)
                  (skip-chars-forward "\s\t")
@@ -194,6 +196,9 @@
                 ((looking-at-p "-Sdescribe")
                  (forward-char 10))
                 (t
+                 (when (not sdeps-found)
+                   (push "-Sdeps" args)
+                   (push (format "{:deps {replique/replique %s}}" replique-coords) args))
                  (when host (push (format "-J-Dreplique.server.host=%s" host) args))
                  (when port (push (format "-J-Dreplique.server.port=%s" port) args))
                  (setq continue nil)))))
