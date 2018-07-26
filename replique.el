@@ -697,7 +697,7 @@
                       (if-let ((main-cljs-namescapes
                                 (replique/get tooling-repl :main-cljs-namespaces)))
                           (puthash :main-cljs-namespaces
-                                   (add-to-list main-cljs-namescapes main-ns)
+                                   (cons main-ns main-cljs-namescapes)
                                    tooling-repl)
                         (puthash :main-cljs-namespaces (list main-ns) tooling-repl)))))))))))))
 
