@@ -111,7 +111,7 @@ Execute the command:
 
 `M-x replique/repl`
 
-Replique will prompt for a project directory. Choose your project root directory.
+At that point, Replique prompts for a project directory. Choose your project root directory.
 Replique then prompts for a REPL start script. Choose the "\*default\*" entry to start the REPLs without CLI options.
 See [REPL start script](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script) for an explanation of the use of REPL start scripts.
 Once done, Replique starts a socket REPL using a random available port number.
@@ -124,19 +124,19 @@ Kill the buffer to close the REPL.
 
 ### Clojurescript REPL
 
-Add Clojurescript to your [deps.edn](https://clojure.org/guides/deps_and_cli) dependencies
+Add Clojurescript to your [deps.edn](https://clojure.org/guides/deps_and_cli) dependencies.
 
 `[org.clojure/clojurescript {:mvn/version VERSION_NUMBER}]`
 
-Start a Clojure REPL
+Start a Clojure REPL:
 
 `M-x replique/repl`
 
-Start a Clojurescript REPL in your Clojure REPL
+Start a Clojurescript REPL in your Clojure REPL:
 
 `M-x replique/cljs-repl` or, at the REPL `(replique.interactive/cljs-repl)`
 
-Connect a browser to the cljs REPL
+Connect a browser to the cljs REPL:
 
 `M-x replique/browser`
 
@@ -175,30 +175,29 @@ Keybinding              | Description
 <kbd>M-.</kbd>          | Jump to symbol definition
 <kbd>C-c C-r</kbd>      | Change active REPL session
 <kbd>C-c C-c</kbd>      | Pretty print the expression at point
-<kbd>C-c C-u</kbd>      | Find all the usages of the expression at point
-<kbd>C-c C-w</kbd>      | Watch a mutable reference or the stream of the REPL output
+<kbd>C-c C-u</kbd>      | Find all the [usages](https://github.com/EwenG/replique.el/blob/master/doc/finding-usages.md) of the expression at point
+<kbd>C-c C-w</kbd>      | [Watch](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) a mutable reference or the stream of the REPL output
 
 ### Interactive commands
 
 Command                          | Description
 ---------------------------------|----------------------------------
-`replique/repl`                  | Start a REPL, use the universal prefix argument (`C-u`) to customize the REPL host
-`replique/cljs-repl`             | Transform a clj REPL into a cljs REPL
-`replique/cljs-repl-nashorn`     | Transform a clj REPL into a Nashorn cljs REPL
+`replique/repl`                  | Start a REPL, use the universal prefix argument (`C-u`) to customize the REPL host and port number
+`replique/cljs-repl`             | Turn a clj REPL into a cljs REPL
+`replique/cljs-repl-nashorn`     | Turn a clj REPL into a Nashorn cljs REPL
 `replique/browser`               | Open a browser tab and connects it to the Clojurescript REPL
 `replique/switch-active-repl`    | Change the active REPL session
 `replique/switch-active-process` | Change the active JVM process
 `replique/close-process`         | Close all processes associated with a JVM process
 `replique/output-main-js-file`   | Write a main js file to disk
-`replique/classpath`             | Reload the classpath based on the deps.edn configuration
+`replique/classpath`             | Reload the classpath based on the deps.edn configuration, optionally using the optons of a REPl start script
 `replique/reload-all`            | Reload the current namespace as well as all its dependencies
 `replique/remove-var`            | Prompts for a var to be undefined. The var is also removed from all the mappings of all the namespaces
-`replique/offline-mode`          | Switch Leiningen to offline mode (-o flag)
-`replique/params`                | Set the value of \*print-length\*, \*print-level\* or \*warn-on-reflection\*
+`replique/params`                | Set the value of \*print-length\*, \*print-level\* or \*warn-on-reflection\* for the currently active REPL
 `replique/pprint`                | Pretty print the expression at point
-`replique/find-usage`            | Find all the usages of the expression at point
-`replique/watch`                 | Watch a mutable reference or the stream of the REPL output
-`replique/logback-reload`        | Reload the currently loaded logback configuration 
+`replique/find-usage`            | Find all the [usages](https://github.com/EwenG/replique.el/blob/master/doc/finding-usages.md) of the expression at point
+`replique/watch`                 | [Watch](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) a mutable reference or the stream of the REPL output
+`replique/logback-reload`        | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the currently loaded logback configuration 
 
 ### REPL API
 
@@ -209,23 +208,23 @@ Functions                        | Description
 `repl`                           | Start a Clojure REPL. This MUST be used instead of `clojure.main/repl`
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
 `cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
-`logback-reload`                 | Reload the currently loaded logback configuration
+`logback-reload`                 | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the currently loaded logback configuration
 
 Macros                           | Description
 ---------------------------------|----------------------------------
 `load-file`                      | Loads a clj/cljs/cljc file in the REPL
 `load-url`                       | Loads a clj/cljs/cljc URL in the REPL. The URL can be a file or a file in a jar 
 `cljs-in-ns`                     | Change the cljs REPL namespace
-`set-cljs-repl-verbose`          | Set the verbose option of the Clojurescript REPL
-`set-cljs-compiler-opt`          | Customize a Clojurescript compiler option. See the `compiler-opts` var for available options
-`remove-var`                     | Remove a var from its namespace. Also remove all mappings to this var from any namespace
-`capture-env`                    | Capture a local environment and saves it in the atom given as first parameter
-`capture-child-env`              | Capture a local environment and appends it to its parent. Must be used in the body of a `capture-env` macro or another `capture-child-env`  macro
-`with-env`                       | Restore the bindings of its first parameter wich must be a captured environment and then executes its body 
+`set-cljs-repl-verbose`          | Set the [verbose option](https://github.com/EwenG/replique.el/blob/master/doc/clojurescript.md#clojurescript-compiler-configuration) of the Clojurescript REPL
+`set-cljs-compiler-opt`          | Customize a Clojurescript [compiler option](https://github.com/EwenG/replique.el/blob/master/doc/clojurescript.md#clojurescript-compiler-configuration). See the `compiler-opts` var for available options
+`remove-var`                     | [Remove](https://github.com/EwenG/replique.el/blob/master/doc/removing-var-and-reloading-dependencies.md) a var from its namespace. Also remove all mappings to this var from any namespace
+`capture-env`                    | [Capture](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) a local environment and saves it in the atom given as first parameter
+`capture-child-env`              | [Capture](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) a local environment and appends it to its parent. Must be used in the body of a `capture-env` macro or another `capture-child-env`  macro
+`with-env`                       | [Restore](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) the bindings of its first parameter wich must be a captured environment and then executes its body 
 
 Vars                             | Description
 ---------------------------------|----------------------------------
-`compiler-opts`                  | The compiler options that can be customized at the REPL
+`compiler-opts`                  | The [compiler options]((https://github.com/EwenG/replique.el/blob/master/doc/clojurescript.md#clojurescript-compiler-configuration)) that can be customized at the REPL
 
 # License
 
