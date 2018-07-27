@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 0.0.15-SNAPSHOT
+;; Version 0.0.15
 ;; Package-Requires: ((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0"))
 
 ;; Commentary:
@@ -1039,7 +1039,7 @@
                                               active-repl)))
  )
 
-(defconst replique/version "0.0.15-SNAPSHOT")
+(defconst replique/version "0.0.15")
 
 (defcustom replique/prompt "^[^=> \n]+=> *"
   "Regexp to recognize prompts in the replique mode."
