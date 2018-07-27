@@ -1,6 +1,6 @@
 # REPL sessions
 
-## REPL start script
+## REPL start script
 
 By default, Replique starts REPLs without any [CLI aliases](https://clojure.org/reference/deps_and_cli#_aliases).
 Using aliases is useful to start a REPL with a customized classpath or with JVM options.
