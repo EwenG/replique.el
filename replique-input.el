@@ -49,7 +49,6 @@ Security bug: your string can still be temporarily recovered with
             (string-match comint-password-prompt-regexp string))
       (when (string-match "^[ \n\r\t\v\f\b\a]+" string)
         (setq string (replace-match "" t t string)))
-      (print "rr")
       (replique-input/send-invisible (replique/get tooling-repl :proc) string))))
 
 (defun replique/process-input (input-str)
