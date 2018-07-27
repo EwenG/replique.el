@@ -111,8 +111,8 @@ Execute the command:
 
 `M-x replique/repl`
 
-At that point, Replique prompts for a project directory. Choose your project root directory.
-Replique then prompts for a REPL start script. Choose the "\*default\*" entry to start the REPLs without CLI options.
+At that point, Replique prompts for a project directory. Choose the root directory of your project.
+Replique then prompts for a REPL start script. Choose the "\*default\*" entry to start the REPL without CLI options.
 See [REPL start script](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script) for an explanation of the use of REPL start scripts.
 Once done, Replique starts a socket REPL using a random available port number.
 
