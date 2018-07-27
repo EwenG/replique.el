@@ -21,6 +21,15 @@ The selected file must contain a valid Clojure command line. The following optio
 
 Other options are ignored.
 
+For example, a REPL start script can be a file named `repl.sh` at the root of your project directory with the following content:
+
+```
+#!/bin/sh
+
+;; Start a REPL, using the :dev alias
+clojure -A:dev
+```
+
 ## REPL hostname and port number
 
 By default, Replique starts a socket REPL on localhost using a random available port number.
