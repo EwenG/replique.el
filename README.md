@@ -107,11 +107,13 @@ Replique tries, as much as possible, to keep features parity between Clojure and
 
 ### Clojure REPL
 
+Execute the command:
+
 `M-x replique/repl`
 
-Replique will prompt for a project directory and a REPL start script.
-When prompted for a REPL start script choose the "\*default\*" to start the REPLs without CLI options.
-See [REPL start script](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md) for an explanation of the use of REPL start scripts.
+Replique will prompt for a project directory. Choose your project root directory.
+Replique then prompts for a REPL start script. Choose the "\*default\*" entry to start the REPLs without CLI options.
+See [REPL start script](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script) for an explanation of the use of REPL start scripts.
 Once done, Replique starts a socket REPL using a random available port number.
 
 Use `C-x C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
