@@ -1807,7 +1807,7 @@ minibuffer"
 ;; HTTP read-post / get -> blocking read while bytes are still coming in
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
-;; byte-recompile to check warnings ----  M-x C-u 0 byte-recompile-directory
+;; byte-recompile to check warnings ----  C-u 0 M-x byte-recompile-directory
 
 ;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
 
