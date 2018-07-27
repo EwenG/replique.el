@@ -1,6 +1,8 @@
 # Replique
 
-An emacs mode for [Replique](https://github.com/EwenG/replique). Replique is a development environment for Clojure and Clojurescript implemented as a leiningen plugin.
+An emacs mode for [Replique](https://github.com/EwenG/replique). 
+Replique is a development environment for Clojure and Clojurescript.
+Replique relies on the Clojure [command line tools](https://clojure.org/guides/deps_and_cli) for starting REPLs.
 
 ## Installation
 
@@ -30,11 +32,12 @@ Enable Replique when editing clojure files
 
 `(add-hook 'clojure-mode-hook 'replique/minor-mode)`
 
-### Leiningen
+### Clojure command line tools
 
-Download the [leiningen script](http://leiningen.org/). Either place the lein script in emacs `exec-path` or customize the `replique/lein-script` variable, for example
+See the [Clojure getting started](https://clojure.org/guides/getting_started) for instructions on how to install the command line tools.
 
-`(setq replique/lein-script "~/bin/lein")`
+The Clojure command used to start REPLs is customizable: 
+`(setq replique/clojure-bin "~/bin/clojure")`
 
 ## Optional configuration
 
@@ -95,6 +98,7 @@ Enable [code evaluation in org-mode](https://github.com/EwenG/replique.el/blob/m
 - Data visualization for mutable references
 - Support for capturing and visualizing local bindings
 - Org-mode integration
+- Dynamic classpath reloading
 - Logback configuration reloading
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
@@ -105,7 +109,10 @@ Replique tries, as much as possible, to keep features parity between Clojure and
 
 `M-x replique/repl`
 
-Replique will prompt you for a project directory and a port number. The project directory must contain a leiningen `project.clj` file. Replique will start a socket REPL using the provided port number. Use `0` to start the REPL on a random port number.
+Replique will prompt for a project directory and a REPL start script.
+When prompted for a REPL start script choose the "\*default\*" to start the REPLs without CLI options.
+See [REPL start script](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md) for an explanation of the use of REPL start scripts.
+Once done, Replique starts a socket REPL using a random available port number.
 
 Use `C-x C-e` to evaluate a Clojure form, `C-c C-l` to load a Clojure file in the REPL and `C-c M-n` to change the REPL namespace.
 
@@ -115,9 +122,9 @@ Kill the buffer to close the REPL.
 
 ### Clojurescript REPL
 
-Add Clojurescript to your *project.clj* dependencies
+Add Clojurescript to your [deps.edn](https://clojure.org/guides/deps_and_cli) dependencies
 
-`[org.clojure/clojurescript VERSION_NUMBER]`
+`[org.clojure/clojurescript {:mvn/version VERSION_NUMBER}]`
 
 Start a Clojure REPL
 
@@ -151,6 +158,8 @@ See the [default keymap](#default-keymap), the [interactive commands](#interacti
 - [Debugging](https://github.com/EwenG/replique.el/blob/master/doc/debugging.md)
 - [Org-mode integration](https://github.com/EwenG/replique.el/blob/master/doc/org-mode-integration.md)
 - [Logback reloading](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md)
+- [Migrating from Leiningen]()
+- [Building/packaging an application]()
 
 ### Default keymap
 
@@ -179,7 +188,7 @@ Command                          | Description
 `replique/switch-active-process` | Change the active JVM process
 `replique/close-process`         | Close all processes associated with a JVM process
 `replique/output-main-js-file`   | Write a main js file to disk
-`replique/classpath`             | Reload the classpath based on the project.clj configuration
+`replique/classpath`             | Reload the classpath based on the deps.edn configuration
 `replique/reload-all`            | Reload the current namespace as well as all its dependencies
 `replique/remove-var`            | Prompts for a var to be undefined. The var is also removed from all the mappings of all the namespaces
 `replique/offline-mode`          | Switch Leiningen to offline mode (-o flag)
@@ -198,6 +207,7 @@ Functions                        | Description
 `repl`                           | Start a Clojure REPL. This MUST be used instead of `clojure.main/repl`
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
 `cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
+`logback-reload`                 | Reload the currently loaded logback configuration
 
 Macros                           | Description
 ---------------------------------|----------------------------------
@@ -213,7 +223,6 @@ Macros                           | Description
 
 Vars                             | Description
 ---------------------------------|----------------------------------
-`repl-port`                      | The current REPL port number
 `compiler-opts`                  | The compiler options that can be customized at the REPL
 
 # License

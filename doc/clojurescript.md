@@ -25,7 +25,7 @@ These two use cases are covered below.
 
 Start a Clojurescript REPL using the `M-x replique/cljs-repl` command. Then connect a browser to the Clojurescript REPL by using the `M-x replique/browser` command.
  
-Under the hood, the `M-x replique/browser` command starts a browser and points it to the `http://localhost:port` URL. The port number is the same than the one returned by evaluating `(replique.interactive/repl-port)` in a Clojure REPL.
+Under the hood, the `M-x replique/browser` command starts a browser and points it to the `http://localhost:port` URL. The port number is the same than the one returned by evaluating `(replique.utils/server-port replique.utils/http-server)` in a Clojure REPL.
 
 ### Using the REPL to build a web application
 
@@ -54,11 +54,12 @@ Replique only manages development builds. For production builds, I would recomme
 
 ### Customizing the compilation folder
 
-By default, Replique compiles Clojurescript files in the `target/cljs` folder. The compilation output folder can be customized using the `project.clj` file:
+By default, Replique compiles Clojurescript files in the `target/cljs` folder. The compilation output folder can be customized using an [init file]():
 
-`{:replique {:cljs-compile-path "%s/cljs"}}`
-
-Including `%s` will splice the `:target-path` into this value.
+```clojure
+(in-ns 'user)
+(alter-var-root #'replique.utils/cljs-compile-path (constantly "target/cljs"))
+```
 
 ### Using external javascript libraries
 
@@ -74,20 +75,27 @@ Here is an example of a Clojurescript macro that sets a watcher on the namespace
 redefined in the namespace, `my-callback` is triggered.
 
 ```
-(defn my-callback [repl-env compiler-env]
-  (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();"))
+(defn my-callback [ns-sym repl-env compiler-env ns-updated?]
+  (when (ns-updated? ns-sym)
+    (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();")))
 
 (defmacro def-with-watcher []
-  (swap! cljs.env/*compiler* update :replique/ns-watches
-         assoc ana/*cljs-ns* my-callback)
+  (swap! cljs.env/*compiler* assoc-in [:replique/ns-watches ::watch-callback]
+         (partial my-callback cljs.analyzer/*cljs-ns*))
   nil)
 ```
 
 To watch a var instead of a namespace:
 
 ```
-(swap! cljs.env/*compiler* update :replique/var-watches
-       assoc ana/*cljs-ns* {'my-var my-callback})
+(defn my-callback [var-sym repl-env compiler-env var-updated?]
+  (when (var-updated? var-sym)
+    (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();")))
+
+(defmacro def-with-watcher []
+  (swap! cljs.env/*compiler* assoc-in [:replique/var-watches ::watch-callback]
+         (partial my-callback 'some-namespace/some-var-name))
+  nil)
 ```
 
 ### Other considerations when using the browser REPL
