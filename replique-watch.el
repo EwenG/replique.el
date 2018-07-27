@@ -25,6 +25,7 @@
 (require 'replique-list-vars)
 (require 'replique-context)
 (require 'replique-pprint)
+(require 'ivy)
 
 (defvar-local replique-watch/directory nil)
 (defvar-local replique-watch/repl-env nil)

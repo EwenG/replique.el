@@ -23,6 +23,7 @@
 
 (require 'replique-repls)
 (require 'replique-hashmap)
+(require 'ivy)
 
 (defvar replique-params/print-length-history nil)
 (defvar replique-params/print-level-history nil)

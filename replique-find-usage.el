@@ -28,6 +28,7 @@
 (require 'replique-files)
 (require 'replique-context)
 (require 'replique-highlight)
+(require 'ivy)
 
 (comment
  (progn (re-search-forward (replique-find-usage/symbols-regexp '(eee)) nil t)
