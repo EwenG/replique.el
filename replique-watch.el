@@ -208,7 +208,7 @@
 (defun replique-watch/watch* (var-ns tooling-repl repl)
   (let* ((watched-data (completing-read "Watch REPL data: "
                                         '("printed" "results" "var")
-                                        nil t)))
+                                        nil t nil nil "printed")))
     (cond ((equal watched-data "var")
            (let ((var-ns (replique-list-vars/list-namespaces tooling-repl repl var-ns)))
              (replique-list-vars/list-vars

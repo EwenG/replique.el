@@ -154,15 +154,15 @@
     (map-let ((:type type) (:package package) (:ns ns)) meta
       (let ((type (gethash type replique/annotations-map)))
         (cond ((and ns type)
-               (format "%s <%s>" ns type))
+               (format " %s <%s>" ns type))
               ((and package type)
-               (format "%s <%s>" package type))
+               (format " %s <%s>" package type))
               (type
-               (format "<%s>" type))
+               (format " <%s>" type))
               (ns
-               (format "%s" ns))
+               (format " %s" ns))
               (package
-               (format "%s" package))
+               (format " %s" package))
               (t nil))))))
 
 (defun replique/auto-complete-match-index (candidate)
@@ -318,7 +318,7 @@
    (clojurec-mode . 'replique/in-ns-cljc)
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
-(defun replique/symbol-backward ()
+(defun replique/symbol-backward-bounds ()
   (let* ((ppss (syntax-ppss (point)))
          (in-string? (not (null (nth 3 ppss)))))
     (if in-string?
@@ -326,10 +326,14 @@
           (when (and string-start
                      (< (+ 1 string-start) (point))
                      (>= string-start (line-beginning-position)))
-            (buffer-substring-no-properties (+ 1 string-start) (point))))
+            (list (+ 1 string-start) (point))))
       (let ((sym-bounds (bounds-of-thing-at-point 'symbol)))
         (when sym-bounds
-          (buffer-substring-no-properties (car sym-bounds) (point)))))))
+          (list (car sym-bounds) (point)))))))
+
+(defun replique/symbol-backward (bounds)
+  (when bounds
+    (buffer-substring-no-properties (car bounds) (cadr bounds))))
 
 (defun replique/company-backend (command &optional arg &rest ignored)
   (interactive (list 'interactive))
@@ -338,12 +342,21 @@
     (company-begin-backend 'replique/company-backend))
    ((equal command 'prefix) (when (or (derived-mode-p 'clojure-mode)
                                       (derived-mode-p 'replique/mode))
-                              (replique/symbol-backward)))
+                              (replique/symbol-backward
+                               (replique/symbol-backward-bounds))))
    ((equal command 'sorted) t)
    ((equal command 'candidates) (replique/auto-complete arg))
    ((equal command 'annotation) (replique/auto-complete-annotation arg))
    ((equal command 'no-cache) t)
    ((equal command 'match) (replique/auto-complete-match-index arg))))
+
+(defun replique/completion-at-point ()
+  (when (or (derived-mode-p 'clojure-mode)
+            (derived-mode-p 'replique/mode))
+    (when-let (bounds (replique/symbol-backward-bounds))
+      `(,(car bounds) ,(cadr bounds)
+       ,(replique/auto-complete (replique/symbol-backward bounds)) .
+       (:annotation-function replique/auto-complete-annotation)))))
 
 (defun replique/with-interrupt-warning (fn &rest params)
   (let ((maybe-interrupted (replique/return-value-on-quit
@@ -563,7 +576,8 @@
        (user-error "No started REPL"))
      (let ((ivy-sort-functions-alist nil))
        (list (completing-read "Switch to REPL: "
-                              (replique/presorted-completion-table repl-names) nil t)))))
+                              (replique/presorted-completion-table repl-names) nil t nil nil
+                              (car repl-names))))))
   ;; All windows displaying the previously active repl are set to display the newly active
   ;; repl, unless the newly active repl is already a visible buffer
   (let* ((buffer (get-buffer repl-buff-name))
@@ -589,7 +603,7 @@
      (let ((ivy-sort-functions-alist nil))
        (list (completing-read "Switch to process: "
                               (replique/presorted-completion-table directories)
-                              nil t)))))
+                              nil t nil nil (car directories))))))
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
          (prev-active-directory (replique/get prev-active-tooling-repl :directory))
@@ -639,7 +653,8 @@
                                    nil
                                    (completing-read "Main Clojurescript namespace: "
                                                     main-cljs-namespaces
-                                                    nil t)))))
+                                                    nil t nil nil
+                                                    (car main-cljs-namespaces))))))
       (if main-cljs-namespace
           (replique/send-input-from-source-clj
            (format "(replique.interactive/cljs-repl '%s)" main-cljs-namespace)
@@ -680,7 +695,8 @@
                                     (t (replique/return-value-on-quit
                                         nil
                                         (completing-read "Main Clojurescript namespace: "
-                                                         namespaces nil t nil nil '(nil))))))
+                                                         namespaces nil t nil nil
+                                                         (car namespaces))))))
                      (resp (replique/send-tooling-msg
                             tooling-repl
                             (replique/hash-map :type :output-main-js-files
@@ -761,7 +777,8 @@
 ;; has chosen one before) or by prompting the user
 (defun replique/select-css-url (file-path css-urls)
   (or (replique/get replique/css-prefered-files file-path)
-      (let ((selected-url (completing-read "Select the css file to reload: " css-urls nil t)))
+      (let ((selected-url (completing-read "Select the css file to reload: "
+                                           css-urls nil t nil nil (car css-urls))))
         (setq replique/css-prefered-files (replique/assoc replique/css-prefered-files
                                                           file-path selected-url))
         selected-url)))
@@ -884,14 +901,14 @@
          (output-files (replique/move-to-front output-files last-selected-output-file))
          ;; We don't want ivy to sort candidates by alphabetical order
          (ivy-sort-functions-alist nil)
+         (candidates (append output-files '("*new-file*")))
          (output (if output-files
                      (let ((ivy-sort-functions-alist nil))
                        (completing-read "Compile to file: "
                                         ;; All candidates are lists in order for completing-read
                                         ;; to keep the order of the candidates
-                                        (replique/presorted-completion-table
-                                         (append output-files '("*new-file*")))
-                                        nil t))
+                                        (replique/presorted-completion-table candidates)
+                                        nil t nil nil (car candidates)))
                    "*new-file*"))
          (is-new-file (equal output "*new-file*"))
          (output (if is-new-file
@@ -980,7 +997,8 @@
                  (goto-char point-start))
                 (t
                  (let ((file (if (and files (null file))
-                                 (completing-read "Jump to file: " files nil t)
+                                 (completing-read "Jump to file: " files nil t nil nil
+                                                  (car files))
                                file)))
                    (when-let (buff (replique-resources/find-file file))
                      (xref-push-marker-stack)
@@ -1102,8 +1120,6 @@ unwrapping a top level comment block "
     (define-key map "\C-c\C-w" 'replique/watch)
     map))
 
-(defun replique/commons ())
-
 (define-derived-mode replique/mode comint-mode "Replique"
   "Commands:\\<replique/mode-map>"
   (setq-local comint-prompt-regexp replique/prompt)
@@ -1117,6 +1133,9 @@ unwrapping a top level comment block "
   (clojure-mode-variables)
   (clojure-font-lock-setup)
   (set-syntax-table clojure-mode-syntax-table)
+  (setq-local completion-at-point-functions
+              (cons 'replique/completion-at-point
+                    completion-at-point-functions))
   (when (boundp 'company-backends)
     (add-to-list 'company-backends 'replique/company-backend)
     (setq-local company-tooltip-align-annotations
@@ -1168,6 +1187,9 @@ The following commands are available:
 
 \\{replique/minor-mode-map}"
   :lighter "Replique" :keymap replique/minor-mode-map
+  (setq-local completion-at-point-functions
+              (cons 'replique/completion-at-point
+                    completion-at-point-functions))
   (when (boundp 'company-backends)
     (add-to-list 'company-backends 'replique/company-backend)
     (setq-local company-tooltip-align-annotations
@@ -1179,13 +1201,12 @@ The following commands are available:
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling))
          (default-directory (replique/get tooling-repl :directory))
+         (candidates (thread-last (directory-files default-directory)
+                       (seq-filter 'replique/script-file-predicate)
+                       (cons "*default*")))
          (spath-script (completing-read
                         "-Spath script: "
-                        (thread-last (directory-files default-directory)
-                          (seq-filter 'replique/script-file-predicate)
-                          (cons "*default*"))
-                        nil
-                        t))
+                        candidates nil t nil nil (car candidates)))
          (spath-script (when (not (equal spath-script "*default*")) spath-script))
          (spath-command (replique-cli/spath-command replique/clojure-bin
                                                     replique/replique-coords
@@ -1477,7 +1498,7 @@ The following commands are available:
    (let* ((tooling-repls (replique/repls-by-maybe-not-started
                           :repl-type :tooling :error-on-nil t))
           (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
-     (list (completing-read "Close process: " directories nil t))))
+     (list (completing-read "Close process: " directories nil t nil nil (car directories)))))
   (replique/close-repls directory t))
 
 (defun replique/time-diff (t1 t2)
@@ -1619,14 +1640,12 @@ minibuffer"
           (directory (replique/normalize-directory-name directory))
           (existing-repl (replique/repl-by-maybe-not-started
                           :directory directory :repl-type :tooling))
+          (candidates (thread-last (directory-files directory)
+                        (seq-filter 'replique/script-file-predicate)
+                        (cons "*default*")))
           (repl-script (when (not existing-repl)
                          (completing-read
-                          "REPL start script: "
-                          (thread-last (directory-files directory)
-                            (seq-filter 'replique/script-file-predicate)
-                            (cons "*default*"))
-                          nil
-                          t))))
+                          "REPL start script: " candidates nil t nil nil (car candidates)))))
      (list directory (when (not (equal repl-script "*default*")) repl-script))))
   (let* (;; Normalizing the directory name is necessary in order to be able to find repls
          ;; by directory name

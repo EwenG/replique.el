@@ -129,6 +129,6 @@
             (message "%s" (replique-pprint/pprint-str err))
             (message "list-namespaces failed"))
         (let ((namespaces (replique/get resp :namespaces)))
-          (completing-read "Namespace: " namespaces nil t default-ns))))))
+          (completing-read "Namespace: " namespaces nil t default-ns nil (car namespaces)))))))
 
 (provide 'replique-list-vars)
