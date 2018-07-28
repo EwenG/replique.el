@@ -29,6 +29,7 @@
 (require 'replique-context)
 (require 'replique-highlight)
 (require 'ivy)
+(require 'xref)
 
 (comment
  (progn (re-search-forward (replique-find-usage/symbols-regexp '(eee)) nil t)
