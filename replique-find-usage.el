@@ -133,7 +133,7 @@
 
 (defun replique-find-usage/subdirectory? (dir base)
   (when (and dir base (file-directory-p dir) (file-directory-p base))
-    (string-prefix-p base dir)))
+    (string-prefix-p (file-name-as-directory base) (file-name-as-directory dir))))
 
 (defun replique-find-usage/subdirectory-dirs? (dir bases)
   (seq-some (apply-partially 'replique-find-usage/subdirectory? dir) bases))
