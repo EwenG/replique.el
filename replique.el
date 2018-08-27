@@ -888,10 +888,10 @@
 (defvar replique/less-args-builder 'replique/less-args-builder-default
   "Function that returns the command to use when compiling less files")
 
-(defun replique/load-css-preprocessor
-    (type executable args-builder file-path tooling-repl cljs-repl)
-  (when (not cljs-repl)
-    (user-error "No active Clojurescript REPL"))
+(defun replique/compile-css-preprocessor
+    (type executable args-builder file-path tooling-repl repl)
+  (when (not repl)
+    (user-error "No active REPL"))
   (let* ((directory (replique/get tooling-repl :directory))
          (output-files (replique/get-in replique/css-preprocessors-output-files
                                         `[,directory ,type :output-files]))
@@ -943,28 +943,36 @@
                  (thread-first x
                    (replique/assoc :last-selected-output-file output)
                    (replique/assoc-in `[:output-files ,output] main-source-file)))))
-        (replique/load-css output tooling-repl cljs-repl)))))
+        output))))
 
-(defun replique/load-stylus (file-path tooling-repl cljs-repl)
-  (replique/load-css-preprocessor :stylus replique/stylus-executable
-                                  replique/stylus-args-builder
-                                  file-path tooling-repl cljs-repl))
+(defun replique/load-stylus (file-path tooling-repl repl)
+  (let ((css-output (replique/compile-css-preprocessor :stylus replique/stylus-executable
+                                                       replique/stylus-args-builder
+                                                       file-path tooling-repl repl)))
+    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+      (replique/load-css css-output tooling-repl repl))))
 
 
-(defun replique/load-scss (file-path tooling-repl cljs-repl)
-  (replique/load-css-preprocessor :scss replique/scss-executable
-                                  replique/scss-args-builder
-                                  file-path tooling-repl cljs-repl))
+(defun replique/load-scss (file-path tooling-repl repl)
+  (let ((css-output (replique/compile-css-preprocessor :scss replique/scss-executable
+                                                       replique/scss-args-builder
+                                                       file-path tooling-repl repl)))
+    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+      (replique/load-css css-output tooling-repl repl))))
 
-(defun replique/load-sass (file-path tooling-repl cljs-repl)
-  (replique/load-css-preprocessor :sass replique/sass-executable
-                                  replique/sass-args-builder
-                                  file-path tooling-repl cljs-repl))
+(defun replique/load-sass (file-path tooling-repl repl)
+  (let ((css-output (replique/compile-css-preprocessor :sass replique/sass-executable
+                                                       replique/sass-args-builder
+                                                       file-path tooling-repl repl)))
+    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+      (replique/load-css css-output tooling-repl repl))))
 
-(defun replique/load-less (file-path tooling-repl cljs-repl)
-  (replique/load-css-preprocessor :less replique/less-executable
-                                  replique/less-args-builder
-                                  file-path tooling-repl cljs-repl))
+(defun replique/load-less (file-path tooling-repl repl)
+  (let ((css-output (replique/compile-css-preprocessor :less replique/less-executable
+                                                       replique/less-args-builder
+                                                       file-path tooling-repl repl)))
+    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+      (replique/load-css css-output tooling-repl repl))))
 
 (defun replique/jump-to-definition* (symbol tooling-repl repl-env ns)
   (let* ((resp (replique/send-tooling-msg
@@ -1825,6 +1833,7 @@ minibuffer"
 ;; replique/classpath -> lein classpath outputs downloading messages
 ;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611 -- setting ivy-sort-functions-alist to  nil as a temporary workaround
 ;; HTTP read-post / get -> blocking read while bytes are still coming in
+;; scss less stylus for clj REPLs (javafx reloading?)
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  C-u 0 M-x byte-recompile-directory
