@@ -449,29 +449,34 @@
 (defun replique/eval-defn ()
   "Eval the top level sexpr at point"
   (interactive)
-  (let* ((expr-bounds (save-excursion
-                        (let ((target-point (point)))
-                          (skip-chars-backward replique-context/symbol-separator-re)
-                          (let ((top-level (or (syntax-ppss-toplevel-pos
-                                                (replique-context/syntax-ppss (point)))
-                                               (point))))
-                            (goto-char top-level)
-                            (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
-                            (replique-context/maybe-skip-read-discard-or-splice-forward)
-                            (replique-context/unwrap-comment target-point)))))
-         (expr (when expr-bounds
-                 (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
-    (when expr
-      (replique/maybe-change-ns)
-      (let* ((line (replique/line-number-at-pos (car expr-bounds)))
-             (column (1+ (replique/column-number-at-pos (car expr-bounds))))
-             (replique/eval-from-source-meta (replique/hash-map
-                                              :line line
-                                              :column column
-                                              :url (replique/buffer-url
-                                                    (buffer-file-name)))))
-        (replique/send-input-from-source-dispatch
-         expr)))))
+  (let ((active-repl (replique/active-repl '(:clj :cljs))))
+    (if (not active-repl)
+        (user-error "No active Clojure or Clojurescript REPL")
+      (let* ((expr-bounds (save-excursion
+                            (let ((target-point (point)))
+                              (skip-chars-backward replique-context/symbol-separator-re)
+                              (let ((top-level (or (syntax-ppss-toplevel-pos
+                                                    (replique-context/syntax-ppss (point)))
+                                                   (point))))
+                                (goto-char top-level)
+                                (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+                                (replique-context/maybe-skip-read-discard-or-splice-forward)
+                                (replique-context/unwrap-comment
+                                 (replique/get active-repl :repl-type)
+                                 target-point)))))
+             (expr (when expr-bounds
+                     (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
+        (when expr
+          (replique/maybe-change-ns)
+          (let* ((line (replique/line-number-at-pos (car expr-bounds)))
+                 (column (1+ (replique/column-number-at-pos (car expr-bounds))))
+                 (replique/eval-from-source-meta (replique/hash-map
+                                                  :line line
+                                                  :column column
+                                                  :url (replique/buffer-url
+                                                        (buffer-file-name)))))
+            (replique/send-input-from-source-dispatch
+             expr)))))))
 
 (defun replique/load-url-clj (url props clj-repl)
   (if (not clj-repl)
