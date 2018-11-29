@@ -160,8 +160,8 @@ See the [default keymap](#default-keymap), the [interactive commands](#interacti
 - [Debugging](https://github.com/EwenG/replique.el/blob/master/doc/debugging.md)
 - [Org-mode integration](https://github.com/EwenG/replique.el/blob/master/doc/org-mode-integration.md)
 - [Logback reloading](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md)
-- [Migrating from Leiningen]()
-- [Building/packaging an application]()
+- [Migrating from Leiningen](https://github.com/EwenG/replique.el/blob/master/doc/migrating-from-leiningen.md)
+- [Building/packaging an application](https://github.com/EwenG/replique.el/blob/master/doc/building-packaging-an-application.md)
 
 ### Default keymap
 
