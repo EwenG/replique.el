@@ -4,4 +4,4 @@
 
 * Customizing the *print-length*
 
-![Customizing the print-length](https://i.imgur.com/undefined.gif)
+![Customizing the print-length](https://i.imgur.com/lf8GvLQ.gif)
