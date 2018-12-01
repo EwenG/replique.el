@@ -1,3 +1,3 @@
 * Watching the clojuresript compiler environment atom
 
-[[https://i.imgur.com/n2AKgga.gif|alt=replique-watch-demo]]
+![Watching the clojuresript compiler environment atom](https://i.imgur.com/n2AKgga.gif|alt=replique-watch-demo)
