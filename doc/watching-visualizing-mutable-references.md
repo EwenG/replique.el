@@ -1,6 +1,10 @@
 # Watching / visualizing mutable references
 
-Replique supports using dedicated buffers to 'watch' the values of mutable references over time.
+Replique supports using dedicated buffers to 'watch' the values of Clojure and Clojurescript mutable references over time.
+
+## Demo
+
+[Here] is a demo of the Replique watch feature. 
 
 ## Watching mutable references
 
