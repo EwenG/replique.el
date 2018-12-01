@@ -4,7 +4,7 @@ Replique supports using dedicated buffers to 'watch' the values of Clojure and C
 
 ## Demo
 
-[Here] is a demo of the Replique watch feature. 
+[Here](https://github.com/EwenG/replique.el/blob/master/doc/watch-demo.md) is a demo of the Replique watch feature. 
 
 ## Watching mutable references
 
