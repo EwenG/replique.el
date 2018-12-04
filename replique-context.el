@@ -602,10 +602,12 @@
                      ;; method body (single arity)
                      (goto-char (+ 1 (oref object-extracted :start)))
                      (replique-context/forward-comment)
-                     (when named-fn-binding
-                       (puthash (aref named-fn-binding 0)
-                                (aref named-fn-binding 1)
-                                replique-context/locals))
+                     ;; don't push the named fn in locals as it is bound to a var with the same name
+                     (comment
+                      (when named-fn-binding
+                        (puthash (aref named-fn-binding 0)
+                                 (aref named-fn-binding 1)
+                                 replique-context/locals)))
                      (replique-context/handle-params-bindings
                       target-point 'replique-context/add-local-binding)
                      (setq quit t))
@@ -639,10 +641,13 @@
                                 ;; method body (single arity)
                                 (goto-char (+ 1 (oref object-extracted :start)))
                                 (replique-context/forward-comment)
-                                (when named-fn-binding
-                                  (puthash (aref named-fn-binding 0)
-                                           (aref named-fn-binding 1)
-                                           replique-context/locals))
+                                ;; don't push the named fn in locals as it is bound to a var
+                                ;; with the same name
+                                (comment
+                                 (when named-fn-binding
+                                   (puthash (aref named-fn-binding 0)
+                                            (aref named-fn-binding 1)
+                                            replique-context/locals)))
                                 (replique-context/handle-params-bindings
                                  target-point 'replique-context/add-local-binding))
                                ((and (cl-typep object-extracted
@@ -1350,6 +1355,24 @@
                   (equal (char-after (+ 1 (point))) ?@)))
     (forward-char 2)))
 
+(defun replique-context/maybe-skip-symbol-prefix ()
+  (let ((continue t))
+    (while continue
+      (let ((skip-nb (cond ((or (and (equal (char-after (point)) ?#)
+                                     (equal (char-after (+ 1 (point))) ?_))
+                                (and (equal (char-after (point)) ?#)
+                                     (equal (char-after (+ 1 (point))) ?'))
+                                (and (equal (char-after (point)) ?~)
+                                     (equal (char-after (+ 1 (point))) ?@)))
+                            2)
+                           ((or (equal (char-after (point)) ?')
+                                (equal (char-after (point)) ?`)
+                                (equal (char-after (point)) ?~))
+                            1))))
+        (if (null skip-nb)
+            (setq continue nil)
+          (forward-char skip-nb))))))
+
 (defun replique-context/walk-init (target-point)
   (let* ((ppss (replique-context/syntax-ppss target-point))
          (top-level (syntax-ppss-toplevel-pos ppss)))
@@ -1461,6 +1484,17 @@
           (setq continue nil)
           ns-candidate)))
     ns-candidate))
+
+(defun replique-context/symbol-at-point ()
+  (save-excursion
+    (let ((p (point)))
+      (skip-chars-backward replique-context/symbol-separator-re)
+      (replique-context/maybe-skip-symbol-prefix)
+      (let ((start (point)))
+        (when (<= start p)
+          (skip-chars-forward replique-context/symbol-separator-re)
+          (when (> (point) start)
+            (buffer-substring-no-properties start (point))))))))
 
 (defvar replique-context/context nil)
 

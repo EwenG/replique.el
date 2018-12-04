@@ -1050,8 +1050,7 @@
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
-  (interactive (list (let ((sym (symbol-at-point)))
-                       (when sym (symbol-name sym)))))
+  (interactive (list (replique-context/symbol-at-point)))
   (replique/with-modes-dispatch
    (replique/mode . (apply-partially 'replique/jump-to-definition-session symbol))
    (clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
@@ -1850,5 +1849,4 @@ minibuffer"
  (local-set-key (kbd "C-s C-s") 'outline-show-all)
  )
 
-;; check windows
-;; build script
+;; Dynamically adding clojurescript to the classpath and starting a cljs-repl -> No reader function for tag ...
