@@ -21,15 +21,25 @@
 
 ;; Code:
 
+(require 'replique-utils)
 (require 'replique-repls)
 (require 'replique-pprint)
 
-(defun replique/logback-reload ()
+(defun replique/logback-reload (&optional file-url)
   (interactive)
-  (let* ((clj-repl (replique/active-repl :clj t))
-         (directory (replique/get clj-repl :directory))
-         (tooling-repl (replique/repl-by :directory directory :repl-type :tooling)))
-    (replique/send-input-from-source-clj "(replique.interactive/logback-reload)"
-                                         tooling-repl clj-repl)))
+  (when (buffer-file-name)
+    (comint-check-source (buffer-file-name))
+    (let* ((tooling-repl (replique/active-repl :tooling t))
+           (clj-repl (replique/active-repl :clj t))
+           (file-url (or file-url
+                         (read-file-name "Logback configuration file: "
+                                         (replique/get tooling-repl :directory)
+                                         (buffer-file-name) t (buffer-file-name))))
+           (directory (replique/get clj-repl :directory))
+           (tooling-repl (replique/repl-by :directory directory :repl-type :tooling)))
+      (replique/send-input-from-source-clj
+       (format "(replique.interactive/logback-reload \"%s\")"
+               (replique/buffer-url file-url))
+       tooling-repl clj-repl))))
 
 (provide 'replique-logback)
