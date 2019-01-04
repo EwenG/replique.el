@@ -2,6 +2,11 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.16
 
+- Reloading logback files now requires an explicit url
+- Minor jump-to-definition and eldoc fixes
+- Clj REPLs now support compiling less/scss/stylus files
+- Fix a finding usage bug where some directories could be excluded from the search 
+
 # Version 0.0.15
 
 - Improve Clojurescript namespace/var watching
