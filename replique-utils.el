@@ -53,4 +53,9 @@
                    (cycle-sort-function . ,'identity))
       (complete-with-action action completions string pred))))
 
+(defun replique/buffer-url (file-name)
+  (if (string-match "^\\(.*\\.jar\\):\\(.+\\)" file-name)
+      (format "jar:file:%s!/%s" (match-string 1 file-name) (match-string 2 file-name))
+    (format "file://%s" file-name)))
+
 (provide 'replique-utils)

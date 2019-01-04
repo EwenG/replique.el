@@ -499,11 +499,6 @@
      (format "(replique.interactive/load-url \"%s\")" url)
      props repl)))
 
-(defun replique/buffer-url (file-name)
-  (if (string-match "^\\(.*\\.jar\\):\\(.+\\)" file-name)
-      (format "jar:file:%s!/%s" (match-string 1 file-name) (match-string 2 file-name))
-    (format "file://%s" file-name)))
-
 (defun replique/load-file (file-path)
   (interactive (list (buffer-file-name)))
   (comint-check-source file-path)
