@@ -97,6 +97,7 @@ Enable [code evaluation in org-mode](https://github.com/EwenG/replique.el/blob/m
 - CSS, [Stylus](http://stylus-lang.com/), [less](http://lesscss.org/), [sass](http://sass-lang.com/), javascript files live reloading
 - Data visualization for mutable references
 - Support for capturing and visualizing local bindings
+- REPL post eval hooks for watching changes in Clojure/Clojurescript namespaces
 - Org-mode integration
 - Dynamic classpath reloading
 - Logback configuration reloading
@@ -158,6 +159,7 @@ See the [default keymap](#default-keymap), the [interactive commands](#interacti
 - [Watching / visualizing mutable references](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md)
 - [Finding usages](https://github.com/EwenG/replique.el/blob/master/doc/finding-usages.md)
 - [Debugging](https://github.com/EwenG/replique.el/blob/master/doc/debugging.md)
+- [Post eval hooks](https://github.com/EwenG/replique.el/blob/master/doc/post-eval-hooks.md)
 - [Org-mode integration](https://github.com/EwenG/replique.el/blob/master/doc/org-mode-integration.md)
 - [Logback reloading](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md)
 - [Migrating from Leiningen](https://github.com/EwenG/replique.el/blob/master/doc/migrating-from-leiningen.md)
@@ -208,7 +210,8 @@ Functions                        | Description
 `repl`                           | Start a Clojure REPL. This MUST be used instead of `clojure.main/repl`
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
 `cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
-`logback-reload`                 | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the currently loaded logback configuration
+`logback-reload`                 | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the logback configuration given as parameter.
+`eval-js`                        | Evaluate a javascript string using the currently connected javascript runtime environment
 
 Macros                           | Description
 ---------------------------------|----------------------------------

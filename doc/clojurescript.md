@@ -65,39 +65,6 @@ By default, Replique compiles Clojurescript files in the `target/cljs` folder. T
 
 Replique does not expose the Clojurescript compiler options related to using javascript libraries ([:foreign-libs](https://clojurescript.org/reference/compiler-options#foreign-libs) and [:libs](https://clojurescript.org/reference/compiler-options#libs)). The recommended way to deal with external libraries when using Replique is to use a `deps.clj` file, as described in the [cljsjs](https://clojurescript.org/reference/dependencies#cljsjs) section of the Clojurescript reference.
 
-### Watching Clojurescript vars or namespaces
-
-Clojurescript vars and namespaces are not reified in the javascript runtime environment. As a consequence, one cannot watch them using
-[Clojure watchers](https://clojuredocs.org/clojure.core/add-watch).
-Replique provides a workaround to watch vars and namespaces during development, by using the data available in the Clojurescript
-compiler environment.
-Here is an example of a Clojurescript macro that sets a watcher on the namespace where it is defined. Every time a var is
-redefined in the namespace, `my-callback` is triggered.
-
-```
-(defn my-callback [ns-sym repl-env compiler-env ns-updated?]
-  (when (ns-updated? ns-sym)
-    (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();")))
-
-(defmacro def-with-watcher []
-  (swap! cljs.env/*compiler* assoc-in [:replique/ns-watches ::watch-callback]
-         (partial my-callback cljs.analyzer/*cljs-ns*))
-  nil)
-```
-
-To watch a var instead of a namespace:
-
-```
-(defn my-callback [var-sym repl-env compiler-env var-updated?]
-  (when (var-updated? var-sym)
-    (cljs.repl/-evaluate repl-env "<cljs repl>" 1 "do_something();")))
-
-(defmacro def-with-watcher []
-  (swap! cljs.env/*compiler* assoc-in [:replique/var-watches ::watch-callback]
-         (partial my-callback 'some-namespace/some-var-name))
-  nil)
-```
-
 ### Other considerations when using the browser REPL
 
 The main javascript files emitted using the `replique/output-main-js-file` command internally uses the port number of the Replique REPL. If the port number changes across REPL session, the main javascript files must be updated accordingly. Fortunately, Replique handles this for you and updates all main javascript files found in the project directory on REPL startup.
