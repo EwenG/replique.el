@@ -27,7 +27,7 @@ Here is an example of watching all the Clojure namespaces which name starts with
 ```
 
 The above example can be put in a
-[REPL init file](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script)
+[REPL init file](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-init-file)
 in order for it to be executed on each REPL start.
 
 ## Watching Clojurescript vars or namespaces
@@ -59,5 +59,5 @@ Here is an example of watching a single Clojurescript var:
 ```
 
 The above examples can be put in a
-[REPL init file](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script)
+[REPL init file](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-init-file)
 in order for them to be executed on each REPL start.
