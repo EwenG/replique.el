@@ -1,5 +1,7 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.17
+
 # Version 0.0.16
 
 - Reloading logback files now requires an explicit url
