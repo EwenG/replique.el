@@ -30,7 +30,7 @@ The above example can be put in a
 [REPL init file](https://github.com/EwenG/replique.el/blob/master/doc/repl-sessions.md#repl-start-script)
 in order for it to be executed on each REPL start.
 
-## Watching the Clojurescript vars or namespaces
+## Watching Clojurescript vars or namespaces
 
 Clojurescript namespaces can be watched by mutating the `replique.utils/cljs-env-hooks` atom.
 The `replique.utils/cljs-env-hooks` atom contains a map which keys are namespace prefixes and values are functions
