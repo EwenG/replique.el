@@ -1,1 +1,1 @@
-(define-package "replique" "0.0.15" "A development environment for Clojure and Clojurescript" '((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0")))
+(define-package "replique" "0.0.16" "A development environment for Clojure and Clojurescript" '((emacs "25") (clojure-mode "5.6.0") (ivy "0.10.0")))
