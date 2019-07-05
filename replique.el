@@ -1082,7 +1082,7 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique/replique-coords "{:git/url \"git@github.com:EwenG/replique.git\" :sha \"7c92459ebffe136e2b0fb1f9cd1e13ba692a20e6\"}"
+(defcustom replique/replique-coords "{:git/url \"https://github.com:EwenG/replique.git\" :sha \"7c92459ebffe136e2b0fb1f9cd1e13ba692a20e6\"}"
   "The tools.deps coordinates of the Replique dependency."
   :type 'string
   :group 'replique)
@@ -1828,11 +1828,11 @@ minibuffer"
 ;; try under jdk7
 ;; autocompletion for nested classes (with a "$")
 ;; cljs tagged literal should not work when defined in a cljc file (it works because it is defined in the clojure process)
-;; deps.edn / tools.alpha support
 ;; replique/classpath -> lein classpath outputs downloading messages
 ;; Completing read - sort order of replique/presorted-completion-table not preserved because of a ivy bug? - https://github.com/abo-abo/swiper/issues/1611 -- setting ivy-sort-functions-alist to  nil as a temporary workaround
 ;; HTTP read-post / get -> blocking read while bytes are still coming in
 ;; scss less stylus for clj REPLs (javafx reloading?)
+;; Add a .repliqueignore alternative (using replique init file ?) because build directories can be deleted / recreated
 
 ;; min versions -> clojure 1.8.0, clojurescript 1.9.473
 ;; byte-recompile to check warnings ----  C-u 0 M-x byte-recompile-directory
@@ -1845,3 +1845,7 @@ minibuffer"
  )
 
 ;; Dynamically adding clojurescript to the classpath and starting a cljs-repl -> No reader function for tag ...
+;; replique-watch -> change repl params (*print-length* ...) revert the buffer to the most recent watched value
+;; replique-context (in-ns ...) in comments are not ignored
+
+;; cljs server mime types  -> handle  upper case
