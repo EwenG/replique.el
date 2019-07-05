@@ -1082,7 +1082,7 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique/replique-coords "{:git/url \"https://github.com:EwenG/replique.git\" :sha \"7c92459ebffe136e2b0fb1f9cd1e13ba692a20e6\"}"
+(defcustom replique/replique-coords "{:git/url \"https://github.com/EwenG/replique.git\" :sha \"7c92459ebffe136e2b0fb1f9cd1e13ba692a20e6\"}"
   "The tools.deps coordinates of the Replique dependency."
   :type 'string
   :group 'replique)
