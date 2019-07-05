@@ -2,6 +2,8 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.17
 
+- Change the replique dependency protocol form git to https in order to avoid authentication errors
+
 # Version 0.0.16
 
 - Reloading logback files now requires an explicit url
