@@ -866,13 +866,13 @@
 (defvar replique/sass-args-builder 'replique/sass-args-builder-default
   "Function that returns the command to use when compiling sass files")
 
-(defcustom replique/scss-executable "scss"
+(defcustom replique/scss-executable "sass"
   "Scss executable path"
   :type 'string
   :group 'replique)
 
 (defun replique/scss-args-builder-default (input output)
-  (list "--sourcemap=inline" "--default-encoding" "utf-8" input output))
+  (list "--embed-source-map" input output))
 
 (defvar replique/scss-args-builder 'replique/scss-args-builder-default
   "Function that returns the command to use when compiling scss files")
