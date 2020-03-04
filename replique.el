@@ -1363,7 +1363,7 @@ The following commands are available:
   (let ((js-files (replique/directory-files-recursively
                    directory "\\.js$"
                    'replique/default-dir-predicate
-                   "replique/refresh-main-js-file"))
+                   "replique/do-refresh-main-js-file"))
         (main-js-files nil))
     (dolist (f js-files)
       (when (and (file-readable-p f) (replique/is-main-js-file f))
@@ -1371,7 +1371,7 @@ The following commands are available:
     (message "Looking for main js files ... %s file(s) found" (length main-js-files))
     main-js-files))
 
-(defun replique/refresh-main-js-files (main-js-files host port)
+(defun replique/do-refresh-main-js-files (main-js-files host port)
   (message "Refreshing main js files ...")
   (let ((namespaces nil)
         (nb-refreshed 0))
@@ -1391,6 +1391,19 @@ The following commands are available:
           (buffer-substring-no-properties 1 (point-max)))))
     (message "Refreshing main js files ... %s file(s) refreshed" nb-refreshed)
     namespaces))
+
+(defun replique/refresh-main-js-files ()
+  "Search for and refresh the main js files found in the project directory by updating the REPL host and port number."
+  (interactive)
+  (let* ((tooling-repl (replique/active-repl :tooling))
+         (directory (replique/get tooling-repl :directory))
+         (http-host (replique/get tooling-repl :http-host))
+         (http-port (replique/get tooling-repl :http-port))
+         (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
+    (when main-js-files
+      (when-let ((main-cljs-namespaces (replique/do-refresh-main-js-files
+                                        main-js-files http-host http-port)))
+        (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl)))))
 
 ;; We do not use (message ...) because messages may be received splitted and the message fn
 ;; always prints a new line. Instead we set a text property on the last char printed in the
@@ -1443,60 +1456,63 @@ The following commands are available:
          (replique/close-repls directory t)))
       (push tooling-repl replique/repls)
       (replique/make-repl-starting repl-cmd directory host port)
-      (let (;; Search for the main js files while the process is starting
-            (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
-        (replique/process-filter-skip-repl-starting-output
-         proc
-         (lambda (host port http-host http-port)
-           ;; Print process messages
-           (set-process-filter proc 'replique/proc-message-fn)
-           (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
-                  (network-proc (open-network-stream directory nil host port))
-                  (timeout (run-at-time
-                            2 nil (lambda (proc)
-                                    (message "Error while starting the REPL. The port number may already be used by another process")
-                                    (when (process-live-p proc)
-                                      (interrupt-process proc)))
-                            proc)))
-             (puthash :port port tooling-repl)
-             (puthash :host host tooling-repl)
-             (puthash :http-port http-port tooling-repl)
-             (puthash :http-host http-host tooling-repl)
-             (puthash :network-proc network-proc tooling-repl)
-             (set-process-sentinel
-              network-proc
-              (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
-             ;; The sentinel on the network proc already handles the cleaning of REPLs
-             (set-process-sentinel proc nil)
-             (replique/process-filter-read
-              network-proc network-proc-buff
-              ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
-              ;; informations about the clojure process at init time
-              (lambda (cljs-compile-path)
-                (cancel-timer timeout)
-                (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
-                       (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
-                  (replique/process-filter-read
-                   network-proc network-proc-buff 'replique/dispatch-tooling-msg)
-                  (puthash :started? t tooling-repl)
-                  (dolist (starting-repl starting-repls)
-                    (condition-case err
-                        (when (not (eq starting-repl tooling-repl))
-                          (if (buffer-live-p (replique/get starting-repl :buffer))
-                              (replique/start-repl tooling-repl starting-repl)
-                            (replique/close-repl starting-repl t)))
-                      (error
-                       (replique/close-repls directory t)
-                       ;; rethrow the error
-                       (signal (car err) (cdr err))))))))
-             ;; No need to wait for the return value of shared-tooling-repl
-             ;; since it does not print anything
-             (process-send-string
-              network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
-             (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+      (replique/process-filter-skip-repl-starting-output
+       proc
+       (lambda (host port http-host http-port)
+         ;; Print process messages
+         (set-process-filter proc 'replique/proc-message-fn)
+         (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
+                (network-proc (open-network-stream directory nil host port))
+                (timeout (run-at-time
+                          2 nil (lambda (proc)
+                                  (message "Error while starting the REPL. The port number may already be used by another process")
+                                  (when (process-live-p proc)
+                                    (interrupt-process proc)))
+                          proc)))
+           (puthash :port port tooling-repl)
+           (puthash :host host tooling-repl)
+           (puthash :http-port http-port tooling-repl)
+           (puthash :http-host http-host tooling-repl)
+           (puthash :network-proc network-proc tooling-repl)
+           (set-process-sentinel
+            network-proc
+            (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
+           ;; The sentinel on the network proc already handles the cleaning of REPLs
+           (set-process-sentinel proc nil)
+           (replique/process-filter-read
+            network-proc network-proc-buff
+            ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
+            ;; informations about the clojure process at init time
+            (lambda (cljs-compile-path)
+              (cancel-timer timeout)
+              (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
+                     (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
+                (replique/process-filter-read
+                 network-proc network-proc-buff 'replique/dispatch-tooling-msg)
+                (puthash :started? t tooling-repl)
+                (dolist (starting-repl starting-repls)
+                  (condition-case err
+                      (when (not (eq starting-repl tooling-repl))
+                        (if (buffer-live-p (replique/get starting-repl :buffer))
+                            (replique/start-repl tooling-repl starting-repl)
+                          (replique/close-repl starting-repl t)))
+                    (error
+                     (replique/close-repls directory t)
+                     ;; rethrow the error
+                     (signal (car err) (cdr err))))))))
+           ;; No need to wait for the return value of shared-tooling-repl
+           ;; since it does not print anything
+           (process-send-string
+            network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
+           (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+           ;; We don't search for the main-js-files before the process is started because
+           ;; we want to give a chance to the replique init file to output some
+           ;; .repliqueignore files
+           (let ((main-js-files (when (null (file-symlink-p (directory-file-name directory)))
+                                  (replique/with-interrupt-warning 'replique/find-main-js-files directory))))
              ;; Refresh main js files as soon as we know the http-port number
              (when main-js-files
-               (when-let ((main-cljs-namespaces (replique/refresh-main-js-files
+               (when-let ((main-cljs-namespaces (replique/do-refresh-main-js-files
                                                  main-js-files http-host http-port)))
                  (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl))))))))))
 
