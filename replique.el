@@ -933,7 +933,7 @@
                                     (funcall args-builder main-source-file output)))
         (when (not (equal 0 command-result))
           (ansi-color-apply-on-region (point-min) (point-max))
-          (message (buffer-substring (point-min) (point-max)))))
+          (message "%s" (buffer-substring (point-min) (point-max)))))
       (when (equal 0 command-result)
         (setq replique/css-preprocessors-output-files
               (replique/update-in
@@ -1464,7 +1464,7 @@ The following commands are available:
          (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
                 (network-proc (open-network-stream directory nil host port))
                 (timeout (run-at-time
-                          2 nil (lambda (proc)
+                          5 nil (lambda (proc)
                                   (message "Error while starting the REPL. The port number may already be used by another process")
                                   (when (process-live-p proc)
                                     (interrupt-process proc)))
@@ -1865,3 +1865,5 @@ minibuffer"
 ;; replique-context (in-ns ...) in comments are not ignored
 
 ;; cljs server mime types  -> handle  upper case
+
+;; Check the timeout when starting REPL, replique init.clj time involved ? includes loading some code ?
