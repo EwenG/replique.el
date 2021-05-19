@@ -23,7 +23,8 @@
 
 (require 'subr-x)
 (require 'comint)
-(require 'replique-hashmap)
+(require 'clj-print)
+(require 'clj-pprint)
 (require 'replique-transit)
 
 (defvar replique/repls nil)
@@ -49,8 +50,8 @@
                                 (let ((k (car arg))
                                       (v (cdr arg)))
                                   (or (equal :error-on-nil k)
-                                      (and (replique/contains? repl k)
-                                           (funcall matching-fn (replique/get repl k) v)))))
+                                      (and (clj-data/contains? repl k)
+                                           (funcall matching-fn (clj-data/get repl k) v)))))
                               (replique/plist->alist args))))
          (found (funcall filtering-fn pred source)))
     (if (and (null found) (plist-get args :error-on-nil))
@@ -75,11 +76,11 @@
   ;; filter the repls to only keep the repls of the active process
   (let* ((active-process-dir (thread-first
                                  (replique/repl-by :repl-type :tooling :error-on-nil error-on-nil)
-                               (replique/get :directory)))
+                               (clj-data/get :directory)))
          (replique/repls (if active-process-dir
                              (seq-filter (lambda (repl)
                                            (string= active-process-dir
-                                                    (replique/get repl :directory)))
+                                                    (clj-data/get repl :directory)))
                                          replique/repls))))
     (if (listp repl-type-or-types)
         (apply 'replique/repls-or-repl-by 'seq-find
@@ -142,20 +143,20 @@
        (cond ,@dispatch-code))))
 
 (defvar replique/correlation-id 0)
-(defvar replique/synchronous-messages (replique/hash-map))
+(defvar replique/synchronous-messages (clj-data/hash-map))
 
 (defun replique/send-tooling-msg (tooling-repl msg)
-  (let* ((tooling-network-proc (replique/get tooling-repl :network-proc))
-         (process-id (replique/get tooling-repl :directory))
+  (let* ((tooling-network-proc (clj-data/get tooling-repl :network-proc))
+         (process-id (clj-data/get tooling-repl :directory))
          (correlation-id replique/correlation-id)
-         (msg (replique/assoc msg
+         (msg (clj-data/assoc msg
                               :process-id process-id
                               :correlation-id correlation-id))
-         (serialized-msg (replique-print/print-str msg)))
+         (serialized-msg (clj-print/print-str msg)))
     ;; replique-context may generate large message (fn-param, fn-param-meta ...)
     ;; We limit the size of a message because of the jvm method size limit
     (when (< (length serialized-msg) 60000)
-      (puthash correlation-id replique/nothing replique/synchronous-messages)
+      (puthash correlation-id clj-data/nothing replique/synchronous-messages)
       (setq replique/correlation-id  (if (= most-positive-fixnum correlation-id)
                                          0
                                        (+ 1 correlation-id)))
@@ -174,8 +175,8 @@
             (result nil))
         (while wait-output?
           (with-local-quit (accept-process-output tooling-network-proc nil nil t))
-          (let ((sync-msg (replique/get replique/synchronous-messages correlation-id)))
-            (cond ((not (eq replique/nothing sync-msg))
+          (let ((sync-msg (clj-data/get replique/synchronous-messages correlation-id)))
+            (cond ((not (eq clj-data/nothing sync-msg))
                    (remhash correlation-id replique/synchronous-messages)
                    ;; There may be other blocking calls to accept-process-output.
                    ;; Try to wake up them by sending a block message
@@ -192,7 +193,7 @@
          (in-string? (nth 3 parser-state)))
     (and (equal depth 0) (null in-string?))))
 
-(defvar replique/eval-from-source-meta (replique/hash-map :url nil
+(defvar replique/eval-from-source-meta (clj-data/hash-map :url nil
                                                           :line nil
                                                           :column nil))
 
@@ -200,12 +201,12 @@
   (let* ((tooling-repl (replique/active-repl :tooling t))
          (resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/assoc replique/eval-from-source-meta
+                (clj-data/assoc replique/eval-from-source-meta
                                 :type :source-meta
                                 :repl-env :replique/clj))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-error-str err))
+        (message "%s" (clj-pprint/pprint-error-str err))
         (message "source-meta failed"))
       (comint-simple-send proc string))))
 
@@ -250,21 +251,21 @@
       (insert old-input))))
 
 (defun replique/send-input-from-source-session (input repl)
-  (let ((buff (replique/get repl :buffer)))
+  (let ((buff (clj-data/get repl :buffer)))
     (with-current-buffer buff
       (replique/comint-send-input-from-source input))))
 
 (defun replique/send-input-from-source-clj (input tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (let ((buff (replique/get clj-repl :buffer)))
+    (let ((buff (clj-data/get clj-repl :buffer)))
       (with-current-buffer buff
         (replique/comint-send-input-from-source input)))))
 
 (defun replique/send-input-from-source-cljs (input tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (let ((buff (replique/get cljs-repl :buffer)))
+    (let ((buff (clj-data/get cljs-repl :buffer)))
       (with-current-buffer buff
         (replique/comint-send-input-from-source input)))))
 
@@ -272,7 +273,7 @@
     (input tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (let ((buff (replique/get repl :buffer)))
+    (let ((buff (clj-data/get repl :buffer)))
       (with-current-buffer buff
         (replique/comint-send-input-from-source input)))))
 

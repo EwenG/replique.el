@@ -32,14 +32,16 @@
 (require 'xref)
 (require 'replique-utils)
 (require 'replique-repls)
-(require 'replique-hashmap)
+(require 'clj-data)
 (require 'replique-cli)
 (require 'replique-resources)
 (require 'replique-files)
 (require 'replique-remove-var)
 (require 'replique-transit)
+(require 'clj-context)
 (require 'replique-context)
-(require 'replique-print)
+(require 'clj-print)
+(require 'clj-pprint)
 (require 'replique-pprint)
 (require 'replique-params)
 (require 'replique-watch)
@@ -55,26 +57,26 @@
   (string-join
    (thread-last replique/repls
      (mapcar (lambda (repl)
-               (let* ((repl (if (replique/contains? repl :buffer)
-                                (replique/assoc repl :buffer '**)
+               (let* ((repl (if (clj-data/contains? repl :buffer)
+                                (clj-data/assoc repl :buffer '**)
                               repl))
-                      (repl (if (replique/contains? repl :proc)
-                                (replique/assoc repl :proc '**)
+                      (repl (if (clj-data/contains? repl :proc)
+                                (clj-data/assoc repl :proc '**)
                               repl))
-                      (repl (if (replique/contains? repl :network-proc)
-                                (replique/assoc repl :network-proc '**)
+                      (repl (if (clj-data/contains? repl :network-proc)
+                                (clj-data/assoc repl :network-proc '**)
                               repl))
-                      (repl (if (replique/contains? repl :recent-output)
-                                (replique/assoc repl :recent-output '**)
+                      (repl (if (clj-data/contains? repl :recent-output)
+                                (clj-data/assoc repl :recent-output '**)
                               repl)))
                  repl)))
-     (mapcar 'replique-pprint/pprint-str))
+     (mapcar 'clj-pprint/pprint-str))
    "\n"))
 
 ;; Auto completion
 
 (defconst replique/annotations-map
-  (replique/hash-map
+  (clj-data/hash-map
    :method "me"
    :field "fi"
    :static-method "sm"
@@ -95,50 +97,50 @@
       ((:candidate candidate) (:type type) (:package package) (:ns ns) (:match-index match-index))
       c
     (propertize candidate
-                'meta (replique/hash-map :type type :package package :ns ns)
+                'meta (clj-data/hash-map :type type :package package :ns ns)
                 'match-index match-index)))
 
 (defun replique/auto-complete* (prefix tooling-repl repl-env ns)
   (let* ((resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :completion
+                (clj-data/hash-map :type :completion
                                    :repl-env repl-env
                                    :context (replique-context/get-context
                                              tooling-repl ns repl-env)
                                    :ns ns
                                    :prefix prefix))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "completion failed with prefix %s" prefix)
             nil)
-        (let* ((candidates (replique/get resp :candidates)))
+        (let* ((candidates (clj-data/get resp :candidates)))
           (mapcar 'replique/make-candidate candidates))))))
 
 (defun replique/auto-complete-session (prefix repl)
-  (let* ((directory (replique/get repl :directory))
+  (let* ((directory (clj-data/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-env (replique/get repl :repl-env))
-         (ns (symbol-name (replique/get repl :ns))))
+         (repl-env (clj-data/get repl :repl-env))
+         (ns (symbol-name (clj-data/get repl :ns))))
     (replique/auto-complete* prefix tooling-repl repl-env ns)))
 
 (defun replique/auto-complete-clj (prefix tooling-repl clj-repl)
   (when clj-repl
     (replique/auto-complete* prefix tooling-repl
-                             (replique/get clj-repl :repl-env)
+                             (clj-data/get clj-repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
 (defun replique/auto-complete-cljs (prefix tooling-repl cljs-repl)
   (when cljs-repl
     (replique/auto-complete* prefix tooling-repl
-                             (replique/get cljs-repl :repl-env)
+                             (clj-data/get cljs-repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
 (defun replique/auto-complete-cljc (prefix tooling-repl repl)
   (when repl
     (replique/auto-complete* prefix tooling-repl
-                             (replique/get repl :repl-env)
+                             (clj-data/get repl :repl-env)
                              (replique-context/clojure-find-ns))))
 
 (defun replique/auto-complete (prefix)
@@ -180,7 +182,7 @@
                  arg)
                 ((or force-highlight (equal index args-index))
                  (setq args-index (1+ args-index))
-                 (replique-print/with-face :object arg :face 'eldoc-highlight-function-argument))
+                 (clj-print/with-face :object arg :face 'eldoc-highlight-function-argument))
                 (t
                  (setq args-index (1+ args-index))
                  arg)))
@@ -190,7 +192,7 @@
 (defun replique/repliquedoc-format-arglists (index arglists)
   (thread-first (lambda (x) (replique/repliquedoc-format-arglist index x))
     (mapcar arglists)
-    replique-print/print-str))
+    clj-print/print-str))
 
 (defun replique/repliquedoc-format (msg)
   (map-let ((:name name) (:arglists arglists) (:return return) (:index index)) msg
@@ -205,41 +207,41 @@
 (defun replique/repliquedoc* (tooling-repl repl-env ns)
   (let ((resp (replique/send-tooling-msg
                tooling-repl
-               (replique/hash-map :type :repliquedoc
+               (clj-data/hash-map :type :repliquedoc
                                   :repl-env repl-env
                                   :context (replique-context/get-context
                                             tooling-repl ns repl-env)
                                   :ns ns))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "eldoc failed")
             nil)
         (with-demoted-errors "eldoc error: %s"
-          (replique/repliquedoc-format (replique/get resp :doc)))))))
+          (replique/repliquedoc-format (clj-data/get resp :doc)))))))
 
 (defun replique/repliquedoc-session (repl)
-  (let* ((directory (replique/get repl :directory))
+  (let* ((directory (clj-data/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-env (replique/get repl :repl-env))
-         (ns (symbol-name (replique/get repl :ns))))
+         (repl-env (clj-data/get repl :repl-env))
+         (ns (symbol-name (clj-data/get repl :ns))))
     (replique/repliquedoc* tooling-repl repl-env ns)))
 
 (defun replique/repliquedoc-clj (tooling-repl clj-repl)
   (when clj-repl
     (replique/repliquedoc*
-     tooling-repl (replique/get clj-repl :repl-env) (replique-context/clojure-find-ns))))
+     tooling-repl (clj-data/get clj-repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/repliquedoc-cljs (tooling-repl cljs-repl)
   (when cljs-repl
     (replique/repliquedoc*
-     tooling-repl (replique/get cljs-repl :repl-env) (replique-context/clojure-find-ns))))
+     tooling-repl (clj-data/get cljs-repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/repliquedoc-cljc (tooling-repl repl)
   (when repl
     (replique/repliquedoc*
-     tooling-repl (replique/get repl :repl-env) (replique-context/clojure-find-ns))))
+     tooling-repl (clj-data/get repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/eldoc-documentation-function ()
   ;; Ensures a REPL is started, since eldoc-mode is enabled globally by default
@@ -252,15 +254,15 @@
      (t . nil))))
 
 (defun replique/in-ns-session (repl)
-  (let* ((directory (replique/get repl :directory))
+  (let* ((directory (clj-data/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (all-ns (replique/get (replique/list-namespaces
-                                tooling-repl (replique/get repl :repl-env))
+         (all-ns (clj-data/get (replique/list-namespaces
+                                tooling-repl (clj-data/get repl :repl-env))
                                :namespaces))
          (ns-name (when all-ns
                     (completing-read "Set ns to: " all-ns))))
     (when (> (length ns-name) 0)
-      (if (equal :clj (replique/get repl :repl-type))
+      (if (equal :clj (clj-data/get repl :repl-type))
           (replique/send-input-from-source-clj
            (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl repl)
         (replique/send-input-from-source-cljs
@@ -269,8 +271,8 @@
 (defun replique/in-ns-clj (tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
-    (let* ((all-ns (replique/get (replique/list-namespaces
-                                  tooling-repl (replique/get clj-repl :repl-env))
+    (let* ((all-ns (clj-data/get (replique/list-namespaces
+                                  tooling-repl (clj-data/get clj-repl :repl-env))
                                  :namespaces))
            (ns-name (when all-ns
                       (completing-read
@@ -282,8 +284,8 @@
 (defun replique/in-ns-cljs (tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
-    (let* ((all-ns (replique/get (replique/list-namespaces
-                                  tooling-repl (replique/get cljs-repl :repl-env))
+    (let* ((all-ns (clj-data/get (replique/list-namespaces
+                                  tooling-repl (clj-data/get cljs-repl :repl-env))
                                  :namespaces))
            (ns-name (when all-ns
                       (completing-read
@@ -296,15 +298,15 @@
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
 
-    (let* ((all-ns (replique/get (replique/list-namespaces
-                                  tooling-repl (replique/get repl :repl-env))
+    (let* ((all-ns (clj-data/get (replique/list-namespaces
+                                  tooling-repl (clj-data/get repl :repl-env))
                                  :namespaces))
            (ns-name (when all-ns
                       (completing-read
                        "Set ns to: " all-ns nil nil (replique-context/clojure-find-ns)))))
       (when (> (length ns-name) 0)
         (replique/send-input-from-source-cljc
-         (if (equal :cljs (replique/get repl :repl-type))
+         (if (equal :cljs (clj-data/get repl :repl-type))
              (format "(replique.interactive/cljs-in-ns '%s)" ns-name)
            (format "(clojure.core/in-ns '%s)" ns-name))
          tooling-repl repl)))))
@@ -370,23 +372,23 @@
 
 (defun replique/maybe-change-ns-clj (tooling-repl clj-repl)
   (let ((ns-name (replique-context/clojure-find-ns))
-        (repl-ns (replique/get clj-repl :ns)))
+        (repl-ns (clj-data/get clj-repl :ns)))
     (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
       (replique/send-input-from-source-clj
        (format "(clojure.core/in-ns '%s)" ns-name) tooling-repl clj-repl))))
 
 (defun replique/maybe-change-ns-cljs (tooling-repl cljs-repl)
   (let ((ns-name (replique-context/clojure-find-ns))
-        (repl-ns (replique/get cljs-repl :ns)))
+        (repl-ns (clj-data/get cljs-repl :ns)))
     (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
       (replique/send-input-from-source-cljs
        (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl cljs-repl))))
 
 (defun replique/maybe-change-ns-cljc (tooling-repl repl)
   (let ((ns-name (replique-context/clojure-find-ns))
-        (repl-ns (replique/get repl :ns)))
+        (repl-ns (clj-data/get repl :ns)))
     (when (and ns-name repl-ns (not (string= ns-name (symbol-name repl-ns))))
-      (if (equal :cljs (replique/get repl :repl-type))
+      (if (equal :cljs (clj-data/get repl :repl-type))
           (replique/send-input-from-source-cljs
            (format "(replique.interactive/cljs-in-ns '%s)" ns-name) tooling-repl repl)
         (replique/send-input-from-source-clj
@@ -428,7 +430,7 @@
       (replique/maybe-change-ns)
       (let* ((line (replique/line-number-at-pos start))
              (column (1+ (replique/column-number-at-pos start)))
-             (replique/eval-from-source-meta (replique/hash-map
+             (replique/eval-from-source-meta (clj-data/hash-map
                                               :line line
                                               :column column
                                               :url (replique/buffer-url
@@ -441,7 +443,7 @@
   (replique/eval-region
    (save-excursion
      (backward-sexp 1)
-     (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+     (clj-context/maybe-skip-dispatch-macro-or-quoted-backward)
      (replique-context/maybe-skip-read-discard-or-splice-forward)
      (point))
    (point)))
@@ -454,15 +456,15 @@
         (user-error "No active Clojure or Clojurescript REPL")
       (let* ((expr-bounds (save-excursion
                             (let ((target-point (point)))
-                              (skip-chars-backward replique-context/symbol-separator-re)
+                              (skip-chars-backward clj-context/symbol-separator-re)
                               (let ((top-level (or (syntax-ppss-toplevel-pos
-                                                    (replique-context/syntax-ppss (point)))
+                                                    (clj-context/syntax-ppss (point)))
                                                    (point))))
                                 (goto-char top-level)
-                                (replique-context/maybe-skip-dispatch-macro-or-quoted-backward)
+                                (clj-context/maybe-skip-dispatch-macro-or-quoted-backward)
                                 (replique-context/maybe-skip-read-discard-or-splice-forward)
                                 (replique-context/unwrap-comment
-                                 (replique/get active-repl :repl-type)
+                                 (clj-data/get active-repl :repl-type)
                                  target-point)))))
              (expr (when expr-bounds
                      (buffer-substring-no-properties (car expr-bounds) (cdr expr-bounds)))))
@@ -470,7 +472,7 @@
           (replique/maybe-change-ns)
           (let* ((line (replique/line-number-at-pos (car expr-bounds)))
                  (column (1+ (replique/column-number-at-pos (car expr-bounds))))
-                 (replique/eval-from-source-meta (replique/hash-map
+                 (replique/eval-from-source-meta (clj-data/hash-map
                                                   :line line
                                                   :column column
                                                   :url (replique/buffer-url
@@ -534,7 +536,7 @@
 (defun replique/reload-all-cljc (props repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
-    (let ((form (if (equal :cljs (replique/get repl :repl-type))
+    (let ((form (if (equal :cljs (clj-data/get repl :repl-type))
                     (format "(replique.interactive/load-url \"%s\" :reload-all)"
                             (replique/buffer-url (buffer-file-name)))
                   (format "(require '%s :reload-all)" (replique-context/clojure-find-ns)))))
@@ -555,23 +557,23 @@
     (when (not cljs-repl)
       (user-error "No active Clojurescript REPL"))
     (browse-url (format "http://%s:%s"
-                        (replique/get cljs-repl :http-host)
-                        (replique/get cljs-repl :http-port)))))
+                        (clj-data/get cljs-repl :http-host)
+                        (clj-data/get cljs-repl :http-port)))))
 
 (defun replique/switch-active-repl (repl-buff-name)
   "Switch the currently active REPL session"
   (interactive
    (let* ((active-repl (replique/active-repl :tooling t))
-          (directory (replique/get active-repl :directory))
+          (directory (clj-data/get active-repl :directory))
           (repls (seq-filter (lambda (repl)
-                               (let ((repl-type (replique/get repl :repl-type))
-                                     (d (replique/get repl :directory)))
+                               (let ((repl-type (clj-data/get repl :repl-type))
+                                     (d (clj-data/get repl :directory)))
                                  (and
                                   (equal d directory)
                                   (not (equal :tooling repl-type)))))
                              replique/repls))
           (repl-names (mapcar (lambda (repl)
-                                (buffer-name (replique/get repl :buffer)))
+                                (buffer-name (clj-data/get repl :buffer)))
                               repls)))
      (when (null repls)
        (user-error "No started REPL"))
@@ -584,7 +586,7 @@
   (let* ((buffer (get-buffer repl-buff-name))
          (repl (replique/repl-by :buffer buffer))
          (prev-active-repl (replique/active-repl '(:clj :cljs)))
-         (prev-active-buffer (replique/get prev-active-repl :buffer))
+         (prev-active-buffer (clj-data/get prev-active-repl :buffer))
          (prev-active-windows (get-buffer-window-list prev-active-buffer)))
     (setq replique/repls (delete repl replique/repls))
     (setq replique/repls (push repl replique/repls))
@@ -597,7 +599,7 @@
   "Switch the currently active JVM process"
   (interactive
    (let* ((tooling-repls (replique/repls-by :repl-type :tooling))
-          (directories (mapcar (lambda (repl) (replique/get repl :directory))
+          (directories (mapcar (lambda (repl) (clj-data/get repl :directory))
                                tooling-repls)))
      (when (not (car directories))
        (user-error "No started REPL"))
@@ -607,9 +609,9 @@
                               nil t nil nil (car directories))))))
   (let* ((new-active-repls (replique/repls-by :directory proc-name))
          (prev-active-tooling-repl (replique/active-repl :tooling))
-         (prev-active-directory (replique/get prev-active-tooling-repl :directory))
+         (prev-active-directory (clj-data/get prev-active-tooling-repl :directory))
          (prev-repls (replique/repls-by :directory prev-active-directory))
-         (prev-repl-types (mapcar (lambda (repl) (replique/get repl :repl-type)) prev-repls)))
+         (prev-repl-types (mapcar (lambda (repl) (clj-data/get repl :repl-type)) prev-repls)))
     ;; Buffer replacement is disabled for now, until we find a better user experience
     (comment
      ;; All windows displaying the previously active repls are set to display the newly active
@@ -617,11 +619,11 @@
      (dolist (repl-type prev-repl-types)
        (let* ((prev-active-repl (replique/repl-by :directory prev-active-directory
                                                   :repl-type repl-type))
-              (prev-buffer (replique/get prev-active-repl :buffer))
+              (prev-buffer (clj-data/get prev-active-repl :buffer))
               (new-active-repl (replique/repl-by
                                 :directory proc-name
                                 :repl-type repl-type))
-              (new-buffer (replique/get new-active-repl :buffer))
+              (new-buffer (clj-data/get new-active-repl :buffer))
               (windows (get-buffer-window-list prev-buffer)))
          (when new-buffer
            (dolist (window windows)
@@ -633,11 +635,11 @@
 (defun replique/list-namespaces (tooling-repl repl-env)
   (let ((resp (replique/send-tooling-msg
                tooling-repl
-               (replique/hash-map :type :list-namespaces
+               (clj-data/hash-map :type :list-namespaces
                                   :repl-env repl-env))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-error-str err))
+        (message "%s" (clj-pprint/pprint-error-str err))
         (message "list-namespaces failed")))
     resp))
 
@@ -648,7 +650,7 @@
          (clj-repl (replique/active-repl :clj)))
     (when (not clj-repl)
       (user-error "No active Clojure REPL"))
-    (let* ((main-cljs-namespaces (replique/get tooling-repl :main-cljs-namespaces))
+    (let* ((main-cljs-namespaces (clj-data/get tooling-repl :main-cljs-namespaces))
            (main-cljs-namespace (when main-cljs-namespaces
                                   (replique/return-value-on-quit
                                    nil
@@ -680,17 +682,17 @@
     (when-let ((output-to (or
                            output-to
                            (read-file-name "Output main js file to: "
-                                           (replique/get tooling-repl :directory)))))
+                                           (clj-data/get tooling-repl :directory)))))
       (let ((output-to (file-truename output-to)))
         (when (file-directory-p output-to)
           (user-error "%s is a directory" output-to))
         (when (or (not (file-exists-p output-to))
                   (yes-or-no-p (format "Override %s?" output-to)))
           (let ((resp (if main-ns
-                          (replique/hash-map :namespaces nil)
+                          (clj-data/hash-map :namespaces nil)
                         (replique/list-namespaces tooling-repl :replique/cljs))))
-            (when (not (replique/get resp :error))
-              (let* ((namespaces (replique/get resp :namespaces))
+            (when (not (clj-data/get resp :error))
+              (let* ((namespaces (clj-data/get resp :namespaces))
                      (main-ns (cond (main-ns main-ns)
                                     ((seq-empty-p namespaces) nil)
                                     (t (replique/return-value-on-quit
@@ -700,19 +702,19 @@
                                                          (car namespaces))))))
                      (resp (replique/send-tooling-msg
                             tooling-repl
-                            (replique/hash-map :type :output-main-js-files
+                            (clj-data/hash-map :type :output-main-js-files
                                                :repl-env :replique/cljs
                                                :output-to output-to
                                                :main-ns main-ns))))
-                (let ((err (replique/get resp :error)))
+                (let ((err (clj-data/get resp :error)))
                   (if err
                       (progn
-                        (message "%s" (replique-pprint/pprint-error-str err))
+                        (message "%s" (clj-pprint/pprint-error-str err))
                         (message "output-main-js-file failed"))
                     (message "Main javascript file written to: %s" output-to)
                     (when main-ns
                       (if-let ((main-cljs-namescapes
-                                (replique/get tooling-repl :main-cljs-namespaces)))
+                                (clj-data/get tooling-repl :main-cljs-namespaces)))
                           (puthash :main-cljs-namespaces
                                    (cons main-ns main-cljs-namescapes)
                                    tooling-repl)
@@ -725,8 +727,8 @@
 (defun replique/cljs-repl-connection-script ()
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling t))
-         (http-host (replique/get tooling-repl :http-host))
-         (http-port (replique/get tooling-repl :http-port))
+         (http-host (clj-data/get tooling-repl :http-host))
+         (http-port (clj-data/get tooling-repl :http-port))
          (script (format "(function() {
   var scripts = [];
   var makeScript = function() {
@@ -757,14 +759,14 @@
     (message script)))
 
 (defun replique/list-css (tooling-repl cljs-repl)
-  (let* ((repl-env (replique/get cljs-repl :repl-env))
+  (let* ((repl-env (clj-data/get cljs-repl :repl-env))
          (resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :list-css
+                (clj-data/hash-map :type :list-css
                                    :repl-env repl-env))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (when err
-        (message "%s" (replique-pprint/pprint-error-str err))
+        (message "%s" (clj-pprint/pprint-error-str err))
         (message "list-css failed")))
     resp))
 
@@ -772,25 +774,25 @@
   (let ((url-filename (file-name-nondirectory (url-filename (url-generic-parse-url url)))))
     (equal file-name url-filename)))
 
-(defvar replique/css-prefered-files (replique/hash-map))
+(defvar replique/css-prefered-files (clj-data/hash-map))
 
 ;; Choose a css url either by looking into replique/css-prefered-files (if the user already
 ;; has chosen one before) or by prompting the user
 (defun replique/select-css-url (file-path css-urls)
-  (or (replique/get replique/css-prefered-files file-path)
+  (or (clj-data/get replique/css-prefered-files file-path)
       (let ((selected-url (completing-read "Select the css file to reload: "
                                            css-urls nil t nil nil (car css-urls))))
-        (setq replique/css-prefered-files (replique/assoc replique/css-prefered-files
+        (setq replique/css-prefered-files (clj-data/assoc replique/css-prefered-files
                                                           file-path selected-url))
         selected-url)))
 
 (defun replique/load-css (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let* ((repl-env (replique/get cljs-repl :repl-env))
+  (let* ((repl-env (clj-data/get cljs-repl :repl-env))
          (resp (replique/list-css tooling-repl cljs-repl)))
-    (when (not (replique/get resp :error))
-      (let* ((css-urls (replique/get resp :css-urls))
+    (when (not (clj-data/get resp :error))
+      (let* ((css-urls (clj-data/get resp :css-urls))
              (css-urls (seq-filter (apply-partially 'replique/asset-url-matches?
                                                     (file-name-nondirectory file-path))
                                    css-urls))
@@ -805,29 +807,29 @@
             (message "Could not find a css file to reload")
           (let ((resp (replique/send-tooling-msg
                        tooling-repl
-                       (replique/hash-map :type :load-css
+                       (clj-data/hash-map :type :load-css
                                           :repl-env repl-env
                                           :url selected-url))))
-            (let ((err (replique/get resp :error)))
+            (let ((err (clj-data/get resp :error)))
               (if err
                   (progn
-                    (message "%s" (replique-pprint/pprint-error-str err))
+                    (message "%s" (clj-pprint/pprint-error-str err))
                     (message "load-css %s: failed" file-path))
                 (message "load-css %s: done" file-path)))))))))
 
 (defun replique/load-js (file-path tooling-repl cljs-repl)
   (when (not cljs-repl)
     (user-error "No active Clojurescript REPL"))
-  (let* ((repl-env (replique/get cljs-repl :repl-env))
+  (let* ((repl-env (clj-data/get cljs-repl :repl-env))
          (resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :load-js
+                (clj-data/hash-map :type :load-js
                                    :repl-env repl-env
                                    :file-path file-path))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "load-js %s: failed" file-path))
         (message "load-js %s: done" file-path)))))
 
@@ -835,7 +837,7 @@
 ;;                                   {:last-selected-output-file output-file}}}}
 ;; When the user triggers a compilation, he is prompted for an output css file. The
 ;; compilation is performed using the main source file.
-(defvar replique/css-preprocessors-output-files (replique/hash-map))
+(defvar replique/css-preprocessors-output-files (clj-data/hash-map))
 
 ;; Move x to the first position in coll
 (defun replique/move-to-front (coll x)
@@ -892,11 +894,11 @@
     (type executable args-builder file-path tooling-repl repl)
   (when (not repl)
     (user-error "No active REPL"))
-  (let* ((directory (replique/get tooling-repl :directory))
-         (output-files (replique/get-in replique/css-preprocessors-output-files
+  (let* ((directory (clj-data/get tooling-repl :directory))
+         (output-files (clj-data/get-in replique/css-preprocessors-output-files
                                         `[,directory ,type :output-files]))
-         (output-files (replique/keys output-files))
-         (last-selected-output-file (replique/get-in
+         (output-files (clj-data/keys output-files))
+         (last-selected-output-file (clj-data/get-in
                                      replique/css-preprocessors-output-files
                                      `[,directory ,type :last-selected-output-file]))
          (output-files (replique/move-to-front output-files last-selected-output-file))
@@ -914,12 +916,12 @@
          (is-new-file (equal output "*new-file*"))
          (output (if is-new-file
                      (read-file-name "Compile to file: "
-                                     (replique/get tooling-repl :directory)
+                                     (clj-data/get tooling-repl :directory)
                                      nil t)
                    output))
          (main-source-file (if is-new-file
                                file-path
-                             (replique/get-in replique/css-preprocessors-output-files
+                             (clj-data/get-in replique/css-preprocessors-output-files
                                               `[,directory ,type :output-files ,output])))
          (output (file-truename output))
          (command-result 0))
@@ -936,20 +938,20 @@
           (message "%s" (buffer-substring (point-min) (point-max)))))
       (when (equal 0 command-result)
         (setq replique/css-preprocessors-output-files
-              (replique/update-in
+              (clj-data/update-in
                replique/css-preprocessors-output-files
                `[,directory ,type]
                (lambda (x)
                  (thread-first x
-                   (replique/assoc :last-selected-output-file output)
-                   (replique/assoc-in `[:output-files ,output] main-source-file)))))
+                   (clj-data/assoc :last-selected-output-file output)
+                   (clj-data/assoc-in `[:output-files ,output] main-source-file)))))
         output))))
 
 (defun replique/load-stylus (file-path tooling-repl repl)
   (let ((css-output (replique/compile-css-preprocessor :stylus replique/stylus-executable
                                                        replique/stylus-args-builder
                                                        file-path tooling-repl repl)))
-    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+    (when (and css-output (equal :cljs (clj-data/get repl :repl-type)))
       (replique/load-css css-output tooling-repl repl))))
 
 
@@ -957,44 +959,44 @@
   (let ((css-output (replique/compile-css-preprocessor :scss replique/scss-executable
                                                        replique/scss-args-builder
                                                        file-path tooling-repl repl)))
-    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+    (when (and css-output (equal :cljs (clj-data/get repl :repl-type)))
       (replique/load-css css-output tooling-repl repl))))
 
 (defun replique/load-sass (file-path tooling-repl repl)
   (let ((css-output (replique/compile-css-preprocessor :sass replique/sass-executable
                                                        replique/sass-args-builder
                                                        file-path tooling-repl repl)))
-    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+    (when (and css-output (equal :cljs (clj-data/get repl :repl-type)))
       (replique/load-css css-output tooling-repl repl))))
 
 (defun replique/load-less (file-path tooling-repl repl)
   (let ((css-output (replique/compile-css-preprocessor :less replique/less-executable
                                                        replique/less-args-builder
                                                        file-path tooling-repl repl)))
-    (when (and css-output (equal :cljs (replique/get repl :repl-type)))
+    (when (and css-output (equal :cljs (clj-data/get repl :repl-type)))
       (replique/load-css css-output tooling-repl repl))))
 
 (defun replique/jump-to-definition* (symbol tooling-repl repl-env ns)
   (let* ((resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :meta
+                (clj-data/hash-map :type :meta
                                    :repl-env repl-env
                                    :ns ns
                                    :symbol symbol
                                    :context (replique-context/get-context
                                              tooling-repl ns repl-env)))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "jump-to-definition failed with symbol: %s" symbol))
-        (let* ((meta (replique/get resp :meta))
-               (file (replique/get-in resp [:meta :file]))
-               (files (replique/get-in resp [:meta :files]))
-               (local? (replique/get-in resp [:meta :local?]))
-               (point-start (replique/get-in resp [:meta :point-start]))
-               (line (replique/get-in resp [:meta :line]))
-               (column (replique/get-in resp [:meta :column])))
+        (let* ((meta (clj-data/get resp :meta))
+               (file (clj-data/get-in resp [:meta :file]))
+               (files (clj-data/get-in resp [:meta :files]))
+               (local? (clj-data/get-in resp [:meta :local?]))
+               (point-start (clj-data/get-in resp [:meta :point-start]))
+               (line (clj-data/get-in resp [:meta :line]))
+               (column (clj-data/get-in resp [:meta :column])))
           (cond ((not (replique-transit/is-small-number? line))
                  (message "Cannot handle line number %s" line)
                  (message "jump-to-definition failed with symbol: %s" symbol))
@@ -1019,29 +1021,29 @@
                          (move-to-column column))))))))))))
 
 (defun replique/jump-to-definition-session (symbol repl)
-  (let* ((directory (replique/get repl :directory))
+  (let* ((directory (clj-data/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-         (repl-env (replique/get repl :repl-env))
-         (ns (symbol-name (replique/get repl :ns))))
+         (repl-env (clj-data/get repl :repl-env))
+         (ns (symbol-name (clj-data/get repl :ns))))
     (replique/jump-to-definition* symbol tooling-repl repl-env ns)))
 
 (defun replique/jump-to-definition-clj (symbol tooling-repl clj-repl)
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get clj-repl :repl-env) (replique-context/clojure-find-ns))))
+     symbol tooling-repl (clj-data/get clj-repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get cljs-repl :repl-env) (replique-context/clojure-find-ns))))
+     symbol tooling-repl (clj-data/get cljs-repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/jump-to-definition-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique/jump-to-definition*
-     symbol tooling-repl (replique/get repl :repl-env) (replique-context/clojure-find-ns))))
+     symbol tooling-repl (clj-data/get repl :repl-env) (replique-context/clojure-find-ns))))
 
 (defun replique/jump-to-definition (symbol)
   "Jump to symbol at point definition, if the metadata for the symbol at point contains enough information"
@@ -1208,7 +1210,7 @@ The following commands are available:
 (defun replique/classpath ()
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling))
-         (default-directory (replique/get tooling-repl :directory))
+         (default-directory (clj-data/get tooling-repl :directory))
          (candidates (thread-last (directory-files default-directory)
                        (seq-filter 'replique/script-file-predicate)
                        (cons "*default*")))
@@ -1231,13 +1233,13 @@ The following commands are available:
                           (re-search-backward "^.+" nil t)
                           (buffer-substring-no-properties (point) (point-max))))))
          (resp (replique/send-tooling-msg
-                tooling-repl (replique/hash-map :type :update-classpath
+                tooling-repl (clj-data/hash-map :type :update-classpath
                                                 :repl-env :replique/clj
                                                 :classpath classpath))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "replique/classpath failed"))
         (message "Classpath updated")))))
 
@@ -1255,7 +1257,7 @@ The following commands are available:
      ,(format "%s" directory))))
 
 (defun replique/close-tooling-repl (tooling-repl)
-  (let ((tooling-proc (replique/get tooling-repl :proc)))
+  (let ((tooling-proc (clj-data/get tooling-repl :proc)))
     (when (process-live-p tooling-proc)
       ;; SIGINT, the jvm should stop, even if there is pending non daemon threads, shutdown
       ;; hooks should run
@@ -1266,15 +1268,15 @@ The following commands are available:
 (defun replique/maybe-close-tooling-repl (directory)
   (let ((other-repls (replique/repls-by-maybe-not-started :directory directory)))
     (when (seq-every-p (lambda (repl)
-                         (equal :tooling (replique/get repl :repl-type)))
+                         (equal :tooling (clj-data/get repl :repl-type)))
                        other-repls)
       (mapcar (lambda (tooling-repl)
                 (replique/close-tooling-repl tooling-repl))
               other-repls))))
 
 (defun replique/close-repl (repl kill-buffers)
-  (let* ((buffer (replique/get repl :buffer))
-         (directory (replique/get repl :directory))
+  (let* ((buffer (clj-data/get repl :buffer))
+         (directory (clj-data/get repl :directory))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
@@ -1295,10 +1297,10 @@ The following commands are available:
 (defun replique/close-repls (directory kill-buffers)
   (let* ((repls (replique/repls-by-maybe-not-started :directory directory))
          (not-tooling-repls (seq-filter (lambda (repl)
-                                          (not (equal :tooling (replique/get repl :repl-type))))
+                                          (not (equal :tooling (clj-data/get repl :repl-type))))
                                         repls))
          (tooling-repls (seq-filter (lambda (repl)
-                                      (equal :tooling (replique/get repl :repl-type)))
+                                      (equal :tooling (clj-data/get repl :repl-type)))
                                     repls)))
     (dolist (repl not-tooling-repls)
       (replique/close-repl repl kill-buffers))
@@ -1396,9 +1398,9 @@ The following commands are available:
   "Search for and refresh the main js files found in the project directory by updating the REPL host and port number."
   (interactive)
   (let* ((tooling-repl (replique/active-repl :tooling))
-         (directory (replique/get tooling-repl :directory))
-         (http-host (replique/get tooling-repl :http-host))
-         (http-port (replique/get tooling-repl :http-port))
+         (directory (clj-data/get tooling-repl :directory))
+         (http-host (clj-data/get tooling-repl :http-host))
+         (http-port (clj-data/get tooling-repl :http-port))
          (main-js-files (replique/with-interrupt-warning 'replique/find-main-js-files directory)))
     (when main-js-files
       (when-let ((main-cljs-namespaces (replique/do-refresh-main-js-files
@@ -1437,7 +1439,7 @@ The following commands are available:
       (user-error clj-script-error))
     (message "Starting REPL with Clojure command:\n%s" (string-join repl-cmd " "))
     (let* ((proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
-           (tooling-repl (replique/hash-map
+           (tooling-repl (clj-data/hash-map
                           :directory directory
                           :repl-type :tooling
                           :proc proc
@@ -1446,7 +1448,7 @@ The following commands are available:
                           :http-host nil
                           :http-port nil
                           :repl-cmd repl-cmd
-                          :ref-watchers (replique/hash-map)
+                          :ref-watchers (clj-data/hash-map)
                           :main-cljs-namespaces nil
                           :started? nil)))
       ;; Perform the starting REPLs cleaning in case of an error when starting the process
@@ -1493,7 +1495,7 @@ The following commands are available:
                 (dolist (starting-repl starting-repls)
                   (condition-case err
                       (when (not (eq starting-repl tooling-repl))
-                        (if (buffer-live-p (replique/get starting-repl :buffer))
+                        (if (buffer-live-p (clj-data/get starting-repl :buffer))
                             (replique/start-repl tooling-repl starting-repl)
                           (replique/close-repl starting-repl t)))
                     (error
@@ -1521,7 +1523,7 @@ The following commands are available:
   (interactive
    (let* ((tooling-repls (replique/repls-by-maybe-not-started
                           :repl-type :tooling :error-on-nil t))
-          (directories (mapcar (lambda (repl) (replique/get repl :directory)) tooling-repls)))
+          (directories (mapcar (lambda (repl) (clj-data/get repl :directory)) tooling-repls)))
      (list (completing-read "Close process: " directories nil t nil nil (car directories)))))
   (replique/close-repls directory t))
 
@@ -1547,7 +1549,7 @@ The following commands are available:
 minibuffer"
   (let* ((buffer (process-buffer process))
          (repl (replique/repl-by-maybe-not-started :buffer buffer))
-         (recent-output (replique/get repl :recent-output))
+         (recent-output (clj-data/get repl :recent-output))
          (active-repl-clj (replique/active-repl :clj))
          (active-repl-cljs (replique/active-repl :cljs)))
     (ring-insert recent-output (list (current-time) string))
@@ -1577,13 +1579,13 @@ minibuffer"
     buffer))
 
 (defun replique/start-repl (tooling-repl starting-repl)
-  (let* ((directory (replique/get tooling-repl :directory))
-         (host (replique/get tooling-repl :host))
-         (port (replique/get tooling-repl :port))
-         (http-host (replique/get tooling-repl :http-host))
-         (http-port (replique/get tooling-repl :http-port))
-         (repl-buffer (replique/get starting-repl :buffer))
-         (repl-type (replique/get starting-repl :repl-type))
+  (let* ((directory (clj-data/get tooling-repl :directory))
+         (host (clj-data/get tooling-repl :host))
+         (port (clj-data/get tooling-repl :port))
+         (http-host (clj-data/get tooling-repl :http-host))
+         (http-port (clj-data/get tooling-repl :http-port))
+         (repl-buffer (clj-data/get starting-repl :buffer))
+         (repl-type (clj-data/get starting-repl :repl-type))
          (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
          (repl-cmd (format "(replique.watch/repl)\n")))
     (set-process-sentinel proc (apply-partially 'replique/on-repl-close repl-buffer))
@@ -1592,7 +1594,7 @@ minibuffer"
      (lambda (resp)
        (if (buffer-live-p repl-buffer)
            (let* ((resp (replique-transit/decode resp))
-                  (session (replique/get resp :client)))
+                  (session (clj-data/get resp :client)))
              (with-current-buffer repl-buffer
                (erase-buffer)
                (rename-buffer (generate-new-buffer-name
@@ -1616,7 +1618,7 @@ minibuffer"
 
 (defun replique/make-repl-starting (repl-cmd directory host port)
   (let* ((repl-buffer (generate-new-buffer (replique/buffer-name directory :clj)))
-         (repl (replique/hash-map :directory directory
+         (repl (clj-data/hash-map :directory directory
                                   :host host
                                   :port port
                                   :http-host nil
@@ -1677,24 +1679,24 @@ minibuffer"
          (existing-repl (replique/repl-by-maybe-not-started
                          :directory directory :repl-type :tooling))
          (host (cond (existing-repl
-                      (replique/get existing-repl :host))
+                      (clj-data/get existing-repl :host))
                      (host host)
                      ((equal 4 (prefix-numeric-value current-prefix-arg))
                       (read-string "Hostname: " "localhost"))
                      (t nil)))
          (port (cond
                 (existing-repl
-                 (replique/get existing-repl :port))
+                 (clj-data/get existing-repl :port))
                 (port port)
                 ((equal 4 (prefix-numeric-value current-prefix-arg))
                  (read-number "Port number: " 0))
                 (t nil))))
     (cond
-     ((and existing-repl (null (replique/get existing-repl :started?)))
-      (replique/make-repl-starting (replique/get existing-repl :repl-cmd)
+     ((and existing-repl (null (clj-data/get existing-repl :started?)))
+      (replique/make-repl-starting (clj-data/get existing-repl :repl-cmd)
                                    directory host port))
      (existing-repl
-      (let ((starting-repl (replique/make-repl-starting (replique/get existing-repl :repl-cmd)
+      (let ((starting-repl (replique/make-repl-starting (clj-data/get existing-repl :repl-cmd)
                                                         directory host port)))
         (condition-case err
             (replique/start-repl existing-repl starting-repl)
@@ -1706,11 +1708,11 @@ minibuffer"
       (replique/make-tooling-repl directory repl-script host port)))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
-  (let* ((directory (replique/get repl :directory))
-         (repl-type (replique/get repl :repl-type))
-         (repl-env (replique/get repl :repl-env))
-         (repl-buffer (replique/get repl :buffer))
-         (session (replique/get repl :session)))
+  (let* ((directory (clj-data/get repl :directory))
+         (repl-type (clj-data/get repl :repl-type))
+         (repl-env (clj-data/get repl :repl-env))
+         (repl-buffer (clj-data/get repl :buffer))
+         (session (clj-data/get repl :session)))
     (when (not (equal repl-type new-repl-type))
       (when (equal (replique/buffer-name directory repl-type session)
                    (buffer-name repl-buffer))
@@ -1719,11 +1721,11 @@ minibuffer"
                           (replique/buffer-name directory new-repl-type session))))))
     (if (and (equal repl-type new-repl-type) (equal repl-env new-repl-env))
         repl
-      (replique/update-repl repl (replique/assoc repl
+      (replique/update-repl repl (clj-data/assoc repl
                                                  :repl-type new-repl-type
                                                  :repl-env new-repl-env)))))
 (defun replique/dispatch-async-msg (msg)
-  (let ((msg-type (replique/get msg :type)))
+  (let ((msg-type (clj-data/get msg :type)))
     (cond
      (;; Global error (uncaught exception)
       (equal :error msg-type)
@@ -1732,26 +1734,26 @@ minibuffer"
          (with-temp-buffer
            (insert (propertize "Uncaught exception" 'face '(:foreground "red")))
            (insert " - Thread: ")
-           (insert (replique/get msg :thread))
+           (insert (clj-data/get msg :thread))
            (insert "\n")
-           (replique-print/print (replique/get msg :value))
-           (let ((replique-context/platform-tag :clj))
-             (let ((replique-pprint/threshold 80))
-               (replique-pprint/pprint*)))
+           (clj-print/print (clj-data/get msg :value))
+           (let ((clj-context/platform-tag :clj))
+             (let ((clj-pprint/threshold 80))
+               (clj-pprint/pprint*)))
            (buffer-substring (point-min) (point-max))))))
      ((equal :repl-meta msg-type)
       (let* ((msg (replique-transit/decode msg))
              (repl (replique/repl-by
-                    :session (replique/get (replique/get msg :session) :client)
-                    :directory (replique/get msg :process-id))))
+                    :session (clj-data/get (clj-data/get msg :session) :client)
+                    :directory (clj-data/get msg :process-id))))
         (when repl
           (let ((repl (replique/on-repl-type-change
-                       repl (replique/get msg :repl-type) (replique/get msg :repl-env))))
-            (replique/update-repl repl (replique/assoc repl
-                                                       :ns (replique/get msg :ns)
-                                                       :params (replique/get msg :params)))))))
+                       repl (clj-data/get msg :repl-type) (clj-data/get msg :repl-env))))
+            (replique/update-repl repl (clj-data/assoc repl
+                                                       :ns (clj-data/get msg :ns)
+                                                       :params (clj-data/get msg :params)))))))
      ((equal :watch-update msg-type)
-      (let* ((directory (replique/get msg :process-id))
+      (let* ((directory (clj-data/get msg :process-id))
              (msg (replique-transit/decode msg)))
         (replique-watch/notify-update msg)))
      (t (message "Received unsupported message while dispatching tooling messages: %s" msg)))))
@@ -1766,12 +1768,12 @@ minibuffer"
          nil)
         ((not (hash-table-p msg))
          (message "Received invalid message while dispatching tooling messages: %s" msg))
-        ((replique/get msg :correlation-id)
+        ((clj-data/get msg :correlation-id)
          (let* ((tooling-repl (replique/repl-by
                                :repl-type :tooling
-                               :directory (replique/get msg :process-id)))
-                (correlation-id (replique/get msg :correlation-id))
-                (sync-msg (replique/get replique/synchronous-messages correlation-id)))
+                               :directory (clj-data/get msg :process-id)))
+                (correlation-id (clj-data/get msg :correlation-id))
+                (sync-msg (clj-data/get replique/synchronous-messages correlation-id)))
            (when sync-msg
              (puthash correlation-id msg replique/synchronous-messages))))
         (t (replique/with-new-dyn-context 'replique/dispatch-async-msg msg))))

@@ -22,7 +22,7 @@
 ;; Code:
 
 (require 'replique-repls)
-(require 'replique-hashmap)
+(require 'clj-data)
 (require 'ivy)
 
 (defvar replique-params/print-length-history nil)
@@ -180,28 +180,28 @@
             :action (apply-partially 'replique-params/edit-param action-fn)))
 
 (defun replique-params/set-param (repl param param-value)
-  (let ((buff (replique/get repl :buffer)))
+  (let ((buff (clj-data/get repl :buffer)))
     (with-current-buffer buff
       (replique/comint-send-input-from-source
        (concat "(set! " (get-text-property 0 'replique-params/param param) " " param-value ")")))))
 
 (defun replique-params/params-session (repl)
-  (replique-params/params* (replique/get repl :params)
+  (replique-params/params* (clj-data/get repl :params)
                            (apply-partially 'replique-params/set-param repl)))
 
 (defun replique-params/params-clj (tooling-repl clj-repl)
   (when clj-repl
-    (replique-params/params* (replique/get clj-repl :params)
+    (replique-params/params* (clj-data/get clj-repl :params)
                              (apply-partially 'replique-params/set-param clj-repl))))
 
 (defun replique-params/params-cljs (tooling-repl cljs-repl)
   (when cljs-repl
-    (replique-params/params* (replique/get cljs-repl :params)
+    (replique-params/params* (clj-data/get cljs-repl :params)
                              (apply-partially 'replique-params/set-param cljs-repl))))
 
 (defun replique-params/params-cljc (tooling-repl repl)
   (when repl
-    (replique-params/params* (replique/get repl :params)
+    (replique-params/params* (clj-data/get repl :params)
                              (apply-partially 'replique-params/set-param repl))))
 
 (declare-function replique-watch/params-watch "replique-watch.el")

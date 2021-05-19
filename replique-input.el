@@ -21,7 +21,7 @@
 
 ;; Code:
 
-(require 'replique-hashmap)
+(require 'clj-data)
 
 (defun replique-input/send-invisible (proc prompt)
   "Read a string without echoing. Send it to the process standard input.
@@ -49,16 +49,16 @@ Security bug: your string can still be temporarily recovered with
             (string-match comint-password-prompt-regexp string))
       (when (string-match "^[ \n\r\t\v\f\b\a]+" string)
         (setq string (replace-match "" t t string)))
-      (replique-input/send-invisible (replique/get tooling-repl :proc) string))))
+      (replique-input/send-invisible (clj-data/get tooling-repl :proc) string))))
 
 (defun replique/process-input (input-str)
   (interactive (list (read-string "Process input: ")))
   (let ((tooling-repl (replique/active-repl :tooling t)))
-    (process-send-string (replique/get tooling-repl :proc) (concat input-str "\n"))))
+    (process-send-string (clj-data/get tooling-repl :proc) (concat input-str "\n"))))
 
 (defun replique/process-input-password (input-str)
   (interactive (list (read-passwd "Process input: ")))
   (let ((tooling-repl (replique/active-repl :tooling t)))
-    (process-send-string (replique/get tooling-repl :proc) (concat input-str "\n"))))
+    (process-send-string (clj-data/get tooling-repl :proc) (concat input-str "\n"))))
 
 (provide 'replique-input)

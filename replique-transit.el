@@ -21,44 +21,44 @@
 
 ;; Code:
 
-(require 'replique-hashmap)
-(require 'replique-print)
+(require 'clj-data)
+(require 'clj-print)
 
 (defvar replique-transit/decode-for-printing nil)
 
-(defclass replique/with-meta (replique-print/printable)
+(defclass replique/with-meta (clj-print/printable)
   ((value :initarg :value)
    (meta :initarg :meta)))
 
-(defmethod replique-print/print-method ((m replique/with-meta))
+(defmethod clj-print/print-method ((m replique/with-meta))
   (let ((meta (oref m :meta))
         (value (oref m :value)))
     (if (not (hash-table-empty-p meta))
         (progn
           (insert "^")
-          (replique-print/print-map meta)
+          (clj-print/print-map meta)
           (insert-char ?\s)
-          (replique-print/print-dispatch value))
-      (replique-print/print-dispatch value))))
+          (clj-print/print-dispatch value))
+      (clj-print/print-dispatch value))))
 
-(defclass replique/more (replique-print/printable)
+(defclass replique/more (clj-print/printable)
   ((type :initarg :type)))
 
-(defmethod replique-print/print-method ((o replique/more))
+(defmethod clj-print/print-method ((o replique/more))
   (let ((type (oref o :type)))
     (cond ((equal type "level")
            (insert-char ?#))
           ((equal type "length")
            (insert "...")))))
 
-(defclass replique-transit/tagged-value (replique-print/printable)
+(defclass replique-transit/tagged-value (clj-print/printable)
   ((tag :initarg :tag)
    (value :initarg :value)))
 
 (defclass replique-transit/tag ()
   ((tag :initarg :tag)))
 
-(defmethod replique-print/print-method ((o replique-transit/tagged-value))
+(defmethod clj-print/print-method ((o replique-transit/tagged-value))
   (let ((tag (oref o :tag))
         (value (oref o :value)))
     (cond ((equal tag ?n)
@@ -86,17 +86,17 @@
           ((cl-typep tag 'replique-transit/tag)
            (let ((tag (oref tag :tag)))
              (cond ((equal tag "set")
-                    (replique-print/print-set value))
+                    (clj-print/print-set value))
                    (t (insert ?#)
                       (insert tag)
                       (insert ?\s)
-                      (replique-print/print-dispatch value))))))))
+                      (clj-print/print-dispatch value))))))))
 
-(defclass replique-transit/empty-list (replique-print/printable)
+(defclass replique-transit/empty-list (clj-print/printable)
   ())
 
-(defmethod replique-print/print-method ((o replique-transit/empty-list))
-  (replique-print/print-list '()))
+(defmethod clj-print/print-method ((o replique-transit/empty-list))
+  (clj-print/print-list '()))
 
 ;; Decoder fns
 (defun replique-transit/decode-boolean (tag rep)
@@ -124,7 +124,7 @@
   (replique/more :type type))
 
 (defvar replique-transit/default-read-handlers
-  (replique/hash-map ?\? 'replique-transit/decode-boolean
+  (clj-data/hash-map ?\? 'replique-transit/decode-boolean
                      ?z 'replique-transit/decode-special-number
                      ;; do not decode big decimal since we may loose precision
                      ?n 'replique-transit/decode-bigint
@@ -192,7 +192,7 @@
              (stringp (aref a 0)))
         (let ((maybe-tagged-value (replique-transit/decode (aref a 0))))
           (if (replique-transit/is-tag maybe-tagged-value)
-              (let ((tag-handler (replique/get replique-transit/default-read-handlers
+              (let ((tag-handler (clj-data/get replique-transit/default-read-handlers
                                                maybe-tagged-value)))
                 (if tag-handler
                     (funcall tag-handler maybe-tagged-value (replique-transit/decode (aref a 1)))
@@ -206,7 +206,7 @@
   (if (and (> (length s) 1) (eq ?~ (aref s 0)))
       (cond ((eq ?# (aref s 1)) (replique-transit/tag :tag (substring-no-properties s 2)))
             ((eq ?~ (aref s 1)) (substring-no-properties s 1))
-            (t (let ((tag-handler (replique/get replique-transit/default-read-handlers
+            (t (let ((tag-handler (clj-data/get replique-transit/default-read-handlers
                                                 (aref s 1))))
                  (if tag-handler
                      (funcall tag-handler (aref s 1) (substring-no-properties s 2))
@@ -234,7 +234,7 @@
  (replique-transit/decode (read "\"e\\n\""))
  (replique-transit/decode '(1 ["~#circle" 2] 3))
  (replique-transit/decode ["~#circle" 2])
- (replique-transit/decode (replique/hash-map ["~#circle" [3 4]] 1 :f "~hee"))
+ (replique-transit/decode (clj-data/hash-map ["~#circle" [3 4]] 1 :f "~hee"))
  (replique-transit/decode (read "[\"~#with-meta\" [(1 2) #s(hash-table test equal size 1 data (:e \"e\"))]]"))
  (replique-transit/decode (read "[\"~#set\" [1 2]]"))
  (replique-transit/decode (read "[\"~#object\" [\"[I\" 0x3850d28c \"[I@3850d28c\"]]"))

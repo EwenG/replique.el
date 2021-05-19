@@ -21,7 +21,8 @@
 
 ;; Code:
 
-(require 'replique-hashmap)
+(require 'clj-data)
+(require 'clj-context)
 (require 'replique-context)
 
 ;; Any number of spaces followed by a call to clojure or clj (may be with an absolute path) followed by the arguments
@@ -54,7 +55,7 @@
                           (when (string-suffix-p "clojure" command)
                             command))))
           (when (and command (executable-find command))
-            (push (replique/hash-map :command command :args args) cli-args))))
+            (push (clj-data/hash-map :command command :args args) cli-args))))
       (when (> (length cli-args) 1)
         (user-error "Multiple calls to the Clojure command line interface found in file %s"
                     cli-file))
@@ -70,24 +71,24 @@
   (with-temp-buffer
     (insert sdeps)
     (goto-char (point-min))
-    (replique-context/forward-comment)
-    (let* ((sdeps-map (replique-context/extracted-value (replique-context/read-one))))
-      (when (and (cl-typep sdeps-map 'replique-context/object-delimited)
+    (clj-context/forward-comment)
+    (let* ((sdeps-map (replique-context/extracted-value (clj-context/read-one))))
+      (when (and (cl-typep sdeps-map 'clj-context/object-delimited)
                  (eq :map (oref sdeps-map :delimited)))
         (goto-char (+ 1 (oref sdeps-map :start)))
-        (replique-context/forward-comment)
-        (let ((deps-key (replique-context/extracted-value (replique-context/read-one))))
+        (clj-context/forward-comment)
+        (let ((deps-key (replique-context/extracted-value (clj-context/read-one))))
           (while (and
                   deps-key
-                  (not (and (cl-typep deps-key 'replique-context/object-symbol)
+                  (not (and (cl-typep deps-key 'clj-context/object-symbol)
                             (equal ":deps" (oref deps-key :symbol)))))
-            (replique-context/forward-comment)
-            (setq deps-key (replique-context/extracted-value (replique-context/read-one))))
+            (clj-context/forward-comment)
+            (setq deps-key (replique-context/extracted-value (clj-context/read-one))))
           (if deps-key
               (progn
-                (replique-context/forward-comment)
-                (let ((deps-map (replique-context/extracted-value (replique-context/read-one))))
-                  (when (and (cl-typep deps-map 'replique-context/object-delimited)
+                (clj-context/forward-comment)
+                (let ((deps-map (replique-context/extracted-value (clj-context/read-one))))
+                  (when (and (cl-typep deps-map 'clj-context/object-delimited)
                              (eq :map (oref deps-map :delimited)))
                     (goto-char (- (oref deps-map :end) 1))
                     (insert " replique/replique ")
@@ -229,15 +230,15 @@
          "-Sdeps" ,(format "{:deps {replique/replique %s}}" replique-coords)
          ,@(when host (list (format "-J-Dreplique.server.host=%s" host)))
          ,@(when port (list (format "-J-Dreplique.server.port=%s" port)))
-         "-m" "replique.main" ,(format "%s" directory))
+         "-M" "-m" "replique.main" ,(format "%s" directory))
     (let* ((parsed-command (replique-cli/parse-cli-call cli-file))
            (parsed-args (replique-cli/cli-args-with-replique
                          replique-coords host port
-                         (replique/get parsed-command :args))))
+                         (clj-data/get parsed-command :args))))
       (push "-m" parsed-args)
       (push "replique.main" parsed-args)
       (push (format "%s" directory) parsed-args)
-      (cons (replique/get parsed-command :command) (nreverse parsed-args)))))
+      (cons (clj-data/get parsed-command :command) (nreverse parsed-args)))))
 
 (defun replique-cli/spath-command
     (default-clojure-bin replique-coords cli-file)
@@ -248,9 +249,10 @@
     (let* ((parsed-command (replique-cli/parse-cli-call cli-file))
            (parsed-args (replique-cli/cli-args-with-replique
                          replique-coords nil nil
-                         (replique/get parsed-command :args))))
+                         (clj-data/get parsed-command :args)))
+           (parsed-args (nreverse parsed-args)))
       (push "-Spath" parsed-args)
-      (cons (replique/get parsed-command :command) (nreverse parsed-args)))))
+      (cons (clj-data/get parsed-command :command) parsed-args))))
 
 (provide 'replique-cli)
 

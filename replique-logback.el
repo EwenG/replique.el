@@ -23,7 +23,6 @@
 
 (require 'replique-utils)
 (require 'replique-repls)
-(require 'replique-pprint)
 
 (defun replique/logback-reload (&optional file-url)
   (interactive)
@@ -33,9 +32,9 @@
            (clj-repl (replique/active-repl :clj t))
            (file-url (or file-url
                          (read-file-name "Logback configuration file: "
-                                         (replique/get tooling-repl :directory)
+                                         (clj-data/get tooling-repl :directory)
                                          (buffer-file-name) t (buffer-file-name))))
-           (directory (replique/get clj-repl :directory))
+           (directory (clj-data/get clj-repl :directory))
            (tooling-repl (replique/repl-by :directory directory :repl-type :tooling)))
       (replique/send-input-from-source-clj
        (format "(replique.interactive/logback-reload \"%s\")"

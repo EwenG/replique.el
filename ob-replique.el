@@ -23,7 +23,8 @@
 
 (require 'ob)
 (require 'replique-repls)
-(require 'replique-pprint)
+(require 'clj-data)
+(require 'clj-pprint)
 
 (add-to-list 'org-babel-tangle-lang-exts '("clojure" . "clj"))
 (add-to-list 'org-babel-tangle-lang-exts '("clojurescript" . "cljs"))
@@ -39,16 +40,16 @@
         (format "No active %s REPL" repl-type)
       (let* ((form-s (replace-regexp-in-string "\n" " " form-s))
              (tooling-repl (replique/active-repl :tooling t))
-             (repl-env (replique/get repl :repl-env))
+             (repl-env (clj-data/get repl :repl-env))
              (resp (replique/send-tooling-msg
                     tooling-repl
-                    (replique/hash-map :type :eval
+                    (clj-data/hash-map :type :eval
                                        :repl-env repl-env
                                        :form form-s))))
-        (let ((err (replique/get resp :error)))
+        (let ((err (clj-data/get resp :error)))
           (if err
-              (replique-pprint/pprint-error-str err)
-            (replique/get resp :result)))))))
+              (clj-pprint/pprint-error-str err)
+            (clj-data/get resp :result)))))))
 (comment
  (replique/eval-form :cljs "(+ 1 4)")
  )

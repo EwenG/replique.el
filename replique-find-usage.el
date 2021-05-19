@@ -26,8 +26,10 @@
 (require 'replique-utils)
 (require 'replique-repls)
 (require 'replique-files)
+(require 'clj-data)
+(require 'clj-context)
+(require 'clj-pprint)
 (require 'replique-context)
-(require 'replique-highlight)
 (require 'ivy)
 (require 'xref)
 
@@ -47,10 +49,10 @@
 ;; ?: -> shy group
 ;; beginning of line or symbol separator or end of line
 (defvar replique-find-usage/symbol-separator-re
-  (concat "\\(?:^\\|" "[" replique-context/symbol-separators "]" "\\|$\\)"))
+  (concat "\\(?:^\\|" "[" clj-context/symbol-separators "]" "\\|$\\)"))
 
 (defvar replique-find-usage/symbol-ns-class-separator-re
-  (concat "\\(?:^\\|" "[" replique-context/symbol-separators "/" "]" "\\|$\\)"))
+  (concat "\\(?:^\\|" "[" clj-context/symbol-separators "/" "]" "\\|$\\)"))
 
 (defun replique-find-usage/escaped-symbol-name (sym)
   (regexp-quote (symbol-name sym)))
@@ -89,7 +91,7 @@
       (goto-char position))))
 
 (defun replique-find-usage/show-results (tooling-repl prompt results)
-  (replique-list-vars/ivy-read-with-hightlight
+  (replique-list-vars/ivy-read-with-highlight
    prompt results
    :action 'replique-find-usage/jump-to-result))
 
@@ -105,7 +107,7 @@
 (defun replique-find-usage/select-directories (tooling-repl)
   (let* ((default (or (replique-find-usage/maybe-visited-jar)
                       (replique/guess-project-root-dir)
-                      (replique/get tooling-repl :directory)))
+                      (clj-data/get tooling-repl :directory)))
          (dir (let ((ivy-sort-functions-alist nil)
                     (candidates (replique/presorted-completion-table
                                  (list default
@@ -118,14 +120,14 @@
           ((equal "Classpath" dir)
            (let ((resp (replique/send-tooling-msg
                         tooling-repl
-                        (replique/hash-map :type :classpath-for-sources
+                        (clj-data/hash-map :type :classpath-for-sources
                                            :repl-env :replique/clj))))
-             (let ((err (replique/get resp :error)))
+             (let ((err (clj-data/get resp :error)))
                (if err
                    (progn
-                     (message "%s" (replique-pprint/pprint-error-str err))
+                     (message "%s" (clj-pprint/pprint-error-str err))
                      (message "classpath "))
-                 (replique/get resp :paths)))))
+                 (clj-data/get resp :paths)))))
           ((equal "Other directory" dir)
            (when-let (dir (read-file-name "Search in directory: " nil nil t nil
                                           'replique-find-usage/directory-or-jar?))
@@ -190,7 +192,7 @@
        "The listing of source files was interruted. replique/find-usage may return a partial result"))
     replique/directory-files-recursively-files))
 
-(defvar replique-find-usage/jar-entries-cache (replique/hash-map))
+(defvar replique-find-usage/jar-entries-cache (clj-data/hash-map))
 
 (defun replique-find-usage/list-jar-entries (file-re jar-file)
   (with-temp-buffer
@@ -235,9 +237,9 @@
                          (ns (car ns-start))
                          (start-pos (cdr ns-start))
                          (stop-pos (cdr (cadr replique-context/ns-starts))))
-                    (when (replique/contains? symbols-in-namespaces ns)
+                    (when (clj-data/contains? symbols-in-namespaces ns)
                       (let ((symbols (cons global-symbol
-                                           (replique/get symbols-in-namespaces ns))))
+                                           (clj-data/get symbols-in-namespaces ns))))
                         (goto-char start-pos)
                         (while (re-search-forward (replique-find-usage/symbols-regexp
                                                    symbols ns-or-class?)
@@ -267,27 +269,27 @@
 (defun replique-find-usage/find-usage* (symbol tooling-repl repl-type repl-env ns)
   (let ((resp (replique/send-tooling-msg
                tooling-repl
-               (replique/hash-map :type :symbols-in-namespaces
+               (clj-data/hash-map :type :symbols-in-namespaces
                                   :repl-env repl-env
                                   :context (replique-context/get-context
                                             tooling-repl ns repl-env)
                                   :ns ns
                                   :symbol symbol))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "find-usage failed with symbol: %s" symbol))
-        (let* ((type (replique/get resp :find-usage-type))
-               (global-symbol (replique/get resp type))
+        (let* ((type (clj-data/get resp :find-usage-type))
+               (global-symbol (clj-data/get resp type))
                (directories (when type (replique-find-usage/select-directories tooling-repl)))
                (directories (replique-find-usage/filter-subdirectories directories)))
           (cond ((equal :var type)
                  (let ((results (replique-find-usage/do-find-usage
                                  directories
                                  repl-type
-                                 (replique/get resp :default-ns)
-                                 (replique/get resp :symbols-in-namespaces)
+                                 (clj-data/get resp :default-ns)
+                                 (clj-data/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
                                  global-symbol nil)))
                    (if results
@@ -300,8 +302,8 @@
                  (let ((results (replique-find-usage/do-find-usage
                                  directories
                                  repl-type
-                                 (replique/get resp :default-ns)
-                                 (replique/get resp :symbols-in-namespaces)
+                                 (clj-data/get resp :default-ns)
+                                 (clj-data/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
                                  global-symbol nil)))
                    (if results
@@ -314,8 +316,8 @@
                  (let ((results (replique-find-usage/do-find-usage
                                  directories
                                  repl-type
-                                 (replique/get resp :default-ns)
-                                 (replique/get resp :symbols-in-namespaces)
+                                 (clj-data/get resp :default-ns)
+                                 (clj-data/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
                                  global-symbol t)))
                    (if results
@@ -330,8 +332,8 @@
                  (let ((results (replique-find-usage/do-find-usage
                                  directories
                                  repl-type
-                                 (replique/get resp :default-ns)
-                                 (replique/get resp :symbols-in-namespaces)
+                                 (clj-data/get resp :default-ns)
+                                 (clj-data/get resp :symbols-in-namespaces)
                                  replique-find-usage/search-in-strings-and-comments
                                  global-symbol t)))
                    (if results
@@ -348,24 +350,24 @@
   (if (not clj-repl)
       (user-error "No active Clojure REPL")
     (replique-find-usage/find-usage* symbol tooling-repl
-                                     (replique/get clj-repl :repl-type)
-                                     (replique/get clj-repl :repl-env)
+                                     (clj-data/get clj-repl :repl-type)
+                                     (clj-data/get clj-repl :repl-env)
                                      (replique-context/clojure-find-ns))))
 
 (defun replique-find-usage/find-usage-cljs (symbol tooling-repl cljs-repl)
   (if (not cljs-repl)
       (user-error "No active Clojurescript REPL")
     (replique-find-usage/find-usage* symbol tooling-repl
-                                     (replique/get cljs-repl :repl-type)
-                                     (replique/get cljs-repl :repl-env)
+                                     (clj-data/get cljs-repl :repl-type)
+                                     (clj-data/get cljs-repl :repl-env)
                                      (replique-context/clojure-find-ns))))
 
 (defun replique-find-usage/find-usage-cljc (symbol tooling-repl repl)
   (if (not repl)
       (user-error "No active Clojure or Clojurescript REPL")
     (replique-find-usage/find-usage* symbol tooling-repl
-                                     (replique/get repl :repl-type)
-                                     (replique/get repl :repl-env)
+                                     (clj-data/get repl :repl-type)
+                                     (clj-data/get repl :repl-env)
                                      (replique-context/clojure-find-ns))))
 
 (defun replique/find-usage (symbol)
@@ -410,7 +412,7 @@
 
 (defun replique-find-usage/parameters ()
   (interactive)
-  (let ((params (replique/hash-map
+  (let ((params (clj-data/hash-map
                  "search-in-strings-and-comments"
                  'replique-find-usage/search-in-strings-and-comments)))
     (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)

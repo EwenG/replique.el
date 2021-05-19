@@ -23,8 +23,13 @@
 
 (require 'replique-repls)
 (require 'replique-list-vars)
+(require 'clj-data)
+(require 'clj-context)
+(require 'clj-highlight)
 (require 'replique-context)
-(require 'replique-pprint)
+(require 'clj-pprint)
+(require 'clj-print)
+(require 'clj-browse)
 (require 'ivy)
 
 (defvar-local replique-watch/directory nil)
@@ -35,96 +40,69 @@
 (defvar-local replique-watch/print-length nil)
 (defvar-local replique-watch/print-level nil)
 (defvar-local replique-watch/print-meta nil)
-(defvar-local replique-watch/browse-path nil)
 (defvar-local replique-watch/record-size nil)
 (defvar buffer-id-generator 0)
-
-(defvar replique-watch/no-candidate "")
-
-(defvar replique-watch/temporary-browse-path nil)
-(defvar replique-watch/candidate->index nil)
-(defvar replique-watch/index->pos nil)
 
 (defun replique-watch/new-buffer-id (watch-type)
   (let ((new-buffer-id buffer-id-generator))
     (setq buffer-id-generator (+ 1 buffer-id-generator))
     (concat watch-type "-" (number-to-string new-buffer-id))))
 
-(defun replique-watch/pprint (val)
-  (let ((inhibit-read-only t)
-        (replique-pprint/is-multi-line? nil)
-        (p (point)))
-    (font-lock-mode -1)
-    (erase-buffer)
-    (insert val)
-    (goto-char (point-min))
-    (let* ((p-min (point-min))
-           (p-max (point-max))
-           (printed-raw (buffer-substring-no-properties p-min p-max)))
-      (replique-pprint/pprint)
-      (put-text-property p-min (max p-min (+ 1 p-min))
-                         'replique-watch/raw-printed
-                         printed-raw))
-    (font-lock-mode 1)
-    (goto-char p)
-    (set-buffer-modified-p nil)))
-
 (defun replique-watch/init-watch-buffer (tooling-repl repl buffer-id watch-buffer)
-  (let* ((ref-watchers (replique/get tooling-repl :ref-watchers))
-         (repl-type (replique/get repl :repl-type))
-         (repl-env (replique/get repl :repl-env))
+  (let* ((ref-watchers (clj-data/get tooling-repl :ref-watchers))
+         (repl-type (clj-data/get repl :repl-type))
+         (repl-env (clj-data/get repl :repl-env))
          (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
          (print-length (thread-first repl
-                         (replique/get :params)
-                         (replique/get (concat ns-prefix "/*print-length*"))))
+                         (clj-data/get :params)
+                         (clj-data/get (concat ns-prefix "/*print-length*"))))
          (print-level (thread-first repl
-                        (replique/get :params)
-                        (replique/get (concat ns-prefix "/*print-level*"))))
+                        (clj-data/get :params)
+                        (clj-data/get (concat ns-prefix "/*print-level*"))))
          (print-meta (thread-first repl
-                       (replique/get :params)
-                       (replique/get (concat ns-prefix "/*print-meta*")))))
+                       (clj-data/get :params)
+                       (clj-data/get (concat ns-prefix "/*print-meta*")))))
     (with-current-buffer watch-buffer
-      (buffer-disable-undo watch-buffer)
-      (clojure-mode)
       (replique-watch/minor-mode)
-      (setq buffer-read-only t)
-      (setq replique-watch/directory (replique/get tooling-repl :directory))
-      (setq replique-watch/repl-env repl-env)
       (setq replique-watch/repl-type repl-type)
-      (setq replique-watch/buffer-id buffer-id)
+      (setq replique-watch/repl-env repl-env)
+      (setq replique-watch/directory (clj-data/get tooling-repl :directory))
       (setq replique-watch/print-length print-length)
       (setq replique-watch/print-level print-level)
       (setq replique-watch/print-meta print-meta)
-      (setq replique-watch/browse-path '()))
+      (setq replique-watch/buffer-id buffer-id)
+      (setq replique-watch/directory (clj-data/get tooling-repl :directory)))
     (puthash buffer-id watch-buffer ref-watchers)))
 
 (defun replique-watch/do-watch (tooling-repl repl buffer-id var-name)
-  (let* ((repl-env (replique/get repl :repl-env))
+  (let* ((repl-env (clj-data/get repl :repl-env))
          (watch-buffer (generate-new-buffer (format "*watch*%s*" var-name)))
          (resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :add-watch
+                (clj-data/hash-map :type :add-watch
                                    :repl-env repl-env
                                    :var-sym (make-symbol (format "'%s" var-name))
                                    :buffer-id buffer-id))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
           (progn
             (kill-buffer watch-buffer)
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (message "watch failed with var %s" var-name)
             nil)
-        (let* ((repl-type (replique/get repl :repl-type))
+        (let* ((repl-type (clj-data/get repl :repl-type))
+               (repl-env (clj-data/get repl :repl-env))
                (ns-prefix (if (equal repl-type :cljs) "cljs.core" "clojure.core"))
                (print-length (thread-first repl
-                               (replique/get :params)
-                               (replique/get (concat ns-prefix "/*print-length*"))))
+                               (clj-data/get :params)
+                               (clj-data/get (concat ns-prefix "/*print-length*"))))
                (print-level (thread-first repl
-                              (replique/get :params)
-                              (replique/get (concat ns-prefix "/*print-level*"))))
+                              (clj-data/get :params)
+                              (clj-data/get (concat ns-prefix "/*print-level*"))))
                (print-meta (thread-first repl
-                             (replique/get :params)
-                             (replique/get (concat ns-prefix "/*print-meta*")))))
+                             (clj-data/get :params)
+                             (clj-data/get (concat ns-prefix "/*print-meta*")))))
+          (clj-browse/init-browse-buffer watch-buffer)
           (replique-watch/init-watch-buffer tooling-repl repl buffer-id watch-buffer)
           (with-current-buffer watch-buffer
             (setq replique-watch/var-name var-name)
@@ -138,14 +116,14 @@
       (when replique-watch/var-name
         (let ((resp (replique/send-tooling-msg
                      tooling-repl
-                     (replique/hash-map :type :remove-watch
+                     (clj-data/hash-map :type :remove-watch
                                         :repl-env replique-watch/repl-env
                                         :buffer-id replique-watch/buffer-id))))
-          (let ((err (replique/get resp :error)))
+          (let ((err (clj-data/get resp :error)))
             (when err
-              (message "%s" (replique-pprint/pprint-error-str err))
+              (message "%s" (clj-pprint/pprint-error-str err))
               (error "Error while removing watcher for var: %s" replique-watch/var-name)))))
-      (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+      (let ((ref-watchers (clj-data/get tooling-repl :ref-watchers)))
         (remhash replique-watch/buffer-id ref-watchers)))))
 
 (add-hook 'kill-buffer-hook 'replique-watch/on-kill-buffer)
@@ -156,14 +134,14 @@
     (replique-watch/do-watch tooling-repl repl buffer-id var-name)))
 
 (defun replique-watch/watch-printed (tooling-repl repl)
-  (let* ((repl-type (replique/get repl :repl-type))
-         (directory (replique/get repl :directory))
-         (session (replique/get repl :session))
+  (let* ((repl-type (clj-data/get repl :repl-type))
+         (directory (clj-data/get repl :directory))
+         (session (clj-data/get repl :session))
          (printed-buffer-id (if (equal :cljs repl-type)
                                 "var-replique.cljs-env.watch/printed"
                               (concat "printed-" session)))
-         (ref-watchers (replique/get tooling-repl :ref-watchers))
-         (existing-printed-watch-buffer (replique/get ref-watchers printed-buffer-id)))
+         (ref-watchers (clj-data/get tooling-repl :ref-watchers))
+         (existing-printed-watch-buffer (clj-data/get ref-watchers printed-buffer-id)))
     (if existing-printed-watch-buffer
         (pop-to-buffer-same-window existing-printed-watch-buffer)
       (let* ((buffer-name (if (equal :cljs repl-type)
@@ -174,21 +152,21 @@
                                     (replique/keyword-to-string repl-type)
                                     session)))
              (watch-buffer (generate-new-buffer buffer-name)))
-        (replique-watch/init-watch-buffer
-         tooling-repl repl printed-buffer-id watch-buffer)
+        (clj-browse/init-browse-buffer watch-buffer)
+        (replique-watch/init-watch-buffer tooling-repl repl printed-buffer-id watch-buffer)
         (with-current-buffer watch-buffer
           (replique-watch/refresh t nil nil))
         (pop-to-buffer-same-window watch-buffer)))))
 
 (defun replique-watch/watch-results (tooling-repl repl)
-  (let* ((repl-type (replique/get repl :repl-type))
-         (directory (replique/get repl :directory))
-         (session (replique/get repl :session))
+  (let* ((repl-type (clj-data/get repl :repl-type))
+         (directory (clj-data/get repl :directory))
+         (session (clj-data/get repl :session))
          (results-buffer-id (if (equal :cljs repl-type)
                                 "var-replique.cljs-env.watch/results"
                               (concat "results-" session)))
-         (ref-watchers (replique/get tooling-repl :ref-watchers))
-         (existing-results-watch-buffer (replique/get ref-watchers results-buffer-id)))
+         (ref-watchers (clj-data/get tooling-repl :ref-watchers))
+         (existing-results-watch-buffer (clj-data/get ref-watchers results-buffer-id)))
     (if existing-results-watch-buffer
         (pop-to-buffer-same-window existing-results-watch-buffer)
       (let* ((buffer-name (if (equal :cljs repl-type)
@@ -199,8 +177,8 @@
                                     (replique/keyword-to-string repl-type)
                                     session)))
              (watch-buffer (generate-new-buffer buffer-name)))
-        (replique-watch/init-watch-buffer
-         tooling-repl repl results-buffer-id watch-buffer)
+        (clj-browse/init-browse-buffer watch-buffer)
+        (replique-watch/init-watch-buffer tooling-repl repl results-buffer-id watch-buffer)
         (with-current-buffer watch-buffer
           (replique-watch/refresh t nil nil))
         (pop-to-buffer-same-window watch-buffer)))))
@@ -238,24 +216,24 @@
       (replique-watch/watch* var-ns tooling-repl repl))))
 
 (defun replique-watch/watch-session (repl)
-  (let* ((repl-ns (replique/get repl :ns))
-         (directory (replique/get repl :directory))
+  (let* ((repl-ns (clj-data/get repl :ns))
+         (directory (clj-data/get repl :directory))
          (tooling-repl (replique/repl-by :directory directory :repl-type :tooling)))
     (replique-watch/watch* (symbol-name repl-ns) tooling-repl repl)))
 
 (defun replique-watch/kill-repl-watch-buffers (repl)
-  (let ((directory (replique/get repl :directory))
-        (session (replique/get repl :session)))
+  (let ((directory (clj-data/get repl :directory))
+        (session (clj-data/get repl :session)))
     (when-let (tooling-repl (replique/repl-by :directory directory :repl-type :tooling))
-      (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
-        (when-let (watch-buffer (replique/get ref-watchers (concat "printed-" session)))
+      (let ((ref-watchers (clj-data/get tooling-repl :ref-watchers)))
+        (when-let (watch-buffer (clj-data/get ref-watchers (concat "printed-" session)))
           (kill-buffer watch-buffer))
-        (when-let (watch-buffer (replique/get ref-watchers (concat "results-" session)))
+        (when-let (watch-buffer (clj-data/get ref-watchers (concat "results-" session)))
           (kill-buffer watch-buffer))
-        (when-let (watch-buffer (replique/get
+        (when-let (watch-buffer (clj-data/get
                                  ref-watchers "var-replique.cljs-env.watch/printed"))
           (kill-buffer watch-buffer))
-        (when-let (watch-buffer (replique/get
+        (when-let (watch-buffer (clj-data/get
                                  ref-watchers "var-replique.cljs-env.watch/results"))
           (kill-buffer watch-buffer))))))
 
@@ -269,20 +247,20 @@
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique-watch/notify-update (msg)
-  (let* ((directory (replique/get msg :process-id))
+  (let* ((directory (clj-data/get msg :process-id))
          (tooling-repl (replique/repl-by :repl-type :tooling
                                          :directory directory)))
     (when tooling-repl
-      (let* ((buffer-id (replique/get msg :buffer-id))
-             (ref-watchers (replique/get tooling-repl :ref-watchers))
-             (watch-buffer (replique/get ref-watchers buffer-id)))
+      (let* ((buffer-id (clj-data/get msg :buffer-id))
+             (ref-watchers (clj-data/get tooling-repl :ref-watchers))
+             (watch-buffer (clj-data/get ref-watchers buffer-id)))
         (when watch-buffer
           (with-current-buffer watch-buffer
             (set-buffer-modified-p t)))))))
 
 (defun replique-watch/is-orphan-buffer? (tooling-repl buffer-id)
-  (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
-    (not (replique/contains? ref-watchers buffer-id))))
+  (let ((ref-watchers (clj-data/get tooling-repl :ref-watchers)))
+    (not (clj-data/contains? ref-watchers buffer-id))))
 
 (defun replique-watch/refresh (&optional first-render? no-update? minibuffer?)
   (interactive)
@@ -290,47 +268,47 @@
       (user-error "replique-watch/refresh can only be used in a watch buffer")
     (let* ((tooling-repl (replique/repl-by :repl-type :tooling
                                            :directory replique-watch/directory))
-           (msg (replique/hash-map :type :refresh-watch
+           (msg (clj-data/hash-map :type :refresh-watch
                                    :update? (null no-update?)
                                    :repl-env replique-watch/repl-env
                                    :buffer-id replique-watch/buffer-id
                                    :print-length replique-watch/print-length
                                    :print-level replique-watch/print-level
                                    :print-meta replique-watch/print-meta
-                                   :browse-path `(quote ,replique-watch/browse-path)))
+                                   :browse-path `(quote ,clj-browse/browse-path)))
            (msg (if replique-watch/var-name
-                    (replique/assoc msg :var-sym
+                    (clj-data/assoc msg :var-sym
                                     (make-symbol (format "'%s" replique-watch/var-name)))
                   msg)))
       (when tooling-repl
         (let ((resp (replique/send-tooling-msg tooling-repl msg)))
-          (let ((err (replique/get resp :error)))
+          (let ((err (clj-data/get resp :error)))
             (if err
                 (progn
-                  (message "%s" (replique-pprint/pprint-error-str err))
+                  (message "%s" (clj-pprint/pprint-error-str err))
                   (cond ((null replique-watch/var-name)
                          (message "refresh watch failed"))
-                        ((replique/get resp :undefined)
+                        ((clj-data/get resp :undefined)
                          (message "%s is undefined" replique-watch/var-name))
                         (t (message "refresh watch failed with var %s"
                                     replique-watch/var-name))))
               ;; Ensure the buffer is not an orphan one
-              (let ((ref-watchers (replique/get tooling-repl :ref-watchers)))
+              (let ((ref-watchers (clj-data/get tooling-repl :ref-watchers)))
                 (puthash replique-watch/buffer-id (current-buffer) ref-watchers))
               (when (not first-render?)
                 (message "Refreshing ..."))
-              (let ((resp (replique/get resp :refresh-watch)))
-                (setq replique-watch/record-size (replique/get resp :record-size))
-                (replique-watch/pprint (replique/get resp :var-value))
+              (let ((resp (clj-data/get resp :refresh-watch)))
+                (setq replique-watch/record-size (clj-data/get resp :record-size))
+                (clj-browse/pprint (clj-data/get resp :var-value))
                 (when (not first-render?)
                   (if minibuffer?
                       (minibuffer-message "Refreshing ... done")
                     (message "Refreshing ... done")))))))))))
 
-(defun replique-watch/do-browse (candidate)
-  (if (equal replique-watch/no-candidate candidate)
+(defun replique-watch/browse-done (candidate)
+  (if (equal clj-browse/no-candidate candidate)
       (progn
-        (setq replique-watch/browse-path replique-watch/temporary-browse-path)
+        (setq clj-browse/browse-path clj-browse/temporary-browse-path)
         (replique-watch/refresh nil t nil)
         (goto-char (point-min)))
     (let* ((tooling-repl (replique/repl-by :repl-type :tooling
@@ -338,20 +316,19 @@
            (repl-env replique-watch/repl-env)
            (resp (replique/send-tooling-msg
                   tooling-repl
-                  (replique/hash-map :type :can-browse?
+                  (clj-data/hash-map :type :can-browse?
                                      :repl-env repl-env
                                      :candidate candidate))))
-      (let ((err (replique/get resp :error)))
+      (let ((err (clj-data/get resp :error)))
         (if err
             (progn
-              (message "%s" (replique-pprint/pprint-str err))
+              (message "%s" (clj-pprint/pprint-str err))
               (message "can-browse? failed with candidate: %s"
-                       (replique-print/print-str candidate)))
-          (if (replique/get resp :can-browse?)
-              (let* ((browse-index (replique/get replique-watch/candidate->index candidate))
+                       (clj-print/print-str candidate)))
+          (if (clj-data/get resp :can-browse?)
+              (let* ((browse-index (clj-data/get clj-browse/candidate->index candidate))
                      (candidate (propertize candidate 'replique-watch/browse-index browse-index)))
-                (setq replique-watch/browse-path
-                      (cons candidate replique-watch/temporary-browse-path))
+                (setq clj-browse/browse-path (cons candidate clj-browse/temporary-browse-path))
                 (replique-watch/refresh nil t nil)
                 (goto-char (point-min)))
             (message "Cannot browse the selected path")))))))
@@ -359,39 +336,44 @@
 (defun replique-watch/browse-backward-delete-char ()
   (interactive)
   (if (equal "" ivy-text)
-      (let ((new-browse-path (cdr replique-watch/temporary-browse-path)))
+      (let ((new-browse-path (cdr clj-browse/temporary-browse-path)))
         (ivy-quit-and-run
-         (let ((replique-watch/temporary-browse-path new-browse-path))
-           (replique-watch/browse*))))
+          (let ((clj-browse/temporary-browse-path new-browse-path))
+            (clj-browse/browse* 'replique-watch/browse-candidates*
+                                'replique-watch/browse-done
+                                replique-watch/browse-map))))
     (ivy-backward-delete-char)))
 
 (defun replique-watch/browse-alt-done ()
   (interactive)
   (when-let (candidate (nth ivy--index ivy--all-candidates))
-    (when (not (equal replique-watch/no-candidate candidate))
+    (when (not (equal clj-browse/no-candidate candidate))
       (let* ((tooling-repl (with-ivy-window
                              (replique/repl-by :repl-type :tooling
                                                :directory replique-watch/directory)))
              (repl-env (with-ivy-window replique-watch/repl-env))
              (resp (replique/send-tooling-msg
                     tooling-repl
-                    (replique/hash-map :type :can-browse?
+                    (clj-data/hash-map :type :can-browse?
                                        :repl-env repl-env
                                        :candidate candidate))))
-        (let ((err (replique/get resp :error)))
+        (let ((err (clj-data/get resp :error)))
           (if err
               (progn
-                (message "%s" (replique-pprint/pprint-str err))
+                (message "%s" (clj-pprint/pprint-str err))
                 (message "can-browse? failed with candidate: %s"
-                         (replique-print/print-str candidate))
+                         (clj-print/print-str candidate))
                 (sit-for 0.5))
-            (if (replique/get resp :can-browse?)
-                (let* ((browse-index (replique/get replique-watch/candidate->index candidate))
-                       (candidate (propertize candidate 'replique-watch/browse-index browse-index))
-                       (new-browse-path (cons candidate replique-watch/temporary-browse-path)))
-                  (ivy-quit-and-run
-                    (let ((replique-watch/temporary-browse-path new-browse-path))
-                      (replique-watch/browse*))))
+            (if (clj-data/get resp :can-browse?)
+                (progn
+                  (let* ((browse-index (clj-data/get clj-browse/candidate->index candidate))
+                         (candidate (propertize candidate 'replique-watch/browse-index browse-index))
+                         (new-browse-path (cons candidate clj-browse/temporary-browse-path)))
+                    (ivy-quit-and-run
+                      (let ((clj-browse/temporary-browse-path new-browse-path))
+                        (clj-browse/browse* 'replique-watch/browse-candidates*
+                                            'replique-watch/browse-done
+                                            replique-watch/browse-map)))))
               (message "Cannot browse the selected path")
               (sit-for 0.5))))))))
 
@@ -401,249 +383,38 @@
     (define-key map (kbd "C-j") 'replique-watch/browse-alt-done)
     map))
 
-(defun replique-watch/browse-path->string (browse-path)
-  (if (eq '() browse-path)
-      ""
-    (concat (string-join (reverse browse-path) " ") " ")))
-
 (defun replique-watch/browse-candidates* (user-input)
   (let* ((tooling-repl (replique/repl-by :repl-type :tooling
                                          :directory replique-watch/directory))
          (resp (replique/send-tooling-msg
                 tooling-repl
-                (replique/hash-map :type :browse-candidates
+                (clj-data/hash-map :type :browse-candidates
                                    :repl-env replique-watch/repl-env
                                    :var-sym (make-symbol (format "'%s" replique-watch/var-name))
                                    :buffer-id replique-watch/buffer-id
-                                   :browse-path `(quote ,replique-watch/temporary-browse-path)
+                                   :browse-path `(quote ,clj-browse/temporary-browse-path)
                                    :prefix user-input
                                    :print-meta replique-watch/print-meta))))
-    (let ((err (replique/get resp :error)))
+    (let ((err (clj-data/get resp :error)))
       (if err
-          (if (replique/get resp :undefined)
+          (if (clj-data/get resp :undefined)
               (error "%s is undefined" replique-watch/var-name)
-            (message "%s" (replique-pprint/pprint-error-str err))
+            (message "%s" (clj-pprint/pprint-error-str err))
             (error "Browse failed while requesting browse candidates"))
-        (replique/get resp :candidates)))))
-
-(defun replique-watch/browse-candidates (user-input)
-  (with-ivy-window
-    (replique-watch/browse-candidates* user-input)))
+        (clj-data/get resp :candidates)))))
 
 (defun replique-watch/read-one ()
-  (let ((replique-context/splice-ends '())
-        (replique-context/symbol-separators replique-pprint/symbol-separators)
-        (replique-context/symbol-separator-re replique-pprint/symbol-separator-re))
-    (replique-context/read-one)))
-
-(defun replique-watch/compute-browse-positions-sequential (index->pos seq)
-  (let ((continue t)
-        (index 0))
-    (goto-char (+ 1 (oref seq :start)))
-    (while continue
-      (replique-context/forward-comment)
-      (let ((p-start (point))
-            (object (replique-watch/read-one)))
-        (if (null object)
-            (setq continue nil)
-          (puthash index p-start index->pos)
-          (setq index (+ 1 index)))))
-    index->pos))
-
-(defun replique-watch/compute-browse-positions-map (index->pos map)
-   (let ((continue t)
-         (index 0))
-     (goto-char (+ 1 (oref map :start)))
-     (while continue
-       (replique-context/forward-comment)
-       (let ((p-start (point))
-             (object (replique-watch/read-one)))
-         (if (null object)
-             (setq continue nil)
-           (when (equal 0 (logand index 1))
-             (puthash index p-start index->pos))
-           (setq index (+ 1 index)))))
-     index->pos))
-
-(defun replique-watch/compute-browse-positions-dispatch-macro (index->pos dm)
-   (let ((dm-type (oref dm :dispatch-macro))
-         (dm-value (replique-context/meta-value (oref dm :value))))
-     (cond ((and (eq :set dm-type)
-                 (cl-typep dm-value 'replique-context/object-delimited))
-            (replique-watch/compute-browse-positions-sequential index->pos dm-value))
-           ((and (or (eq :tagged-literal dm-type) (eq :namespaced-map dm-type))
-                 (cl-typep dm-value 'replique-context/object-delimited))
-            (if (equal :map (oref dm-value :delimited))
-                (replique-watch/compute-browse-positions-map index->pos dm-value)
-              (replique-watch/compute-browse-positions-sequential index->pos dm-value))))
-     index->pos))
-
-(defun replique-watch/compute-browse-positions-dispatch (index->pos)
-  (let* ((object (replique-watch/read-one))
-         (object-meta-value (replique-context/meta-value object)))
-    (when object-meta-value
-      (cond ((and (cl-typep object-meta-value 'replique-context/object-delimited)
-                  (equal :map (oref object-meta-value :delimited)))
-             (replique-watch/compute-browse-positions-map index->pos object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-delimited)
-             (replique-watch/compute-browse-positions-sequential index->pos object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
-             (replique-watch/compute-browse-positions-dispatch-macro
-              index->pos object-meta-value)))))
-  index->pos)
-
-(defun replique-watch/goto-indexes-path-position-sequential (target-index seq)
-  (let ((continue t)
-        (index 0))
-    (goto-char (+ 1 (oref seq :start)))
-    (while (and (< index target-index) continue)
-      (replique-context/forward-comment)
-      (let ((object (replique-watch/read-one)))
-        (if (null object)
-            (setq continue nil)
-          (setq index (+ 1 index)))))
-    (>= index target-index)))
-
-(defun replique-watch/goto-indexes-path-position-map (target-index seq)
-  (let ((continue t)
-        (index 0))
-    (goto-char (+ 1 (oref seq :start)))
-    (while (and (<= index target-index) continue)
-      (replique-context/forward-comment)
-      (let ((object (replique-watch/read-one)))
-        (if (null object)
-            (setq continue nil)
-          (setq index (+ 1 index)))))
-    (> index target-index)))
-
-(defun replique-watch/goto-indexes-path-position-dispatch-macro (target-index dm)
-  (let ((dm-type (oref dm :dispatch-macro))
-        (dm-value (replique-context/meta-value (oref dm :value))))
-    (cond ((and (eq :set dm-type)
-                (cl-typep dm-value 'replique-context/object-delimited))
-           (replique-watch/goto-indexes-path-position-sequential target-index dm-value))
-          ((and (or (eq :tagged-literal dm-type) (eq :namespaced-map dm-type))
-                (cl-typep dm-value 'replique-context/object-delimited))
-           (if (equal :map (oref dm-value :delimited))
-               (replique-watch/goto-indexes-path-position-map target-index dm-value)
-             (replique-watch/goto-indexes-path-position-sequential target-index dm-value))))))
-
-(defun replique-watch/goto-indexes-path-position-dispatch (index)
-  (let* ((object (replique-watch/read-one))
-         (object-meta-value (replique-context/meta-value object)))
-    (when object-meta-value
-      (cond ((and (cl-typep object-meta-value 'replique-context/object-delimited)
-                  (equal :map (oref object-meta-value :delimited)))
-             (replique-watch/goto-indexes-path-position-map index object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-delimited)
-             (replique-watch/goto-indexes-path-position-sequential index object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
-             (replique-watch/goto-indexes-path-position-dispatch-macro
-              index object-meta-value))))))
-
-(defun replique-watch/compute-browse-positions (indexes-path)
-  (let ((index->pos (replique/hash-map))
-        (at-position? t))
-    (save-excursion
-      (save-restriction
-        (widen)
-        (goto-char (point-min))
-        (while (and at-position? (consp indexes-path))
-          (if (null (car indexes-path))
-              (setq at-position? nil)
-            (replique-context/forward-comment)
-            (setq at-position?
-                  (replique-watch/goto-indexes-path-position-dispatch (car indexes-path)))
-            (setq indexes-path (cdr indexes-path))))
-        (when at-position?
-          (replique-context/forward-comment)
-          (puthash -1 (point) index->pos)
-          (replique-watch/compute-browse-positions-dispatch index->pos))))
-    index->pos))
-
-(defun replique-watch/compute-browse-indexes-sequential (candidate->index seq)
-  (let ((continue t)
-        (index 0))
-    (goto-char (+ 1 (oref seq :start)))
-    (while continue
-      (replique-context/forward-comment)
-      (let* ((object (replique-watch/read-one)))
-        (if (null object)
-            (setq continue nil)
-          (puthash (number-to-string index) index candidate->index)
-          (setq index (+ 1 index)))))
-    candidate->index))
-
-(defun replique-watch/compute-browse-indexes-map (candidate->index map)
-  (let ((continue t)
-        (index 0))
-    (goto-char (+ 1 (oref map :start)))
-    (while continue
-      (replique-context/forward-comment)
-      (let* ((object-start (point))
-             (object (replique-watch/read-one)))
-        (if (null object)
-            (setq continue nil)
-          (when (equal 0 (logand index 1))
-            (let ((k-str (buffer-substring-no-properties object-start (point))))
-              ;; If there are multiple identical keys in a map, then we cannot
-              ;; distinguish between them
-              (if (replique/contains? candidate->index k-str)
-                  (remhash k-str candidate->index)
-                (puthash k-str index candidate->index))))
-          (setq index (+ 1 index)))))
-    candidate->index))
-
-(defun replique-watch/compute-browse-indexes-dispatch-macro (candidate->index dm)
-  (let ((dm-type (oref dm :dispatch-macro))
-        (dm-value (replique-context/meta-value (oref dm :value))))
-    (cond ((and (eq :set dm-type)
-                (cl-typep dm-value 'replique-context/object-delimited))
-           (replique-watch/compute-browse-indexes-sequential candidate->index dm-value))
-          ((and (or (eq :tagged-literal dm-type) (eq :namespaced-map dm-type))
-                (cl-typep dm-value 'replique-context/object-delimited))
-           (if (equal :map (oref dm-value :delimited))
-               (replique-watch/compute-browse-indexes-map candidate->index dm-value)
-             (replique-watch/compute-browse-indexes-sequential candidate->index dm-value))))
-    candidate->index))
-
-(defun replique-watch/compute-browse-indexes-dispatch (candidate->index)
-  (let* ((object (replique-watch/read-one))
-         (object-meta-value (replique-context/meta-value object)))
-    (when object-meta-value
-      (cond ((and (cl-typep object-meta-value 'replique-context/object-delimited)
-                  (equal :map (oref object-meta-value :delimited)))
-             (replique-watch/compute-browse-indexes-map candidate->index object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-delimited)
-             (replique-watch/compute-browse-indexes-sequential candidate->index
-                                                               object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
-             (replique-watch/compute-browse-indexes-dispatch-macro
-              candidate->index object-meta-value)))))
-  candidate->index)
-
-(defun replique-watch/compute-browse-indexes (indexes-path)
-  (let ((candidate->index (replique/hash-map))
-        (at-position? t))
-    (goto-char (point-min))
-    (while (and at-position? (consp indexes-path))
-      (if (null (car indexes-path))
-          (setq at-position? nil)
-        (replique-context/forward-comment)
-        (setq at-position?
-              (replique-watch/goto-indexes-path-position-dispatch (car indexes-path)))
-        (setq indexes-path (cdr indexes-path))))
-    (when at-position?
-      (replique-context/forward-comment)
-      (replique-watch/compute-browse-indexes-dispatch candidate->index))
-    candidate->index))
+  (let ((clj-context/splice-ends '())
+        (clj-context/symbol-separators clj-pprint/symbol-separators)
+        (clj-context/symbol-separator-re clj-pprint/symbol-separator-re))
+    (clj-context/read-one)))
 
 (defun replique-watch/compute-init-candidate-sequential (target-point seq)
   (let ((continue t)
         (index 0))
     (goto-char (+ 1 (oref seq :start)))
     (while continue
-      (replique-context/forward-comment)
+      (clj-context/forward-comment)
       (let* ((object-start (point))
              (object (replique-watch/read-one)))
         (cond ((null object)
@@ -660,7 +431,7 @@
         (index 0))
     (goto-char (+ 1 (oref map :start)))
     (while continue
-      (replique-context/forward-comment)
+      (clj-context/forward-comment)
       (let* ((object-start (point))
              (object (replique-watch/read-one)))
         (cond ((null object)
@@ -676,27 +447,27 @@
 
 (defun replique-watch/compute-init-candidate-dispatch-macro (target-point dm)
   (let ((dm-type (oref dm :dispatch-macro))
-        (dm-value (replique-context/meta-value (oref dm :value))))
+        (dm-value (clj-context/meta-value (oref dm :value))))
     (cond ((and (eq :set dm-type)
-                (cl-typep dm-value 'replique-context/object-delimited))
+                (cl-typep dm-value 'clj-context/object-delimited))
            (replique-watch/compute-init-candidate-map target-point dm-value))
           ((and (or (eq :tagged-literal dm-type) (eq :namespaced-map dm-type))
-                (cl-typep dm-value 'replique-context/object-delimited))
+                (cl-typep dm-value 'clj-context/object-delimited))
            (if (equal :map (oref dm-value :delimited))
                (replique-watch/compute-init-candidate-map target-point dm-value)
              (replique-watch/compute-init-candidate-sequential target-point dm-value))))))
 
 (defun replique-watch/compute-init-candidate-dispatch (target-point)
   (let* ((object (replique-watch/read-one))
-         (object-meta-value (replique-context/meta-value object)))
+         (object-meta-value (clj-context/meta-value object)))
     (when object-meta-value
-      (cond ((and (cl-typep object-meta-value 'replique-context/object-delimited)
+      (cond ((and (cl-typep object-meta-value 'clj-context/object-delimited)
                   (equal :map (oref object-meta-value :delimited)))
              (replique-watch/compute-init-candidate-map target-point object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-delimited)
+            ((cl-typep object-meta-value 'clj-context/object-delimited)
              (replique-watch/compute-init-candidate-sequential target-point
                                                                object-meta-value))
-            ((cl-typep object-meta-value 'replique-context/object-dispatch-macro)
+            ((cl-typep object-meta-value 'clj-context/object-dispatch-macro)
              (replique-watch/compute-init-candidate-dispatch-macro
               target-point object-meta-value))))))
 
@@ -708,63 +479,6 @@
         (goto-char (point-min))
         (replique-watch/compute-init-candidate-dispatch target-point)))))
 
-(defun replique-watch/compute-path-indexes ()
-  (let ((browse-path (reverse replique-watch/browse-path))
-        (temporary-browse-path (reverse replique-watch/temporary-browse-path)))
-    (while (and
-            (car browse-path)
-            (car temporary-browse-path)
-            (equal (car browse-path) (car temporary-browse-path)))
-      (setq browse-path (cdr browse-path))
-      (setq temporary-browse-path (cdr temporary-browse-path)))
-    (if (null (car browse-path))
-        (mapcar (apply-partially 'get-text-property 0 'replique-watch/browse-index)
-                temporary-browse-path)
-      :negative-path)))
-
-(defun replique-watch/browse* (&optional init-candidate)
-  (let* ((printed-raw (get-text-property (point-min) 'replique-watch/raw-printed))
-         (path-indexes (replique-watch/compute-path-indexes))
-         (replique-watch/candidate->index (when (not (equal :negative-path path-indexes))
-                                            (with-temp-buffer
-                                              (insert printed-raw)
-                                              (replique-watch/compute-browse-indexes
-                                               path-indexes))))
-         (replique-watch/index->pos (when (not (equal :negative-path path-indexes))
-                                      (replique-watch/compute-browse-positions path-indexes)))
-         ;; for whatever reason :preset with :dynamic-collection does not work when :preselect
-         ;; is a string, but its works if it is a number
-         ;; Thus we start be prefectching the candidates to find the index of the init-candidate
-         (initial-candidates (replique-watch/browse-candidates* ""))
-         (preselect (when init-candidate (seq-position initial-candidates init-candidate))))
-    (ivy-read
-     (concat "Browse path: "
-             (replique-watch/browse-path->string
-              replique-watch/temporary-browse-path))
-     'replique-watch/browse-candidates
-     :dynamic-collection t
-     :action 'replique-watch/do-browse
-     :preselect preselect
-     :update-fn (lambda ()
-                  (with-ivy-window
-                    (replique-highlight/unhighlight)
-                    (when-let ((candidate (nth ivy--index ivy--all-candidates)))
-                      (if (equal replique-watch/no-candidate candidate)
-                          (when-let (pos (replique/get replique-watch/index->pos -1))
-                            (goto-char pos)
-                            (replique-highlight/highlight-no-line
-                             pos (min (point-max) (+ 1 pos))))
-                        (when-let (index (replique/get replique-watch/candidate->index
-                                                       candidate))
-                          (when-let (pos (replique/get replique-watch/index->pos index))
-                            (goto-char pos)
-                            (replique-highlight/highlight-no-line
-                             pos (min (point-max) (+ 1 pos)))))))))
-     :require-match t
-     :keymap replique-watch/browse-map
-     :caller 'replique-watch/browse
-     :unwind (lambda () (replique-highlight/unhighlight)))))
-
 (defun replique-watch/browse ()
   (interactive)
   (if (not (bound-and-true-p replique-watch/minor-mode))
@@ -773,24 +487,13 @@
                                               :directory replique-watch/directory))
       (if (replique-watch/is-orphan-buffer? tooling-repl replique-watch/buffer-id)
           (message "The buffer must be refreshed")
-        (let ((replique-watch/temporary-browse-path replique-watch/browse-path)
+        (let ((clj-browse/temporary-browse-path clj-browse/browse-path)
               (init-candidate (replique-watch/compute-init-candidate)))
           (when tooling-repl
-            (replique-watch/browse* init-candidate)))))))
-
-(defun replique-params/param->param-candidate (k v)
-  (propertize (replique-params/unqualify k)
-              'replique-params/param k
-              'replique-params/default-val v
-              'replique-params/history (replique-params/param->history
-                                        (replique-params/unqualify k))))
-
-(defun replique-params/params->params-candidate (params)
-  (let ((candidates nil))
-    (maphash (lambda (k v)
-               (push (replique-params/param->param-candidate k v) candidates))
-             params)
-    candidates))
+            (clj-browse/browse* 'replique-watch/browse-candidates*
+                                'replique-watch/browse-done
+                                replique-watch/browse-map
+                                init-candidate)))))))
 
 (defun replique-watch/set-param-watch (tooling-repl param param-value)
   (cond ((equal "*print-length*" param)
@@ -812,7 +515,7 @@
                        "cljs.core"
                      "clojure.core")))
     (when tooling-repl
-      (replique-params/params* (replique/hash-map
+      (replique-params/params* (clj-data/hash-map
                                 (concat ns-prefix "/*print-length*") replique-watch/print-length
                                 (concat ns-prefix "/*print-level*") replique-watch/print-level
                                 (concat ns-prefix "/*print-meta*") replique-watch/print-meta)
@@ -837,18 +540,18 @@
                                  (string-to-number value)))
                   (resp (replique/send-tooling-msg
                          tooling-repl
-                         (replique/hash-map :type (if (and record-size (> record-size 1))
+                         (clj-data/hash-map :type (if (and record-size (> record-size 1))
                                                       :start-recording :stop-recording)
                                             :repl-env replique-watch/repl-env
                                             :var-sym (make-symbol
                                                       (format "'%s" replique-watch/var-name))
                                             :buffer-id replique-watch/buffer-id
                                             :record-size record-size))))
-             (let ((err (replique/get resp :error)))
+             (let ((err (clj-data/get resp :error)))
                (if err
-                   (if (replique/get resp :undefined)
+                   (if (clj-data/get resp :undefined)
                        (message "%s is undefined" replique-watch/var-name)
-                     (message "%s" (replique-pprint/pprint-error-str err))
+                     (message "%s" (clj-pprint/pprint-error-str err))
                      (message "%s failed with var sym: %s"
                               (if (and record-size (> record-size 1))
                                   "start-recording" "stop-recording")
@@ -882,20 +585,20 @@
                                               :directory replique-watch/directory))
       (let ((resp (replique/send-tooling-msg
                    tooling-repl
-                   (replique/hash-map :type :set-record-position
+                   (clj-data/hash-map :type :set-record-position
                                       :repl-env replique-watch/repl-env
                                       :var-sym (make-symbol
                                                 (format "'%s" replique-watch/var-name))
                                       :buffer-id replique-watch/buffer-id
                                       :index (- new-index 1)))))
-        (let ((err (replique/get resp :error)))
+        (let ((err (clj-data/get resp :error)))
           (if err
-              (if (replique/get resp :undefined)
+              (if (clj-data/get resp :undefined)
                   (error "%s is undefined" replique-watch/var-name)
-                (message "%s" (replique-pprint/pprint-error-str err))
+                (message "%s" (clj-pprint/pprint-error-str err))
                 (error "record-next failed with var sym: %s"
                        (make-symbol (format "'%s" replique-watch/var-name))))
-            (let ((record-position (replique/get resp :record-position)))
+            (let ((record-position (clj-data/get resp :record-position)))
               (when replique-watch/record-refresh-timer
                 (cancel-timer replique-watch/record-refresh-timer))
               (setq replique-watch/record-refresh-timer
@@ -903,8 +606,8 @@
                                  'replique-watch/record-position-refresh
                                  (current-buffer)))
               (with-current-buffer minibuffer-buffer
-                (setq replique-watch/record-index (replique/get record-position :index))
-                (setq replique-watch/record-count (replique/get record-position :count))
+                (setq replique-watch/record-index (clj-data/get record-position :index))
+                (setq replique-watch/record-count (clj-data/get record-position :count))
                 (let ((inhibit-read-only t))
                   (delete-minibuffer-contents)
                   (insert (format "%s/%s "
@@ -935,21 +638,21 @@
           (message "The buffer must be refreshed")
         (let ((resp (replique/send-tooling-msg
                      tooling-repl
-                     (replique/hash-map :type :record-position
+                     (clj-data/hash-map :type :record-position
                                         :repl-env replique-watch/repl-env
                                         :var-sym (make-symbol
                                                   (format "'%s" replique-watch/var-name))
                                         :buffer-id replique-watch/buffer-id))))
-          (let ((err (replique/get resp :error)))
+          (let ((err (clj-data/get resp :error)))
             (if err
-                (if (replique/get resp :undefined)
+                (if (clj-data/get resp :undefined)
                     (message "%s is undefined" replique-watch/var-name)
-                  (message "%s" (replique-pprint/pprint-error-str err))
+                  (message "%s" (clj-pprint/pprint-error-str err))
                   (message "record-menu failed with var sym: %s"
                            (make-symbol (format "'%s" replique-watch/var-name))))
-              (let* ((record-position (replique/get resp :record-position))
-                     (index (replique/get record-position :index))
-                     (count (replique/get record-position :count))
+              (let* ((record-position (clj-data/get resp :record-position))
+                     (index (clj-data/get record-position :index))
+                     (count (clj-data/get record-position :count))
                      (minibuffer-setup-hook (lambda ()
                                               (setq buffer-read-only t)
                                               (setq replique-watch/record-index index)
@@ -960,7 +663,7 @@
 
 (defun replique-watch/copy-browse-path ()
   (interactive)
-  (let* ((browse-path (mapcar 'substring-no-properties replique-watch/browse-path))
+  (let* ((browse-path (mapcar 'substring-no-properties clj-browse/browse-path))
          (browse-path (concat "[" (string-join browse-path " ") "]")))
     (kill-new browse-path)
     (message "Browse path has been copied to clipboard: %s" browse-path)))

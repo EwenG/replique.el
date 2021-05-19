@@ -21,9 +21,8 @@
 
 ;; Code:
 
-(require 'replique-hashmap)
+(require 'clj-data)
 (require 'replique-repls)
-(require 'replique-hashmap)
 (require 'replique-list-vars)
 
 (defmacro comment (&rest body)
@@ -61,7 +60,7 @@
 
 (defun replique/remove-var-session (repl)
   (replique/remove-var*
-   (symbol-name (replique/get repl :ns)) (replique/active-repl :tooling) repl))
+   (symbol-name (clj-data/get repl :ns)) (replique/active-repl :tooling) repl))
 
 (defun replique/remove-var-get-ns ()
   (if (equal major-mode 'replique/mode)
