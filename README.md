@@ -13,7 +13,7 @@ Replique is compatible with clojure 1.8.0+, clojurescript 1.9.473+ and requires 
 Add Replique to your emacs package archives
 
 ```elisp
-(add-to-list 'package-archives '("replique" . "https://raw.githubusercontent.com/EwenG/replique.el/master/packages/") t)
+(add-to-list 'package-archives '("replique" . "https://raw.githubusercontent.com/EwenG/EwenG.github.io/master/packages") t)
 ```
 
 Install Replique
