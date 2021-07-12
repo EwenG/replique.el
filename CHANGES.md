@@ -1,5 +1,11 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.18
+
+- Extract many utilities to a separate library
+- Extract some print/pprint/context code to a separate library
+- Increase the REPL startup timeout
+
 # Version 0.0.17
 
 - Change the replique dependency protocol form git to https in order to avoid authentication errors
