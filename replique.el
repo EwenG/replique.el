@@ -846,6 +846,11 @@
       (seq-remove (lambda (y) (equal x y)))
       (cons x))))
 
+(defcustom replique/repl-start-timeout 5
+  "Timeout used when starting a Replique REPL, in seconds"
+  :type 'integer
+  :group 'replique)
+
 (defcustom replique/stylus-executable "stylus"
   "Stylus executable path"
   :type 'string
@@ -1466,10 +1471,12 @@ The following commands are available:
          (let* ((network-proc-buff (generate-new-buffer (format " *%s*" directory)))
                 (network-proc (open-network-stream directory nil host port))
                 (timeout (run-at-time
-                          5 nil (lambda (proc)
-                                  (message "Error while starting the REPL. The port number may already be used by another process")
-                                  (when (process-live-p proc)
-                                    (interrupt-process proc)))
+                          replique/repl-start-timeout
+                          nil
+                          (lambda (proc)
+                            (message "Error while starting the REPL. The port number may already be used by another process")
+                            (when (process-live-p proc)
+                              (interrupt-process proc)))
                           proc)))
            (puthash :port port tooling-repl)
            (puthash :host host tooling-repl)
