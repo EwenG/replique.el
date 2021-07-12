@@ -30,6 +30,7 @@
 (require 'clj-pprint)
 (require 'clj-print)
 (require 'clj-browse)
+(require 'clj-params)
 (require 'ivy)
 
 (defvar-local replique-watch/directory nil)
@@ -515,13 +516,20 @@
                        "cljs.core"
                      "clojure.core")))
     (when tooling-repl
-      (replique-params/params* (clj-data/hash-map
-                                (concat ns-prefix "/*print-length*") replique-watch/print-length
-                                (concat ns-prefix "/*print-level*") replique-watch/print-level
-                                (concat ns-prefix "/*print-meta*") replique-watch/print-meta)
-                               (apply-partially 'replique-watch/set-param-watch tooling-repl)))))
-
-(defvar replique-watch/record-history nil)
+      (clj-params/params* (list
+                           (propertize "*print-length*"
+                                       'clj-params/param (concat ns-prefix "/*print-length*")
+                                       'clj-params/default-val replique-watch/print-length
+                                       'clj-params/edit-fn 'clj-params/edit-numerical)
+                           (propertize "*print-level*"
+                                       'clj-params/param (concat ns-prefix "/*print-level*")
+                                       'clj-params/default-val replique-watch/print-level
+                                       'clj-params/edit-fn 'clj-params/edit-numerical)
+                           (propertize "*print-meta*"
+                                       'clj-params/param (concat ns-prefix "/*print-meta*")
+                                       'clj-params/default-val replique-watch/print-meta
+                                       'clj-params/edit-fn 'clj-params/edit-boolean))
+                          (apply-partially 'replique-watch/set-param-watch tooling-repl)))))
 
 (defun replique-watch/record ()
   (interactive)
@@ -531,10 +539,7 @@
                                               :directory replique-watch/directory))
       (if (replique-watch/is-orphan-buffer? tooling-repl replique-watch/buffer-id)
           (message "The buffer must be refreshed")
-        (replique-params/edit-numerical
-         (propertize "Recording size"
-                     'replique-params/history 'replique-watch/record-history
-                     'replique-params/default-val replique-watch/record-size)
+        (clj-params/edit-numerical
          (lambda (param value)
            (let* ((record-size (when (not (equal "nil" value))
                                  (string-to-number value)))
@@ -559,7 +564,9 @@
                  (setq replique-watch/record-size record-size)
                  (message (if (and record-size (> record-size 1))
                               (format "Recording started. Recording size: %s" record-size)
-                            "Recording stopped")))))))))))
+                            "Recording stopped"))))))
+         (propertize "Recording size"
+                     'clj-params/default-val replique-watch/record-size))))))
 
 
 (defvar replique-watch/minibuffer-map-record-menu

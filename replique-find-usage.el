@@ -29,6 +29,7 @@
 (require 'clj-data)
 (require 'clj-context)
 (require 'clj-pprint)
+(require 'clj-params)
 (require 'replique-context)
 (require 'ivy)
 (require 'xref)
@@ -381,44 +382,19 @@
    (clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
-(defvar replique-find-usage/search-in-strings-and-comments-history nil)
-
-(defun replique-find-usage/param->history (param)
-  (cond ((equal "search-in-strings-and-comments" param)
-         'replique-find-usage/search-in-strings-and-comments-history)))
-
-(defun replique-find-usage/param->param-candidate (k v)
-  (propertize k
-              'replique-params/param v
-              'replique-params/default-val (symbol-value v)
-              'replique-params/history (replique-find-usage/param->history k)))
-
-(defun replique-find-usage/params->params-candidate (params)
-  (let ((candidates nil))
-    (maphash (lambda (k v)
-               (push (replique-find-usage/param->param-candidate k v) candidates))
-             params)
-    candidates))
-
-(defun replique-find-usage/edit-param (action-fn param)
-  (cond ((equal "search-in-strings-and-comments" param)
-         (replique-params/edit-boolean param action-fn))))
-
 (defun replique-find-usage/set-param (param param-value)
-  (set (get-text-property 0 'replique-params/param param)
+  (set (get-text-property 0 'clj-params/param param)
        (cond ((equal "true" param-value) t)
              ((equal "false" param-value) nil)
              (t (string-to-number param-value)))))
 
 (defun replique-find-usage/parameters ()
   (interactive)
-  (let ((params (clj-data/hash-map
-                 "search-in-strings-and-comments"
-                 'replique-find-usage/search-in-strings-and-comments)))
-    (ivy-read "Parameters: " (replique-find-usage/params->params-candidate params)
-              :require-match t
-              :action (apply-partially 'replique-find-usage/edit-param
-                                       'replique-find-usage/set-param))))
+  (clj-params/params* (list (propertize "search-in-strings-and-comments"
+                                        'clj-params/param 'replique-find-usage/search-in-strings-and-comments
+                                        'clj-params/default-val replique-find-usage/search-in-strings-and-comments
+                                        'clj-params/edit-fn 'clj-params/edit-boolean))
+                      'replique-find-usage/set-param))
 
 (provide 'replique-find-usage)
 
