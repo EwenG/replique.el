@@ -198,8 +198,7 @@
                  (forward-char 10))
                 (t
                  (when (not sdeps-found)
-                   (push "-Sdeps" args)
-                   (push (format "{:deps {replique/replique %s}}" replique-coords) args))
+                   (setq args (seq-concatenate 'list args (list (format "{:deps {replique/replique %s}}" replique-coords) "-Sdeps"))))
                  (when host (push (format "-J-Dreplique.server.host=%s" host) args))
                  (when port (push (format "-J-Dreplique.server.port=%s" port) args))
                  (setq continue nil)))))
