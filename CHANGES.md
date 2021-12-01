@@ -1,5 +1,12 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
+# Version 0.0.19
+
+- Update the minumum emacs version
+- Update the minumum clojurescript version
+- More robust clojure starting command
+- CSS files are now sent to the browser upon reloading, even when the cljs REPL is not the active one
+
 # Version 0.0.18
 
 - Extract many utilities to a separate library

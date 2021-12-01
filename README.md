@@ -6,7 +6,7 @@ Replique relies on the Clojure [command line tools](https://clojure.org/guides/d
 
 ## Installation
 
-Replique is compatible with clojure 1.8.0+, clojurescript 1.9.473+ and requires emacs 25+.
+Replique is compatible with clojure 1.8.0+, clojurescript 1.10.238+ and requires emacs 27+.
 
 ### Emacs mode
 

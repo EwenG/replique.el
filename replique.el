@@ -18,7 +18,7 @@
 ;; This file is not part of GNU Emacs.
 
 ;; Version 0.0.19-SNAPSHOT
-;; Package-Requires: ((emacs "25") (clojure-mode "5.8.1") (ivy "0.10.0") (clj-data "0.0.2"))
+;; Package-Requires: ((emacs "27") (clojure-mode "5.8.1") (ivy "0.10.0") (clj-data "0.0.2"))
 
 ;; Commentary:
 
@@ -1830,11 +1830,10 @@ minibuffer"
 
 (provide 'replique)
 
-;; compliment keywords cljs -> missing :require ... ?
 ;; CSS / HTML autocompletion, with core.spec ?
 ;; The cljs-env makes no use of :repl-require
 
-;; autocomplete using the spec first, compliment next if no candidates
+;; autocomplete using the spec first, completion next if no candidates
 
 ;; spec autocomplete for files -> emacs first line local variables
 ;; spec autocomplete for macros -> specized macros
@@ -1859,7 +1858,7 @@ minibuffer"
 ;; scss less stylus for clj REPLs (javafx reloading?)
 ;; Add a .repliqueignore alternative (using replique init file ?) because build directories can be deleted / recreated
 
-;; min versions -> clojure 1.8.0, clojurescript 1.9.473
+;; min versions -> clojure 1.8.0, clojurescript 1.10.238
 ;; byte-recompile to check warnings ----  C-u 0 M-x byte-recompile-directory
 
 ;; printing something that cannot be printed by the elisp printer results something that cannot be read by the reader because the elisp printer will print a partial object before throwing an exception
