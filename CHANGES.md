@@ -1,6 +1,6 @@
 See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
-# Version 0.0.19
+# Version 1.0.0
 
 - Add the replique/restart-repls command to restart a process and its REPLs
 - More robust REPLs starting with regard to race conditions when restarting REPLs
