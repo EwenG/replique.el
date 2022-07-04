@@ -2,7 +2,7 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.19
 
-- Add a the replique/restart-repls command to restart a process and its REPLs
+- Add the replique/restart-repls command to restart a process and its REPLs
 - More robust REPLs starting with regard to race conditions when restarting REPLs
 - Add the possibility to reload log4j2 configurations
 - Update the minimum emacs version
