@@ -47,6 +47,7 @@
 (require 'replique-watch)
 (require 'replique-find-usage)
 (require 'replique-logback)
+(require 'replique-log4j2)
 (require 'replique-input)
 
 (defmacro comment (&rest body)
