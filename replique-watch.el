@@ -248,9 +248,9 @@
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique-watch/notify-update (msg)
-  (let* ((directory (clj-data/get msg :process-id))
+  (let* ((proc-id (clj-data/get msg :process-id))
          (tooling-repl (replique/repl-by :repl-type :tooling
-                                         :directory directory)))
+                                         :proc-id proc-id)))
     (when tooling-repl
       (let* ((buffer-id (clj-data/get msg :buffer-id))
              (ref-watchers (clj-data/get tooling-repl :ref-watchers))

@@ -28,6 +28,7 @@
 (require 'replique-transit)
 
 (defvar replique/repls nil)
+(defvar replique/proc-id 0)
 
 (defun replique/plist->alist (plist)
   (let ((alist '()))
@@ -147,7 +148,7 @@
 
 (defun replique/send-tooling-msg (tooling-repl msg)
   (let* ((tooling-network-proc (clj-data/get tooling-repl :network-proc))
-         (process-id (clj-data/get tooling-repl :directory))
+         (process-id (clj-data/get tooling-repl :proc-id))
          (correlation-id replique/correlation-id)
          (msg (clj-data/assoc msg
                               :process-id process-id

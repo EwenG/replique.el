@@ -644,6 +644,14 @@
         (message "list-namespaces failed")))
     resp))
 
+(defun replique/send-cljs-repl (tooling-repl clj-repl main-cljs-namespace)
+  (if main-cljs-namespace
+      (replique/send-input-from-source-clj
+       (format "(replique.interactive/cljs-repl '%s)" main-cljs-namespace)
+       tooling-repl clj-repl)
+    (replique/send-input-from-source-clj
+     "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))
+
 (defun replique/cljs-repl ()
   "Start a Clojurescript REPL in the currently active Clojure REPL"
   (interactive)
@@ -659,12 +667,7 @@
                                                     main-cljs-namespaces
                                                     nil t nil nil
                                                     (car main-cljs-namespaces))))))
-      (if main-cljs-namespace
-          (replique/send-input-from-source-clj
-           (format "(replique.interactive/cljs-repl '%s)" main-cljs-namespace)
-           tooling-repl clj-repl)
-        (replique/send-input-from-source-clj
-         "(replique.interactive/cljs-repl)" tooling-repl clj-repl)))))
+      (replique/send-cljs-repl tooling-repl clj-repl main-cljs-namespace))))
 
 (defun replique/cljs-repl-nashorn ()
   "Start a Clojurescript Nashorn REPL in the currently active Clojure REPL"
@@ -1271,8 +1274,8 @@ The following commands are available:
     (setq replique/repls (delete tooling-repl replique/repls))))
 
 ;; Close all the tooling repls that have no "session" REPL
-(defun replique/maybe-close-tooling-repl (directory)
-  (let ((other-repls (replique/repls-by-maybe-not-started :directory directory)))
+(defun replique/maybe-close-tooling-repl (proc-id)
+  (let ((other-repls (replique/repls-by-maybe-not-started :proc-id proc-id)))
     (when (seq-every-p (lambda (repl)
                          (equal :tooling (clj-data/get repl :repl-type)))
                        other-repls)
@@ -1282,7 +1285,7 @@ The following commands are available:
 
 (defun replique/close-repl (repl kill-buffers)
   (let* ((buffer (clj-data/get repl :buffer))
-         (directory (clj-data/get repl :directory))
+         (proc-id (clj-data/get repl :proc-id))
          (proc (get-buffer-process buffer)))
     (when proc
       (set-process-sentinel proc nil)
@@ -1298,10 +1301,10 @@ The following commands are available:
           (insert (concat "\nConnection broken by remote peer\n")))))
     (setq replique/repls (delete repl replique/repls))
     ;; If the only repl left is a tooling repl, let's close it
-    (replique/maybe-close-tooling-repl directory)))
+    (replique/maybe-close-tooling-repl proc-id)))
 
-(defun replique/close-repls (directory kill-buffers)
-  (let* ((repls (replique/repls-by-maybe-not-started :directory directory))
+(defun replique/close-repls (proc-id kill-buffers)
+  (let* ((repls (replique/repls-by-maybe-not-started :proc-id proc-id))
          (not-tooling-repls (seq-filter (lambda (repl)
                                           (not (equal :tooling (clj-data/get repl :repl-type))))
                                         repls))
@@ -1313,6 +1316,39 @@ The following commands are available:
     (dolist (tooling-repl tooling-repls)
       (replique/close-tooling-repl tooling-repl))))
 
+(defun replique/send-cljs-repl-callback (main-cljs-namespace clj-repl)
+  (let* ((tooling-repl (replique/repl-by :repl-type :tooling
+                                         :proc-id (clj-data/get clj-repl :proc-id))))
+    (replique/send-cljs-repl tooling-repl clj-repl main-cljs-namespace)))
+
+(defun replique/sort-by-session (repl1 repl2)
+  (< (string-to-number (clj-data/get repl1 :session))
+     (string-to-number (clj-data/get repl2 :session))))
+
+(defun replique/restart-repls (directory)
+  (let* ((repls (replique/repls-by-maybe-not-started :directory directory))
+         (not-tooling-repls (seq-filter (lambda (repl)
+                                          (not (equal :tooling (clj-data/get repl :repl-type))))
+                                        repls))
+         ;; Sort by session number in order to keep stable session numbers and thus buffer names
+         (not-tooling-repls (sort not-tooling-repls 'replique/sort-by-session))
+         (tooling-repls (seq-filter (lambda (repl)
+                                      (equal :tooling (clj-data/get repl :repl-type)))
+                                    repls)))
+    (when (> (clj-data/count tooling-repls) 1)
+      (error "Multiple tooling repls found for directory: %s" directory))
+    (let* ((tooling-repl (car tooling-repls))
+           (repl-script (clj-data/get tooling-repl :repl-script)))
+      (dolist (repl not-tooling-repls)
+        (replique/close-repl repl t))
+      (replique/close-tooling-repl tooling-repl)
+      (dolist (repl not-tooling-repls)
+        (let* ((repl-type (clj-data/get repl :repl-type))
+               (main-namespace (clj-data/get repl :main-ns))
+               (started-callback (when (equal :cljs repl-type)
+                                   (apply-partially 'replique/send-cljs-repl-callback main-namespace))))
+          (replique/repl directory repl-script nil nil nil started-callback))))))
+
 (defun replique/on-repl-close (buffer process event)
   (let ((closing-repl (replique/repl-by-maybe-not-started :buffer buffer)))
     (when closing-repl
@@ -1322,11 +1358,11 @@ The following commands are available:
              (replique/close-repl closing-repl nil))
             (t nil)))))
 
-(defun replique/on-tooling-repl-close (network-proc-buffer directory process event)
+(defun replique/on-tooling-repl-close (network-proc-buffer proc-id process event)
   (cond ((string= "deleted\n" event)
-         (replique/close-repls directory t))
+         (replique/close-repls proc-id t))
         ((string= "connection broken by remote peer\n" event)
-         (replique/close-repls directory nil))
+         (replique/close-repls proc-id nil))
         (t nil))
   (replique/kill-process-buffer network-proc-buffer))
 
@@ -1435,35 +1471,55 @@ The following commands are available:
       "%s\n%s" string
       (propertize (process-name proc) 'face 'replique/minibuffer-output-repl-name-face)))))
 
-(defun replique/make-tooling-repl (directory repl-script host port)
+;; Avoid race conditions when starting the REPLs by starting the REPLs one by one
+(defun replique/start-repls-one-by-one (tooling-repl proc-id starting-repls)
+  (let* ((starting-repl (car starting-repls)))
+    (when starting-repl
+      (condition-case err
+          (if (buffer-live-p (clj-data/get starting-repl :buffer))
+              (replique/start-repl tooling-repl starting-repl
+                                   (lambda (repl)
+                                     (replique/start-repls-one-by-one tooling-repl proc-id (cdr starting-repls))))
+            (replique/close-repl proc-id t))
+        (error
+         (replique/close-repls proc-id t)
+         ;; rethrow the error
+         (signal (car err) (cdr err)))))))
+
+(defun replique/make-tooling-repl (directory repl-script host port buffer-name started-callback)
   (let* ((default-directory directory)
+         (proc-id replique/proc-id)
          (repl-cmd (replique-cli/clojure-command
                     replique/clojure-bin replique/replique-coords
-                    host port directory repl-script))
+                    host port proc-id repl-script))
          (clj-script-error (replique/check-clojure-bin (car repl-cmd))))
     (when clj-script-error
       (user-error clj-script-error))
     (message "Starting REPL with Clojure command:\n%s" (string-join repl-cmd " "))
     (let* ((proc (apply 'start-process directory nil (car repl-cmd) (cdr repl-cmd)))
+           (proc-id replique/proc-id)
            (tooling-repl (clj-data/hash-map
                           :directory directory
                           :repl-type :tooling
                           :proc proc
+                          :proc-id proc-id
                           :host host
                           :port port
                           :http-host nil
                           :http-port nil
                           :repl-cmd repl-cmd
+                          :repl-script repl-script
                           :ref-watchers (clj-data/hash-map)
                           :main-cljs-namespaces nil
                           :started? nil)))
+      (setq replique/proc-id (+ replique/proc-id 1))
       ;; Perform the starting REPLs cleaning in case of an error when starting the process
       (set-process-sentinel
        proc
        (lambda (process event)
-         (replique/close-repls directory t)))
+         (replique/close-repls proc-id t)))
       (push tooling-repl replique/repls)
-      (replique/make-repl-starting repl-cmd directory host port)
+      (replique/make-repl-starting repl-cmd directory proc-id host port buffer-name started-callback)
       (replique/process-filter-skip-repl-starting-output
        proc
        (lambda (host port http-host http-port)
@@ -1486,7 +1542,7 @@ The following commands are available:
            (puthash :network-proc network-proc tooling-repl)
            (set-process-sentinel
             network-proc
-            (apply-partially 'replique/on-tooling-repl-close network-proc-buff directory))
+            (apply-partially 'replique/on-tooling-repl-close network-proc-buff proc-id))
            ;; The sentinel on the network proc already handles the cleaning of REPLs
            (set-process-sentinel proc nil)
            (replique/process-filter-read
@@ -1496,20 +1552,17 @@ The following commands are available:
             (lambda (cljs-compile-path)
               (cancel-timer timeout)
               (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
-                     (starting-repls (replique/repls-by-maybe-not-started :directory directory)))
+                     (starting-repls (replique/repls-by-maybe-not-started :proc-id proc-id))
+                     (starting-repls (seq-filter (lambda (repl)
+                                                   (not (equal :tooling (clj-data/get repl :repl-type))))
+                                                 starting-repls))
+                     ;; Reverse the REPLs to start them in the right order, since they are pushed
+                     ;; in front of the list upon creation
+                     (starting-repls (reverse starting-repls)))
                 (replique/process-filter-read
                  network-proc network-proc-buff 'replique/dispatch-tooling-msg)
                 (puthash :started? t tooling-repl)
-                (dolist (starting-repl starting-repls)
-                  (condition-case err
-                      (when (not (eq starting-repl tooling-repl))
-                        (if (buffer-live-p (clj-data/get starting-repl :buffer))
-                            (replique/start-repl tooling-repl starting-repl)
-                          (replique/close-repl starting-repl t)))
-                    (error
-                     (replique/close-repls directory t)
-                     ;; rethrow the error
-                     (signal (car err) (cdr err))))))))
+                (replique/start-repls-one-by-one tooling-repl proc-id starting-repls))))
            ;; No need to wait for the return value of shared-tooling-repl
            ;; since it does not print anything
            (process-send-string
@@ -1524,7 +1577,8 @@ The following commands are available:
              (when main-js-files
                (when-let ((main-cljs-namespaces (replique/do-refresh-main-js-files
                                                  main-js-files http-host http-port)))
-                 (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl))))))))))
+                 (puthash :main-cljs-namespaces main-cljs-namespaces tooling-repl)))))))
+      tooling-repl)))
 
 (defun replique/close-process (directory)
   "Close all the REPL sessions associated with a JVM process"
@@ -1533,7 +1587,20 @@ The following commands are available:
                           :repl-type :tooling :error-on-nil t))
           (directories (mapcar (lambda (repl) (clj-data/get repl :directory)) tooling-repls)))
      (list (completing-read "Close process: " directories nil t nil nil (car directories)))))
-  (replique/close-repls directory t))
+  (let* ((tooling-repl (replique/repl-by-maybe-not-started
+                        :repl-type :tooling
+                        :directory directory))
+         (proc-id (clj-data/get tooling-repl :proc-id)))
+    (replique/close-repls proc-id t)))
+
+(defun replique/restart-process (directory)
+  "Restart all the REPL sessions associated with a JVM process"
+  (interactive
+   (let* ((tooling-repls (replique/repls-by-maybe-not-started
+                          :repl-type :tooling :error-on-nil t))
+          (directories (mapcar (lambda (repl) (clj-data/get repl :directory)) tooling-repls)))
+     (list (completing-read "Restart process: " directories nil t nil nil (car directories)))))
+  (replique/restart-repls directory))
 
 (defun replique/time-diff (t1 t2)
   (float-time (time-subtract t1 t2)))
@@ -1586,7 +1653,7 @@ minibuffer"
     (run-hooks 'comint-exec-hook)
     buffer))
 
-(defun replique/start-repl (tooling-repl starting-repl)
+(defun replique/start-repl (tooling-repl starting-repl start-repl-callback)
   (let* ((directory (clj-data/get tooling-repl :directory))
          (host (clj-data/get tooling-repl :host))
          (port (clj-data/get tooling-repl :port))
@@ -1594,6 +1661,7 @@ minibuffer"
          (http-port (clj-data/get tooling-repl :http-port))
          (repl-buffer (clj-data/get starting-repl :buffer))
          (repl-type (clj-data/get starting-repl :repl-type))
+         (started-callback (clj-data/get starting-repl :started-callback))
          (proc (open-network-stream (buffer-name repl-buffer) repl-buffer host port))
          (repl-cmd (format "(replique.watch/repl)\n")))
     (set-process-sentinel proc (apply-partially 'replique/on-repl-close repl-buffer))
@@ -1605,8 +1673,7 @@ minibuffer"
                   (session (clj-data/get resp :client)))
              (with-current-buffer repl-buffer
                (erase-buffer)
-               (rename-buffer (generate-new-buffer-name
-                               (replique/buffer-name directory repl-type session))))
+               (rename-buffer (replique/buffer-name directory repl-type session) t))
              (set-process-filter proc nil)
              (replique/make-comint proc repl-buffer)
              (comment (set-buffer repl-buffer))
@@ -1619,24 +1686,40 @@ minibuffer"
              (puthash :session session starting-repl)
              (puthash :ns 'user starting-repl)
              (puthash :started? t starting-repl)
-             (comment (display-buffer repl-buffer)))
+             (comment (display-buffer repl-buffer))
+             (when start-repl-callback
+               (funcall start-repl-callback starting-repl))
+             (when started-callback
+               ;; use replique/with-new-dyn-context in order to give comint the time
+               ;; to refresh the buffer (printing prompt)
+               (replique/with-new-dyn-context started-callback starting-repl)))
          (when (process-live-p proc)
            (interrupt-process proc)))))
-    (process-send-string proc "clojure.core.server/*session*\n")))
+    (process-send-string proc "clojure.core.server/*session*\n")
+    starting-repl))
 
-(defun replique/make-repl-starting (repl-cmd directory host port)
-  (let* ((repl-buffer (generate-new-buffer (replique/buffer-name directory :clj)))
-         (repl (clj-data/hash-map :directory directory
+(defun replique/make-repl-starting (repl-cmd directory proc-id host port
+                                             buffer-name started-callback)
+  (when buffer-name
+    (when (get-buffer buffer-name)
+      (error "Buffer already exists: %s" buffer-name)))
+  (let* ((repl-buffer (generate-new-buffer (or
+                                            buffer-name
+                                            (replique/buffer-name directory :clj))))
+         (repl (clj-data/hash-map :proc-id proc-id
+                                  :directory directory
                                   :host host
                                   :port port
                                   :http-host nil
                                   :http-port nil
                                   :repl-type :clj
                                   :repl-env :replique/clj
+                                  :main-ns nil
                                   :buffer repl-buffer
                                   :recent-output (make-ring 10)
                                   :params nil
-                                  :started? nil)))
+                                  :started? nil
+                                  :started-callback started-callback)))
     (with-current-buffer repl-buffer
       (insert (format "Clojure REPL starting...\n\nDirectory:\n%s\n\nCommand:\n%s"
                       directory (string-join repl-cmd " "))))
@@ -1666,7 +1749,7 @@ minibuffer"
   (seq-contains replique/start-script-extensions (file-name-extension f)))
 
 ;;;###autoload
-(defun replique/repl (directory repl-script &optional host port)
+(defun replique/repl (directory repl-script &optional host port buffer-name started-callback)
   "Start a REPL session"
   (interactive
    (let* ((directory (read-directory-name
@@ -1698,22 +1781,29 @@ minibuffer"
                 (port port)
                 ((equal 4 (prefix-numeric-value current-prefix-arg))
                  (read-number "Port number: " 0))
-                (t nil))))
+                (t nil)))
+         (proc-id (when existing-repl
+                    (clj-data/get existing-repl :proc-id))))
     (cond
      ((and existing-repl (null (clj-data/get existing-repl :started?)))
       (replique/make-repl-starting (clj-data/get existing-repl :repl-cmd)
-                                   directory host port))
+                                   directory proc-id
+                                   host port buffer-name
+                                   started-callback))
      (existing-repl
       (let ((starting-repl (replique/make-repl-starting (clj-data/get existing-repl :repl-cmd)
-                                                        directory host port)))
+                                                        directory proc-id
+                                                        host port buffer-name
+                                                        started-callback)))
         (condition-case err
-            (replique/start-repl existing-repl starting-repl)
+            (replique/start-repl existing-repl starting-repl nil)
           (error
            (replique/close-repl starting-repl t)
            ;; rethrow the error
-           (signal (car err) (cdr err))))))
+           (signal (car err) (cdr err))))
+        starting-repl))
      (t
-      (replique/make-tooling-repl directory repl-script host port)))))
+      (replique/make-tooling-repl directory repl-script host port buffer-name started-callback)))))
 
 (defun replique/on-repl-type-change (repl new-repl-type new-repl-env)
   (let* ((directory (clj-data/get repl :directory))
@@ -1725,8 +1815,7 @@ minibuffer"
       (when (equal (replique/buffer-name directory repl-type session)
                    (buffer-name repl-buffer))
         (with-current-buffer repl-buffer
-          (rename-buffer (generate-new-buffer-name
-                          (replique/buffer-name directory new-repl-type session))))))
+          (rename-buffer (replique/buffer-name directory new-repl-type session) t))))
     (if (and (equal repl-type new-repl-type) (equal repl-env new-repl-env))
         repl
       (replique/update-repl repl (clj-data/assoc repl
@@ -1753,16 +1842,16 @@ minibuffer"
       (let* ((msg (replique-transit/decode msg))
              (repl (replique/repl-by
                     :session (clj-data/get (clj-data/get msg :session) :client)
-                    :directory (clj-data/get msg :process-id))))
+                    :proc-id (clj-data/get msg :process-id))))
         (when repl
           (let ((repl (replique/on-repl-type-change
                        repl (clj-data/get msg :repl-type) (clj-data/get msg :repl-env))))
             (replique/update-repl repl (clj-data/assoc repl
                                                        :ns (clj-data/get msg :ns)
-                                                       :params (clj-data/get msg :params)))))))
+                                                       :params (clj-data/get msg :params)
+                                                       :main-ns (clj-data/get msg :main-ns)))))))
      ((equal :watch-update msg-type)
-      (let* ((directory (clj-data/get msg :process-id))
-             (msg (replique-transit/decode msg)))
+      (let* ((msg (replique-transit/decode msg)))
         (replique-watch/notify-update msg)))
      (t (message "Received unsupported message while dispatching tooling messages: %s" msg)))))
 
@@ -1779,7 +1868,7 @@ minibuffer"
         ((clj-data/get msg :correlation-id)
          (let* ((tooling-repl (replique/repl-by
                                :repl-type :tooling
-                               :directory (clj-data/get msg :process-id)))
+                               :proc-id (clj-data/get msg :process-id)))
                 (correlation-id (clj-data/get msg :correlation-id))
                 (sync-msg (clj-data/get replique/synchronous-messages correlation-id)))
            (when sync-msg
