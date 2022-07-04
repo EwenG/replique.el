@@ -2,8 +2,11 @@ See also [replique](https://github.com/EwenG/replique/blob/master/CHANGES.md)
 
 # Version 0.0.19
 
-- Update the minumum emacs version
-- Update the minumum clojurescript version
+- Add a the replique/restart-repls command to restart a process and its REPLs
+- More robust REPLs starting with regard to race conditions when restarting REPLs
+- Add the possibility to reload log4j2 configurations
+- Update the minimum emacs version
+- Update the minimum clojurescript version
 - More robust clojure starting command
 - CSS files are now sent to the browser upon reloading, even when the cljs REPL is not the active one
 
