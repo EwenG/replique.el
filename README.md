@@ -100,7 +100,7 @@ Enable [code evaluation in org-mode](https://github.com/EwenG/replique.el/blob/m
 - REPL post eval hooks for watching changes in Clojure/Clojurescript namespaces
 - Org-mode integration
 - Dynamic classpath reloading
-- Logback configuration reloading
+- Logs configuration reloading
 
 Replique tries, as much as possible, to keep features parity between Clojure and Clojurescript.
 
@@ -161,7 +161,7 @@ See the [default keymap](#default-keymap), the [interactive commands](#interacti
 - [Debugging](https://github.com/EwenG/replique.el/blob/master/doc/debugging.md)
 - [Post eval hooks](https://github.com/EwenG/replique.el/blob/master/doc/post-eval-hooks.md)
 - [Org-mode integration](https://github.com/EwenG/replique.el/blob/master/doc/org-mode-integration.md)
-- [Logback reloading](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md)
+- [Logback and log4j2 reloading](https://github.com/EwenG/replique.el/blob/master/doc/logs-reloading.md)
 - [Migrating from Leiningen](https://github.com/EwenG/replique.el/blob/master/doc/migrating-from-leiningen.md)
 - [Building/packaging an application](https://github.com/EwenG/replique.el/blob/master/doc/building-packaging-an-application.md)
 
@@ -190,7 +190,8 @@ Command                          | Description
 `replique/browser`               | Open a browser tab and connects it to the Clojurescript REPL
 `replique/switch-active-repl`    | Change the active REPL session
 `replique/switch-active-process` | Change the active JVM process
-`replique/close-process`         | Close all processes associated with a JVM process
+`replique/close-process`         | Close a JVM process and all its associated REPLs
+`replique/restart-process`       | Restart a JVM process and recreate all the started REPLs associated with this process. Preserves REPLs types (clj/cljs)
 `replique/output-main-js-file`   | Write a main js file to disk
 `replique/classpath`             | Reload the classpath based on the deps.edn configuration, optionally using the optons of a REPl start script
 `replique/reload-all`            | Reload the current namespace as well as all its dependencies
@@ -199,7 +200,8 @@ Command                          | Description
 `replique/pprint`                | Pretty print the expression at point
 `replique/find-usage`            | Find all the [usages](https://github.com/EwenG/replique.el/blob/master/doc/finding-usages.md) of the expression at point
 `replique/watch`                 | [Watch](https://github.com/EwenG/replique.el/blob/master/doc/watching-visualizing-mutable-references.md) a mutable reference or the stream of the REPL output
-`replique/logback-reload`        | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the currently loaded logback configuration 
+`replique/logback-reload`        | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logs-reloading.md) a logback configuration
+`replique/log4j2-reload`         | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logs-reloading.md) a log4j2 configuration
 
 ### REPL API
 
@@ -210,7 +212,8 @@ Functions                        | Description
 `repl`                           | Start a Clojure REPL. This MUST be used instead of `clojure.main/repl`
 `cljs-repl`                      | Turn the REPL into a Clojurescript REPL
 `cljs-repl-nashorn`              | Turn the REPL into a Clojurescript REPL running in a [Nashorn](http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html) environement
-`logback-reload`                 | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logback-reloading.md) the logback configuration given as parameter.
+`logback-reload`                 | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logs-reloading.md) the logback configuration given as parameter.
+`log4j2-reload`                  | [Reload](https://github.com/EwenG/replique.el/blob/master/doc/logs-reloading.md) the log4j2 configuration given as parameter.
 `eval-js`                        | Evaluate a javascript string using the currently connected javascript runtime environment
 
 Macros                           | Description

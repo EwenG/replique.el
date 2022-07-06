@@ -27,7 +27,7 @@ For example, a REPL start script can be a file named `repl.sh` at the root of yo
 #!/bin/sh
 
 ;; Start a REPL, using the :dev alias
-clojure -A:dev
+clojure -M:dev
 ```
 
 ## REPL hostname and port number
@@ -46,6 +46,8 @@ Replique will keep at most one Clojure REPL and one Clojurescript REPL active at
 Multiple JVM processes can be started simultaneously for different projects by using different directories when starting the REPLs. Use `replique/switch-active-process` to change the currently active process. Symbolic links can be used to start multiple JVM processes simultaneously for the same project.
 
 Use `replique/close-process` to close all the REPL sessions associated with a JVM process.
+
+Use `replique/restart-process` to restart a JVM process and all the REPLs associated with this process. This command preserves the REPLs types (clj/cljs)
 
 ## REPL printing
 
@@ -89,7 +91,7 @@ The `replique/process-input` and `replique/process-input-password` interactive c
 ## REPL parameters
 
 Replique provides a dedicated interface to edit some of the dynamic vars that affect the REPL behavior.
-These vars are \*print-length\*, \*print-level\* and \*warn-on-reflection\*. To edit one of them, use the `replique/params` interactive command.
+These vars are `*print-length*`, `*print-level*` and `*warn-on-reflection*. To edit one of them, use the `replique/params` interactive command.
 The `replique/params` interface provides two keybindings: `+` and `-` to quickly increment/decrement numerical values or to toggle boolean values.
 
 ## REPL init file
