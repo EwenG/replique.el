@@ -91,7 +91,7 @@ The `replique/process-input` and `replique/process-input-password` interactive c
 ## REPL parameters
 
 Replique provides a dedicated interface to edit some of the dynamic vars that affect the REPL behavior.
-These vars are `*print-length*`, `*print-level*` and `*warn-on-reflection*. To edit one of them, use the `replique/params` interactive command.
+These vars are `*print-length*`, `*print-level*` and `*warn-on-reflection*`. To edit one of them, use the `replique/params` interactive command.
 The `replique/params` interface provides two keybindings: `+` and `-` to quickly increment/decrement numerical values or to toggle boolean values.
 
 ## REPL init file
