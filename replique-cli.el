@@ -123,6 +123,8 @@
     (let ((continue t)
           (sdeps-found nil)
           (args '()))
+      (when host (push (format "-J-Dreplique.server.host=%s" host) args))
+      (when port (push (format "-J-Dreplique.server.port=%s" port) args))
       (while continue
         (skip-chars-forward "\s\t")
         (let ((char1+ (char-after))
@@ -199,8 +201,6 @@
                 (t
                  (when (not sdeps-found)
                    (setq args (seq-concatenate 'list args (list (format "{:deps {replique/replique %s}}" replique-coords) "-Sdeps"))))
-                 (when host (push (format "-J-Dreplique.server.host=%s" host) args))
-                 (when port (push (format "-J-Dreplique.server.port=%s" port) args))
                  (setq continue nil)))))
       args)))
 
@@ -218,7 +218,7 @@
   "-J:opt    -Sdeps  \"  {rr :deps {kk \\\"rr\\\" {:deps }}}   \"  -O")
 
  (replique-cli/cli-args-with-replique
-  "{:local/root \"path\"}" "localhost" 0 "dir"
+  "{:local/root \"path\"}" "localhost" 0
   "-J:opt    -Sdeps  '  {rr :deps {kk \"rr\" {:deps }}} '    -O ")
  )
 
