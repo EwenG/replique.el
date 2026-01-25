@@ -566,7 +566,8 @@
                               (format "Recording started. Recording size: %s" record-size)
                             "Recording stopped"))))))
          (propertize "Recording size"
-                     'clj-params/default-val replique-watch/record-size))))))
+                     'clj-params/default-val replique-watch/record-size
+                     'clj-params/history (clj-params/param->history "Recording size")))))))
 
 
 (defvar replique-watch/minibuffer-map-record-menu
