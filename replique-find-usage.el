@@ -175,9 +175,10 @@
             (buffer-substring (line-beginning-position) (line-end-position)))))
 
 (defun replique-find-usage/jar-reducer (jar-file file-re files jar-entry)
-  (if (and jar-entry (string-match-p file-re (aref jar-entry 0)))
-      (cons (aref jar-entry 0) files)
-    files))
+  (let* ((file-name (archive--file-desc-int-file-name jar-entry)))
+    (if (and jar-entry (string-match-p file-re file-name))
+        (cons file-name files)
+      files)))
 
 (defun replique-find-usage/list-directory-files (file-re directory)
   (let ((replique/directory-files-recursively-files nil))
