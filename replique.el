@@ -1669,8 +1669,7 @@ minibuffer"
      proc repl-buffer
      (lambda (resp)
        (if (buffer-live-p repl-buffer)
-           (let* ((resp (replique-transit/decode resp))
-                  (session (clj-data/get resp :client)))
+           (let* ((session resp))
              (with-current-buffer repl-buffer
                (erase-buffer)
                (rename-buffer (replique/buffer-name directory repl-type session) t))
@@ -1695,7 +1694,7 @@ minibuffer"
                (replique/with-new-dyn-context started-callback starting-repl)))
          (when (process-live-p proc)
            (interrupt-process proc)))))
-    (process-send-string proc "clojure.core.server/*session*\n")
+    (process-send-string proc "(:client clojure.core.server/*session*)\n")
     starting-repl))
 
 (defun replique/make-repl-starting (repl-cmd directory proc-id host port
