@@ -30,7 +30,7 @@
   ((value :initarg :value)
    (meta :initarg :meta)))
 
-(defmethod clj-print/print-method ((m replique/with-meta))
+(cl-defmethod clj-print/print-method ((m replique/with-meta))
   (let ((meta (oref m :meta))
         (value (oref m :value)))
     (if (not (hash-table-empty-p meta))
@@ -44,7 +44,7 @@
 (defclass replique/more (clj-print/printable)
   ((type :initarg :type)))
 
-(defmethod clj-print/print-method ((o replique/more))
+(cl-defmethod clj-print/print-method ((o replique/more))
   (let ((type (oref o :type)))
     (cond ((equal type "level")
            (insert-char ?#))
@@ -58,7 +58,7 @@
 (defclass replique-transit/tag ()
   ((tag :initarg :tag)))
 
-(defmethod clj-print/print-method ((o replique-transit/tagged-value))
+(cl-defmethod clj-print/print-method ((o replique-transit/tagged-value))
   (let ((tag (oref o :tag))
         (value (oref o :value)))
     (cond ((equal tag ?n)
@@ -95,7 +95,7 @@
 (defclass replique-transit/empty-list (clj-print/printable)
   ())
 
-(defmethod clj-print/print-method ((o replique-transit/empty-list))
+(cl-defmethod clj-print/print-method ((o replique-transit/empty-list))
   (clj-print/print-list '()))
 
 ;; Decoder fns
