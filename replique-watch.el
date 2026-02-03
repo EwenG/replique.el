@@ -242,9 +242,9 @@
   (interactive)
   (replique/with-modes-dispatch
    (replique/mode . 'replique-watch/watch-session)
-   (clojure-mode . 'replique-watch/watch-clj)
-   (clojurescript-mode . 'replique-watch/watch-cljs)
-   (clojurec-mode . 'replique-watch/watch-cljc)
+   (clojure-ts-mode . 'replique-watch/watch-clj)
+   (clojure-ts-clojurescript-mode . 'replique-watch/watch-cljs)
+   (clojure-ts-clojurec-mode . 'replique-watch/watch-cljc)
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique-watch/notify-update (msg)

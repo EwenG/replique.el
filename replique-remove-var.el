@@ -71,9 +71,9 @@
   (interactive)
   (replique/with-modes-dispatch
    (replique/mode . 'replique/remove-var-session)
-   (clojure-mode . 'replique/remove-var-clj)
-   (clojurescript-mode . 'replique/remove-var-cljs)
-   (clojurec-mode . 'replique/remove-var-cljc)
+   (clojure-ts-mode . 'replique/remove-var-clj)
+   (clojure-ts-clojurescript-mode . 'replique/remove-var-cljs)
+   (clojure-ts-clojurec-mode . 'replique/remove-var-cljc)
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (provide 'replique-remove-var)

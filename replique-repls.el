@@ -102,14 +102,14 @@
                    (f (cdr item)))
                ;; The order of priority is the order of the modes as defined during
                ;; the use of the macro
-               (cond ((equal 'clojure-mode m)
-                      `((equal 'clojure-mode major-mode)
+               (cond ((equal 'clojure-ts-mode m)
+                      `((equal 'clojure-ts-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
-                     ((equal 'clojurescript-mode m)
-                      `((equal 'clojurescript-mode major-mode)
+                     ((equal 'clojure-ts-clojurescript-mode m)
+                      `((equal 'clojure-ts-clojurescript-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
-                     ((equal 'clojurec-mode m)
-                      `((equal 'clojurec-mode major-mode)
+                     ((equal 'clojure-ts-clojurec-mode m)
+                      `((equal 'clojure-ts-clojurec-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,active-repl-sym)))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
@@ -281,9 +281,9 @@
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
    (replique/mode . (apply-partially 'replique/send-input-from-source-session input))
-   (clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
-   (clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
-   (clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
+   (clojure-ts-mode . (apply-partially 'replique/send-input-from-source-clj input))
+   (clojure-ts-clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
+   (clojure-ts-clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (provide 'replique-repls)

@@ -30,7 +30,7 @@ Load replique
 
 Enable Replique when editing clojure files
 
-`(add-hook 'clojure-mode-hook 'replique/minor-mode)`
+`(add-hook 'clojure-ts-mode-hook 'replique/minor-mode)`
 
 ### Clojure command line tools
 
@@ -50,7 +50,7 @@ Enable company-mode either globally or locally
 Or
 
 ```elisp
-(add-hook 'clojure-mode-hook
+(add-hook 'clojure-ts-mode-hook
 	  (lambda ()
 	    (company-mode 1)))
 ```
