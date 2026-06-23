@@ -18,7 +18,7 @@
 ;; This file is not part of GNU Emacs.
 
 ;; Version 1.1.0-SNAPSHOT
-;; Package-Requires: ((emacs "30") (clojure-ts-mode "20251202.1521") (ivy "0.10.0") (clj-data "0.0.2"))
+;; Package-Requires: ((emacs "30") (ivy "0.10.0") (clj-data "0.0.2"))
 
 ;; Commentary:
 
@@ -26,7 +26,7 @@
 
 (require 'subr-x)
 (require 'comint)
-(require 'clojure-ts-mode)
+(require 'replique-clojure-mode)
 (require 'map)
 (require 'ivy)
 (require 'xref)
@@ -148,9 +148,9 @@
   (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
      (replique/mode . (apply-partially 'replique/auto-complete-session prefix))
-     (clojure-ts-mode . (apply-partially 'replique/auto-complete-clj prefix))
-     (clojure-ts-clojurescript-mode . (apply-partially 'replique/auto-complete-cljs prefix))
-     (clojure-ts-clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix))
+     (replique-clojure-mode . (apply-partially 'replique/auto-complete-clj prefix))
+     (replique-clojure-clojurescript-mode . (apply-partially 'replique/auto-complete-cljs prefix))
+     (replique-clojure-clojurec-mode . (apply-partially 'replique/auto-complete-cljc prefix))
      (t . nil))))
 
 (defun replique/auto-complete-annotation (candidate)
@@ -249,9 +249,9 @@
   (when (not (null (replique/active-repl :tooling)))
     (replique/with-modes-dispatch
      (replique/mode . 'replique/repliquedoc-session)
-     (clojure-ts-mode . 'replique/repliquedoc-clj)
-     (clojure-ts-clojurescript-mode . 'replique/repliquedoc-cljs)
-     (clojure-ts-clojurec-mode . 'replique/repliquedoc-cljc)
+     (replique-clojure-mode . 'replique/repliquedoc-clj)
+     (replique-clojure-clojurescript-mode . 'replique/repliquedoc-cljs)
+     (replique-clojure-clojurec-mode . 'replique/repliquedoc-cljc)
      (t . nil))))
 
 (defun replique/in-ns-session (repl)
@@ -317,9 +317,9 @@
   (interactive)
   (replique/with-modes-dispatch
    (replique/mode . 'replique/in-ns-session)
-   (clojure-ts-mode . 'replique/in-ns-clj)
-   (clojure-ts-clojurescript-mode . 'replique/in-ns-cljs)
-   (clojure-ts-clojurec-mode . 'replique/in-ns-cljc)
+   (replique-clojure-mode . 'replique/in-ns-clj)
+   (replique-clojure-clojurescript-mode . 'replique/in-ns-cljs)
+   (replique-clojure-clojurec-mode . 'replique/in-ns-cljc)
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique/symbol-backward-bounds ()
@@ -344,7 +344,7 @@
   (cond
    ((equal command 'interactive)
     (company-begin-backend 'replique/company-backend))
-   ((equal command 'prefix) (when (or (derived-mode-p 'clojure-ts-mode)
+   ((equal command 'prefix) (when (or (derived-mode-p 'replique-clojure-mode)
                                       (derived-mode-p 'replique/mode))
                               (replique/symbol-backward
                                (replique/symbol-backward-bounds))))
@@ -355,7 +355,7 @@
    ((equal command 'match) (replique/auto-complete-match-index arg))))
 
 (defun replique/completion-at-point ()
-  (when (or (derived-mode-p 'clojure-ts-mode)
+  (when (or (derived-mode-p 'replique-clojure-mode)
             (derived-mode-p 'replique/mode))
     (when-let (bounds (replique/symbol-backward-bounds))
       `(,(car bounds) ,(cadr bounds)
@@ -399,9 +399,9 @@
   (let ((active-repl (replique/active-repl '(:clj :cljs)))
         (ns-name (replique-context/clojure-find-ns)))
     (replique/with-modes-dispatch
-     (clojure-ts-mode . 'replique/maybe-change-ns-clj)
-     (clojure-ts-clojurescript-mode . 'replique/maybe-change-ns-cljs)
-     (clojure-ts-clojurec-mode . 'replique/maybe-change-ns-cljc)
+     (replique-clojure-mode . 'replique/maybe-change-ns-clj)
+     (replique-clojure-clojurescript-mode . 'replique/maybe-change-ns-cljs)
+     (replique-clojure-clojurec-mode . 'replique/maybe-change-ns-cljc)
      (t . nil))))
 
 (defun replique/column-number-at-pos (&optional pos)
@@ -506,11 +506,11 @@
   (interactive (list (buffer-file-name)))
   (comint-check-source file-path)
   (replique/with-modes-dispatch
-   (clojure-ts-mode . (apply-partially 'replique/load-url-clj
+   (replique-clojure-mode . (apply-partially 'replique/load-url-clj
                                     (replique/buffer-url file-path)))
-   (clojure-ts-clojurescript-mode . (apply-partially 'replique/load-url-cljs
+   (replique-clojure-clojurescript-mode . (apply-partially 'replique/load-url-cljs
                                           (replique/buffer-url file-path)))
-   (clojure-ts-clojurec-mode . (apply-partially 'replique/load-url-cljc
+   (replique-clojure-clojurec-mode . (apply-partially 'replique/load-url-cljc
                                      (replique/buffer-url file-path)))
    (css-mode . (apply-partially 'replique/load-css file-path))
    (js2-mode . (apply-partially 'replique/load-js file-path))
@@ -547,9 +547,9 @@
   (interactive)
   (comint-check-source (buffer-file-name))
   (replique/with-modes-dispatch
-   (clojure-ts-mode . 'replique/reload-all-clj)
-   (clojure-ts-clojurescript-mode . 'replique/reload-all-cljs)
-   (clojure-ts-clojurec-mode . 'replique/reload-all-cljc)))
+   (replique-clojure-mode . 'replique/reload-all-clj)
+   (replique-clojure-clojurescript-mode . 'replique/reload-all-cljs)
+   (replique-clojure-clojurec-mode . 'replique/reload-all-cljc)))
 
 (defun replique/browser ()
   "Open a browser tab on the port the REPL is listening to"
@@ -795,6 +795,7 @@
     (user-error "No active Clojurescript REPL"))
   (let* ((repl-env (clj-data/get cljs-repl :repl-env))
          (resp (replique/list-css tooling-repl cljs-repl)))
+    
     (when (not (clj-data/get resp :error))
       (let* ((css-urls (clj-data/get resp :css-urls))
              (css-urls (seq-filter (apply-partially 'replique/asset-url-matches?
@@ -1059,9 +1060,9 @@
   (interactive (list (replique-context/symbol-at-point)))
   (replique/with-modes-dispatch
    (replique/mode . (apply-partially 'replique/jump-to-definition-session symbol))
-   (clojure-ts-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
-   (clojure-ts-clojurescript-mode . (apply-partially 'replique/jump-to-definition-cljs symbol))
-   (clojure-ts-clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
+   (replique-clojure-mode . (apply-partially 'replique/jump-to-definition-clj symbol))
+   (replique-clojure-clojurescript-mode . (apply-partially 'replique/jump-to-definition-cljs symbol))
+   (replique-clojure-clojurec-mode . (apply-partially 'replique/jump-to-definition-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (comment
@@ -1149,9 +1150,12 @@ unwrapping a top level comment block "
                                               'comint-output-filter-functions
                                               'replique-input/comint-watch-for-password-prompt
                                               t))
-  (clojure-ts-mode-variables)
-  (clojure-font-lock-setup)
-  (set-syntax-table clojure-ts-mode-syntax-table)
+  (set-syntax-table replique-clojure-mode-syntax-table)
+  (replique-clojure--ensure-grammars)
+  (when (treesit-ready-p 'treejure)
+    (treesit-parser-create 'treejure)
+    (replique-clojure--mode-variables)
+    (treesit-major-mode-setup))
   (setq-local completion-at-point-functions
               (cons 'replique/completion-at-point
                     completion-at-point-functions))

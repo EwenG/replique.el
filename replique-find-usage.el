@@ -22,7 +22,7 @@
 ;; Code:
 
 (require 'arc-mode)
-(require 'clojure-ts-mode)
+(require 'replique-clojure-mode)
 (require 'replique-utils)
 (require 'replique-repls)
 (require 'replique-files)
@@ -252,7 +252,7 @@
                           (when (null (match-string-no-properties
                                        replique-find-usage/tag-reader-group-index))
                             (let ((ppss (when (not include-string-and-comments?)
-                                          (with-syntax-table clojure-ts-mode-syntax-table
+                                          (with-syntax-table replique-clojure-mode-syntax-table
                                             (syntax-ppss)))))
                               ;; Not in a string or a comment
                               (when (null (nth 8 ppss))
@@ -378,9 +378,9 @@
   (when (buffer-file-name)
     (comint-check-source (buffer-file-name)))
   (replique/with-modes-dispatch
-   (clojure-ts-mode . (apply-partially 'replique-find-usage/find-usage-clj symbol))
-   (clojure-ts-clojurescript-mode . (apply-partially 'replique-find-usage/find-usage-cljs symbol))
-   (clojure-ts-clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
+   (replique-clojure-mode . (apply-partially 'replique-find-usage/find-usage-clj symbol))
+   (replique-clojure-clojurescript-mode . (apply-partially 'replique-find-usage/find-usage-cljs symbol))
+   (replique-clojure-clojurec-mode . (apply-partially 'replique-find-usage/find-usage-cljc symbol))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (defun replique-find-usage/set-param (param param-value)

@@ -90,11 +90,15 @@
                replique/repls (list :repl-type repl-type-or-types))
       (replique/repl-by :repl-type repl-type-or-types :error-on-nil error-on-nil))))
 
+;; First parameter can be a boolean, if false, don't error out if no REPL is started
 (defmacro replique/with-modes-dispatch (&rest modes-alist)
   (let* ((tooling-repl-sym (make-symbol "tooling-repl"))
          (clj-repl-sym (make-symbol "clj-repl-sym"))
          (cljs-repl-sym (make-symbol "cljs-repl-sym"))
          (active-repl-sym (make-symbol "active-repl-sym"))
+         (error-on-no-repl (if (booleanp (car modes-alist))
+                               (car modes-alist)
+                             t))
          (dispatch-code
           (mapcar
            (lambda (item)
@@ -102,14 +106,14 @@
                    (f (cdr item)))
                ;; The order of priority is the order of the modes as defined during
                ;; the use of the macro
-               (cond ((equal 'clojure-ts-mode m)
-                      `((equal 'clojure-ts-mode major-mode)
+               (cond ((equal 'replique-clojure-mode m)
+                      `((equal 'replique-clojure-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,clj-repl-sym)))
-                     ((equal 'clojure-ts-clojurescript-mode m)
-                      `((equal 'clojure-ts-clojurescript-mode major-mode)
+                     ((equal 'replique-clojure-clojurescript-mode m)
+                      `((equal 'replique-clojure-clojurescript-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,cljs-repl-sym)))
-                     ((equal 'clojure-ts-clojurec-mode m)
-                      `((equal 'clojure-ts-clojurec-mode major-mode)
+                     ((equal 'replique-clojure-clojurec-mode m)
+                      `((equal 'replique-clojure-clojurec-mode major-mode)
                         (funcall ,f ,tooling-repl-sym ,active-repl-sym)))
                      ((equal 'css-mode m)
                       `((equal 'css-mode major-mode)
@@ -137,7 +141,7 @@
                      ((equal 't m)
                       `(t ,f)))))
            modes-alist)))
-    `(let* ((,tooling-repl-sym (replique/active-repl :tooling t))
+    `(let* ((,tooling-repl-sym (replique/active-repl :tooling ,error-on-no-repl))
             (,clj-repl-sym (replique/active-repl :clj))
             (,cljs-repl-sym (replique/active-repl :cljs))
             (,active-repl-sym (replique/active-repl '(:clj :cljs))))
@@ -281,9 +285,9 @@
 (defun replique/send-input-from-source-dispatch (input)
   (replique/with-modes-dispatch
    (replique/mode . (apply-partially 'replique/send-input-from-source-session input))
-   (clojure-ts-mode . (apply-partially 'replique/send-input-from-source-clj input))
-   (clojure-ts-clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
-   (clojure-ts-clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
+   (replique-clojure-mode . (apply-partially 'replique/send-input-from-source-clj input))
+   (replique-clojure-clojurescript-mode . (apply-partially'replique/send-input-from-source-cljs input))
+   (replique-clojure-clojurec-mode . (apply-partially'replique/send-input-from-source-cljc input))
    (t . (user-error "Unsupported major mode: %s" major-mode))))
 
 (provide 'replique-repls)

@@ -54,8 +54,8 @@
   (interactive)
   (replique/with-modes-dispatch
    (replique/mode . 'replique-pprint/pprint-session)
-   (clojure-ts-mode . 'replique-pprint/pprint-clj)
-   (clojure-ts-clojurescript-mode . 'replique-pprint/pprint-cljs)
-   (clojure-ts-clojurec-mode . 'replique-pprint/pprint-cljc)))
+   (replique-clojure-mode . 'replique-pprint/pprint-clj)
+   (replique-clojure-clojurescript-mode . 'replique-pprint/pprint-cljs)
+   (replique-clojure-clojurec-mode . 'replique-pprint/pprint-cljc)))
 
 (provide 'replique-pprint)

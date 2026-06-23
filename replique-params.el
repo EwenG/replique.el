@@ -95,9 +95,9 @@
       (replique-watch/params-watch)
     (replique/with-modes-dispatch
      (replique/mode . 'replique-params/params-session)
-     (clojure-ts-mode . 'replique-params/params-clj)
-     (clojure-ts-clojurescript-mode . 'replique-params/params-cljs)
-     (clojure-ts-clojurec-mode . 'replique-params/params-cljc)
+     (replique-clojure-mode . 'replique-params/params-clj)
+     (replique-clojure-clojurescript-mode . 'replique-params/params-cljs)
+     (replique-clojure-clojurec-mode . 'replique-params/params-cljc)
      (t . (user-error "Unsupported major mode: %s" major-mode)))))
 
 (provide 'replique-params)
