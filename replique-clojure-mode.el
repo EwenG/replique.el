@@ -63,6 +63,7 @@
 (declare-function treesit-node-parent "treesit.c")
 (declare-function treesit-node-child "treesit.c")
 (declare-function treesit-node-child-by-field-name "treesit.c")
+(declare-function replique-clojure-semantic-mode "replique-clojure-semantic")
 
 
 ;;;; Customization
@@ -74,6 +75,15 @@
 
 (defcustom replique-clojure-ensure-grammars t
   "When non-nil, ensure the required Tree-sitter grammars are installed."
+  :safe #'booleanp
+  :type 'boolean)
+
+(defcustom replique-clojure-enable-semantic t
+  "When non-nil, layer the treejure semantic analysis over the syntax mode.
+On entering `replique-clojure-mode' this loads `replique-clojure-semantic' and
+enables `replique-clojure-semantic-mode' (the C-module client: semantic faces +
+Flymake diagnostics).  When the library or the C module is unavailable the
+major mode still works as the pure treesit syntax layer."
   :safe #'booleanp
   :type 'boolean)
 
@@ -447,9 +457,12 @@ them.  Expands to a Tree-sitter alternation vector."
   (append replique-clojure--font-lock-queries
           replique-clojure--extra-queries))
 
+(declare-function replique-clojure--refresh-def-forms "replique-clojure-semantic")
+
 (defun replique-clojure--set-extra-def-forms (symbol value)
   "Setter for `replique-clojure-extra-def-forms'.
-Sets SYMBOL to VALUE and refreshes every `replique-clojure-mode' buffer."
+Sets SYMBOL to VALUE and refreshes every `replique-clojure-mode' buffer — both
+the treesit font-lock and, where active, the semantic layer."
   (set-default-toplevel-value symbol value)
   (let ((new (replique-clojure--compute-extra-def-queries value)))
     (dolist (buf (buffer-list))
@@ -457,7 +470,10 @@ Sets SYMBOL to VALUE and refreshes every `replique-clojure-mode' buffer."
         (with-current-buffer buf
           (setq replique-clojure--extra-queries new)
           (setq-local treesit-font-lock-settings (replique-clojure--font-lock-settings))
-          (font-lock-flush))))))
+          (font-lock-flush)
+          (when (and (bound-and-true-p replique-clojure-semantic-mode)
+                     (fboundp 'replique-clojure--refresh-def-forms))
+            (replique-clojure--refresh-def-forms)))))))
 
 (defcustom replique-clojure-extra-def-forms nil
   "List of macro names highlighted the same way as `defn'.
@@ -1144,7 +1160,13 @@ treejure semantic module and are not part of this mode."
     (replique-clojure--mode-variables)
     (treesit-major-mode-setup)
     (add-hook 'hack-local-variables-hook
-              #'replique-clojure--hack-local-variables 0 t)))
+              #'replique-clojure--hack-local-variables 0 t)
+    ;; Layer the treejure semantic faces/diagnostics on top, when enabled and
+    ;; the C module is available.  The library is loaded lazily so the syntax
+    ;; mode stays self-contained; failures degrade to the pure syntax layer.
+    (when (and replique-clojure-enable-semantic module-file-suffix
+               (require 'replique-clojure-semantic nil t))
+      (replique-clojure-semantic-mode 1))))
 
 ;;;###autoload
 (define-derived-mode replique-clojure-clojurescript-mode replique-clojure-mode
