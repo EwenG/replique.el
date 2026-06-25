@@ -156,7 +156,7 @@ Picks the nearest ancestor with a `deps.edn'/`project.clj'/`.git', else
 (defun replique-clojure--get-workspace (root)
   "Return the workspace for ROOT, creating it on first use."
   (or (gethash root replique-clojure--workspaces)
-      (puthash root (treejure-init root nil nil)
+      (puthash root (treejure-init root)
                replique-clojure--workspaces)))
 
 (defun replique-clojure--build-category-faces ()
