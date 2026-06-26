@@ -52,6 +52,7 @@
 ;;; Code:
 
 (require 'flymake)
+(require 'xref)
 
 (defgroup replique-clojure-semantic nil
   "Treejure semantic analysis layer for Clojure (the C-module client)."
@@ -68,6 +69,15 @@ changing the C source."
 (defcustom replique-clojure-semantic-idle-delay 0.3
   "Seconds of idle time before the buffer-local semantic check after an edit."
   :type 'number)
+
+(defcustom replique-clojure-semantic-source-dirs '("src" "test")
+  "Project-relative source directories searched for cross-namespace resolution.
+Used to seed a workspace's classpath so cross-file jump-to-definition can find
+the project's own namespaces.  Entries that do not exist under the project root
+are ignored; if none exist, the root itself is used.  This is an interim
+heuristic — the JVM oracle supplies the full classpath (incl. jars) later."
+  :type '(repeat string)
+  :safe #'listp)
 
 (defface replique-clojure-local-face
   '((t (:inherit font-lock-variable-name-face)))
@@ -97,6 +107,8 @@ entry (or a nil face) is left unpainted."
 (declare-function treejure-init "treejure-module")
 (declare-function treejure-check-buffer "treejure-module")
 (declare-function treejure-semantic-faces "treejure-module")
+(declare-function treejure-definition "treejure-module")
+(declare-function treejure-references "treejure-module")
 (declare-function treejure-close-buffer "treejure-module")
 (declare-function treejure-set-def-forms "treejure-module")
 (declare-function treejure-category-names "treejure-module")
@@ -153,10 +165,24 @@ Picks the nearest ancestor with a `deps.edn'/`project.clj'/`.git', else
        (locate-dominating-file default-directory ".git")
        default-directory)))
 
+(defun replique-clojure--classpath (root)
+  "Return the cross-namespace search dirs for project ROOT.
+The existing `replique-clojure-semantic-source-dirs' under ROOT that exist,
+else ROOT itself.  This is an interim heuristic: it resolves the project's own
+namespaces (enough for cross-file jump-to-definition between your files).  The
+full classpath — library/external deps and jars — is supplied by the JVM oracle
+in a later slice (PLAN step 6)."
+  (let ((dirs (delq nil
+                    (mapcar (lambda (d)
+                              (let ((p (expand-file-name d root)))
+                                (and (file-directory-p p) p)))
+                            replique-clojure-semantic-source-dirs))))
+    (or dirs (list (directory-file-name root)))))
+
 (defun replique-clojure--get-workspace (root)
   "Return the workspace for ROOT, creating it on first use."
   (or (gethash root replique-clojure--workspaces)
-      (puthash root (treejure-init root)
+      (puthash root (treejure-init root (replique-clojure--classpath root))
                replique-clojure--workspaces)))
 
 (defun replique-clojure--build-category-faces ()
@@ -303,6 +329,81 @@ CROSS-FILE-P selects the module's fast (nil) or full (t) tier."
   (when (bound-and-true-p replique-clojure-semantic-mode)
     (replique-clojure--check t)))
 
+
+;;;; Navigation — xref backend
+;;
+;; Jump-to-definition and find-references over the module's cached analysis.
+;; In-file: a local usage resolves to its binding, a same-namespace var usage to
+;; its definition (by resolved identity, so shadowing is handled).  Cross-file:
+;; an aliased/qualified or `:refer'-ed var jumps to its definition in the
+;; resolved dependency (jump-to-def only; references stay buffer-scoped).  The
+;; module returns 0-based byte offsets into whichever file owns the target.
+
+(defun replique-clojure--point-byte (&optional pos)
+  "Return the 0-based tree byte offset of POS (or point)."
+  (1- (position-bytes (or pos (point)))))
+
+(defun replique-clojure--line-at (pos)
+  "Return the text of the line containing POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+
+(defun replique-clojure--xref-item (loc)
+  "Build an xref item from module LOC plist (:file :beg :end), or nil.
+LOC's `:file' is this buffer for an in-file target, or another file (read from
+disk, last-saved state) for a cross-namespace target; the summary line and
+position are taken from whichever buffer owns the file."
+  (let ((file (plist-get loc :file))
+        (byte (plist-get loc :beg)))
+    (cond
+     ((and replique-clojure--file-id (equal file replique-clojure--file-id))
+      (when-let* ((pos (replique-clojure--byte->pos byte)))
+        (xref-make (replique-clojure--line-at pos)
+                   (xref-make-buffer-location (current-buffer) pos))))
+     ((file-readable-p file)
+      (when-let* ((buf (find-file-noselect file t)))
+        (with-current-buffer buf
+          (when-let* ((pos (byte-to-position (1+ byte))))
+            (xref-make (replique-clojure--line-at pos)
+                       (xref-make-buffer-location buf pos)))))))))
+
+(defun replique-clojure--xref-query-byte (identifier)
+  "Return the query byte for IDENTIFIER (its captured point), else point."
+  (or (and (stringp identifier)
+           (get-text-property 0 'replique-clojure--byte identifier))
+      (replique-clojure--point-byte)))
+
+(defun replique-clojure--xref-backend ()
+  "The xref backend symbol when the semantic layer is active."
+  (and (bound-and-true-p replique-clojure-semantic-mode)
+       replique-clojure--ws replique-clojure--file-id
+       'replique-clojure))
+
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql replique-clojure)))
+  (when-let* ((bounds (bounds-of-thing-at-point 'symbol)))
+    (propertize (buffer-substring-no-properties (car bounds) (cdr bounds))
+                'replique-clojure--byte
+                (replique-clojure--point-byte (car bounds)))))
+
+(cl-defmethod xref-backend-identifier-completion-table ((_backend (eql replique-clojure)))
+  nil)
+
+(cl-defmethod xref-backend-definitions ((_backend (eql replique-clojure)) identifier)
+  (replique-clojure--check t)            ; ensure the cached analysis is current
+  (when-let* ((loc (treejure-definition
+                    replique-clojure--ws replique-clojure--file-id
+                    (replique-clojure--xref-query-byte identifier)))
+              (item (replique-clojure--xref-item loc)))
+    (list item)))
+
+(cl-defmethod xref-backend-references ((_backend (eql replique-clojure)) identifier)
+  (replique-clojure--check t)
+  (delq nil (mapcar #'replique-clojure--xref-item
+                    (treejure-references
+                     replique-clojure--ws replique-clojure--file-id
+                     (replique-clojure--xref-query-byte identifier)))))
+
 ;;;###autoload
 (define-minor-mode replique-clojure-semantic-mode
   "Layer treejure's semantic faces and diagnostics over the syntax layer.
@@ -323,6 +424,7 @@ renders semantic-face overlays plus Flymake diagnostics."
             (add-hook 'after-save-hook #'replique-clojure--full-check nil t)
             (add-hook 'window-buffer-change-functions #'replique-clojure--full-check nil t)
             (add-hook 'flymake-diagnostic-functions #'replique-clojure--flymake nil t)
+            (add-hook 'xref-backend-functions #'replique-clojure--xref-backend nil t)
             ;; Re-push def-forms + re-check once `.dir-locals.el' is applied
             ;; (which happens after this mode body runs).
             (add-hook 'hack-local-variables-hook
@@ -340,6 +442,7 @@ renders semantic-face overlays plus Flymake diagnostics."
     (remove-hook 'after-save-hook #'replique-clojure--full-check t)
     (remove-hook 'window-buffer-change-functions #'replique-clojure--full-check t)
     (remove-hook 'flymake-diagnostic-functions #'replique-clojure--flymake t)
+    (remove-hook 'xref-backend-functions #'replique-clojure--xref-backend t)
     (remove-hook 'hack-local-variables-hook #'replique-clojure--refresh-def-forms t)
     (save-restriction
       (widen)
