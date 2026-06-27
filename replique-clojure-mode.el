@@ -1146,6 +1146,17 @@ highlighting itself comes from treesit, not this table.")
   (setq-local treesit-font-lock-settings (replique-clojure--font-lock-settings))
   (font-lock-flush))
 
+(defconst replique-clojure--data-file-extensions '("edn" "dtm")
+  "Extensions of EDN data files (not Clojure source).
+`.edn'/`.dtm' hold pure data — no namespace form, no code — so the semantic
+layer has nothing to analyse and is skipped for them.")
+
+(defun replique-clojure--data-buffer-p ()
+  "Return non-nil if this buffer holds EDN data rather than Clojure source."
+  (and buffer-file-name
+       (member (file-name-extension buffer-file-name)
+               replique-clojure--data-file-extensions)))
+
 ;;;###autoload
 (define-derived-mode replique-clojure-mode prog-mode "Replique[clj]"
   "Major mode for editing Clojure code, built on Tree-sitter (treejure grammar).
@@ -1164,7 +1175,10 @@ treejure semantic module and are not part of this mode."
     ;; Layer the treejure semantic faces/diagnostics on top, when enabled and
     ;; the C module is available.  The library is loaded lazily so the syntax
     ;; mode stays self-contained; failures degrade to the pure syntax layer.
+    ;; Skipped for EDN data buffers (`.edn'/`.dtm'): they carry no namespace or
+    ;; code for the semantic pass to analyse.
     (when (and replique-clojure-enable-semantic module-file-suffix
+               (not (replique-clojure--data-buffer-p))
                (require 'replique-clojure-semantic nil t))
       (replique-clojure-semantic-mode 1))))
 
