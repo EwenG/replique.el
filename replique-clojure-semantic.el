@@ -145,6 +145,10 @@ entry (or a nil face) is left unpainted."
 (defvar-local replique-clojure--idle-timer nil
   "Idle timer scheduled to run the buffer-local semantic check.")
 
+(defvar-local replique-clojure--pending-cross-file nil
+  "Tier requested by the pending idle check: t = full, nil = fast.
+A pending full-tier request is never downgraded to fast by a later edit.")
+
 (defun replique-clojure--ensure-module ()
   "Load the treejure dynamic module once per session.
 Signals if the module file is missing."
@@ -305,8 +309,13 @@ CROSS-FILE-P selects the module's fast (nil) or full (t) tier."
     (replique-clojure--refresh-overlays)
     (replique-clojure--report-flymake replique-clojure--last-diags)))
 
-(defun replique-clojure--schedule-check ()
-  "Arm (or re-arm) the idle timer for the fast-tier semantic check."
+(defun replique-clojure--schedule-check (cross-file-p)
+  "Arm (or re-arm) the idle timer for a semantic check, coalescing bursts.
+CROSS-FILE-P selects the tier; a pending full-tier request is never
+downgraded to fast.  Deferring to idle keeps the full tier's dependency I/O
+off the redisplay path and collapses bursts (e.g. several
+`window-buffer-change-functions' calls) into a single check."
+  (when cross-file-p (setq replique-clojure--pending-cross-file t))
   (when (timerp replique-clojure--idle-timer)
     (cancel-timer replique-clojure--idle-timer))
   (let ((buf (current-buffer)))
@@ -316,18 +325,32 @@ CROSS-FILE-P selects the module's fast (nil) or full (t) tier."
            (lambda ()
              (when (buffer-live-p buf)
                (with-current-buffer buf
-                 (when replique-clojure--dirty
-                   (replique-clojure--check nil)))))))))
+                 ;; Run if the buffer changed (fast) or a full check is pending
+                 ;; (a dependency may have gone stale with no local edit).
+                 (when (and (bound-and-true-p replique-clojure-semantic-mode)
+                            (or replique-clojure--dirty
+                                replique-clojure--pending-cross-file))
+                   (let ((cf replique-clojure--pending-cross-file))
+                     (setq replique-clojure--pending-cross-file nil)
+                     (replique-clojure--check cf))))))))))
 
 (defun replique-clojure--after-change (_beg _end _len)
   "Mark the buffer dirty and schedule a debounced fast-tier check."
   (setq replique-clojure--dirty t)
-  (replique-clojure--schedule-check))
+  (replique-clojure--schedule-check nil))
 
 (defun replique-clojure--full-check (&rest _)
-  "Run the full-tier check (save / buffer-switch / focus triggers)."
+  "Run the full-tier check synchronously (save trigger)."
   (when (bound-and-true-p replique-clojure-semantic-mode)
     (replique-clojure--check t)))
+
+(defun replique-clojure--schedule-full-check (&rest _)
+  "Defer a coalesced full-tier check (buffer-switch / focus triggers).
+Used for `window-buffer-change-functions', a redisplay hook: arming a timer
+returns instantly, so the full tier's dependency I/O never runs during
+redisplay, and a burst of calls collapses into one check."
+  (when (bound-and-true-p replique-clojure-semantic-mode)
+    (replique-clojure--schedule-check t)))
 
 
 ;;;; Navigation — xref backend
@@ -422,7 +445,8 @@ renders semantic-face overlays plus Flymake diagnostics."
                   (replique-clojure--build-category-faces))
             (add-hook 'after-change-functions #'replique-clojure--after-change nil t)
             (add-hook 'after-save-hook #'replique-clojure--full-check nil t)
-            (add-hook 'window-buffer-change-functions #'replique-clojure--full-check nil t)
+            (add-hook 'window-buffer-change-functions
+                      #'replique-clojure--schedule-full-check nil t)
             (add-hook 'flymake-diagnostic-functions #'replique-clojure--flymake nil t)
             (add-hook 'xref-backend-functions #'replique-clojure--xref-backend nil t)
             ;; Re-push def-forms + re-check once `.dir-locals.el' is applied
@@ -440,7 +464,8 @@ renders semantic-face overlays plus Flymake diagnostics."
       (cancel-timer replique-clojure--idle-timer))
     (remove-hook 'after-change-functions #'replique-clojure--after-change t)
     (remove-hook 'after-save-hook #'replique-clojure--full-check t)
-    (remove-hook 'window-buffer-change-functions #'replique-clojure--full-check t)
+    (remove-hook 'window-buffer-change-functions
+                 #'replique-clojure--schedule-full-check t)
     (remove-hook 'flymake-diagnostic-functions #'replique-clojure--flymake t)
     (remove-hook 'xref-backend-functions #'replique-clojure--xref-backend t)
     (remove-hook 'hack-local-variables-hook #'replique-clojure--refresh-def-forms t)
@@ -451,7 +476,8 @@ renders semantic-face overlays plus Flymake diagnostics."
       (treejure-close-buffer replique-clojure--ws replique-clojure--file-id))
     (setq replique-clojure--ws nil
           replique-clojure--file-id nil
-          replique-clojure--last-diags nil)))
+          replique-clojure--last-diags nil
+          replique-clojure--pending-cross-file nil)))
 
 (provide 'replique-clojure-semantic)
 
