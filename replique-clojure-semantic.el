@@ -91,18 +91,37 @@ heuristic — the JVM oracle supplies the full classpath (incl. jars) later."
   '((t (:inherit font-lock-warning-face)))
   "Face for symbols resolving to nothing (the `:unresolved' category).")
 
+(defface replique-clojure-macro-face
+  '((t (:inherit font-lock-builtin-face)))
+  "Face for known non-core macro invocations (the `:macro-invocation' category).
+The module paints this only on the head of a *known* non-core macro — today a
+user-declared def-form (see `replique-clojure-extra-def-forms'); library macros
+follow once macro knowledge / `:lint-as' lands.  Special forms and core macros
+read as `:special-form' (`font-lock-keyword-face') instead, so this distinct hue
+means \"a macro the grammar could not have known about\" — treesit cannot tell a
+macro call from a function call without resolution.")
+
 (defcustom replique-clojure-semantic-category-faces
   '((:local            . replique-clojure-local-face)
     (:local-unused     . replique-clojure-unused-face)
-    (:global-var       . font-lock-variable-name-face)
+    ;; Global var references are left UNPAINTED on purpose: treesit already
+    ;; renders them (namespace -> `font-lock-type-face', name -> default), and
+    ;; not overriding it both lets that namespace coloring show through and
+    ;; makes `:local' (which IS painted) visually stand out.
+    (:global-var       . nil)
+    ;; Special forms AND core macros both arrive as `:special-form' (keyword);
+    ;; `:macro-invocation' is reserved for KNOWN non-core macros (user
+    ;; def-forms), so a project macro reads in the distinct macro hue.
     (:special-form     . font-lock-keyword-face)
-    (:macro-invocation . font-lock-keyword-face)
+    (:macro-invocation . replique-clojure-macro-face)
     (:unresolved       . replique-clojure-unresolved-face))
   "Map a treejure semantic-face category (keyword) to an Emacs face.
 The keywords match `treejure-category-names'; C decides categories, Elisp owns
-the visual mapping, so new faces need no module rebuild.  A category with no
-entry (or a nil face) is left unpainted."
-  :type '(alist :key-type symbol :value-type face))
+the visual mapping, so new faces need no module rebuild.  A category mapped to
+nil (or absent) is left unpainted — treesit's own faces then show through."
+  :type '(alist :key-type symbol
+                :value-type (choice (const :tag "Unpainted (treesit shows)" nil)
+                                    face)))
 
 (declare-function treejure-init "treejure-module")
 (declare-function treejure-check-buffer "treejure-module")
