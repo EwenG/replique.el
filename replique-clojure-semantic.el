@@ -36,11 +36,13 @@
 ;; `replique-clojure-enable-semantic' is non-nil and the module is available;
 ;; failures degrade gracefully to the pure syntax layer.
 ;;
-;; Currently the module returns buffer-only facts: `:local' / unused-greyout
-;; faces from the scope pass, plus grammar-level (`ERROR'/`MISSING'/`invalid_*')
-;; and `unused-binding' diagnostics.  Cross-file faces (`:global-var',
-;; `:unresolved') and navigation arrive with later module slices and need no
-;; change here beyond the `category -> face' map
+;; The module returns buffer-only faces -- `:local' / unused-greyout from the
+;; scope pass and the `:special-form' / `:macro-invocation' form-head faces --
+;; plus grammar-level (`ERROR'/`MISSING'/`invalid_*'), `unused-binding' and the
+;; require/var Tier-1/2 diagnostics.  There is deliberately no var face: a
+;; resolved var is colored by the treesit syntax layer, not the semantic
+;; overlay.  The `:unresolved' face arrives with a later module slice and needs
+;; no change here beyond the `category -> face' map
 ;; (`replique-clojure-semantic-category-faces').
 ;;
 ;; INVARIANT (byte<->position): the module always parses the whole *widened*
@@ -104,11 +106,11 @@ macro call from a function call without resolution.")
 (defcustom replique-clojure-semantic-category-faces
   '((:local            . replique-clojure-local-face)
     (:local-unused     . replique-clojure-unused-face)
-    ;; Global var references are left UNPAINTED on purpose: treesit already
-    ;; renders them (namespace -> `font-lock-type-face', name -> default), and
-    ;; not overriding it both lets that namespace coloring show through and
-    ;; makes `:local' (which IS painted) visually stand out.
-    (:global-var       . nil)
+    ;; There is no var face: a resolved var (same- or cross-namespace) is left to
+    ;; the syntax layer.  treesit already colors a qualified symbol's namespace
+    ;; (`font-lock-type-face') and the def-name forms, so the semantic overlay
+    ;; paints only what treesit cannot -- locals, form heads, and (later)
+    ;; `:unresolved' -- which also lets `:local' visually stand out.
     ;; Special forms AND core macros both arrive as `:special-form' (keyword);
     ;; `:macro-invocation' is reserved for KNOWN non-core macros (user
     ;; def-forms), so a project macro reads in the distinct macro hue.
@@ -128,6 +130,7 @@ nil (or absent) is left unpainted — treesit's own faces then show through."
 (declare-function treejure-semantic-faces "treejure-module")
 (declare-function treejure-definition "treejure-module")
 (declare-function treejure-references "treejure-module")
+(declare-function treejure-jar-entry "treejure-module")
 (declare-function treejure-close-buffer "treejure-module")
 (declare-function treejure-set-def-forms "treejure-module")
 (declare-function treejure-category-names "treejure-module")
@@ -136,6 +139,10 @@ nil (or absent) is left unpainted — treesit's own faces then show through."
 ;; Defined in replique-clojure-mode.el (the syntax layer); also drives this
 ;; layer, where listed macros are analysed like `defn'.
 (defvar replique-clojure-extra-def-forms)
+(defvar replique-clojure-enable-semantic)
+(declare-function replique-clojure-mode "replique-clojure-mode")
+(declare-function replique-clojure-clojurescript-mode "replique-clojure-mode")
+(declare-function replique-clojure-clojurec-mode "replique-clojure-mode")
 
 (defvar replique-clojure--module-loaded nil
   "Non-nil once the treejure dynamic module has been loaded.")
@@ -378,8 +385,11 @@ redisplay, and a burst of calls collapses into one check."
 ;; In-file: a local usage resolves to its binding, a same-namespace var usage to
 ;; its definition (by resolved identity, so shadowing is handled).  Cross-file:
 ;; an aliased/qualified or `:refer'-ed var jumps to its definition in the
-;; resolved dependency (jump-to-def only; references stay buffer-scoped).  The
-;; module returns 0-based byte offsets into whichever file owns the target.
+;; resolved dependency (jump-to-def only; references stay buffer-scoped).  A
+;; jar-backed target comes back as a synthetic \"<jar>!<entry>\" path, which we
+;; open in a read-only buffer holding the entry's source (extracted via the
+;; module's `treejure-jar-entry').  The module returns 0-based byte offsets into
+;; whichever file owns the target.
 
 (defun replique-clojure--point-byte (&optional pos)
   "Return the 0-based tree byte offset of POS (or point)."
@@ -391,24 +401,83 @@ redisplay, and a burst of calls collapses into one check."
     (goto-char pos)
     (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
 
+(defun replique-clojure--jar-location-p (file)
+  "Non-nil if FILE is a synthetic \"<jar>!<entry>\" jar-backed location."
+  (and (stringp file) (string-match-p "\\.jar!" file)))
+
+(defun replique-clojure--split-jar-location (file)
+  "Split a \"<jar>!<entry>\" FILE into (JAR ENTRY), or nil.
+Splits at the jar's `.jar' boundary (greedy), the convention the module builds
+the synthetic path with, so the entry part may itself contain dots."
+  (when (string-match "\\`\\(.*\\.jar\\)!\\(.*\\)\\'" file)
+    (list (match-string 1 file) (match-string 2 file))))
+
+(defun replique-clojure--jar-entry-major-mode (entry)
+  "Return the major-mode function for a jar ENTRY, by its file extension."
+  (pcase (file-name-extension entry)
+    ("cljs" #'replique-clojure-clojurescript-mode)
+    ("cljc" #'replique-clojure-clojurec-mode)
+    (_      #'replique-clojure-mode)))
+
+(defvar replique-clojure--jar-entry-buffers (make-hash-table :test 'equal)
+  "Map a \"<jar>!<entry>\" key to its cached read-only source buffer.
+Keyed by the full jar path (not its basename), so two jars sharing a basename
+never collide.  Buffers are session-lived; a killed one is re-extracted.")
+
+(defun replique-clojure--jar-entry-buffer (jar entry)
+  "Return a read-only buffer holding ENTRY extracted from JAR, or nil.
+The buffer is extracted once and reused on later jumps (keyed by the full
+JAR!ENTRY identity, so same-basename jars do not collide).  Its text is the
+exact UTF-8 source the module parsed, so the module's 0-based byte offsets map
+through `byte-to-position' unchanged.  Highlighting is on, but the semantic
+layer is NOT enabled: this is a read-only viewer of foreign library source, not
+a project file to analyse.  Were it enabled it would inherit the *current*
+project's workspace (via `default-directory') and, since the buffer has no
+`buffer-file-name', intern a junk FileNode under a name-derived bogus path,
+running pointless analysis and Flymake on un-editable code."
+  (let* ((key (format "%s!%s" jar entry))
+         (cached (gethash key replique-clojure--jar-entry-buffers)))
+    (if (buffer-live-p cached)
+        cached
+      (when-let* ((text (treejure-jar-entry jar entry))
+                  (buf (generate-new-buffer
+                        (format "*treejure %s!%s*"
+                                (file-name-nondirectory jar) entry))))
+        (with-current-buffer buf
+          (let ((inhibit-read-only t))
+            (insert text)
+            (goto-char (point-min)))
+          (set-buffer-modified-p nil)
+          (let ((replique-clojure-enable-semantic nil))
+            (funcall (replique-clojure--jar-entry-major-mode entry)))
+          (read-only-mode 1))
+        (puthash key buf replique-clojure--jar-entry-buffers)
+        buf))))
+
+(defun replique-clojure--xref-from-buffer (buf byte)
+  "Build an xref item at 0-based tree BYTE within BUF, or nil."
+  (with-current-buffer buf
+    (when-let* ((pos (byte-to-position (1+ byte))))
+      (xref-make (replique-clojure--line-at pos)
+                 (xref-make-buffer-location buf pos)))))
+
 (defun replique-clojure--xref-item (loc)
   "Build an xref item from module LOC plist (:file :beg :end), or nil.
-LOC's `:file' is this buffer for an in-file target, or another file (read from
-disk, last-saved state) for a cross-namespace target; the summary line and
-position are taken from whichever buffer owns the file."
-  (let ((file (plist-get loc :file))
-        (byte (plist-get loc :beg)))
-    (cond
-     ((and replique-clojure--file-id (equal file replique-clojure--file-id))
-      (when-let* ((pos (replique-clojure--byte->pos byte)))
-        (xref-make (replique-clojure--line-at pos)
-                   (xref-make-buffer-location (current-buffer) pos))))
-     ((file-readable-p file)
-      (when-let* ((buf (find-file-noselect file t)))
-        (with-current-buffer buf
-          (when-let* ((pos (byte-to-position (1+ byte))))
-            (xref-make (replique-clojure--line-at pos)
-                       (xref-make-buffer-location buf pos)))))))))
+LOC's `:file' is this buffer (an in-file target), another source file (a
+cross-namespace target, read from disk at its last-saved state), or a synthetic
+\"<jar>!<entry>\" path (a jar-backed var, opened read-only); the summary line and
+position come from whichever buffer owns the target."
+  (let* ((file (plist-get loc :file))
+         (byte (plist-get loc :beg))
+         (buf (cond
+               ((and replique-clojure--file-id (equal file replique-clojure--file-id))
+                (current-buffer))
+               ((replique-clojure--jar-location-p file)
+                (pcase (replique-clojure--split-jar-location file)
+                  (`(,jar ,entry) (replique-clojure--jar-entry-buffer jar entry))))
+               ((file-readable-p file)
+                (find-file-noselect file t)))))
+    (and buf (replique-clojure--xref-from-buffer buf byte))))
 
 (defun replique-clojure--xref-query-byte (identifier)
   "Return the query byte for IDENTIFIER (its captured point), else point."

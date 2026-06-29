@@ -35,10 +35,12 @@
 ;;     model, with a `no-indent' seam so multi-line string interiors are left
 ;;     untouched.
 ;;
-;; Semantic faces (`:local', `:global-var', `:macro-invocation', `:unresolved',
-;; unused greyout), diagnostics and navigation are deliberately NOT here: per the
-;; PLAN they are computed by the C semantic module and layered *on top* of these
-;; faces as an overlay.  This file is pure, in-core treesit.
+;; Semantic faces (`:local', `:macro-invocation', `:special-form',
+;; `:unresolved', unused greyout), diagnostics and navigation are deliberately
+;; NOT here: per the PLAN they are computed by the C semantic module and layered
+;; *on top* of these faces as an overlay.  (There is no semantic var face --
+;; resolved vars are colored by this treesit layer.)  This file is pure, in-core
+;; treesit.
 ;;
 ;; Customization (M-x customize-group RET replique-clojure RET):
 ;;   `replique-clojure-ensure-grammars'           install/update the grammar
