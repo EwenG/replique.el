@@ -444,14 +444,18 @@ them.  Expands to a Tree-sitter alternation vector."
      :language 'treejure
      :feature 'doc
      :override t
+     ;; Mirror the built-in `defn'-family docstring query (see
+     ;; `replique-clojure--docstring-query'): a string in the second argument
+     ;; position is the docstring, with no trailing form required -- extra
+     ;; def-forms are highlighted exactly like `defn', not like value-carrying
+     ;; `def'.
      `(((list_literal
          :anchor [(comment) (discard)] :*
          :anchor (symbol name: (symbol_name) @_def_symbol)
          :anchor [(comment) (discard)] :*
          :anchor ,(replique-clojure--meta-choice (symbol))
          :anchor [(comment) (discard)] :*
-         :anchor ,(replique-clojure--meta-choice (string) @font-lock-doc-face)
-         :anchor (_visible_form))
+         :anchor ,(replique-clojure--meta-choice (string) @font-lock-doc-face))
         (:match ,(replique-clojure-symbol-regexp syms) @_def_symbol))))))
 
 (defun replique-clojure--font-lock-settings ()
