@@ -81,6 +81,23 @@ heuristic — the JVM oracle supplies the full classpath (incl. jars) later."
   :type '(repeat string)
   :safe #'listp)
 
+(defcustom replique-clojure-semantic-references-scope 'ask
+  "Search scope for project-wide find-usages (`xref-find-references', \\[xref-find-references]).
+One of:
+  `ask'      prompt for the scope on each invocation (classpath / a picked
+             directory / buffer-only) — the choice is transient, re-picked
+             each time (the PLAN search-scope model);
+  `project'  the project source dirs (`replique-clojure-semantic-source-dirs')
+             with no prompt;
+  `buffer'   this buffer only (no cross-file scan).
+A local binding is always buffer-scoped, regardless of this setting (a local
+cannot escape its file).  Cross-file results are filtered by resolved identity,
+so a same-name var in another namespace never matches."
+  :type '(choice (const :tag "Ask each time" ask)
+                 (const :tag "Project source dirs" project)
+                 (const :tag "Buffer only" buffer))
+  :safe #'symbolp)
+
 (defface replique-clojure-local-face
   '((t (:inherit font-lock-variable-name-face)))
   "Face for resolved local bindings and their usages (the `:local' category).")
@@ -508,12 +525,35 @@ position come from whichever buffer owns the target."
               (item (replique-clojure--xref-item loc)))
     (list item)))
 
+(defun replique-clojure--references-scope ()
+  "Return the cross-file find-usages scope as a list of directories, or nil for
+buffer-only.  Honors `replique-clojure-semantic-references-scope': `buffer'
+yields nil, `project' the project source dirs, and `ask' prompts (classpath /
+a picked directory / buffer-only).  The choice is transient — re-decided on
+each call, never persisted (PLAN search-scope model)."
+  (pcase replique-clojure-semantic-references-scope
+    ('buffer nil)
+    ('project (replique-clojure--classpath (replique-clojure--project-root)))
+    (_ (pcase (completing-read
+               "Find references in: "
+               '("Project source dirs" "A directory..." "This buffer only")
+               nil t nil nil "Project source dirs")
+         ("A directory..."
+          (list (expand-file-name (read-directory-name "Search directory: "))))
+         ("This buffer only" nil)
+         (_ (replique-clojure--classpath (replique-clojure--project-root)))))))
+
 (cl-defmethod xref-backend-references ((_backend (eql replique-clojure)) identifier)
   (replique-clojure--check t)
-  (delq nil (mapcar #'replique-clojure--xref-item
-                    (treejure-references
-                     replique-clojure--ws replique-clojure--file-id
-                     (replique-clojure--xref-query-byte identifier)))))
+  ;; A local binding is always buffer-scoped (the module ignores the scope for
+  ;; it); a var is searched across the chosen scope, filtered by resolved
+  ;; identity.  An empty/nil scope means buffer-only (this file's occurrences).
+  (let ((scope (replique-clojure--references-scope)))
+    (delq nil (mapcar #'replique-clojure--xref-item
+                      (treejure-references
+                       replique-clojure--ws replique-clojure--file-id
+                       (replique-clojure--xref-query-byte identifier)
+                       (and scope (vconcat scope)))))))
 
 ;;;###autoload
 (define-minor-mode replique-clojure-semantic-mode
