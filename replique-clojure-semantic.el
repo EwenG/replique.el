@@ -147,6 +147,7 @@ nil (or absent) is left unpainted — treesit's own faces then show through."
 (declare-function treejure-semantic-faces "treejure-module")
 (declare-function treejure-definition "treejure-module")
 (declare-function treejure-references "treejure-module")
+(declare-function treejure-analyze "treejure-module")
 (declare-function treejure-jar-entry "treejure-module")
 (declare-function treejure-close-buffer "treejure-module")
 (declare-function treejure-set-def-forms "treejure-module")
@@ -322,15 +323,19 @@ the semantic layer wins where it has a span (PLAN precedence)."
   (setq replique-clojure--flymake-report-fn report-fn)
   (replique-clojure--report-flymake replique-clojure--last-diags))
 
+(defun replique-clojure--def-forms-vector ()
+  "Return `replique-clojure-extra-def-forms' as a vector of name strings.
+The shape `treejure-set-def-forms' expects (non-string entries dropped)."
+  (vconcat (delq nil (mapcar (lambda (s) (and (stringp s) s))
+                             replique-clojure-extra-def-forms))))
+
 (defun replique-clojure--push-def-forms ()
   "Push `replique-clojure-extra-def-forms' to the module for this workspace.
 The module then analyses those macros like `defn' (skips the def name, binds
 any param vectors), matching how the syntax layer highlights them."
   (when replique-clojure--ws
-    (treejure-set-def-forms
-     replique-clojure--ws
-     (vconcat (delq nil (mapcar (lambda (s) (and (stringp s) s))
-                                replique-clojure-extra-def-forms))))))
+    (treejure-set-def-forms replique-clojure--ws
+                            (replique-clojure--def-forms-vector))))
 
 (defun replique-clojure--refresh-def-forms ()
   "Re-push the extra def-forms and re-run the check (config changed).
@@ -554,6 +559,51 @@ each call, never persisted (PLAN search-scope model)."
                        replique-clojure--ws replique-clojure--file-id
                        (replique-clojure--xref-query-byte identifier)
                        (and scope (vconcat scope)))))))
+
+;;;; Cold full analysis — treejure-analyze
+;;
+;; An explicit command that analyzes a chosen scope up front (the PLAN's cold
+;; full analysis, build-order step 5), warming the workspace's session cache so
+;; later navigation / find-usages over those files needs no re-parse.  The module
+;; returns only an aggregate summary; per-file diagnostics still surface lazily
+;; through Flymake (`treejure-check-buffer') when a file is opened.  The scope is
+;; chosen per invocation (project source dirs or a picked directory) and not
+;; persisted, mirroring the find-usages search-scope model.
+
+(defun replique-clojure--analyze-scope ()
+  "Prompt for the cold-analysis search scope, as a list of directories.
+Mirrors `replique-clojure--references-scope': the project source dirs
+\(`replique-clojure-semantic-source-dirs') or a directory the user picks.  The
+choice is transient (re-decided each call), never persisted."
+  (pcase (completing-read
+          "Analyze scope: "
+          '("Project source dirs" "A directory...")
+          nil t nil nil "Project source dirs")
+    ("A directory..."
+     (list (expand-file-name (read-directory-name "Analyze directory: "))))
+    (_ (replique-clojure--classpath (replique-clojure--project-root)))))
+
+;;;###autoload
+(defun replique-clojure-semantic-analyze (scope-dirs)
+  "Run a cold full analysis of SCOPE-DIRS and report an aggregate summary.
+Interactively, prompt for the scope (the project source dirs, or a directory you
+pick).  Every Clojure source file under SCOPE-DIRS is analyzed at the full tier
+\(diagnostics + cross-file resolution), warming the workspace so later
+jump-to-definition / find-usages over those files reuse the cached analysis.
+Per-file diagnostics still appear lazily via Flymake when a file is opened; this
+command reports only the file and diagnostic counts and returns the summary
+plist."
+  (interactive (list (replique-clojure--analyze-scope)))
+  (replique-clojure--ensure-module)
+  (let ((ws (replique-clojure--get-workspace (replique-clojure--project-root))))
+    (treejure-set-def-forms ws (replique-clojure--def-forms-vector))
+    (let* ((summary (treejure-analyze ws (vconcat scope-dirs)))
+           (files (or (plist-get summary :files) 0))
+           (diags (or (plist-get summary :diagnostics) 0)))
+      (message "Replique: analyzed %d file%s, %d diagnostic%s"
+               files (if (= files 1) "" "s")
+               diags (if (= diags 1) "" "s"))
+      summary)))
 
 ;;;###autoload
 (define-minor-mode replique-clojure-semantic-mode
