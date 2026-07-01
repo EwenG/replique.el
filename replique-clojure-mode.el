@@ -22,10 +22,9 @@
 
 ;;; Commentary:
 
-;; `replique-clojure-mode' is the Tree-sitter *syntax layer* for Clojure,
-;; ClojureScript and ClojureC, built on Emacs' built-in `treesit' over the
-;; `treejure' grammar.  It owns the two commodity, per-buffer concerns that the
-;; PLAN assigns to treesit:
+;; `replique-clojure-mode' is the Tree-sitter *syntax layer* for Clojure and
+;; ClojureScript, built on Emacs' built-in `treesit' over the `treejure'
+;; grammar. It owns grammar-level font-lock and indentation:
 ;;
 ;;   * grammar-level font-lock (`treesit-font-lock-rules') — strings, regexes,
 ;;     keywords, comments, numbers, characters, brackets, errors, plus the
@@ -37,10 +36,8 @@
 ;;
 ;; Semantic faces (`:local', `:macro-invocation', `:special-form',
 ;; `:unresolved', unused greyout), diagnostics and navigation are deliberately
-;; NOT here: per the PLAN they are computed by the C semantic module and layered
-;; *on top* of these faces as an overlay.  (There is no semantic var face --
-;; resolved vars are colored by this treesit layer.)  This file is pure, in-core
-;; treesit.
+;; NOT here: They are computed by the C semantic module and layered *on top* of
+;; these faces as an overlay. This file is pure, in-core treesit.
 ;;
 ;; Customization (M-x customize-group RET replique-clojure RET):
 ;;   `replique-clojure-ensure-grammars'           install/update the grammar
@@ -1152,9 +1149,9 @@ highlighting itself comes from treesit, not this table.")
   (setq-local treesit-font-lock-settings (replique-clojure--font-lock-settings))
   (font-lock-flush))
 
-(defconst replique-clojure--data-file-extensions '("edn" "dtm")
+(defconst replique-clojure--data-file-extensions '("edn")
   "Extensions of EDN data files (not Clojure source).
-`.edn'/`.dtm' hold pure data — no namespace form, no code — so the semantic
+`.edn' hold pure data — no namespace form, no code — so the semantic
 layer has nothing to analyse and is skipped for them.")
 
 (defun replique-clojure--data-buffer-p ()
@@ -1181,7 +1178,7 @@ treejure semantic module and are not part of this mode."
     ;; Layer the treejure semantic faces/diagnostics on top, when enabled and
     ;; the C module is available.  The library is loaded lazily so the syntax
     ;; mode stays self-contained; failures degrade to the pure syntax layer.
-    ;; Skipped for EDN data buffers (`.edn'/`.dtm'): they carry no namespace or
+    ;; Skipped for EDN data buffers (`.edn'): they carry no namespace or
     ;; code for the semantic pass to analyse.
     (when (and replique-clojure-enable-semantic module-file-suffix
                (not (replique-clojure--data-buffer-p))
@@ -1205,14 +1202,13 @@ treejure semantic module and are not part of this mode."
 ;;;###autoload
 (if (treesit-available-p)
     (progn
-      ;; Clojure + EDN (.dtm is Datomic data, also EDN).
+      ;; Clojure + EDN
       (add-to-list 'auto-mode-alist
-                   '("\\.\\(clj\\|dtm\\|edn\\)\\'" . replique-clojure-mode))
+                   '("\\.\\(clj\\|edn\\)\\'" . replique-clojure-mode))
       (add-to-list 'auto-mode-alist '("\\.cljs\\'" . replique-clojure-clojurescript-mode))
       (add-to-list 'auto-mode-alist '("\\.cljc\\'" . replique-clojure-clojurec-mode))
-      ;; babashka / nbb scripts are Clojure(Script) source files.
-      (add-to-list 'interpreter-mode-alist '("bb" . replique-clojure-mode))
-      (add-to-list 'interpreter-mode-alist '("nbb" . replique-clojure-clojurescript-mode)))
+      ;; babashka scripts are Clojure source files.
+      (add-to-list 'interpreter-mode-alist '("bb" . replique-clojure-mode)))
   (message "Replique: Clojure mode not activated — Tree-sitter support is missing."))
 
 (provide 'replique-clojure-mode)
