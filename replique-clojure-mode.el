@@ -46,9 +46,7 @@
 ;;   `replique-clojure-docstring-fill-column'     fill-column for docstrings
 ;;   `replique-clojure-docstring-fill-prefix-width'  docstring fill prefix
 ;; The faces are themeable via the deffaces below, and the indent rules /
-;; extra def-forms are `.dir-locals.el'-friendly.  The single semantic seam in
-;; indentation — resolving a symbol to a `clojure-mode'-style indent spec — is
-;; exposed through `replique-clojure-get-indent-function'.
+;; extra def-forms are `.dir-locals.el'-friendly.
 
 ;;; Code:
 
@@ -105,10 +103,10 @@ continuation lines with the opening double quote on the third column."
 
 ;;;; Faces
 ;;
-;; Grammar faces are assigned directly in the font-lock rules (the
-;; clojure-ts-mode model).  Two categories that have no good standard face get a
-;; dedicated, themeable face here; everything else reuses the standard
-;; `font-lock-*' faces, so a theme controls them with no rebuild.
+;; Grammar faces are assigned directly in the font-lock rules.  Two categories
+;; that have no good standard face get a dedicated, themeable face here;
+;; everything else reuses the standard `font-lock-*' faces, so a theme controls
+;; them with no rebuild.
 
 (defface replique-clojure-keyword-face
   '((t (:inherit font-lock-constant-face)))
@@ -597,13 +595,6 @@ The defaults live in `replique-clojure--semantic-indent-rules-defaults'."
                                                   integer))))
   :set #'replique-clojure--set-semantic-indent-rules)
 
-(defvar replique-clojure-get-indent-function nil
-  "Function returning the dynamic indent spec of a symbol, or nil.
-Called with the symbol name exactly as it appears in the buffer (it may carry
-a namespace alias).  This is the single semantic seam in indentation: a client
-\(e.g. the REPL) resolves a project macro's `:style/indent' / arglist to a
-`clojure-mode'-compatible spec, which is converted to a treejure rule here.")
-
 
 ;;;; Indentation — node predicates
 
@@ -649,10 +640,6 @@ a namespace alias).  This is the single semantic seam in indentation: a client
 (defun replique-clojure--named-node-text (node)
   "Return the name of symbol/keyword NODE (without its namespace)."
   (treesit-node-text (treesit-node-child-by-field-name node "name")))
-
-(defun replique-clojure--node-namespace-text (node)
-  "Return the namespace of symbol/keyword NODE, or nil."
-  (treesit-node-text (treesit-node-child-by-field-name node "namespace")))
 
 (defun replique-clojure--symbol-matches-p (symbol-regexp node)
   "Return non-nil if NODE is a symbol whose name matches SYMBOL-REGEXP."
@@ -727,48 +714,15 @@ With INCLUDE-ANON-FN-LIT, also handle function literals."
   "Value for `treesit-thing-settings'.")
 
 
-;;;; Indentation — dynamic (semantic) seam
-
-(defun replique-clojure--unwrap-dynamic-spec (spec current-depth)
-  "Convert a nested `clojure-mode' SPEC at CURRENT-DEPTH to a treejure rule.
-For example ((:defn)) becomes (:inner 2) and (:defn) becomes (:inner 1)."
-  (if (consp spec)
-      (replique-clojure--unwrap-dynamic-spec (car spec) (1+ current-depth))
-    (cond
-     ((equal spec :defn) (list :inner current-depth))
-     (t nil))))
-
-(defun replique-clojure--dynamic-indent-for-symbol (sym &optional ns)
-  "Return the dynamic indentation rule list for SYM (optionally in NS), or nil.
-Consults `replique-clojure-get-indent-function' and converts its
-`clojure-mode'-compatible return value into treejure rules.  For example
-\(1 ((:defn)) nil) becomes ((:block 1) (:inner 2))."
-  (when (and sym (functionp replique-clojure-get-indent-function))
-    (let* ((full-symbol (if ns (concat ns "/" sym) sym))
-           (spec (funcall replique-clojure-get-indent-function full-symbol)))
-      (if (integerp spec)
-          (list (list :block spec))
-        (when (sequencep spec)
-          (thread-last spec
-                       (seq-map (lambda (el)
-                                  (cond
-                                   ((integerp el) (list :block el))
-                                   ((equal el :defn) (list :inner 0))
-                                   ((consp el) (replique-clojure--unwrap-dynamic-spec el 0))
-                                   (t nil))))
-                       (seq-remove #'null)
-                       (seq-sort (lambda (spec1 _spec2)
-                                   (equal (car spec1) :block)))))))))
+;;;; Indentation — semantic rule lookup
 
 (defun replique-clojure--find-semantic-rules-for-node (node)
   "Return the list of semantic rules for NODE's head symbol."
-  (when-let* ((first-child (treesit-node-child node 0 t)))
-    (let ((symbol-name (replique-clojure--named-node-text first-child))
-          (symbol-namespace (replique-clojure--node-namespace-text first-child)))
-      (or (replique-clojure--dynamic-indent-for-symbol symbol-name symbol-namespace)
-          (alist-get symbol-name
-                     replique-clojure--semantic-indent-rules-cache
-                     nil nil #'equal)))))
+  (when-let* ((first-child (treesit-node-child node 0 t))
+              (symbol-name (replique-clojure--named-node-text first-child)))
+    (alist-get symbol-name
+               replique-clojure--semantic-indent-rules-cache
+               nil nil #'equal)))
 
 (defun replique-clojure--find-semantic-rule (node parent current-depth)
   "Return a suitable indentation rule for NODE within PARENT at CURRENT-DEPTH."

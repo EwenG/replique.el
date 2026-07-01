@@ -32,17 +32,14 @@
 ;; only loads the module, pushes the active buffer's live text to it on edit /
 ;; save / buffer-switch, and renders what the module computes -- semantic-face
 ;; spans as an overlay *on top of* treesit's faces, and diagnostics through
-;; Flymake.  `replique-clojure-mode' enables this minor mode automatically when
+;; Flymake. `replique-clojure-mode' enables this minor mode automatically when
 ;; `replique-clojure-enable-semantic' is non-nil and the module is available;
 ;; failures degrade gracefully to the pure syntax layer.
 ;;
 ;; The module returns buffer-only faces -- `:local' / unused-greyout from the
 ;; scope pass and the `:special-form' / `:macro-invocation' form-head faces --
 ;; plus grammar-level (`ERROR'/`MISSING'/`invalid_*'), `unused-binding' and the
-;; require/var Tier-1/2 diagnostics.  There is deliberately no var face: a
-;; resolved var is colored by the treesit syntax layer, not the semantic
-;; overlay.  The `:unresolved' face arrives with a later module slice and needs
-;; no change here beyond the `category -> face' map
+;; require/var diagnostics. `category -> face' map:
 ;; (`replique-clojure-semantic-category-faces').
 ;;
 ;; INVARIANT (byte<->position): the module always parses the whole *widened*
@@ -246,11 +243,11 @@ Picks the nearest ancestor with a `deps.edn'/`project.clj'/`.git', else
 
 (defun replique-clojure--classpath (root)
   "Return the cross-namespace search dirs for project ROOT.
-The existing `replique-clojure-semantic-source-dirs' under ROOT that exist,
-else ROOT itself.  This is an interim heuristic: it resolves the project's own
-namespaces (enough for cross-file jump-to-definition between your files).  The
-full classpath — library/external deps and jars — is supplied by the JVM oracle
-in a later slice (PLAN step 6)."
+The existing `replique-clojure-semantic-source-dirs' under ROOT that
+exist, else ROOT itself.  This is an interim heuristic: it resolves the
+project's own namespaces (enough for cross-file jump-to-definition
+between your files).  The full classpath — library/external deps and
+jars — is supplied by the JVM oracle."
   (let ((dirs (delq nil
                     (mapcar (lambda (d)
                               (let ((p (expand-file-name d root)))
