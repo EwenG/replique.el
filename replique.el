@@ -631,7 +631,9 @@
              (set-window-buffer window new-buffer))))))
     (dolist (repl (seq-reverse new-active-repls))
       (setq replique/repls (delete repl replique/repls))
-      (setq replique/repls (push repl replique/repls)))))
+      (setq replique/repls (push repl replique/repls)))
+    ;; The active process directory changed: re-root the semantic layer.
+    (replique/refresh-semantic-workspaces)))
 
 (defun replique/list-namespaces (tooling-repl repl-env)
   (let ((resp (replique/send-tooling-msg
@@ -1249,12 +1251,57 @@ The following commands are available:
                 tooling-repl (clj-data/hash-map :type :update-classpath
                                                 :repl-env :replique/clj
                                                 :classpath classpath))))
+    (replique/set-repl-classpath tooling-repl classpath)
     (let ((err (clj-data/get resp :error)))
       (if err
           (progn
             (message "%s" (clj-pprint/pprint-error-str err))
             (message "replique/classpath failed"))
         (message "Classpath updated")))))
+
+;; Integration with the replique-clojure-semantic layer.  When a REPL is active,
+;; the semantic layer roots every Clojure buffer at that REPL's directory and
+;; resolves cross-namespace names against the REPL's own classpath (rather than
+;; the dominating-file root + the async `-Spath' oracle).  The tooling REPL keeps
+;; its classpath under `:classpath' (a `path-separator'-delimited string), read
+;; from the running JVM's `clojure.java.basis' at startup (see
+;; `replique/make-tooling-repl') and refreshed by `replique/classpath'.
+
+(defvar replique-clojure-semantic-active-repl-function)
+
+(defun replique/repl-classpath-entries (tooling-repl)
+  "Return TOOLING-REPL's classpath as a list of existing absolute paths, or nil.
+Splits its `:classpath' string on `path-separator', expands each entry against
+the REPL's directory, and drops entries that do not exist on disk."
+  (when-let* ((cp (clj-data/get tooling-repl :classpath))
+              (dir (clj-data/get tooling-repl :directory)))
+    (seq-filter #'file-exists-p
+                (mapcar (lambda (e) (expand-file-name e dir))
+                        (split-string cp path-separator t)))))
+
+(defun replique/semantic-active-repl ()
+  "Return the active REPL descriptor for `replique-clojure-semantic', or nil.
+The descriptor is `(:root DIR :classpath ENTRIES)' for the active tooling REPL;
+nil when no REPL is started."
+  (when-let* ((tooling-repl (replique/repl-by :repl-type :tooling))
+              (directory (clj-data/get tooling-repl :directory)))
+    (list :root directory
+          :classpath (replique/repl-classpath-entries tooling-repl))))
+
+(defun replique/refresh-semantic-workspaces ()
+  "Tell the semantic layer the active REPL / its classpath changed, if it is loaded."
+  (when (fboundp 'replique-clojure-semantic-refresh-workspaces)
+    (replique-clojure-semantic-refresh-workspaces)))
+
+(defun replique/set-repl-classpath (tooling-repl classpath)
+  "Store CLASSPATH (a `path-separator'-delimited string) on TOOLING-REPL.
+Refreshes the semantic layer so open Clojure buffers pick up the new classpath."
+  (puthash :classpath classpath tooling-repl)
+  (replique/refresh-semantic-workspaces))
+
+(with-eval-after-load 'replique-clojure-semantic
+  (setq replique-clojure-semantic-active-repl-function
+        #'replique/semantic-active-repl))
 
 ;; Not used anymore but kept just in case ...
 ;; lein update-in :plugins conj "[replique/replique \"0.0.1-SNAPSHOT\"]" -- trampoline replique localhost 9000
@@ -1275,7 +1322,10 @@ The following commands are available:
       ;; SIGINT, the jvm should stop, even if there is pending non daemon threads, shutdown
       ;; hooks should run
       (interrupt-process tooling-proc))
-    (setq replique/repls (delete tooling-repl replique/repls))))
+    (setq replique/repls (delete tooling-repl replique/repls))
+    ;; The active REPL may have changed (or none is left): re-root the semantic
+    ;; layer so buffers fall back to the next active REPL or the dominating file.
+    (replique/refresh-semantic-workspaces)))
 
 ;; Close all the tooling repls that have no "session" REPL
 (defun replique/maybe-close-tooling-repl (proc-id)
@@ -1551,11 +1601,13 @@ The following commands are available:
            (set-process-sentinel proc nil)
            (replique/process-filter-read
             network-proc network-proc-buff
-            ;; The cljs-compile-path is not used anymore, but is kept as an example of reading
-            ;; informations about the clojure process at init time
-            (lambda (cljs-compile-path)
+            ;; Read the running JVM's own classpath (its clojure.java.basis
+            ;; current-basis :classpath-roots), asked for below, rather than
+            ;; shelling out to `clojure -Spath': the process already knows its
+            ;; exact, resolved classpath.
+            (lambda (classpath)
               (cancel-timer timeout)
-              (let* ((cljs-compile-path (replique-transit/decode cljs-compile-path))
+              (let* ((classpath (replique-transit/decode classpath))
                      (starting-repls (replique/repls-by-maybe-not-started :proc-id proc-id))
                      (starting-repls (seq-filter (lambda (repl)
                                                    (not (equal :tooling (clj-data/get repl :repl-type))))
@@ -1566,12 +1618,23 @@ The following commands are available:
                 (replique/process-filter-read
                  network-proc network-proc-buff 'replique/dispatch-tooling-msg)
                 (puthash :started? t tooling-repl)
+                ;; Store the REPL's own classpath, then re-root the semantic layer
+                ;; at its directory (enabling cross-file diagnostics resolved
+                ;; against that classpath).  A nil value means the classpath query
+                ;; threw on the JVM side (its `catch' fired): warn and leave the
+                ;; semantic layer on its interim source-dirs classpath.
+                (if (stringp classpath)
+                    (puthash :classpath classpath tooling-repl)
+                  (message "Replique: could not read the REPL classpath (clojure.java.basis/current-basis) — cross-file semantic diagnostics are disabled for this REPL"))
+                (replique/refresh-semantic-workspaces)
                 (replique/start-repls-one-by-one tooling-repl proc-id starting-repls))))
            ;; No need to wait for the return value of shared-tooling-repl
            ;; since it does not print anything
            (process-send-string
             network-proc "(replique.repl/shared-tooling-repl :elisp)\n")
-           (process-send-string network-proc "replique.utils/cljs-compile-path\n")
+           (process-send-string
+            network-proc
+            "(try (clojure.string/join java.io.File/pathSeparator (:classpath-roots (clojure.java.basis/current-basis))) (catch Exception _ nil))\n")
            ;; We don't search for the main-js-files before the process is started because
            ;; we want to give a chance to the replique init file to output some
            ;; .repliqueignore files

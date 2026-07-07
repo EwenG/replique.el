@@ -76,38 +76,12 @@ finds the project's own namespaces the instant a buffer opens) and supply the
 default scope for find-usages / cold analysis.  Entries that do not exist under
 the project root are ignored; if none exist, the root itself is used.
 
-The full, jar-inclusive resolution classpath is supplied by the classpath
-oracle (`replique-clojure-semantic-classpath-command') once it resolves — see
-`replique-clojure--upgrade-classpath'."
+This interim classpath resolves the project's own namespaces only.  The full,
+jar-inclusive resolution classpath (which lights up the gated cross-file
+diagnostics) is supplied by the active REPL — see
+`replique-clojure-semantic-active-repl-function'."
   :type '(repeat string)
   :safe #'listp)
-
-(defcustom replique-clojure-semantic-classpath-command nil
-  "How to compute the project's full classpath for cross-namespace resolution.
-The classpath is the JVM oracle's job (PLAN step 6): it supplies the
-exhaustive, jar-inclusive closure that the module resolves namespaces against
-and that enables the gated cross-file diagnostics (`unresolved-namespace', the
-`:unresolved' face).  One of:
-  nil        auto-detect — `clojure -Spath' for a `deps.edn' project,
-             `lein classpath' for a `project.clj' one;
-  a function called with the project root, returning a command list (program
-             plus args) or nil to skip;
-  a list     used verbatim as the command.
-The command runs once per project, asynchronously, in the project root; it must
-print the classpath (`path-separator'-delimited) on its last output line.  On
-success the workspace is recreated with that classpath marked complete and
-every open buffer in the project is re-checked."
-  :type '(choice (const :tag "Auto-detect" nil)
-                 (function :tag "Function of the project root")
-                 (repeat :tag "Command" string)))
-
-(defcustom replique-clojure-semantic-classpath-aliases nil
-  "Alias string appended to the auto-detected `deps.edn' classpath command.
-When non-nil it is passed as `-A<aliases>' to `clojure -Spath' (e.g. \":test\"
-to fold in the test paths/deps).  Ignored for Leiningen and for a custom
-`replique-clojure-semantic-classpath-command'."
-  :type '(choice (const :tag "None" nil) string)
-  :safe #'string-or-null-p)
 
 (defcustom replique-clojure-semantic-references-scope 'ask
   "Search scope for project-wide find-usages (`xref-find-references', \\[xref-find-references]).
@@ -196,8 +170,20 @@ nil (or absent) is left unpainted — treesit's own faces then show through."
 (defvar replique-clojure--workspaces (make-hash-table :test 'equal)
   "Map a project root (string) to its treejure workspace handle.")
 
+(defvar replique-clojure--workspace-classpaths (make-hash-table :test 'equal)
+  "Map a project root to the classpath its cached workspace was built with.
+Lets `replique-clojure--get-workspace' rebuild a single root's workspace in
+place when its classpath changes (e.g. the active REPL resolved its classpath)
+instead of clearing the whole cache — a new handle, so buffers analysed under
+the old one detect the change and re-analyse.")
+
 (defvar-local replique-clojure--ws nil
-  "The treejure workspace handle for this buffer's project.")
+  "The treejure workspace this buffer's last analysis ran against.
+Set by `replique-clojure--check' after each analysis.  Compared against the
+buffer's current target workspace (`replique-clojure--project-root' →
+`replique-clojure--get-workspace') to detect a stale analysis after the active
+REPL or its classpath changed — see
+`replique-clojure-semantic-refresh-workspaces'.")
 
 (defvar-local replique-clojure--file-id nil
   "The path this buffer is analyzed under in the module (its FileNode key).")
@@ -231,15 +217,51 @@ Signals if the module file is missing."
     (module-load replique-clojure-semantic-module-path)
     (setq replique-clojure--module-loaded t)))
 
+(defvar replique-clojure-semantic-active-repl-function nil
+  "Function of no arguments returning the active REPL descriptor, or nil.
+The descriptor is a plist `(:root DIR :classpath ENTRIES)': DIR is the active
+REPL's directory (a string) and ENTRIES its resolved classpath (a list of
+absolute paths, or nil until it resolves).  When it returns non-nil, the
+semantic layer roots *every* Clojure buffer at DIR and resolves cross-namespace
+names against ENTRIES — the running REPL's authoritative, complete classpath,
+rather than the per-buffer dominating-file root and interim source-dirs
+classpath.  When it returns nil (the default: no function, or no active REPL)
+the standalone dominating-file behavior applies.  replique.el installs a
+function here (via `with-eval-after-load') that tracks its active REPL.")
+
+(defun replique-clojure--active-repl ()
+  "Return the active REPL descriptor `(:root DIR :classpath ENTRIES)', or nil.
+Consults `replique-clojure-semantic-active-repl-function'."
+  (and replique-clojure-semantic-active-repl-function
+       (funcall replique-clojure-semantic-active-repl-function)))
+
+(defvar-local replique-clojure--dominating-root nil
+  "Cached dominating-file project root for this buffer (when no REPL is active).
+`default-directory' is stable for a file-visiting buffer, so the
+`locate-dominating-file' walk is done once and reused across checks.")
+
+(defun replique-clojure--dominating-root ()
+  "Return this buffer's dominating-file project root, cached across calls.
+The nearest ancestor of `default-directory' holding a
+`deps.edn'/`project.clj'/`.git', else `default-directory'.  Memoized in
+`replique-clojure--dominating-root' since `default-directory' does not change."
+  (or replique-clojure--dominating-root
+      (setq replique-clojure--dominating-root
+            (expand-file-name
+             (or (locate-dominating-file default-directory "deps.edn")
+                 (locate-dominating-file default-directory "project.clj")
+                 (locate-dominating-file default-directory ".git")
+                 default-directory)))))
+
 (defun replique-clojure--project-root ()
   "Return the project root that owns the current buffer.
-Picks the nearest ancestor with a `deps.edn'/`project.clj'/`.git', else
-`default-directory'."
-  (expand-file-name
-   (or (locate-dominating-file default-directory "deps.edn")
-       (locate-dominating-file default-directory "project.clj")
-       (locate-dominating-file default-directory ".git")
-       default-directory)))
+When a REPL is active (`replique-clojure-semantic-active-repl-function'), its
+directory is the project root for every Clojure buffer.  Otherwise the buffer's
+cached dominating-file root (`replique-clojure--dominating-root')."
+  (let ((repl (replique-clojure--active-repl)))
+    (if repl
+        (expand-file-name (plist-get repl :root))
+      (replique-clojure--dominating-root))))
 
 (defun replique-clojure--classpath (root)
   "Return the cross-namespace search dirs for project ROOT.
@@ -247,7 +269,8 @@ The existing `replique-clojure-semantic-source-dirs' under ROOT that
 exist, else ROOT itself.  This is an interim heuristic: it resolves the
 project's own namespaces (enough for cross-file jump-to-definition
 between your files).  The full classpath — library/external deps and
-jars — is supplied by the JVM oracle."
+jars — is supplied by the active REPL (see
+`replique-clojure-semantic-active-repl-function')."
   (let ((dirs (delq nil
                     (mapcar (lambda (d)
                               (let ((p (expand-file-name d root)))
@@ -256,129 +279,54 @@ jars — is supplied by the JVM oracle."
     (or dirs (list (directory-file-name root)))))
 
 (defun replique-clojure--get-workspace (root)
-  "Return the workspace for ROOT, creating it on first use.
-The workspace is created immediately with the interim source-dirs classpath
-\(`replique-clojure--classpath') so the buffer is analysable at once; a
-one-shot async classpath oracle then upgrades it in place to the full,
-jar-inclusive classpath (see `replique-clojure--upgrade-classpath')."
-  (or (gethash root replique-clojure--workspaces)
-      (let ((ws (puthash root
-                         (treejure-init root (replique-clojure--classpath root))
-                         replique-clojure--workspaces)))
-        (replique-clojure--upgrade-classpath root)
-        ws)))
+  "Return the workspace for ROOT, (re)building it when its classpath changed.
+When ROOT is the active REPL's directory the workspace is built from the REPL's
+own classpath — authoritative and complete, so the gated cross-file diagnostics
+turn on.  Otherwise (no REPL, a root that is not the active REPL's, or the
+REPL's classpath not resolved yet) the interim source-dirs classpath
+\(`replique-clojure--classpath') is used, which resolves the project's own
+namespaces only.  The cached workspace is reused unless the classpath it should
+use now differs from the one it was built with (the REPL just resolved or
+updated its classpath) — then it is rebuilt in place as a new handle, so buffers
+analysed under the old one detect the change and re-analyse.  The cache is never
+cleared wholesale, so other roots keep their warmed session analysis."
+  (let* ((repl (replique-clojure--active-repl))
+         (repl-cp (and repl
+                       (equal (expand-file-name (plist-get repl :root)) root)
+                       (plist-get repl :classpath)))
+         (classpath (or repl-cp (replique-clojure--classpath root)))
+         (cached (gethash root replique-clojure--workspaces)))
+    (if (and cached
+             (equal classpath (gethash root replique-clojure--workspace-classpaths)))
+        cached
+      (puthash root classpath replique-clojure--workspace-classpaths)
+      (puthash root
+               (treejure-init root classpath (and repl-cp t))
+               replique-clojure--workspaces))))
 
-;;;; Classpath oracle (PLAN step 6)
-;;
-;; The interim classpath (source dirs only) resolves the project's own
-;; namespaces but not its library/`clojure.core' deps, so it leaves the gated
-;; cross-file diagnostics off (`treejure-init's CLASSPATH-COMPLETE nil).  The
-;; oracle computes the real, jar-inclusive classpath out-of-band — `clojure
-;; -Spath' / `lein classpath' — and, when it lands, recreates the workspace with
-;; that classpath marked complete, flipping the gated facts on.  It runs once per
-;; project per session, asynchronously, so opening a file never blocks on JVM
-;; startup; the buffer is already analysable against the interim classpath while
-;; the oracle resolves.
-
-(defvar replique-clojure--classpath-upgraded (make-hash-table :test 'equal)
-  "Project roots whose classpath upgrade has been started this session.
-Gates `replique-clojure--upgrade-classpath' to one attempt per project.")
-
-(defun replique-clojure--classpath-command (root)
-  "Return the shell command (a list) computing ROOT's classpath, or nil.
-Honors `replique-clojure-semantic-classpath-command'; otherwise auto-detects
-`clojure -Spath' (a `deps.edn' project) or `lein classpath' (a `project.clj'
-one).  Returns nil when no build tool / executable is found."
-  (let ((custom replique-clojure-semantic-classpath-command))
-    (cond
-     ((functionp custom) (funcall custom root))
-     (custom)
-     ((file-exists-p (expand-file-name "deps.edn" root))
-      (when-let* ((clj (executable-find "clojure")))
-        (append (list clj)
-                (and replique-clojure-semantic-classpath-aliases
-                     (list (concat "-A" replique-clojure-semantic-classpath-aliases)))
-                (list "-Spath"))))
-     ((file-exists-p (expand-file-name "project.clj" root))
-      (when-let* ((lein (executable-find "lein")))
-        (list lein "classpath"))))))
-
-(defun replique-clojure--parse-classpath (output root)
-  "Return the existing classpath entries in OUTPUT, made absolute under ROOT.
-The classpath is OUTPUT's last non-empty line (`path-separator'-delimited) —
-build-tool noise (download progress, warnings) precedes it.  Each entry is
-expanded against ROOT (a relative `:paths' entry such as \"src\" becomes
-absolute; an already-absolute jar path is unchanged), since the C resolver
-stats classpath entries directly and the sentinel's `default-directory' is not
-ROOT.  Entries that do not exist on disk are dropped; nil when none remain."
-  (when-let* ((lines (split-string (string-trim output) "\n" t))
-              (line (string-trim (car (last lines))))
-              ((> (length line) 0))
-              (entries (seq-filter
-                        #'file-exists-p
-                        (mapcar (lambda (e) (expand-file-name e root))
-                                (split-string line path-separator t)))))
-    entries))
-
-(defun replique-clojure--apply-complete-classpath (root classpath)
-  "Recreate ROOT's workspace with the complete CLASSPATH and re-check buffers.
-The new workspace is marked `classpath-complete', so the gated cross-file
-diagnostics turn on; every live `replique-clojure-semantic-mode' buffer in ROOT
-is re-pointed at it and re-checked at the full tier."
-  (let ((ws (treejure-init root classpath t)))
-    (puthash root ws replique-clojure--workspaces)
+;;;###autoload
+(defun replique-clojure-semantic-refresh-workspaces ()
+  "Re-analyse visible buffers whose workspace changed; others do it lazily.
+For each *visible* `replique-clojure-semantic-mode' buffer, recompute its target
+workspace (`replique-clojure--project-root' → `replique-clojure--get-workspace':
+the active REPL's directory and classpath when a REPL is active, else the
+dominating-file root) and re-analyse it only when that workspace differs from
+the one its last analysis ran against (`replique-clojure--ws').  The workspace
+cache is left intact — a non-visible buffer keeps its (now stale) analysis and
+refreshes lazily the next time it is checked (buffer-switch, edit or save),
+since `replique-clojure--check' always analyses against the current target
+workspace.  replique.el calls this when the active REPL changes, when a REPL's
+classpath resolves, and when the last REPL closes.  A no-op until the module has
+loaded."
+  (when replique-clojure--module-loaded
     (dolist (buf (buffer-list))
       (with-current-buffer buf
         (when (and (bound-and-true-p replique-clojure-semantic-mode)
-                   replique-clojure--ws
-                   (equal (replique-clojure--project-root) root))
-          (setq replique-clojure--ws ws)
-          (replique-clojure--push-def-forms)
-          (replique-clojure--check t))))
-    (message "Replique: classpath ready (%d entr%s) — cross-file diagnostics enabled"
-             (length classpath) (if (= (length classpath) 1) "y" "ies"))))
-
-(defun replique-clojure--upgrade-classpath (root)
-  "Asynchronously compute ROOT's full classpath and recreate its workspace.
-Runs at most once per project per session; a missing build tool / failed
-command simply leaves the interim source-dirs classpath in place (the gated
-diagnostics stay off).  On success calls
-`replique-clojure--apply-complete-classpath'."
-  (unless (gethash root replique-clojure--classpath-upgraded)
-    (puthash root t replique-clojure--classpath-upgraded)
-    (when-let* ((cmd (replique-clojure--classpath-command root)))
-      (let ((stdout (generate-new-buffer " *treejure-classpath*"))
-            (default-directory root))
-        (condition-case err
-            (make-process
-             :name "treejure-classpath"
-             :buffer stdout
-             :command cmd
-             :noquery t
-             :connection-type 'pipe
-             :sentinel
-             (lambda (proc _event)
-               (when (memq (process-status proc) '(exit signal))
-                 (unwind-protect
-                     (when (and (eq (process-status proc) 'exit)
-                                (eq 0 (process-exit-status proc)))
-                       (when-let* ((cp (replique-clojure--parse-classpath
-                                        (with-current-buffer stdout (buffer-string))
-                                        root)))
-                         ;; Union the interim source dirs in: `clojure -Spath'
-                         ;; without a test alias omits `test', which the interim
-                         ;; classpath included, so a bare swap would silently stop
-                         ;; resolving test namespaces.  A superset only resolves
-                         ;; MORE, never reintroducing a false `unresolved-namespace'.
-                         (replique-clojure--apply-complete-classpath
-                          root
-                          (seq-uniq (append cp (replique-clojure--classpath root))
-                                    #'string-equal))))
-                   (when (buffer-live-p stdout) (kill-buffer stdout))))))
-          (error
-           (when (buffer-live-p stdout) (kill-buffer stdout))
-           (message "Replique: classpath oracle failed to start (%s)"
-                    (error-message-string err))))))))
+                   (get-buffer-window buf t)
+                   (not (eq (replique-clojure--get-workspace
+                             (replique-clojure--project-root))
+                            replique-clojure--ws)))
+          (replique-clojure--check t))))))
 
 (defun replique-clojure--build-category-faces ()
   "Compute the category-int -> face vector from `treejure-category-names'."
@@ -493,16 +441,27 @@ Called after `.dir-locals.el' is applied and when the defcustom changes."
 
 (defun replique-clojure--check (cross-file-p)
   "Run the buffer-local semantic check, refresh overlays, report to Flymake.
-CROSS-FILE-P selects the module's fast (nil) or full (t) tier."
-  (when (and replique-clojure--ws replique-clojure--file-id)
-    (setq replique-clojure--last-diags
-          (treejure-check-buffer replique-clojure--ws
-                                 replique-clojure--file-id
-                                 (replique-clojure--semantic-buffer-text)
-                                 cross-file-p))
-    (setq replique-clojure--dirty nil)
-    (replique-clojure--refresh-overlays)
-    (replique-clojure--report-flymake replique-clojure--last-diags)))
+CROSS-FILE-P selects the module's fast (nil) or full (t) tier.  The check always
+runs against the buffer's current target workspace
+\(`replique-clojure--project-root' resolved through
+`replique-clojure--get-workspace') and records it in `replique-clojure--ws' — so
+a check triggered after the active REPL / classpath changed transparently
+re-analyses against the new workspace (the lazy refresh for non-visible
+buffers).  When that workspace changed, this buffer's def-forms are re-pushed to
+it before analysing."
+  (when replique-clojure--file-id
+    (let ((ws (replique-clojure--get-workspace (replique-clojure--project-root))))
+      (unless (eq ws replique-clojure--ws)
+        (setq replique-clojure--ws ws)
+        (replique-clojure--push-def-forms))
+      (setq replique-clojure--last-diags
+            (treejure-check-buffer ws
+                                   replique-clojure--file-id
+                                   (replique-clojure--semantic-buffer-text)
+                                   cross-file-p)
+            replique-clojure--dirty nil)
+      (replique-clojure--refresh-overlays)
+      (replique-clojure--report-flymake replique-clojure--last-diags))))
 
 (defun replique-clojure--schedule-check (cross-file-p)
   "Arm (or re-arm) the idle timer for a semantic check, coalescing bursts.
