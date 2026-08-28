@@ -135,7 +135,9 @@ Falls back to the only live one, which is what there usually is."
               (at-end (= (point) (point-max))))
           (save-excursion
             (goto-char (point-max))
-            (insert (if face (propertize string 'font-lock-face face) string)))
+            ;; `face' rather than `font-lock-face': this buffer has no font
+            ;; lock to honour the latter, so it would simply not be coloured
+            (insert (if face (propertize string 'face face) string)))
           (when at-end (goto-char (point-max)))
           (dolist (w windows) (set-window-point w (point-max))))))))
 
@@ -311,6 +313,9 @@ would not make one."
 (defun replique-start (directory)
   "Start a replique process in DIRECTORY and connect to it."
   (interactive (list (read-directory-name "Project directory: " nil nil t)))
+  (unless (executable-find replique-clojure-program)
+    (user-error "No %s on exec-path - see replique-clojure-program"
+                replique-clojure-program))
   (let* ((directory (file-name-as-directory (expand-file-name directory)))
          (default-directory directory)
          (command (replique-process--command directory)))

@@ -125,6 +125,22 @@ string must be escaped rather than written."
                  (replique-edn-map (list :op :hello :role :control))))
   (should (equal "{}" (replique-edn-map nil))))
 
+(ert-deftest replique-test-process-output-is-coloured ()
+  "The output buffer has no font lock, so a `font-lock-face' would simply
+not be honoured there."
+  (let ((process (replique-process--make :id "faces")))
+    (unwind-protect
+        (progn
+          (replique-process--insert process "went wrong\n" 'replique-stderr)
+          (with-current-buffer (replique-process-buffer process)
+            (goto-char (point-min))
+            (should (eq 'replique-stderr (get-text-property (point) 'face)))))
+      (kill-buffer (replique-process-buffer process)))))
+
+(ert-deftest replique-test-a-missing-clojure-says-which-setting-to-look-at ()
+  (let ((replique-clojure-program "replique-no-such-program"))
+    (should-error (replique-start temporary-file-directory) :type 'user-error)))
+
 ;;; The handshake
 
 (ert-deftest replique-test-a-process-describes-itself ()
@@ -262,6 +278,38 @@ at the line of the first."
     (insert ";; a comment\n(def a 1)\n")
     (should (equal '(("(def a 1)" . 2))
                    (replique-eval--forms (point-min) (point-max))))))
+
+(ert-deftest replique-test-the-transcript-does-not-show-the-source-directive ()
+  "The directive is protocol.  Nobody wrote it, so a transcript that shows
+it is a transcript of the wire rather than of the session."
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique-test-directive.clj" temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "(def marker :here)\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (emacs-lisp-mode)
+                    (setq replique-current-repl repl)
+                    (replique-eval-buffer))
+                (kill-buffer buffer)))
+            (should (replique-test-wait-for
+                     (lambda ()
+                       (string-match-p "#'user/marker" (replique-test-text repl)))))
+            (let ((text (replique-test-text repl)))
+              (should (string-match-p "(def marker :here)" text))
+              (should-not (string-match-p "replique/src" text))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-multibyte-survives-the-round-trip ()
+  "Everything is utf-8, in both directions.  The assertion is made on text
+the form produced rather than on text it was given, so a round trip that
+lost something cannot pass by echoing the question back."
+  (replique-test-with-repl repl
+    (let ((added (replique-test-eval
+                  repl "(str (.toUpperCase \"café\") (apply str (repeat 2 \"🎉\")))")))
+      (should (string-match-p "\"CAFÉ🎉🎉\"" added)))))
 
 ;;; Interrupting
 

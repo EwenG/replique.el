@@ -94,6 +94,9 @@ Each one is a cons of its text and the line it starts on."
                   (concat (replique-src-directive file (cdr form)) "\n" (car form)))
                 forms
                 "\n")
+     ;; What the buffer is shown leaves the directives out: they are protocol,
+     ;; not something anybody wrote
+     (mapconcat #'car forms "\n")
      ;; Only one form has one result to show
      (null (cdr forms)))))
 
@@ -118,7 +121,10 @@ Each one is a cons of its text and the line it starts on."
 
 ;;;###autoload
 (defun replique-eval-region (start end)
-  "Evaluate the forms between START and END."
+  "Evaluate the forms between START and END.
+
+A form that starts inside the region is evaluated whole, even where it
+runs past END: half a form is a read error, not an evaluation."
   (interactive "r")
   (replique-eval--send start end))
 

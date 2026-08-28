@@ -35,6 +35,15 @@
 ;; its own, so consecutive prompts are collapsed rather than counted.  And the
 ;; output of a nested repl arrives as out frames - its prompt included - so it
 ;; is rendered as it comes rather than reconciled with anything.
+;;
+;; Code sent while the repl is busy is held back and written at the next
+;; prompt, so that the transcript reads in the order the repl answered rather
+;; than the order the editor asked.  That holds one prompt per thing sent,
+;; which is right for one form and only approximate when a single send holds
+;; several of them, or when a programmatic send lands in the middle of a form
+;; being typed: the frames of a repl connection carry no id, so nothing here
+;; can tell which form a result belongs to.  Per evaluation ids in the
+;; protocol would settle it.
 
 ;;; Code:
 
@@ -279,14 +288,16 @@ live repl of the current process."
 
 ;;; Sending code
 
-(defun replique-repl-send-code (repl code &optional echo)
+(defun replique-repl-send-code (repl code &optional display echo)
   "Evaluate CODE in REPL.
 
-CODE goes out as it is, over as many lines as it takes.  When ECHO, the
-code is written to the repl buffer - so that the buffer stays the
-transcript it looks like - and the one result it is expected to produce is
-shown in the echo area as well."
+CODE goes out as it is, over as many lines as it takes.  DISPLAY is what
+the repl buffer is shown instead, CODE itself when it is nil: a source
+directive is protocol rather than something the developer wrote, and a
+transcript showing it is a transcript of the wire.  When ECHO, the one
+result the code is expected to produce is shown in the echo area too."
   (let ((conn (replique-repl--conn repl))
+        (display (string-trim (or display code)))
         (code (string-trim code)))
     (unless (replique-conn-live-p conn)
       (user-error "The repl is closed"))
@@ -295,9 +306,9 @@ shown in the echo area as well."
     ;; that shows the next form above the last result is a lie about what
     ;; happened
     (if (replique-repl--at-prompt repl)
-        (replique-repl--insert repl (concat code "\n"))
+        (replique-repl--insert repl (concat display "\n"))
       (setf (replique-repl--queued repl)
-            (append (replique-repl--queued repl) (list code))))
+            (append (replique-repl--queued repl) (list display))))
     (when echo
       (setf (replique-repl--to-echo repl) (1+ (or (replique-repl--to-echo repl) 0))))
     (replique-conn-send-code conn code)))
