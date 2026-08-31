@@ -30,11 +30,15 @@
 ;; rather than inserting directly is what keeps the process mark, the fields
 ;; and the input ring consistent.
 ;;
-;; RET sends what is at the prompt, or inserts a newline while what is there
-;; is not a form yet, so that a form spanning several lines can be typed
-;; rather than pasted.  It only asks that where forms are what is being read:
-;; the code a repl evaluates is handed a real stdin, and a line typed to a
-;; form that is running is finished when the developer says it is.
+;; RET sends what is at the prompt when it is a form and point is at the end
+;; of it, and makes a new line anywhere earlier in it, so that a form
+;; spanning several lines can be typed rather than pasted.  Whether it is
+;; balanced would not be enough to go on by itself: a closing delimiter
+;; inserted with its opening one leaves a form finished before it has been
+;; written, and where point is is what says which of the two was meant.  It
+;; only asks any of that where forms are what is being read: the code a repl
+;; evaluates is handed a real stdin, and a line typed to a form that is
+;; running is finished when the developer says it is.
 ;;
 ;; Two things a client learns the hard way.  A prompt does not mean a form was
 ;; answered: a read error, or a line holding only a comment, produces one of
@@ -57,12 +61,22 @@
 ;; outside of it arrived while nobody was looking, and the echo area is no
 ;; place to say so: the mode line names the buffer instead, and goes on
 ;; naming it until it is read.
+;;
+;; The buffer is read as Clojure - see `replique-repl--clojure' - since what
+;; is typed at the prompt is Clojure and there is no reason for it to look
+;; and move like anything else.  What comint reads it as by default is a
+;; terminal session, and that is not only a poorer answer but a wrong one:
+;; comint watches output for a shell asking for a password and answers it
+;; with the process of the buffer, which here is the repl connection.  The
+;; watcher is taken off.  What asks for a password on a terminal is the jvm,
+;; on a standard input no repl reads - see `replique-process-input-password'.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'subr-x)
 (require 'comint)
+(require 'replique-clojure-mode)
 (require 'replique-common)
 (require 'replique-edn)
 (require 'replique-conn)
@@ -275,9 +289,12 @@ be shown as cut rather than as a whole one."
     table)
   "Enough of the syntax of Clojure to tell where a form ends.
 
-A repl buffer is a comint buffer, so the syntax of what is typed in it is
-not the syntax of any mode it is in.  All this is asked is where the
-delimiters, the strings and the comments are, which is little enough that
+Its own rather than the table the buffer is in.  A repl buffer is given
+`replique-clojure-mode-syntax-table\=', which is a table somebody can
+change; whether RET sends what is at the prompt or starts a new line is
+not an answer a customization should be able to move.  All this is asked
+is where the delimiters, the strings and the comments are, which is
+little enough that
 the two things that look like they need a rule of their own do not: a
 character literal is a backslash, which is an escape, and that is what
 keeps the paren of \\=\\( from counting; and a regex is a dispatch
@@ -292,10 +309,17 @@ answered by typing in the same place, and a line of that is finished when
 the developer says it is and not when a delimiter closes.  A prompt is
 what says forms are being read again - the one this repl wrote, or the
 one a nested repl wrote, which arrives as output and is a prompt all the
-same."
+same.
+
+The line the prompt is on is asked for with `inhibit-field-text-motion\='
+bound.  comint gives what it printed a field of its own, and the process
+mark is the boundary of it, so `line-beginning-position\=' answers there
+with the process mark itself - a limit with the prompt outside it, which
+is a prompt nothing can match."
   (save-excursion
     (goto-char (process-mark proc))
-    (looking-back comint-prompt-regexp (line-beginning-position))))
+    (let ((inhibit-field-text-motion t))
+      (looking-back comint-prompt-regexp (line-beginning-position)))))
 
 (defun replique-repl--unfinished-p (start end)
   "Return non-nil when what is between START and END is unfinished.
@@ -326,12 +350,45 @@ it better than anything here could."
 (define-derived-mode replique-repl-mode comint-mode "Replique"
   "Major mode for a replique REPL.
 
+What is typed at the prompt is Clojure, so the buffer is given the syntax
+and the parse `replique-clojure-mode\=' reads Clojure with - see
+`replique-repl--clojure\='.
+
 \\{replique-repl-mode-map}"
+  :syntax-table replique-clojure-mode-syntax-table
   (setq-local comint-prompt-regexp "^[^ \n]*=> *")
   (setq-local comint-prompt-read-only replique-prompt-read-only)
   (setq-local comint-input-sender #'replique-repl--input-sender)
   (setq-local comint-process-echoes nil)
-  (setq-local mode-line-process '(:eval (replique-repl--mode-line))))
+  ;; What comint watches for is a password prompt of a shell, and what it
+  ;; does about one is send the answer to the process of this buffer - which
+  ;; here is the repl connection, where it would be read as code.  A repl
+  ;; printing "Password: " is a repl printing something.  What does ask on a
+  ;; terminal is the jvm itself, through java.io.Console, which reads the
+  ;; standard input the repl is not - see `replique-process-input-password\='
+  (setq-local comint-output-filter-functions
+              (remq 'comint-watch-for-password-prompt
+                    comint-output-filter-functions))
+  (setq-local mode-line-process '(:eval (replique-repl--mode-line)))
+  (replique-repl--clojure))
+
+(defun replique-repl--clojure ()
+  "Read the current buffer as Clojure, the way `replique-clojure-mode\=' does.
+
+Which is what makes what is typed at the prompt highlighted, indented and
+navigable as the code it is, rather than as the text a comint buffer
+holds by default.
+
+The parse covers the transcript as well as the prompt, and a transcript
+is not Clojure: what a form printed parses as whatever it happens to look
+like.  That is the cost of one parse of one buffer, and it is paid in the
+part nobody edits.  It also means a repl that has printed a great deal is
+a large buffer being reparsed, which is worth knowing when one is slow."
+  (replique-clojure--ensure-grammars)
+  (when (treesit-ready-p 'treejure)
+    (treesit-parser-create 'treejure)
+    (replique-clojure--mode-variables)
+    (treesit-major-mode-setup)))
 
 (defun replique-repl--mode-line ()
   "Return the mode line description of the repl of the current buffer."
@@ -348,18 +405,28 @@ it better than anything here could."
   (comint-simple-send proc string))
 
 (defun replique-repl-return (&optional anyway)
-  "Send what is at the prompt, or start a new line while it is not a form yet.
+  "Send what is at the prompt, or start a new line in what is not finished.
 
-Which is what makes a form that spans several lines something that can be
-typed rather than pasted.  Whether it is finished is only asked of what
-is typed where the repl is reading forms - see
-`replique-repl--reading-a-form-p\=' - and never of what is typed to a form
-that is running.
+What is at the prompt is sent when it is a form and point is at the end
+of it.  Anywhere earlier in it, this makes a new line, which is what
+makes a form spanning several lines something that can be typed rather
+than pasted.
+
+Whether it is balanced is not enough to go on by itself.  A closing
+delimiter inserted with its opening one - `electric-pair-mode\=' and the
+like - leaves a form finished before it has been written, and sending
+every one of those the moment its first line was done would leave nothing
+that can be typed over two lines at all.  Where point is says which of
+the two was meant: a form still being written is written from inside it.
+
+Both questions are only asked of what is typed where the repl is reading
+forms - see `replique-repl--reading-a-form-p\=' - and never of what is
+typed to a form that is running.
 
 With a prefix argument, ANYWAY, send what is there whatever state it is
-in.  Where the text ends is a guess made about text nothing has read yet,
-and a guess is worth a way to overrule it.  A newline in input that is
-already finished is what quoted insert, and \\[open-line], are for.
+in: an unclosed delimiter, or point left in the middle of it.  Where the
+text ends is a guess made about text nothing has read yet, and a guess is
+worth a way to overrule it.
 
 Point above the input sends what is under it, the way `comint-send-input\='
 does: everything above the prompt is a transcript, and a transcript is
@@ -370,11 +437,18 @@ read rather than continued."
              proc
              (>= (point) (process-mark proc))
              (replique-repl--reading-a-form-p proc)
-             (replique-repl--unfinished-p (process-mark proc) (point-max)))
-        ;; Not `newline\=': there is no indenting a comint buffer - the line
-        ;; above the input can be anything the process printed - and
-        ;; `electric-indent-mode\=' would try
-        (insert "\n")
+             (or (< (point) (point-max))
+                 (replique-repl--unfinished-p (process-mark proc) (point-max))))
+        ;; `comint-accumulate\=' rather than an insert of a newline: it marks
+        ;; where the line being typed begins, and `comint-delete-input\=' -
+        ;; which is how the input ring replaces what is at the prompt - takes
+        ;; back to that mark rather than to the process mark.  Without it,
+        ;; recalling a previous input in the middle of a form throws away the
+        ;; lines of that form already written.  Not `newline\=' either: there
+        ;; is no indenting a comint buffer - the line above the input can be
+        ;; anything the process printed - and `electric-indent-mode\=' would
+        ;; try
+        (comint-accumulate)
       (comint-send-input))))
 
 ;;; Opening

@@ -38,6 +38,11 @@
 ;; process printed that belongs to no repl - a background thread, a logging
 ;; framework, a library that writes to System.out from the very form you just
 ;; evaluated.  A developer who cannot find it will think that output vanished.
+;;
+;; The pipe goes both ways, and the other direction is the standard input of
+;; the jvm - see `replique-process-input'.  What reads there is not a repl:
+;; it is java.io.Console, and what it asks for is asked before there is a
+;; repl to answer with, a keystore passphrase being the usual one.
 
 ;;; Code:
 
@@ -883,6 +888,46 @@ where there is one."
   "Show what the current process printed outside of any repl."
   (interactive)
   (pop-to-buffer (replique-process-buffer (replique-process-ensure))))
+
+;;; The standard input of the process
+
+(defun replique-process--stdin (process)
+  "Return the operating system process of PROCESS, to write to.
+
+A repl reads what is typed at its prompt, and that is a socket.  The
+standard input of the jvm is a different thing entirely, and it is what
+`java.io.Console\=' reads - a keystore passphrase asked for at startup, an
+agent asking something before any repl exists.  Nothing of that reaches a
+repl, and nothing typed at a repl reaches it."
+  (let ((proc (replique-process--proc process)))
+    (cond
+     ((null proc)
+      (user-error "Emacs did not start this process - its input is not here"))
+     ((not (process-live-p proc))
+      (user-error "The process is gone"))
+     (t proc))))
+
+(defun replique-process-input (line)
+  "Send LINE to the standard input of the current process.
+
+What the jvm reads there, and what it asks for there, is not what a repl
+reads - see `replique-process--stdin\='.  What it prints in answer is in
+the process buffer, which \[replique-show-process-output] shows."
+  (interactive (list (read-string "Process input: ")))
+  (process-send-string (replique-process--stdin (replique-process-ensure))
+                       (concat line "\n")))
+
+(defun replique-process-input-password (password)
+  "Send PASSWORD to the standard input of the current process, unechoed.
+
+The same as `replique-process-input\=', asked for in a way that does not
+show it, does not keep it in the minibuffer history, and does not leave
+it where \[view-lossage] can be asked for it.  A command of its own
+rather than an argument to that one: a password echoed because the
+argument was forgotten is a password that has already been echoed."
+  (interactive (list (read-passwd "Process input: ")))
+  (process-send-string (replique-process--stdin (replique-process-ensure))
+                       (concat password "\n")))
 
 (provide 'replique-process)
 

@@ -705,6 +705,12 @@ tells a newline to send from a newline to insert."
       (should-not (unfinished "(+ 1 1))")))))
 
 (ert-deftest replique-test-return-waits-for-the-form-to-be-finished ()
+  "That the repl is still at its prompt is the assertion that means
+something.  What the buffer holds does not tell a newline made here from
+one `comint-send-input\=' made on its way out: both leave the same text
+behind, and the repl answers an unfinished form with nothing to show for
+it either way.  What only one of them does is stop the repl reading
+forms."
   (replique-test-with-repl repl
     (with-current-buffer (replique-repl--buffer repl)
       (goto-char (point-max))
@@ -712,11 +718,71 @@ tells a newline to send from a newline to insert."
       (replique-repl-return))
     (replique-test-settle)
     (should (string-suffix-p "(+ 1\n" (replique-test-text repl)))
+    (should (replique-repl--at-prompt repl))
     (with-current-buffer (replique-repl--buffer repl)
       (insert " 1)")
       (replique-repl-return))
     (should (replique-test-wait-for
              (lambda () (string-match-p "^2$" (replique-test-text repl)))))))
+
+(ert-deftest replique-test-a-form-closed-before-it-is-written-is-not-sent ()
+  "A closing delimiter inserted with its opening one leaves the input
+balanced from the first character typed.  Balance alone would send such a
+form the moment its first line was done, and nothing could be typed over
+two lines in a buffer where the closers arrive by themselves.  Where
+point is says which was meant: a form still being written is written from
+inside it."
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      ;; What `electric-pair-mode' leaves behind after "(+ 1 1"
+      (insert "(+ 1 1)")
+      (backward-char)
+      (replique-repl-return))
+    (replique-test-settle)
+    (should (string-suffix-p "(+ 1 1\n)" (replique-test-text repl)))
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (replique-repl-return))
+    (should (replique-test-wait-for
+             (lambda () (string-match-p "^2$" (replique-test-text repl)))))))
+
+(ert-deftest replique-test-return-sends-from-the-middle-when-told-to ()
+  "Where point is is a guess about what the developer is still writing,
+and a guess is worth a way to overrule it."
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (insert "(+ 1 1)")
+      (backward-char)
+      (replique-repl-return t))
+    (should (replique-test-wait-for
+             (lambda () (string-match-p "^2$" (replique-test-text repl)))))))
+
+(ert-deftest replique-test-recalling-an-input-keeps-the-lines-already-typed ()
+  "The input ring replaces what is at the prompt, and what is at the
+prompt is the line being typed - not the form it is the third line of.
+`comint-accumulate\=' is what says where that line began; a newline
+inserted without it leaves the ring taking back to the process mark, and
+recalling a previous input in the middle of a form throws away the lines
+of it already written."
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (insert "(+ 2 2)")
+      (replique-repl-return))
+    (should (replique-test-wait-for
+             (lambda () (string-match-p "^4$" (replique-test-text repl)))))
+    (replique-test-settle)
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (insert "(+ 1")
+      (replique-repl-return)
+      (insert "   (* 3")
+      (comint-previous-input 1)
+      (should (string-suffix-p "(+ 1\n(+ 2 2)"
+                               (buffer-substring-no-properties (point-min)
+                                                               (point-max)))))))
 
 (ert-deftest replique-test-return-sends-what-is-not-a-form-when-told-to ()
   "Where the text ends is a guess about text nothing has read yet.  What
@@ -748,6 +814,47 @@ it is - not when a delimiter closes."
     (should (replique-test-wait-for
              (lambda () (string-match-p (regexp-quote "\"hello (\"")
                                         (replique-test-text repl)))))))
+
+(ert-deftest replique-test-a-password-prompt-is-not-comints-to-answer ()
+  "What comint watches output for is a shell asking for a password, and
+what it does about one is read the answer and send it to the process of
+the buffer.  Here that process is the repl connection, so the answer
+would go to the reader as code.  A repl printing \"Password: \" is a repl
+printing something - what asks on a terminal is the jvm, on a standard
+input the repl is not."
+  (replique-test-with-repl repl
+    (should-not (memq 'comint-watch-for-password-prompt
+                      (buffer-local-value 'comint-output-filter-functions
+                                          (replique-repl--buffer repl))))
+    (let ((asked nil))
+      (cl-letf (((symbol-function 'read-passwd)
+                 (lambda (&rest _) (setq asked t) "")))
+        (replique-repl-send-code repl "(do (.write *out* \"Password: \") (.flush *out*))")
+        (should (replique-test-wait-for
+                 (lambda () (string-match-p "Password: " (replique-test-text repl)))))
+        ;; What comint would do about it is done by a timer
+        (replique-test-settle)
+        (should-not asked)))))
+
+(ert-deftest replique-test-what-is-typed-at-the-prompt-is-clojure ()
+  "The buffer is given the syntax and the parse `replique-clojure-mode\='
+reads Clojure with, so that what is typed at the prompt is the code it is
+rather than the text a comint buffer holds by default.  What comint puts
+on the buffer itself survives being fontified by the parse: the prompt is
+still a prompt to look at."
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (insert "(defn foo [] ; )\n  :kw)")
+      ;; The syntax table: a paren inside a comment closes nothing
+      (let ((comment (save-excursion (search-backward "; )") (point))))
+        (should (nth 4 (syntax-ppss (+ comment 2)))))
+      (font-lock-mode 1)
+      (font-lock-ensure)
+      (let ((defn (save-excursion (search-backward "defn") (point))))
+        (should (eq 'font-lock-keyword-face (get-text-property defn 'face))))
+      (should (memq 'comint-highlight-prompt
+                    (get-text-property (point-min) 'font-lock-face))))))
 
 (ert-deftest replique-test-the-transcript-follows-the-repl-not-the-editor ()
   "Two forms sent back to back are answered one at a time.  Writing the
@@ -1344,6 +1451,53 @@ is what is left, and it is what makes the process clean up after itself."
           (should-not (replique-process-descriptions workdir)))
       (when (process-live-p outside) (delete-process outside))
       (delete-directory workdir t))))
+
+(ert-deftest replique-test-the-standard-input-of-the-process-is-not-the-repl ()
+  "What a repl reads is a socket.  The standard input of the jvm is
+another thing entirely - it is what `java.io.Console\=' reads, which is
+where a keystore passphrase is asked for, before any repl exists - and
+nothing typed at a repl reaches it."
+  (replique-test-with-repl repl
+    (replique-process-input "from-emacs")
+    (replique-test-settle)
+    (replique-repl-send-code
+     repl "(.readLine (java.io.BufferedReader. (java.io.InputStreamReader. System/in)))")
+    (should (replique-test-wait-for
+             (lambda () (string-match-p "\"from-emacs\"" (replique-test-text repl)))))))
+
+(ert-deftest replique-test-a-password-for-the-process-is-not-read-out-loud ()
+  "A command of its own rather than an argument to
+`replique-process-input\=': a password echoed because the argument was
+forgotten is a password that has already been echoed."
+  (replique-test-with-repl repl
+    (let ((echoed nil)
+          (hidden nil))
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (&rest _) (setq echoed t) "shown"))
+                ((symbol-function 'read-passwd)
+                 (lambda (&rest _) (setq hidden t) "hidden")))
+        (call-interactively #'replique-process-input-password))
+      (should hidden)
+      (should-not echoed))
+    (replique-test-settle)
+    (replique-repl-send-code
+     repl "(.readLine (java.io.BufferedReader. (java.io.InputStreamReader. System/in)))")
+    (should (replique-test-wait-for
+             (lambda () (string-match-p "\"hidden\"" (replique-test-text repl)))))))
+
+(ert-deftest replique-test-a-process-emacs-did-not-start-has-no-input-here ()
+  "Its standard input belongs to whatever started it - a shell, or an
+Emacs that has since restarted.  Saying so is what stops a passphrase
+being typed into nothing."
+  (should (equal '(user-error "Emacs did not start this process - its input is not here")
+                 (should-error (replique-process--stdin
+                                (replique-process--make :id "outside")))))
+  (let ((proc (make-process :name "replique-test-gone" :buffer nil
+                            :command (list "cat") :noquery t)))
+    (delete-process proc)
+    (should (equal '(user-error "The process is gone")
+                   (should-error (replique-process--stdin
+                                  (replique-process--make :id "gone" :proc proc)))))))
 
 (ert-deftest replique-test-a-process-that-will-not-stop-says-so ()
   "A process Emacs did not start that does not answer is a process this
