@@ -1024,7 +1024,9 @@ would show."
                   (with-current-buffer buffer
                     (setq replique-current-repl repl)
                     (goto-char (point-max))
-                    (should-error (replique-eval-defun) :type 'user-error))
+                    (should (equal '(user-error "No form at point")
+                                   (should-error (replique-eval-defun)
+                                                 :type 'user-error))))
                 (kill-buffer buffer)))
             (replique-test-eval repl "(defn typed-at-the-prompt [])")
             (should (string-match-p

@@ -52,9 +52,16 @@
   "What counts as plumbing, as regexps matched against a trace line.
 
 The machinery between a form and its evaluation: the compiler, the repl
-that read it, the thread it ran on.  Not `java.lang' at large - that is
-where a jdk exception is thrown, which is the one frame worth reading -
-and never the top frame, which is where this one was thrown."
+that read it, the thread it ran on.  `java.base/\=' is the jdk, which is
+how java prints it since it printed modules - so a frame of the jdk
+matches this like any other does.
+
+Which does not fold the one worth reading, because no rule here has to
+spare it.  The throw path is kept whatever it is made of - see
+`replique-exception--fold\=' - so `Integer.parseInt\=' survives where it
+is what threw, and folds away further down where it is only something the
+code went through.  Where a frame is says which of the two it is; what it
+is called does not."
   :type '(repeat regexp)
   :group 'replique)
 
