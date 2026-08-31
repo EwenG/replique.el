@@ -22,6 +22,11 @@
 (require 'cl-lib)
 (require 'replique)
 
+;; A test run never installs a grammar: it fetches a repository and runs a
+;; compiler, which is not a thing to do behind somebody running the tests.
+;; What needs one is skipped instead - see `replique-test-grammar'.
+(setq replique-clojure-ensure-grammars nil)
+
 (defvar replique-test-process nil
   "The process shared by the tests.")
 
@@ -38,6 +43,34 @@ open on it."
     (when (or (null project) (string-empty-p (string-trim project)))
       (ert-skip "REPLIQUE_PROJECT is not set"))
     (file-name-as-directory (expand-file-name project))))
+
+(defun replique-test-grammar ()
+  "Skip the test unless the grammar replique reads Clojure with is there."
+  (unless (and (fboundp 'treesit-available-p)
+               (treesit-available-p)
+               (treesit-language-available-p replique-eval-grammar))
+    (ert-skip (format "the %s grammar is not installed" replique-eval-grammar))))
+
+(defmacro replique-test-with-clojure (text &rest body)
+  "Run BODY in a Clojure buffer holding TEXT, with point at its beginning."
+  (declare (indent 1))
+  `(with-temp-buffer
+     (replique-clojure-mode)
+     (insert ,text)
+     (goto-char (point-min))
+     ,@body))
+
+(defun replique-test-node-texts (nodes)
+  "Return the text of NODES."
+  (mapcar (lambda (node) (treesit-node-text node t)) nodes))
+
+(defun replique-test-forms (text &optional start end)
+  "Return the text of the forms TEXT holds, as replique reads them.
+
+START and END are where in it to look, the whole of it by default."
+  (replique-test-with-clojure text
+    (replique-test-node-texts
+     (replique-eval--nodes (or start (point-min)) (or end (point-max))))))
 
 (defun replique-test-wait-for (pred &optional timeout)
   "Pump until PRED holds or TIMEOUT seconds pass.  Returns what PRED said."
@@ -681,6 +714,7 @@ which is a lie about what happened."
 (ert-deftest replique-test-the-compiler-is-told-where-the-code-came-from ()
   "A repl reads from a socket, so the file and the line numbers it records
 mean nothing unless the client says where the form was taken from."
+  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-source.clj" temporary-file-directory)))
       (unwind-protect
@@ -690,7 +724,6 @@ mean nothing unless the client says where the form was taken from."
             (let ((buffer (find-file-noselect file)))
               (unwind-protect
                   (with-current-buffer buffer
-                    (emacs-lisp-mode)   ; sexp motion is all this needs
                     (setq replique-current-repl repl)
                     (replique-eval-buffer))
                 (kill-buffer buffer)))
@@ -709,22 +742,141 @@ mean nothing unless the client says where the form was taken from."
   "The directive applies to the next form only, so a region holding
 several forms needs one before each: they would otherwise all be recorded
 at the line of the first."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(def a 1)\n\n(def b 2)\n"
+    (let ((nodes (replique-eval--nodes (point-min) (point-max))))
+      (should (equal '("(def a 1)" "(def b 2)") (replique-test-node-texts nodes)))
+      (should (equal '(1 3)
+                     (mapcar (lambda (n)
+                               (line-number-at-pos (treesit-node-start n) t))
+                             nodes))))))
+
+(ert-deftest replique-test-a-clojure-buffer-has-the-commands-in-it ()
+  "The keys are bound in a Clojure file without anything being turned on
+by hand: the mode replique opens one in is what turns them on."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(def a 1)\n"
+    (should replique-mode)
+    (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))))
+
+(ert-deftest replique-test-a-buffer-that-is-not-ours-is-not-evaluated ()
+  "Evaluating reads the buffer with the grammar it is highlighted with, so
+a buffer that is not read that way is one to say so about rather than to
+guess at."
   (with-temp-buffer
-    (emacs-lisp-mode)
-    (insert "(def a 1)\n\n(def b 2)\n")
-    (let ((forms (replique-eval--forms (point-min) (point-max))))
-      (should (equal '(("(def a 1)" . 1) ("(def b 2)" . 3)) forms)))))
+    (fundamental-mode)
+    (insert "(def a 1)\n")
+    (should-error (replique-eval-buffer) :type 'user-error)))
 
 (ert-deftest replique-test-a-comment-between-two-forms-is-not-a-form ()
-  (with-temp-buffer
-    (emacs-lisp-mode)
-    (insert ";; a comment\n(def a 1)\n")
-    (should (equal '(("(def a 1)" . 2))
-                   (replique-eval--forms (point-min) (point-max))))))
+  (replique-test-grammar)
+  (should (equal '("(def a 1)")
+                 (replique-test-forms ";; a comment\n(def a 1)\n;; another\n"))))
+
+(ert-deftest replique-test-a-discarded-form-is-one-form ()
+  "What #_ discards is part of the form it discards, not a form before it.
+
+A directive written between the two is what the discard eats, and the
+form that was commented out is then the one evaluated."
+  (replique-test-grammar)
+  (should (equal '("(def a 1)" "#_(def b 2)")
+                 (replique-test-forms "(def a 1)\n#_(def b 2)\n")))
+  (should (equal '("#_#_(x)(y)" "(z)")
+                 (replique-test-forms "#_#_(x)(y)\n(z)\n")))
+  (should (equal '("#_ ;; why\n(z)")
+                 (replique-test-forms "#_ ;; why\n(z)\n"))))
+
+(ert-deftest replique-test-metadata-is-part-of-the-form-it-is-on ()
+  "A directive between the metadata and the definition is what the
+metadata ends up on, and the definition is left without it."
+  (replique-test-grammar)
+  (should (equal '("^{:m 1}\n(def c 3)")
+                 (replique-test-forms "^{:m 1}\n(def c 3)\n")))
+  (should (equal '("^:private (def c 3)")
+                 (replique-test-forms "^:private (def c 3)\n"))))
+
+(ert-deftest replique-test-a-reader-macro-is-not-a-form-of-its-own ()
+  "The ones sexp motion reads as two, and the ones it gets right, in one
+list: what is being pinned is that every one of them is a single form."
+  (replique-test-grammar)
+  (let ((forms '("#{1 2}" "#(inc %)" "#?(:clj 1)" "#?@(:clj [1])" "#\"re\""
+                 "~@(a)" "'(1)" "`(1)" "#=(+ 1 1)" "#^String x" "#'foo" "@(f)")))
+    (should (equal forms (replique-test-forms (string-join forms "\n"))))))
+
+(ert-deftest replique-test-what-cannot-be-read-is-sent-as-it-is ()
+  "The reader says what is wrong with an unfinished form better than
+anything here could, so it is what gets to say it."
+  (replique-test-grammar)
+  (should (equal '("(def a 1)" "(def b\n")
+                 (replique-test-forms "(def a 1)\n(def b\n"))))
+
+(ert-deftest replique-test-a-region-inside-a-form-is-the-forms-inside-it ()
+  "Selecting expressions in the body of a function evaluates those
+expressions.  Nothing at the top level starts in that region, and
+answering with the whole function would be answering another question."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(defn f []\n  (a 1)\n  (b 2)\n  (c 3))\n"
+    (let* ((start (progn (search-forward "(a 1)") (match-beginning 0)))
+           (after-a (point))
+           (after-b (progn (search-forward "(b 2)") (point))))
+      (should (equal '("(a 1)" "(b 2)")
+                     (replique-test-node-texts (replique-eval--nodes start after-b))))
+      (should (equal '("(a 1)")
+                     (replique-test-node-texts
+                      (replique-eval--nodes start after-a)))))))
+
+(ert-deftest replique-test-a-form-half-selected-is-evaluated-whole ()
+  "Half a form is a read error, not an evaluation."
+  (replique-test-grammar)
+  (should (equal '("(def a 1)")
+                 (replique-test-forms "(def a 1)\n(def b 2)\n" 1 5))))
+
+(ert-deftest replique-test-the-form-point-is-on ()
+  "What a point command acts on: the whole of the top level form, its
+metadata included, and point just after a form counts as being on it -
+which is where typing one leaves point."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(def a 1)\n^{:m 1}\n(def c 3)\n"
+    (search-forward "def c")
+    (should (equal "^{:m 1}\n(def c 3)"
+                   (treesit-node-text (replique-eval--covering (point)) t)))
+    (goto-char (point-min))
+    (end-of-line)
+    (should (equal "(def a 1)"
+                   (treesit-node-text (replique-eval--covering (1- (point))) t)))))
+
+(ert-deftest replique-test-the-form-before-point ()
+  "The largest form ending there: point after the last paren of (a (b))
+is at the end of both, and the one just finished is the outer one."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(a (b))"
+    (should (equal "(a (b))"
+                   (treesit-node-text (replique-eval--ending-at (point-max)) t))))
+  (replique-test-with-clojure "(x)\n^{:m 1} (def c 3)"
+    (should (equal "^{:m 1} (def c 3)"
+                   (treesit-node-text (replique-eval--ending-at (point-max)) t)))))
+
+(ert-deftest replique-test-a-discard-under-point-is-evaluated ()
+  "The way back from having commented a form out: putting point on it and
+asking for it means the form, not the discarding of it.  A region does
+not descend that way - what was commented out in a region was selected as
+commented out."
+  (replique-test-grammar)
+  (replique-test-with-clojure "#_(def b 2)\n"
+    (search-forward "def b")
+    (should (equal "(def b 2)"
+                   (treesit-node-text
+                    (replique-eval--discarded (replique-eval--covering (point))) t))))
+  ;; and the last of a stacked one, there being no better answer
+  (replique-test-with-clojure "#_#_(x)(y)\n"
+    (should (equal "(y)"
+                   (treesit-node-text
+                    (replique-eval--discarded (replique-eval--covering (point))) t)))))
 
 (ert-deftest replique-test-the-transcript-does-not-show-the-source-directive ()
   "The directive is protocol.  Nobody wrote it, so a transcript that shows
 it is a transcript of the wire rather than of the session."
+  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-directive.clj" temporary-file-directory)))
       (unwind-protect
@@ -733,7 +885,6 @@ it is a transcript of the wire rather than of the session."
             (let ((buffer (find-file-noselect file)))
               (unwind-protect
                   (with-current-buffer buffer
-                    (emacs-lisp-mode)
                     (setq replique-current-repl repl)
                     (replique-eval-buffer))
                 (kill-buffer buffer)))
@@ -743,6 +894,31 @@ it is a transcript of the wire rather than of the session."
             (let ((text (replique-test-text repl)))
               (should (string-match-p "(def marker :here)" text))
               (should-not (string-match-p "replique/src" text))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-a-discarded-form-is-not-evaluated ()
+  "The whole of it, against a real reader: a directive written between #_
+and the form it discards is the form the discard eats, and the one that
+was commented out is then read and evaluated."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique-test-discard.clj" temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "(def evidence :untouched)\n"
+                      "#_(def evidence :the-discard-ran)\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (setq replique-current-repl repl)
+                    (replique-eval-buffer))
+                (kill-buffer buffer)))
+            (should (replique-test-wait-for
+                     (lambda ()
+                       (string-match-p "#'user/evidence" (replique-test-text repl)))))
+            (should (string-match-p "^:untouched$"
+                                    (replique-test-eval repl "evidence"))))
         (delete-file file)))))
 
 (ert-deftest replique-test-multibyte-survives-the-round-trip ()
