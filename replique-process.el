@@ -67,8 +67,13 @@ Nil leaves it out, for a project that does depend on replique.
 
 This default points at a checkout, because replique 2 is not published
 anywhere yet.  It has to become a git or a maven coordinate before anyone
-but its author can use it."
+but its author can use it.
+
+Risky, like everything here that builds the command line: what it names
+is put on the classpath of the process, so it is not a setting a project
+being opened is allowed to offer quietly."
   :type '(choice (const :tag "The project provides replique" nil) string)
+  :risky t
   :group 'replique)
 
 (defcustom replique-aliases nil
@@ -101,8 +106,12 @@ from .dir-locals-2.el, which is where Emacs keeps what is yours rather
 than the project's.
 
 The text is passed on as it was written.  Replique does not read it, which
-is why the aliases it defines have to be named rather than found."
+is why the aliases it defines have to be named rather than found - and
+why the name of the file is risky: whatever it holds reaches -Sdeps
+unread, so a project that could point this somewhere of its own would be
+choosing what the process runs with."
   :type 'string
+  :risky t
   :group 'replique)
 
 (defcustom replique-user-aliases nil
@@ -115,8 +124,11 @@ work with has to know it is there, and no file of theirs has to change.
 
 These are added to `replique-aliases', they do not replace them: a project
 that needs an alias to be usable still gets it.  Set this in your init
-file - a project must not be able to choose what you run."
+file - a project must not be able to choose what you run, which is what
+the global value being the one that is read comes to: see
+`replique-process--main-opt'."
   :type '(repeat string)
+  :risky t
   :group 'replique)
 
 (cl-defstruct (replique-process
@@ -537,10 +549,19 @@ asked for.  What is yours rather than a project's goes in
   "Return the main option, under the aliases the process should run with.
 
 What the project asks for and what you asked for, in that order: yours
-last, so that yours is what wins where they say the same thing."
+last, so that yours is what wins where they say the same thing.
+
+Yours are the global value and not the value the calling buffer has, for
+the reason `replique-process--project-aliases\=' reads the global one: a
+buffer visiting a file in one project carries that project\='s directory
+local variables, and a start is for the project that was named.  A buffer
+local value here would not add to yours - it would be read instead of
+them, and the tooling you start every process with would go missing from
+the one process it was set in the way of."
   (let ((aliases (delete-dups
                   (mapcar (lambda (alias) (concat ":" (string-remove-prefix ":" alias)))
-                          (append replique-aliases replique-user-aliases)))))
+                          (append replique-aliases
+                                  (default-value 'replique-user-aliases))))))
     (if aliases
         (concat "-M" (string-join aliases))
       "-M")))
@@ -586,8 +607,14 @@ SUMMARY being what it would have been reported as."
          (replique-exception-button "browse the exception\n" exception summary nil
                                     "starting the process")
          'replique-note))
-      (message "replique: %s - see %s" why (buffer-name buffer))
-      (display-buffer buffer))))
+      ;; The buffer is where the whole of it is, and it can have been killed
+      ;; while the process was starting.  Then there is nowhere to point at,
+      ;; and what is left to do is say what happened
+      (if (buffer-live-p buffer)
+          (progn
+            (message "replique: %s - see %s" why (buffer-name buffer))
+            (display-buffer buffer))
+        (message "replique: %s" why)))))
 
 (defun replique-process--spawn-filter (proc string)
   "Read the startup line PROC wrote in STRING, then let its output through.
@@ -687,13 +714,16 @@ and the process stops on the write that fills it."
     (let ((process (process-get proc 'replique-process)))
       (if process
           (replique-process--note process "The process exited")
-        (replique-insert-output
-         (replique-process--startup-buffer proc)
-         (format "\nThe process exited with status %s\n" (process-exit-status proc))
-         'replique-note)
-        (replique-process--link-report (replique-process--startup-buffer proc))
-        (message "replique: the process exited without starting - see %s"
-                 (buffer-name (replique-process--startup-buffer proc)))))))
+        (let ((buffer (replique-process--startup-buffer proc)))
+          (replique-insert-output
+           buffer
+           (format "\nThe process exited with status %s\n" (process-exit-status proc))
+           'replique-note)
+          (replique-process--link-report buffer)
+          (if (buffer-live-p buffer)
+              (message "replique: the process exited without starting - see %s"
+                       (buffer-name buffer))
+            (message "replique: the process exited without starting")))))))
 
 (defun replique-process--link-report (buffer)
   "Turn the report clojure wrote, named in BUFFER, into a file to open."

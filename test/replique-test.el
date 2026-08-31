@@ -219,6 +219,29 @@ not be honoured there."
   (let ((replique-clojure-program "replique-no-such-program"))
     (should-error (replique-start temporary-file-directory) :type 'user-error)))
 
+(ert-deftest replique-test-a-start-that-lost-its-buffer-still-says-what-happened ()
+  "The buffer holding what a process wrote can be killed while it is
+starting.  There is then nowhere to point at, and pointing anyway is
+`display-buffer\=' on a buffer that is not there - which is a signal
+raised inside a process filter, in place of the report of what went
+wrong."
+  (let ((proc (make-process :name "replique-test-lost-buffer"
+                            :command '("sleep" "5") :noquery t))
+        (buffer (generate-new-buffer "*replique-test-startup*")))
+    (unwind-protect
+        (progn
+          (process-put proc 'replique-buffer buffer)
+          (process-put proc 'replique-state 'starting)
+          (kill-buffer buffer)
+          (should (equal "replique: the jvm would not start"
+                         (replique-test-message
+                           (replique-process--failed proc "the jvm would not start"))))
+          (delete-process proc)
+          (should (equal "replique: the process exited without starting"
+                         (replique-test-message
+                           (replique-process--spawn-sentinel proc "killed")))))
+      (when (process-live-p proc) (delete-process proc)))))
+
 (defconst replique-test-exception
   '(:class "clojure.lang.ExceptionInfo"
     :message "could not read the config"
@@ -347,6 +370,37 @@ classpath beside its dependencies rather than into them."
     ;; written with or without the colon, since both read as the alias
     (let ((replique-aliases '(":dev" "test")))
       (should (member "-M:dev:test" (replique-process--command "/tmp/a-project/"))))))
+
+(ert-deftest replique-test-your-aliases-are-yours-whatever-buffer-asks ()
+  "A buffer visiting a file in one project carries that project\='s
+directory local variables, and a start is for the project that was named.
+A buffer local value would not be added to yours - it would be read
+instead of them, and what you start every process with would go missing
+from the one process it was set in the way of."
+  (let ((replique-clojure-program "clojure")
+        (replique-coordinates nil)
+        (replique-aliases nil)
+        (saved (default-value 'replique-user-aliases)))
+    (unwind-protect
+        (progn
+          (setq-default replique-user-aliases '("my-tools"))
+          (with-temp-buffer
+            (setq-local replique-user-aliases '("another-projects"))
+            (should (member "-M:my-tools"
+                            (replique-process--command "/tmp/a-project/")))))
+      (setq-default replique-user-aliases saved))))
+
+(ert-deftest replique-test-what-builds-the-command-line-is-not-a-projects-to-set ()
+  "The .dir-locals.el of a project being opened must not be able to offer
+what the process runs with - not quietly, and not behind a prompt that
+offers to remember the answer.  Which aliases a project needs is the
+project\='s to say, and it is the one that is safe."
+  (dolist (setting '(replique-clojure-program replique-coordinates
+                                              replique-user-aliases
+                                              replique-aliases-file))
+    (should (risky-local-variable-p setting)))
+  (should (safe-local-variable-p 'replique-aliases '("dev")))
+  (should-not (safe-local-variable-p 'replique-aliases '(1 2))))
 
 (ert-deftest replique-test-your-aliases-are-added-to-the-projects ()
   "Tooling of your own is named in your init and lives in your deps.edn,
