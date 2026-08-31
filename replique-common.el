@@ -139,8 +139,12 @@ been changed."
     (setq global-mode-string
           (append global-mode-string (list replique--unread-mode-line)))))
 
-(defun replique-track-unread (buffer)
+(defun replique-note-unread (buffer)
   "Note that BUFFER received output while no window showed it.
+
+Named apart from `replique-track-unread\=', the setting it reads: one
+symbol that is both a variable and a function is a symbol whose two
+descriptions are about different things.
 
 Noted once: what is being said is that there is something to read, and
 saying it again per line of it says nothing more."
@@ -190,7 +194,7 @@ left where the reader put it."
           (insert (if face (propertize string 'face face) string)))
         (when at-end (goto-char (point-max)))
         (dolist (w windows) (set-window-point w (point-max)))))
-    (replique-track-unread buffer)))
+    (replique-note-unread buffer)))
 
 (provide 'replique-common)
 

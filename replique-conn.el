@@ -48,6 +48,14 @@ that have not been answered yet, ACC the piece of a line that has arrived
 without its newline."
   proc kind id info pending next-id acc on-frame on-close)
 
+(defconst replique-conn-closed-error "connection-closed"
+  "The `:error\=' of the frame a request gets when the connection dies.
+
+Not something a process sends - it is the answer replique gives on its
+behalf when there will be no answer.  A caller that only ever hears back
+when a request succeeds is a command that silently does nothing when the
+process is gone.")
+
 (defun replique-conn-open (host port kind &rest keys)
   "Open a connection to the process at HOST and PORT and shake hands.
 
@@ -85,18 +93,24 @@ KIND is `control' or `repl'.  KEYS may hold:
      (append (list :op :hello :role (intern (format ":%s" kind)))
              (when process-id (list :process-id process-id)))
      (lambda (frame)
-       (if (equal "error" (plist-get frame :tag))
+       (cond
+        ;; A connection that died is not a process that refused: there is
+        ;; nothing here to report or to act on, and `:on-close\=' is where
+        ;; going away is handled
+        ((equal replique-conn-closed-error (plist-get frame :error)) nil)
+        ((equal "error" (plist-get frame :tag))
            ;; The connection is closed after an unsuccessful handshake, so
            ;; there is nothing to recover - say what happened and let go.
            ;; What a refusal means is the caller\='s to know: a port file
            ;; naming a process that is not there is a refusal it can act on
-           (if on-error
-               (funcall on-error frame)
-             (message "replique: the handshake was refused: %s (%s)"
-                      (plist-get frame :message) (plist-get frame :error)))
+         (if on-error
+             (funcall on-error frame)
+           (message "replique: the handshake was refused: %s (%s)"
+                    (plist-get frame :message) (plist-get frame :error))))
+        (t
          (setf (replique-conn--id conn) (plist-get frame :connection))
          (setf (replique-conn--info conn) frame)
-         (when on-ready (funcall on-ready conn)))))
+         (when on-ready (funcall on-ready conn))))))
     conn))
 
 (defun replique-conn-live-p (conn)
@@ -180,13 +194,28 @@ it is - over as many lines as it takes."
       (when (replique-conn--on-frame conn)
         (funcall (replique-conn--on-frame conn) frame)))))
 
+(defun replique-conn--abandon (conn)
+  "Tell whoever is waiting on CONN that no answer is coming.
+
+The same shape a process would have refused with, so that a caller has
+one way of hearing about both - see `replique-conn-closed-error\=' for
+telling this one apart."
+  (let ((pending (replique-conn--pending conn)))
+    (setf (replique-conn--pending conn) nil)
+    (dolist (cell pending)
+      (with-demoted-errors "replique: error abandoning a request: %S"
+        (funcall (cdr cell)
+                 (list :tag "error"
+                       :error replique-conn-closed-error
+                       :message "The connection to the process closed"
+                       :id (car cell)))))))
+
 (defun replique-conn--sentinel (proc _event)
   "Notice that PROC is gone."
   (unless (process-live-p proc)
     (let ((conn (process-get proc 'replique-conn)))
       (when conn
-        ;; The requests that will never be answered go with it
-        (setf (replique-conn--pending conn) nil)
+        (replique-conn--abandon conn)
         (when (replique-conn--on-close conn)
           (with-demoted-errors "replique: error closing a connection: %S"
             (funcall (replique-conn--on-close conn) conn)))))))

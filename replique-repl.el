@@ -132,7 +132,7 @@ What a buffer asked for is reported where it was asked from.  The rest
 is only ever in the repl buffer, and a repl buffer no window shows is
 where output goes to not be read."
   (when (= 0 (or (replique-repl--to-echo repl) 0))
-    (replique-track-unread (replique-repl--buffer repl))))
+    (replique-note-unread (replique-repl--buffer repl))))
 
 (defun replique-repl--echo-keep (repl string)
   "Keep STRING, printed by the form REPL is answering, for the echo area.
@@ -396,33 +396,44 @@ read rather than continued."
       (setq-local replique--buffer-repl repl)
       (when-let* ((directory (replique-process--directory process)))
         (setq-local default-directory (file-name-as-directory directory))))
-    (setf (replique-repl--conn repl)
-          (replique-conn-open
-           (replique-process--host process)
-           (replique-process--port process)
-           'repl
-           :buffer buffer
-           :process-id (replique-process--id process)
-           :on-ready (lambda (conn)
-                       (let ((proc (replique-conn--proc conn)))
-                         (process-put proc 'replique-repl repl)
-                         (with-current-buffer buffer
-                           (goto-char (point-max))
-                           (set-marker (process-mark proc) (point))
-                           (run-hooks 'comint-exec-hook))))
-           :on-frame (lambda (frame) (replique-repl--frame repl frame))
-           :on-close (lambda (_conn)
-                       (when (buffer-live-p buffer)
-                         (with-current-buffer buffer
-                           (let ((inhibit-read-only t))
-                             (save-excursion
-                               (goto-char (point-max))
-                               (insert (propertize "\nThe connection is closed\n"
-                                                   'face 'replique-note))))))
-                       (setf (replique-process--repls process)
-                             (delq repl (replique-process--repls process)))
-                       (when (eq replique-current-repl repl)
-                         (setq replique-current-repl nil)))))
+    (setf
+     (replique-repl--conn repl)
+     (condition-case err
+         (replique-conn-open
+          (replique-process--host process)
+          (replique-process--port process)
+          'repl
+          :buffer buffer
+          :process-id (replique-process--id process)
+          :on-ready (lambda (conn)
+                      (let ((proc (replique-conn--proc conn)))
+                        (process-put proc 'replique-repl repl)
+                        (with-current-buffer buffer
+                          (goto-char (point-max))
+                          (set-marker (process-mark proc) (point))
+                          (run-hooks 'comint-exec-hook))))
+          :on-frame (lambda (frame) (replique-repl--frame repl frame))
+          :on-close (lambda (_conn)
+                      (when (buffer-live-p buffer)
+                        (with-current-buffer buffer
+                          (let ((inhibit-read-only t))
+                            (save-excursion
+                              (goto-char (point-max))
+                              (insert (propertize "\nThe connection is closed\n"
+                                                  'face 'replique-note))))))
+                      (setf (replique-process--repls process)
+                            (delq repl (replique-process--repls process)))
+                      (when (eq replique-current-repl repl)
+                        (setq replique-current-repl nil))))
+       ;; The process is gone.  `replique-process--connect' says this for the
+       ;; control connection; a repl is opened later, and the process can
+       ;; have left in between
+       (file-error
+        (kill-buffer buffer)
+        (user-error "Nothing is listening on %s:%s - %s"
+                    (replique-process--host process)
+                    (replique-process--port process)
+                    (or (nth 2 err) "the process is gone")))))
     (push repl (replique-process--repls process))
     (setq replique-current-repl repl)
     (pop-to-buffer buffer)
@@ -536,7 +547,7 @@ left alone."
 (defconst replique-kill-timeout 2
   "How long to wait for a process to stop, in seconds, before killing it.")
 
-(defun replique-repl--stop (proc)
+(defun replique-process--stop (proc)
   "Stop PROC, the operating system process Emacs started.
 
 An interrupt rather than a kill: the jvm answers it by running its
@@ -555,7 +566,7 @@ listening."
   (when (process-live-p proc)
     (delete-process proc)))
 
-(defun replique-repl--ask-to-stop (process)
+(defun replique-process--ask-to-stop (process)
   "Ask PROCESS to stop, and wait for it to go.  Return non-nil when it went.
 
 The only way that reaches a process Emacs did not start: it is no child of
@@ -570,7 +581,7 @@ connection closing, which is what the process leaving does to it."
           (accept-process-output nil 0.05)))
       (not (replique-conn-live-p conn)))))
 
-(defun replique-repl--close (process)
+(defun replique-process--close (process)
   "Close the connections to PROCESS and forget it.
 
 The repl buffers are left as they are: what a repl printed is what was
@@ -589,7 +600,7 @@ a terminal, or to whoever is working on the machine it runs on.  It goes
 on running and its port file goes on saying where it is, so
 `replique-connect\=' finds it again."
   (interactive (list (replique-process-ensure)))
-  (replique-repl--close process)
+  (replique-process--close process)
   (message "replique: let go of %s" (replique-process--id process)))
 
 (defun replique-kill-process (process)
@@ -610,10 +621,10 @@ To let go of a process without stopping it, see `replique-disconnect\='."
   (interactive (list (replique-process-ensure)))
   (let* ((id (replique-process--id process))
          (proc (replique-process--proc process))
-         (stopped (replique-repl--ask-to-stop process)))
-    (replique-repl--close process)
+         (stopped (replique-process--ask-to-stop process)))
+    (replique-process--close process)
     (when (process-live-p proc)
-      (replique-repl--stop proc)
+      (replique-process--stop proc)
       (setq stopped t))
     (if stopped
         (message "replique: stopped %s" id)

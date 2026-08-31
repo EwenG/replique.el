@@ -1199,7 +1199,7 @@ developer who is told the process stopped stops looking for it."
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known))))
           (should-not (replique-process--proc process))
-          (let ((said (cl-letf (((symbol-function 'replique-repl--ask-to-stop)
+          (let ((said (cl-letf (((symbol-function 'replique-process--ask-to-stop)
                                  (lambda (_process) nil)))
                         (replique-test-message (replique-kill-process process)))))
             (should (string-match-p "would not stop" said)))
@@ -1339,6 +1339,33 @@ process `replique-connect\=' goes on offering."
           ;; is done when it returns
           (replique-kill-process process)
           (should-not (file-exists-p port-file)))))))
+
+(ert-deftest replique-test-a-request-nobody-will-answer-is-answered ()
+  "A connection that dies takes every unanswered request with it.  A caller
+that only ever hears back on success is a command that silently does
+nothing when the process is gone."
+  (replique-test-with-repl repl
+    (let* ((conn (replique-repl--conn repl))
+           (answers nil))
+      (replique-conn-request conn (list :op :process-info)
+                             (lambda (frame) (push frame answers)))
+      (replique-conn-close conn)
+      (should (replique-test-wait-for (lambda () answers) 5))
+      (let ((frame (car answers)))
+        (should (equal "error" (plist-get frame :tag)))
+        (should (equal replique-conn-closed-error (plist-get frame :error)))))))
+
+(ert-deftest replique-test-a-repl-on-a-process-that-went-says-so ()
+  "The control connection says when there is nothing to connect to.  A repl
+is opened later, and the process can have left in between - which used to
+reach the developer as a backtrace.  The buffer it had made goes too:
+a repl buffer of a repl that never opened is a buffer that says nothing."
+  (let* ((process (replique-process--make :id "replique-test-gone"
+                                          :host "127.0.0.1"
+                                          :port (replique-test-free-port)))
+         (name (replique-repl--buffer-name process)))
+    (should-error (replique-repl process) :type 'user-error)
+    (should-not (get-buffer name))))
 
 ;;; Cleaning up
 

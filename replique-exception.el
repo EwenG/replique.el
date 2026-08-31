@@ -150,26 +150,26 @@ look like one is shown as it came rather than forced into columns."
   (let ((width (min 48 (apply #'max 0
                               (mapcar (lambda (c) (length (or (plist-get c :class) "?")))
                                       chain)))))
-   (seq-do-indexed
-   (lambda (cause index)
-     (let* ((selected (= index replique-exception--index))
-            (class (or (plist-get cause :class) "?")))
-       (when selected (setq replique-exception--selection (point)))
-       (insert (if selected (propertize "  ▸ " 'face 'bold) "    "))
-       (insert (propertize (format "%d  " (1+ index)) 'face 'replique-note))
-       (insert (propertize class
-                           'face (if selected 'replique-exception 'default)))
-       (insert (make-string (max 2 (- (+ width 2) (length class))) ?\s))
-       (insert (truncate-string-to-width
-                (car (split-string (or (plist-get cause :message) "") "\n"))
-                60 nil nil t))
-       ;; The root is the one the reported message names, and a chain that was
-       ;; cut has its root below what the frame carried
-       (when (and (= index (1- (length chain)))
-                  (not (plist-get cause :cause-dropped)))
-         (insert (propertize "  root" 'face 'replique-note)))
-       (insert "\n")))
-   chain))
+    (seq-do-indexed
+     (lambda (cause index)
+       (let* ((selected (= index replique-exception--index))
+              (class (or (plist-get cause :class) "?")))
+         (when selected (setq replique-exception--selection (point)))
+         (insert (if selected (propertize "  ▸ " 'face 'bold) "    "))
+         (insert (propertize (format "%d  " (1+ index)) 'face 'replique-note))
+         (insert (propertize class
+                             'face (if selected 'replique-exception 'default)))
+         (insert (make-string (max 2 (- (+ width 2) (length class))) ?\s))
+         (insert (truncate-string-to-width
+                  (car (split-string (or (plist-get cause :message) "") "\n"))
+                  60 nil nil t))
+         ;; The root is the one the reported message names, and a chain that was
+         ;; cut has its root below what the frame carried
+         (when (and (= index (1- (length chain)))
+                    (not (plist-get cause :cause-dropped)))
+           (insert (propertize "  root" 'face 'replique-note)))
+         (insert "\n")))
+     chain))
   (when (plist-get (car (last chain)) :cause-dropped)
     (insert (propertize "       … the chain goes on below what the frame carried\n"
                         'face 'replique-note))))

@@ -20,7 +20,7 @@
 ;;; Commentary:
 
 ;; A replique process is either one Emacs started, or one that was already
-;; running and left its description in .replique-processes.
+;; running and left its description in .replique/processes.
 ;;
 ;; Both report what they print the same way: as events on the control
 ;; connection.  A process Emacs started also writes to a pipe Emacs reads,
@@ -519,8 +519,14 @@ would not make one."
 
 The directory local variables of the project rather than of the current
 buffer: a process is started for a project, and the buffer that asked for
-it may be anywhere - a repl of another project, or no file at all."
-  (let ((aliases replique-aliases))
+it may be anywhere - a repl of another project, or no file at all.
+
+Which is why the global value is where this starts, and not the value the
+calling buffer has: a buffer visiting a file in one project carries that
+project's aliases, and they are not the ones the project being started
+asked for.  What is yours rather than a project's goes in
+`replique-user-aliases'."
+  (let ((aliases (default-value 'replique-aliases)))
     (with-temp-buffer
       (setq-local replique-aliases aliases)
       (setq-local default-directory directory)
@@ -823,12 +829,14 @@ where there is one."
     (replique-process-request
      process (list :op :process-info)
      (lambda (frame)
-       (message "replique: %s in %s - clojure %s, java %s, up %ss"
-                (plist-get frame :process-id)
-                (plist-get frame :directory)
-                (plist-get frame :clojure-version)
-                (plist-get frame :java-version)
-                (/ (or (plist-get frame :uptime) 0) 1000))))))
+       (if (equal "error" (plist-get frame :tag))
+           (message "replique: %s" (plist-get frame :message))
+         (message "replique: %s in %s - clojure %s, java %s, up %ss"
+                  (plist-get frame :process-id)
+                  (plist-get frame :directory)
+                  (plist-get frame :clojure-version)
+                  (plist-get frame :java-version)
+                  (/ (or (plist-get frame :uptime) 0) 1000)))))))
 
 ;;;###autoload
 (defun replique-select-process ()
