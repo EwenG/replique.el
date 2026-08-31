@@ -22,9 +22,8 @@
 ;; Sending what is in a buffer to a repl, saying where it came from.
 ;;
 ;; The source directive applies to the next form only, so a region holding
-;; several forms is sent as several forms, each with its own: evaluating a
-;; whole buffer would otherwise place every definition but the first at the
-;; line of the first one.
+;; several forms is sent as several forms, each with its own: they would
+;; otherwise all be recorded at the line of the first.
 ;;
 ;; Which means replique has to agree with the reader about where a form
 ;; begins, and sexp motion does not.  `forward-sexp' stops after #_ and after
@@ -249,12 +248,6 @@ A form that starts inside the region is evaluated whole, even where it
 runs past END: half a form is a read error, not an evaluation."
   (interactive "r")
   (replique-eval--send (replique-eval--nodes start end)))
-
-;;;###autoload
-(defun replique-eval-buffer ()
-  "Evaluate every form of the current buffer."
-  (interactive)
-  (replique-eval--send (replique-eval--nodes (point-min) (point-max))))
 
 (provide 'replique-eval)
 

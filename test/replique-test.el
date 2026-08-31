@@ -725,7 +725,7 @@ mean nothing unless the client says where the form was taken from."
               (unwind-protect
                   (with-current-buffer buffer
                     (setq replique-current-repl repl)
-                    (replique-eval-buffer))
+                    (replique-eval-region (point-min) (point-max)))
                 (kill-buffer buffer)))
             (replique-test-wait-for
              (lambda () (string-match-p "#'user/from-a-buffer" (replique-test-text repl))))
@@ -766,7 +766,8 @@ guess at."
   (with-temp-buffer
     (fundamental-mode)
     (insert "(def a 1)\n")
-    (should-error (replique-eval-buffer) :type 'user-error)))
+    (should-error (replique-eval-region (point-min) (point-max))
+                  :type 'user-error)))
 
 (ert-deftest replique-test-a-comment-between-two-forms-is-not-a-form ()
   (replique-test-grammar)
@@ -886,7 +887,7 @@ it is a transcript of the wire rather than of the session."
               (unwind-protect
                   (with-current-buffer buffer
                     (setq replique-current-repl repl)
-                    (replique-eval-buffer))
+                    (replique-eval-region (point-min) (point-max)))
                 (kill-buffer buffer)))
             (should (replique-test-wait-for
                      (lambda ()
@@ -912,7 +913,7 @@ was commented out is then read and evaluated."
               (unwind-protect
                   (with-current-buffer buffer
                     (setq replique-current-repl repl)
-                    (replique-eval-buffer))
+                    (replique-eval-region (point-min) (point-max)))
                 (kill-buffer buffer)))
             (should (replique-test-wait-for
                      (lambda ()
