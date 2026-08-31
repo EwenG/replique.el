@@ -3,8 +3,8 @@ EMACS ?= emacs
 # process.  Without it they are skipped.
 REPLIQUE_PROJECT ?=
 
-SRC = replique-common.el replique-edn.el replique-conn.el replique-process.el \
-      replique-repl.el replique-eval.el replique.el
+SRC = replique-common.el replique-edn.el replique-conn.el replique-exception.el \
+      replique-process.el replique-repl.el replique-eval.el replique.el
 
 .PHONY: all compile test lint clean
 

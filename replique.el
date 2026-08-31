@@ -37,6 +37,7 @@
 (require 'replique-common)
 (require 'replique-edn)
 (require 'replique-conn)
+(require 'replique-exception)
 (require 'replique-process)
 (require 'replique-repl)
 (require 'replique-eval)

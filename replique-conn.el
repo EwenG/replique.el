@@ -60,9 +60,12 @@ KIND is `control' or `repl'.  KEYS may hold:
   :on-frame    called with every frame that is not a reply to a request
                made here
   :on-close    called with the connection when the process closes it
+  :on-error    called with the error frame when the handshake is refused,
+               instead of saying it in the echo area
   :buffer      the buffer of the network process, for the repl role"
   (let* ((process-id (plist-get keys :process-id))
          (on-ready (plist-get keys :on-ready))
+         (on-error (plist-get keys :on-error))
          (proc (make-network-process
                 :name (format "replique-%s" kind)
                 :host host
@@ -84,9 +87,13 @@ KIND is `control' or `repl'.  KEYS may hold:
      (lambda (frame)
        (if (equal "error" (plist-get frame :tag))
            ;; The connection is closed after an unsuccessful handshake, so
-           ;; there is nothing to recover - say what happened and let go
-           (message "replique: the handshake was refused: %s (%s)"
-                    (plist-get frame :message) (plist-get frame :error))
+           ;; there is nothing to recover - say what happened and let go.
+           ;; What a refusal means is the caller\='s to know: a port file
+           ;; naming a process that is not there is a refusal it can act on
+           (if on-error
+               (funcall on-error frame)
+             (message "replique: the handshake was refused: %s (%s)"
+                      (plist-get frame :message) (plist-get frame :error)))
          (setf (replique-conn--id conn) (plist-get frame :connection))
          (setf (replique-conn--info conn) frame)
          (when on-ready (funcall on-ready conn)))))

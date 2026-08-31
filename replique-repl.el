@@ -30,6 +30,12 @@
 ;; rather than inserting directly is what keeps the process mark, the fields
 ;; and the input ring consistent.
 ;;
+;; RET sends what is at the prompt, or inserts a newline while what is there
+;; is not a form yet, so that a form spanning several lines can be typed
+;; rather than pasted.  It only asks that where forms are what is being read:
+;; the code a repl evaluates is handed a real stdin, and a line typed to a
+;; form that is running is finished when the developer says it is.
+;;
 ;; Two things a client learns the hard way.  A prompt does not mean a form was
 ;; answered: a read error, or a line holding only a comment, produces one of
 ;; its own, so consecutive prompts are collapsed rather than counted.  And the
@@ -44,6 +50,13 @@
 ;; being typed: the frames of a repl connection carry no id, so nothing here
 ;; can tell which form a result belongs to.  Per evaluation ids in the
 ;; protocol would settle it.
+;;
+;; The same window - between a form being sent from a buffer and the answer
+;; coming back - is what the echo area reports: what the form printed, then
+;; what it returned.  It is a boundary the protocol draws.  What arrives
+;; outside of it arrived while nobody was looking, and the echo area is no
+;; place to say so: the mode line names the buffer instead, and goes on
+;; naming it until it is read.
 
 ;;; Code:
 
@@ -53,6 +66,7 @@
 (require 'replique-common)
 (require 'replique-edn)
 (require 'replique-conn)
+(require 'replique-exception)
 (require 'replique-process)
 
 (defcustom replique-prompt-read-only t
@@ -61,12 +75,19 @@
   :group 'replique)
 
 (defcustom replique-echo-results t
-  "Whether the result of a form evaluated from a buffer is shown in the echo area.
+  "Whether what a form evaluated from a buffer produced is shown in the echo area.
 
-The result is in the repl buffer either way - this is about not having to
-look at it."
+What it printed as well as what it returned: a result read without the
+printing that went with it is half of what happened.  Both are in the
+repl buffer either way - this is about not having to look at it."
   :type 'boolean
   :group 'replique)
+
+(defconst replique-repl--echo-max-lines 10
+  "How many lines of what a form produced the echo area shows.")
+
+(defconst replique-repl--echo-max-chars 1000
+  "How much of what a form produced the echo area shows, in characters.")
 
 (cl-defstruct (replique-repl
                (:constructor replique-repl--make)
@@ -77,10 +98,13 @@ CONN is its connection, whose id is what `:interrupt' targets.  NS is the
 namespace the next form will be read in, as the last prompt gave it.
 AT-PROMPT says the buffer already ends with a prompt nothing has been
 written after.  TO-ECHO counts the forms sent from a buffer whose result
-has not come back yet.  QUEUED holds the code that was sent while the repl was
+has not come back yet, and ECHOED holds what they have printed so far -
+the two of them are the evaluation the echo area is about to report.
+QUEUED holds the code that was sent while the repl was
 still busy with what came before it, waiting for a prompt to be written
-after."
-  process conn buffer ns params at-prompt to-echo queued last-exception)
+after.  LAST-EXCEPTION is the whole exception frame rather than the
+exception it carries: showing one takes the message and the phase too."
+  process conn buffer ns params at-prompt to-echo echoed queued last-exception)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -101,12 +125,70 @@ after."
       (setf (replique-repl--at-prompt repl) nil)
       (comint-output-filter proc (if face (propertize string 'face face) string)))))
 
+(defun replique-repl--unattended (repl)
+  "Note output in the buffer of REPL that nothing is waiting for.
+
+What a buffer asked for is reported where it was asked from.  The rest
+is only ever in the repl buffer, and a repl buffer no window shows is
+where output goes to not be read."
+  (when (= 0 (or (replique-repl--to-echo repl) 0))
+    (replique-track-unread (replique-repl--buffer repl))))
+
+(defun replique-repl--echo-keep (repl string)
+  "Keep STRING, printed by the form REPL is answering, for the echo area.
+
+Only what a buffer is waiting for: what arrives on its own is nothing
+anybody asked to be told, and the mode line is what says it arrived.
+Kept up to one character past what the echo area shows, which is what
+tells a whole one from a cut one."
+  (when (and replique-echo-results
+             (> (or (replique-repl--to-echo repl) 0) 0))
+    (let* ((kept (or (replique-repl--echoed repl) ""))
+           (room (- (1+ replique-repl--echo-max-chars) (length kept))))
+      (when (> room 0)
+        (setf (replique-repl--echoed repl)
+              (concat kept (if (> (length string) room)
+                               (substring string 0 room)
+                             string)))))))
+
+(defun replique-repl--echo-shorten (repl text)
+  "Return TEXT cut down to what the echo area of REPL should hold.
+
+A form that printed a thousand lines is not a message.  Where it was cut
+the buffer holding the whole of it is named, so that a cut reads as one."
+  (let* ((cut (> (length text) replique-repl--echo-max-chars))
+         (text (if cut (substring text 0 replique-repl--echo-max-chars) text))
+         (lines (split-string text "\n"))
+         (cut (or cut (> (length lines) replique-repl--echo-max-lines)))
+         (text (string-join (seq-take lines replique-repl--echo-max-lines) "\n")))
+    (if cut
+        (concat text (propertize
+                      (format " ... see %s" (buffer-name (replique-repl--buffer repl)))
+                      'face 'replique-note))
+      text)))
+
 (defun replique-repl--echo (repl string)
-  "Show STRING in the echo area if a buffer is waiting for it in REPL."
+  "Show STRING, and what the form printed, in the echo area of REPL.
+
+Only when a buffer is waiting for it: what a repl buffer was typed into
+is on screen already.  What was printed comes first and the result last,
+in the order the buffer shows them.
+
+The evaluation is the boundary, rather than what arrived in the last
+second or so: the frames of a repl connection are not a stream of bytes,
+and between the code being sent and the answer coming back is a window
+the protocol draws rather than one a client guesses at."
   (when (> (or (replique-repl--to-echo repl) 0) 0)
     (setf (replique-repl--to-echo repl) (1- (replique-repl--to-echo repl)))
-    (when replique-echo-results
-      (message "%s" string))))
+    (let ((printed (replique-repl--echoed repl)))
+      (setf (replique-repl--echoed repl) nil)
+      (when replique-echo-results
+        (message "%s"
+                 (replique-repl--echo-shorten
+                  repl
+                  (if (and printed (not (string-empty-p (string-trim printed))))
+                      (concat (string-trim-right printed "\n+") "\n" string)
+                    string)))))))
 
 (defun replique-repl--truncation (exception)
   "Return what EXCEPTION left out, or nil.
@@ -125,20 +207,33 @@ be shown as cut rather than as a whole one."
 (defun replique-repl--frame (repl frame)
   "Render FRAME in the buffer of REPL."
   (pcase (plist-get frame :tag)
-    ("out" (replique-repl--insert repl (plist-get frame :string)))
-    ("err" (replique-repl--insert repl (plist-get frame :string) 'replique-stderr))
+    ("out"
+     (replique-repl--unattended repl)
+     (replique-repl--echo-keep repl (plist-get frame :string))
+     (replique-repl--insert repl (plist-get frame :string)))
+    ("err"
+     (replique-repl--unattended repl)
+     (replique-repl--echo-keep repl (plist-get frame :string))
+     (replique-repl--insert repl (plist-get frame :string) 'replique-stderr))
     ("ret"
+     (replique-repl--unattended repl)
      (let ((value (plist-get frame :value)))
        (replique-repl--insert repl (concat value "\n"))
        (replique-repl--echo repl value)))
     ("exception"
+     (replique-repl--unattended repl)
      (let* ((message (plist-get frame :message))
+            (phase (plist-get frame :phase))
             (exception (plist-get frame :exception))
             (truncated (and exception (replique-repl--truncation exception))))
-       (setf (replique-repl--last-exception repl) exception)
-       (replique-repl--insert repl
-                              (concat message (or truncated "") "\n")
-                              'replique-exception)
+       (setf (replique-repl--last-exception repl) frame)
+       ;; The line is the way to the whole of it: what a developer looks at
+       ;; first is what they would click
+       (replique-repl--insert
+        repl
+        (replique-exception-button (concat message (or truncated "") "\n")
+                                   exception message phase "at the repl")
+        'replique-exception)
        (replique-repl--echo repl message)))
     ("prompt"
      (setf (replique-repl--ns repl) (plist-get frame :ns))
@@ -155,12 +250,67 @@ be shown as cut rather than as a whole one."
        (setf (replique-repl--queued repl) (cdr queued))
        (replique-repl--insert repl (concat (car queued) "\n"))))
     ("error"
+     (replique-repl--unattended repl)
      (replique-repl--insert repl
                             (format "%s: %s\n"
                                     (plist-get frame :error)
                                     (plist-get frame :message))
                             'replique-exception))
     (_ nil)))
+
+;;; Whether what is typed is a form yet
+
+(defconst replique-repl--syntax
+  (let ((table (make-syntax-table)))
+    (modify-syntax-entry ?\( "()" table)
+    (modify-syntax-entry ?\) ")(" table)
+    (modify-syntax-entry ?\[ "(]" table)
+    (modify-syntax-entry ?\] ")[" table)
+    (modify-syntax-entry ?{ "(}" table)
+    (modify-syntax-entry ?} "){" table)
+    (modify-syntax-entry ?\" "\"" table)
+    (modify-syntax-entry ?\\ "\\" table)
+    (modify-syntax-entry ?\; "<" table)
+    (modify-syntax-entry ?\n ">" table)
+    table)
+  "Enough of the syntax of Clojure to tell where a form ends.
+
+A repl buffer is a comint buffer, so the syntax of what is typed in it is
+not the syntax of any mode it is in.  All this is asked is where the
+delimiters, the strings and the comments are, which is little enough that
+the two things that look like they need a rule of their own do not: a
+character literal is a backslash, which is an escape, and that is what
+keeps the paren of \\=\\( from counting; and a regex is a dispatch
+character followed by an ordinary string.")
+
+(defun replique-repl--reading-a-form-p (proc)
+  "Return non-nil when what PROC is waiting for is a form.
+
+What is typed in a repl buffer is not always Clojure.  The repl hands the
+code it evaluates a real stdin, so a form that calls read-line is
+answered by typing in the same place, and a line of that is finished when
+the developer says it is and not when a delimiter closes.  A prompt is
+what says forms are being read again - the one this repl wrote, or the
+one a nested repl wrote, which arrives as output and is a prompt all the
+same."
+  (save-excursion
+    (goto-char (process-mark proc))
+    (looking-back comint-prompt-regexp (line-beginning-position))))
+
+(defun replique-repl--unfinished-p (start end)
+  "Return non-nil when what is between START and END is unfinished.
+
+Unfinished means the reader would want more, and only what more text
+would finish counts: an unclosed delimiter, an unclosed
+string, a trailing backslash.  Delimiters that close what was never
+opened are not unfinished but wrong, and waiting for them would be
+waiting forever - that goes to the reader, which says what is wrong with
+it better than anything here could."
+  (with-syntax-table replique-repl--syntax
+    (let ((state (parse-partial-sexp start end)))
+      (or (> (nth 0 state) 0)
+          (nth 3 state)
+          (nth 5 state)))))
 
 ;;; The mode
 
@@ -169,6 +319,7 @@ be shown as cut rather than as a whole one."
     (define-key map (kbd "C-c C-c") #'replique-interrupt)
     (define-key map (kbd "C-c C-q") #'replique-quit-repl)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)
+    (define-key map (kbd "RET") #'replique-repl-return)
     map)
   "Keymap of a repl buffer.")
 
@@ -195,6 +346,36 @@ be shown as cut rather than as a whole one."
   (let ((repl (process-get proc 'replique-repl)))
     (when repl (setf (replique-repl--at-prompt repl) nil)))
   (comint-simple-send proc string))
+
+(defun replique-repl-return (&optional anyway)
+  "Send what is at the prompt, or start a new line while it is not a form yet.
+
+Which is what makes a form that spans several lines something that can be
+typed rather than pasted.  Whether it is finished is only asked of what
+is typed where the repl is reading forms - see
+`replique-repl--reading-a-form-p\=' - and never of what is typed to a form
+that is running.
+
+With a prefix argument, ANYWAY, send what is there whatever state it is
+in.  Where the text ends is a guess made about text nothing has read yet,
+and a guess is worth a way to overrule it.  A newline in input that is
+already finished is what quoted insert, and \\[open-line], are for.
+
+Point above the input sends what is under it, the way `comint-send-input\='
+does: everything above the prompt is a transcript, and a transcript is
+read rather than continued."
+  (interactive "P")
+  (let ((proc (get-buffer-process (current-buffer))))
+    (if (and (not anyway)
+             proc
+             (>= (point) (process-mark proc))
+             (replique-repl--reading-a-form-p proc)
+             (replique-repl--unfinished-p (process-mark proc) (point-max)))
+        ;; Not `newline\=': there is no indenting a comint buffer - the line
+        ;; above the input can be anything the process printed - and
+        ;; `electric-indent-mode\=' would try
+        (insert "\n")
+      (comint-send-input))))
 
 ;;; Opening
 
@@ -294,8 +475,9 @@ live repl of the current process."
 CODE goes out as it is, over as many lines as it takes.  DISPLAY is what
 the repl buffer is shown instead, CODE itself when it is nil: a source
 directive is protocol rather than something the developer wrote, and a
-transcript showing it is a transcript of the wire.  When ECHO, the one
-result the code is expected to produce is shown in the echo area too."
+transcript showing it is a transcript of the wire.  When ECHO, what the
+one result the code is expected to produce printed and returned is shown
+in the echo area too."
   (let ((conn (replique-repl--conn repl))
         (display (string-trim (or display code)))
         (code (string-trim code)))
@@ -341,48 +523,104 @@ left alone."
     (replique-conn-send-code (replique-repl--conn repl) ":repl/quit")))
 
 (defun replique-show-last-exception ()
-  "Show what the last exception of the current repl carried."
+  "Browse the last exception of the current repl."
   (interactive)
   (let* ((repl (replique-repl-ensure))
-         (exception (replique-repl--last-exception repl)))
-    (unless exception (user-error "No exception yet"))
-    (let ((buffer (get-buffer-create "*replique-exception*")))
-      (with-current-buffer buffer
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (replique-repl--insert-exception exception 0))
-        (goto-char (point-min))
-        (special-mode))
-      (pop-to-buffer buffer))))
+         (frame (replique-repl--last-exception repl)))
+    (unless frame (user-error "No exception yet"))
+    (replique-exception-show (plist-get frame :exception)
+                             (plist-get frame :message)
+                             (plist-get frame :phase)
+                             "at the repl")))
 
-(defun replique-repl--insert-exception (exception depth)
-  "Write EXCEPTION at DEPTH into the current buffer."
-  (let ((indent (make-string (* 2 depth) ?\s)))
-    (insert indent (or (plist-get exception :class) "?") ": "
-            (or (plist-get exception :message) "") "\n")
-    (when-let* ((data (plist-get exception :data)))
-      (insert indent "  data: " data "\n"))
-    (dolist (frame (plist-get exception :trace))
-      (insert indent "  at " frame "\n"))
-    (when-let* ((dropped (plist-get exception :trace-dropped)))
-      (insert indent (format "  ... %s more frames\n" dropped)))
-    (when-let* ((cause (plist-get exception :cause)))
-      (insert indent "caused by:\n")
-      (replique-repl--insert-exception cause (1+ depth)))
-    (when (plist-get exception :cause-dropped)
-      (insert indent "caused by: ... the chain goes on, and its root is what"
-              " the reported message names\n"))))
+(defconst replique-kill-timeout 2
+  "How long to wait for a process to stop, in seconds, before killing it.")
 
-(defun replique-kill-process (process)
-  "Close the connections to PROCESS and stop it if Emacs started it."
-  (interactive (list (replique-process-ensure)))
+(defun replique-repl--stop (proc)
+  "Stop PROC, the operating system process Emacs started.
+
+An interrupt rather than a kill: the jvm answers it by running its
+shutdown hooks, and one of them deletes the port file the process wrote.
+A process killed outright leaves that file behind, and `replique-connect\='
+goes on offering a process that is not there.
+
+Waited for rather than left to happen, so that what the command says it
+did is done when it returns.  A jvm that will not go is killed anyway -
+whatever it is doing, it is holding a port and a file that say it is
+listening."
+  (interrupt-process proc)
+  (let ((limit (+ (float-time) replique-kill-timeout)))
+    (while (and (process-live-p proc) (< (float-time) limit))
+      (accept-process-output nil 0.05)))
+  (when (process-live-p proc)
+    (delete-process proc)))
+
+(defun replique-repl--ask-to-stop (process)
+  "Ask PROCESS to stop, and wait for it to go.  Return non-nil when it went.
+
+The only way that reaches a process Emacs did not start: it is no child of
+this Emacs, there is nothing to signal, and after Emacs restarts none of
+the processes it is connected to are.  What says it went is the control
+connection closing, which is what the process leaving does to it."
+  (let ((conn (replique-process--control process)))
+    (when (replique-conn-live-p conn)
+      (replique-conn-request conn (list :op :shutdown) nil)
+      (let ((limit (+ (float-time) replique-kill-timeout)))
+        (while (and (replique-conn-live-p conn) (< (float-time) limit))
+          (accept-process-output nil 0.05)))
+      (not (replique-conn-live-p conn)))))
+
+(defun replique-repl--close (process)
+  "Close the connections to PROCESS and forget it.
+
+The repl buffers are left as they are: what a repl printed is what was
+printed, and a connection that closed says so in the buffer it belonged
+to."
   (dolist (repl (replique-process--repls process))
     (replique-conn-close (replique-repl--conn repl)))
   (replique-conn-close (replique-process--control process))
-  (when (and (replique-process--proc process)
-             (process-live-p (replique-process--proc process)))
-    (delete-process (replique-process--proc process)))
   (replique-process--forget process))
+
+(defun replique-disconnect (process)
+  "Let go of PROCESS: close the connections to it and leave it running.
+
+What to do with a process that is not yours to stop - one that belongs to
+a terminal, or to whoever is working on the machine it runs on.  It goes
+on running and its port file goes on saying where it is, so
+`replique-connect\=' finds it again."
+  (interactive (list (replique-process-ensure)))
+  (replique-repl--close process)
+  (message "replique: let go of %s" (replique-process--id process)))
+
+(defun replique-kill-process (process)
+  "Stop PROCESS and close the connections to it.
+
+Asked before it is signalled: asking is what works for a process Emacs did
+not start, and a signal is what is left for one that will not answer -
+which Emacs can only send to a process of its own.  Either way the process
+runs its shutdown hooks, and one of them deletes the port file: what stops
+here stops saying it is running.
+
+A process that answers neither - one Emacs did not start, which did not go
+when it was asked - is left running, and saying so is all this can do about
+it.  Silence there would be this command behaving the way
+`replique-disconnect\=' does, under the name that promises the opposite.
+
+To let go of a process without stopping it, see `replique-disconnect\='."
+  (interactive (list (replique-process-ensure)))
+  (let* ((id (replique-process--id process))
+         (proc (replique-process--proc process))
+         (stopped (replique-repl--ask-to-stop process)))
+    (replique-repl--close process)
+    (when (process-live-p proc)
+      (replique-repl--stop proc)
+      (setq stopped t))
+    (if stopped
+        (message "replique: stopped %s" id)
+      (message (concat "replique: %s would not stop - Emacs did not start it,"
+                       " so there is nothing to signal.  Its port file goes on"
+                       " naming it")
+               id))))
 
 (defun replique-switch-to-repl ()
   "Show the buffer of the current repl."

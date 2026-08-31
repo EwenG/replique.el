@@ -22,11 +22,17 @@
 ;; A replique process is either one Emacs started, or one that was already
 ;; running and left its description in .replique-processes.
 ;;
-;; Where the output of the process shows up depends on which of the two it
-;; is.  A process Emacs started writes to a pipe Emacs reads, so it is asked
-;; not to tee - it would otherwise be reported twice, once through the pipe
-;; and once as an event.  A process Emacs merely connected to reports through
-;; its control connection.  Both end up in the same buffer.
+;; Both report what they print the same way: as events on the control
+;; connection.  A process Emacs started also writes to a pipe Emacs reads,
+;; and that pipe is what carries the startup line, along with everything the
+;; jvm and the clojure script say before there is a process to connect to.
+;; It stops being shown once the control connection is up - from there the
+;; two would say the same thing - and it goes on being read, since a pipe
+;; nobody reads fills up and stops the process writing to it.
+;;
+;; The process outlives Emacs on purpose, which is why it is started under
+;; nohup: Emacs hangs up on its children when it exits, and a process that
+;; took a minute to boot should still be there when Emacs comes back.
 ;;
 ;; That buffer matters more than it looks: what reaches it is everything the
 ;; process printed that belongs to no repl - a background thread, a logging
@@ -36,22 +42,81 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'project)
 (require 'subr-x)
 (require 'replique-common)
 (require 'replique-edn)
 (require 'replique-conn)
+(require 'replique-exception)
 
 (defcustom replique-clojure-program "clojure"
   "The clojure command used to start a process."
   :type 'string
   :group 'replique)
 
-(defcustom replique-deps nil
-  "EDN passed to clojure as -Sdeps when starting a process.
+(defcustom replique-coordinates "{:local/root \"/Users/ewen/clojure/replique-2\"}"
+  "The tools.deps coordinate of replique itself, as EDN.
 
-Nil when the project puts replique on the classpath itself, which is the
-usual case for the project replique is being developed in."
+Replique is a tool the editor brings, not something a project should have
+to depend on: it would otherwise be in the dependencies of everyone
+working on that project, whether they use this or not, and in what the
+project builds.  So the editor puts it on the classpath itself, and a
+project needs no change to be worked on.
+
+Nil leaves it out, for a project that does depend on replique.
+
+This default points at a checkout, because replique 2 is not published
+anywhere yet.  It has to become a git or a maven coordinate before anyone
+but its author can use it."
   :type '(choice (const :tag "The project provides replique" nil) string)
+  :group 'replique)
+
+(defcustom replique-aliases nil
+  "Aliases of the deps.edn of the project to start the process with.
+
+A project whose sources are behind an alias needs it to be usable at all.
+Which aliases those are is a property of the project rather than of you,
+so .dir-locals.el is where this belongs - and it is read from the project
+being started, whatever buffer the command was called from."
+  :type '(repeat string)
+  :safe (lambda (value) (and (listp value) (seq-every-p #'stringp value)))
+  :group 'replique)
+
+(defcustom replique-aliases-file ".replique/aliases.edn"
+  "Where in a project the aliases that are yours are defined, if any.
+
+Tooling that is yours but belongs to one project has nowhere good to go:
+the deps.edn of the project is shared with everyone working on it, and
+~/.clojure/deps.edn is not about this project.  This file is - it sits in
+the project, it is meant to be ignored by its version control, and what it
+holds is a map of aliases:
+
+  {:mine {:extra-deps {org.clojure/data.json {:mvn/version \"2.5.1\"}}
+          :extra-paths [\"dev-local\"]}}
+
+They are passed as the aliases of -Sdeps, which is merged as the last deps
+file - so the deps.edn of the project and your own are both still in
+effect, nothing is replaced.  Name the ones to use in `replique-aliases',
+from .dir-locals-2.el, which is where Emacs keeps what is yours rather
+than the project's.
+
+The text is passed on as it was written.  Replique does not read it, which
+is why the aliases it defines have to be named rather than found."
+  :type 'string
+  :group 'replique)
+
+(defcustom replique-user-aliases nil
+  "Aliases of your own deps.edn to start every process with.
+
+Tooling that is yours rather than the project's - a debugger, a profiler,
+whatever you like working with - goes in the aliases of ~/.clojure/deps.edn
+and is named here.  Nothing about it reaches the project, so nobody you
+work with has to know it is there, and no file of theirs has to change.
+
+These are added to `replique-aliases', they do not replace them: a project
+that needs an alias to be usable still gets it.  Set this in your init
+file - a project must not be able to choose what you run."
+  :type '(repeat string)
   :group 'replique)
 
 (cl-defstruct (replique-process
@@ -83,6 +148,31 @@ started it, nil when Emacs only connected to it."
   "Return the processes that are still connected."
   (seq-filter #'replique-process-live-p replique-processes))
 
+(defun replique-process-connected (info)
+  "Return the process INFO describes, when Emacs is already connected to it.
+
+Id, host and port together: an id names a directory, and two checkouts of
+one project have the same one, while a port on its own can have been taken
+over by another process since the port file was written."
+  (seq-find (lambda (process)
+              (and (equal (replique-process--id process) (plist-get info :process-id))
+                   (equal (replique-process--host process) (plist-get info :host))
+                   (equal (replique-process--port process) (plist-get info :port))))
+            (replique-processes-live)))
+
+(defun replique-process-in (directory)
+  "Return the live process Emacs has in DIRECTORY, if any.
+
+Only what this Emacs is connected to.  A process started in a terminal is
+not known here, and nothing short of connecting to it would say whether
+the port file it left names something that is still running."
+  (let ((directory (file-name-as-directory (expand-file-name directory))))
+    (seq-find (lambda (process)
+                (when-let* ((dir (replique-process--directory process)))
+                  (equal directory
+                         (file-name-as-directory (expand-file-name dir)))))
+              (replique-processes-live))))
+
 (defun replique-process--register (process)
   "Remember PROCESS and make it the current one."
   (setq replique-processes (cons process replique-processes))
@@ -110,36 +200,26 @@ Falls back to the only live one, which is what there usually is."
 
 ;;; The output of a process
 
+(define-derived-mode replique-process-mode special-mode "Replique-Process"
+  "Major mode for what a process printed outside of any repl.
+
+No font lock: what goes in carries the faces it needs, and font lock would
+paint over them."
+  (setq-local truncate-lines nil))
+
 (defun replique-process-buffer (process)
   "Return the buffer holding what PROCESS printed outside of any repl."
   (let ((buffer (replique-process--output-buffer process)))
     (unless (buffer-live-p buffer)
       (setq buffer (generate-new-buffer
                     (format "*replique-process: %s*" (replique-process--id process))))
-      (with-current-buffer buffer
-        (setq-local buffer-read-only t))
+      (with-current-buffer buffer (replique-process-mode))
       (setf (replique-process--output-buffer process) buffer))
     buffer))
 
 (defun replique-process--insert (process string &optional face)
   "Show STRING in the output buffer of PROCESS, with FACE."
-  (when (and string (not (string-empty-p string)))
-    (let ((buffer (replique-process-buffer process)))
-      (with-current-buffer buffer
-        (let ((inhibit-read-only t)
-              ;; Follow the output only for a window that was already at the
-              ;; end - a developer reading further up is not dragged along
-              (windows (seq-filter
-                        (lambda (w) (= (window-point w) (point-max)))
-                        (get-buffer-window-list buffer nil t)))
-              (at-end (= (point) (point-max))))
-          (save-excursion
-            (goto-char (point-max))
-            ;; `face' rather than `font-lock-face': this buffer has no font
-            ;; lock to honour the latter, so it would simply not be coloured
-            (insert (if face (propertize string 'face face) string)))
-          (when at-end (goto-char (point-max)))
-          (dolist (w windows) (set-window-point w (point-max))))))))
+  (replique-insert-output (replique-process-buffer process) string face))
 
 (defun replique-process--note (process format &rest args)
   "Say something about PROCESS in its output buffer, from FORMAT and ARGS."
@@ -156,10 +236,13 @@ Falls back to the only live one, which is what there usually is."
     ("err" (replique-process--insert process (plist-get frame :string) 'replique-stderr))
     ("uncaught-exception"
      (let ((thread (plist-get frame :thread))
-           (message (plist-get frame :message)))
+           (message (plist-get frame :message))
+           (exception (plist-get frame :exception)))
        (replique-process--insert
         process
-        (format "Exception in thread \"%s\" %s\n" thread message)
+        (replique-exception-button
+         (format "Exception in thread \"%s\" %s\n" thread message)
+         exception message nil (format "in thread %s" thread))
         'replique-stderr)
        (message "replique: exception in thread \"%s\": %s" thread message)))
     ("dropped"
@@ -182,56 +265,220 @@ Falls back to the only live one, which is what there usually is."
   "Return the directory holding the description of the processes in DIRECTORY."
   (expand-file-name ".replique/processes/" directory))
 
+(defun replique-process--description (file)
+  "Return what the process that wrote FILE said about itself, or nil.
+
+Nil for a file that cannot be read or does not hold a description: what is
+in that directory is what processes put there, and a file that says
+nothing is not one to act on."
+  (condition-case nil
+      (with-temp-buffer
+        (insert-file-contents file)
+        (json-parse-string (buffer-string)
+                           :object-type 'plist
+                           :array-type 'list
+                           :null-object nil
+                           :false-object nil))
+    (error nil)))
+
 (defun replique-process-descriptions (directory)
   "Return the processes that say they are running in DIRECTORY.
 
-A description is what the process wrote to its port file.  A stale file -
-one whose process is gone - is not told apart here: the :process-id of the
-handshake is what catches that."
+Each is a cons of the port file and what the process wrote in it.  A stale
+file - one whose process is gone - is not told apart here: connecting is
+the only thing that says whether anything is there, and
+`replique-process--reap\=' is what acts on the answer."
   (let ((dir (replique-processes-directory directory)))
     (when (file-directory-p dir)
       (seq-keep
        (lambda (file)
-         (condition-case nil
-             (with-temp-buffer
-               (insert-file-contents file)
-               (json-parse-string (buffer-string)
-                                  :object-type 'plist
-                                  :array-type 'list
-                                  :null-object nil
-                                  :false-object nil))
-           (error nil)))
+         (when-let* ((info (replique-process--description file)))
+           (cons file info)))
        (directory-files dir t "\\.json\\'")))))
 
-(defun replique-process--connect (info os-proc on-ready)
+(defun replique-process--loopback-p (host)
+  "Return non-nil when HOST is this machine and can be no other."
+  (member host '("127.0.0.1" "::1" "localhost")))
+
+(defun replique-process--reap (file info reason)
+  "Delete FILE, the port file that said INFO, when REASON proves it wrong.
+
+A port file is deleted on evidence and on nothing else.  `mismatch\=' is an
+answer from a process that is not the one the file names, which says the
+file is wrong wherever that process runs.  `unreachable\=' is nothing
+answering at all, which says the same thing only when the file names this
+machine: a host that is somewhere else can be unreachable for reasons of
+its own, and a process that is alive must not lose the file that makes it
+findable.
+
+Read again before deleting: a process that died and started again between
+the read and the connect wrote a file of its own, and that one is about a
+process that is there.  It is what the file says now, not what it said,
+that has to be wrong."
+  (when (and (or (eq reason 'mismatch)
+                 (replique-process--loopback-p (plist-get info :host)))
+             (file-exists-p file))
+    (let ((current (replique-process--description file)))
+      (when (and current
+                 (equal (plist-get current :pid) (plist-get info :pid))
+                 (equal (plist-get current :started-at) (plist-get info :started-at)))
+        ;; A file that will not go is not a reason for a command to fail: it
+        ;; says something wrong about a directory, and that is all
+        (ignore-errors (delete-file file))))))
+
+(defun replique-process--listening-p (host port)
+  "Return non-nil when something accepts a connection on HOST and PORT.
+
+Whether what answers is a replique process, let alone the one that was
+expected, is not asked here - a handshake is what settles that, and it is
+an answer that comes later.  This says only that the port is not dead."
+  (let ((proc (condition-case nil
+                  (make-network-process :name "replique-probe"
+                                        :host host :service port :noquery t)
+                (file-error nil))))
+    (when proc
+      (delete-process proc)
+      t)))
+
+(defun replique-process--reap-directory (directory)
+  "Delete the port files of DIRECTORY that nothing answers for.
+
+What a start does about the file a crash left behind: a process that was
+killed outright never ran the hook that deletes its port file, so the file
+goes on naming it - and a directory that has a port file is one the
+process refuses to start in.  Reaped here rather than left for the first
+connect, so that the way back from a crash is the command that was going
+to be typed anyway.
+
+Only a port on this machine is probed, and only nothing listening is taken
+as an answer.  A port that answers, with a handshake or with a refusal, is
+a slower question, and `replique-connect\=' is where it is asked."
+  (dolist (description (replique-process-descriptions directory))
+    (let* ((info (cdr description))
+           (host (plist-get info :host))
+           (port (plist-get info :port)))
+      (when (and port
+                 (replique-process--loopback-p host)
+                 (not (replique-process--listening-p host port)))
+        (replique-process--reap (car description) info 'unreachable)))))
+
+(defun replique-process--connect (info os-proc on-ready &optional on-failure)
   "Open the control connection of the process described by INFO.
 
 OS-PROC is the operating system process when Emacs started it.  ON-READY
-is called with the replique process once the handshake is in."
-  (let ((process (replique-process--make
-                  :id (plist-get info :process-id)
-                  :host (plist-get info :host)
-                  :port (plist-get info :port)
-                  :directory (plist-get info :directory)
-                  :info info
-                  :proc os-proc
-                  :repls nil)))
-    (setf (replique-process--control process)
-          (replique-conn-open
-           (plist-get info :host)
-           (plist-get info :port)
-           'control
-           ;; Against a stale port file: the process answering on that port
-           ;; may not be the one the file describes
-           :process-id (plist-get info :process-id)
-           :on-frame (lambda (frame) (replique-process--frame process frame))
-           :on-close (lambda (_conn)
-                       (replique-process--note process "The process is gone")
-                       (replique-process--forget process))
-           :on-ready (lambda (_conn)
-                       (replique-process--register process)
-                       (when on-ready (funcall on-ready process)))))
-    process))
+is called with the replique process once the handshake is in.  Returns the
+process, or nil when there was nothing to connect to.
+
+ON-FAILURE is called with why the connection was not made and a sentence
+saying it: `unreachable\=' when nothing answered on that port, `mismatch\='
+when what answered is not the process INFO describes.  Both are what a
+port file produces once it is old enough - the process it names has
+exited, or has exited and left its port to somebody else - and a caller
+that read INFO from one has a file to do something about.  Said in the
+echo area when there is no ON-FAILURE.
+
+The two arrive differently: nothing to connect to is known before this
+returns, since the connection is made before `replique-conn-open\='
+returns, while a refused handshake is an answer that comes later."
+  (let* ((host (plist-get info :host))
+         (port (plist-get info :port))
+         (process (replique-process--make
+                   :id (plist-get info :process-id)
+                   :host host
+                   :port port
+                   :directory (plist-get info :directory)
+                   :info info
+                   :proc os-proc
+                   :repls nil))
+         (fail (lambda (reason why)
+                 (if on-failure
+                     (funcall on-failure reason why)
+                   (message "replique: %s" why))))
+         (conn (condition-case err
+                   (replique-conn-open
+                    host port 'control
+                    ;; Against a stale port file: the process answering on
+                    ;; that port may not be the one the file describes
+                    :process-id (plist-get info :process-id)
+                    :on-frame (lambda (frame) (replique-process--frame process frame))
+                    :on-close (lambda (_conn)
+                                ;; A process that never got connected has
+                                ;; nothing to say and no buffer to say it in
+                                (when (memq process replique-processes)
+                                  (replique-process--note process "The process is gone"))
+                                (replique-process--forget process))
+                    :on-error (lambda (frame)
+                                (funcall fail 'mismatch
+                                         (format "%s:%s is not %s any more - %s"
+                                                 host port (plist-get info :process-id)
+                                                 (plist-get frame :message))))
+                    :on-ready (lambda (_conn)
+                                (replique-process--register process)
+                                (when on-ready (funcall on-ready process))))
+                 (file-error
+                  ;; The reason and not the whole error: what
+                  ;; `error-message-string\=' makes of one holds every
+                  ;; argument the connection was attempted with
+                  (let ((reason (nth 2 err)))
+                    (funcall fail 'unreachable
+                             (if (stringp reason)
+                                 (format "Nothing is listening on %s:%s - %s"
+                                         host port reason)
+                               (format "Nothing is listening on %s:%s" host port))))
+                  nil))))
+    (when conn
+      (setf (replique-process--control process) conn)
+      process)))
+
+;;; The directory a command is about
+
+(defun replique-process--dominating (predicate)
+  "Return the nearest directory at or above the buffer PREDICATE accepts."
+  (when-let* ((directory (locate-dominating-file default-directory predicate)))
+    ;; `locate-dominating-file' abbreviates what it returns, and a name with
+    ;; a ~ in it is not one to compare against a directory or to pass on
+    (file-name-as-directory (expand-file-name directory))))
+
+(defun replique-process--project-root ()
+  "Return the project of the current buffer, as somewhere to start looking.
+
+The nearest deps.edn above the buffer: it is what `replique-clojure-program'
+reads, so it is what makes a directory one a process can run in, and the
+nearest of them is the module rather than the repository holding it.
+Failing that, whatever Emacs itself calls the project - a version control
+root, usually, which is where a deps.edn is not, so it is a guess and not
+an answer.  Failing that too, where the buffer is."
+  (or (replique-process--dominating
+       (lambda (directory) (file-exists-p (expand-file-name "deps.edn" directory))))
+      (when-let* ((project (project-current)))
+        (file-name-as-directory (expand-file-name (project-root project))))
+      default-directory))
+
+(defun replique-process--directory-to-start ()
+  "Return the directory `replique-start' proposes.
+
+The nearest project above the buffer that has no process of Emacs' own.
+A start is asked for from the buffers of a project already being worked
+on, a repl among them - and a repl buffer is in the directory of its own
+process, which is the one directory `replique-start' refuses.  When every
+project above the buffer is taken, the nearest is proposed all the same:
+what a command proposes is where completion starts, not what it does."
+  (or (replique-process--dominating
+       (lambda (directory)
+         (and (file-exists-p (expand-file-name "deps.edn" directory))
+              (null (replique-process-in directory)))))
+      (replique-process--project-root)))
+
+(defun replique-process--directory-to-connect ()
+  "Return the directory `replique-connect' proposes.
+
+The nearest directory above the buffer that a process says it is running
+in.  A port file is the whole of what `replique-connect' needs, so a
+directory that has one is an answer rather than a guess - and it is not
+the project root of anything: it is the directory a process was started
+in, which is only usually the same thing."
+  (or (replique-process--dominating #'replique-process-descriptions)
+      (replique-process--project-root)))
 
 ;;; Starting
 
@@ -244,34 +491,144 @@ would not make one."
     (when (string-match-p "\\`[A-Za-z0-9][A-Za-z0-9._+-]\\{0,127\\}\\'" name)
       name)))
 
+(defun replique-process--local-aliases (directory)
+  "Return the aliases of your own kept in DIRECTORY, as the text of a map."
+  (let ((file (expand-file-name replique-aliases-file directory)))
+    (when (file-readable-p file)
+      (let ((text (string-trim (with-temp-buffer
+                                 (insert-file-contents file)
+                                 (buffer-string)))))
+        (unless (string-empty-p text) text)))))
+
+(defun replique-process--sdeps (directory)
+  "Return the deps data a process started in DIRECTORY is given, or nil."
+  (let ((aliases (replique-process--local-aliases directory)))
+    (when (or replique-coordinates aliases)
+      (concat "{"
+              (when replique-coordinates
+                (format ":deps {replique/replique %s}" replique-coordinates))
+              (when aliases
+                (concat (when replique-coordinates " ") ":aliases " aliases))
+              ;; The brace goes on a line of its own: the aliases were spliced
+              ;; in as they were written, and a comment on their last line
+              ;; would otherwise swallow it
+              "\n}"))))
+
+(defun replique-process--project-aliases (directory)
+  "Return the aliases DIRECTORY asks for.
+
+The directory local variables of the project rather than of the current
+buffer: a process is started for a project, and the buffer that asked for
+it may be anywhere - a repl of another project, or no file at all."
+  (let ((aliases replique-aliases))
+    (with-temp-buffer
+      (setq-local replique-aliases aliases)
+      (setq-local default-directory directory)
+      (hack-dir-local-variables-non-file-buffer)
+      replique-aliases)))
+
+(defun replique-process--main-opt ()
+  "Return the main option, under the aliases the process should run with.
+
+What the project asks for and what you asked for, in that order: yours
+last, so that yours is what wins where they say the same thing."
+  (let ((aliases (delete-dups
+                  (mapcar (lambda (alias) (concat ":" (string-remove-prefix ":" alias)))
+                          (append replique-aliases replique-user-aliases)))))
+    (if aliases
+        (concat "-M" (string-join aliases))
+      "-M")))
+
 (defun replique-process--command (directory)
-  "Return the command starting a replique process in DIRECTORY."
+  "Return the command starting a replique process in DIRECTORY.
+
+Under nohup where there is one: Emacs sends SIGHUP to what it started when
+it exits, and a process that is meant to be connected to again has to live
+through that.  Where there is none the process is Emacs\='s to lose."
   (let ((id (replique-process--id-for directory)))
-    (append (list replique-clojure-program)
-            (when replique-deps (list "-Sdeps" replique-deps))
-            (list "-M" "-m" "replique.main")
-            (list (replique-edn-map
-                   (append
-                    ;; Emacs reads the pipe of a process it started, and would
-                    ;; otherwise be told everything twice
-                    (list :tee-output 'false)
-                    (when id (list :process-id id))))))))
+    (append (when (executable-find "nohup") (list "nohup"))
+            (list replique-clojure-program)
+            ;; -Sdeps is merged as the last deps file rather than replacing
+            ;; any of them, so bringing replique along, and whatever else is
+            ;; yours, costs the project nothing
+            (when-let* ((sdeps (replique-process--sdeps directory)))
+              (list "-Sdeps" sdeps))
+            (list (replique-process--main-opt) "-m" "replique.main")
+            (when id (list (replique-edn-map (list :process-id id)))))))
+
+(defun replique-process--startup-buffer (proc)
+  "Return the buffer holding what PROC wrote."
+  (process-get proc 'replique-buffer))
+
+(defun replique-process--failed (proc why &optional exception summary)
+  "Say once that PROC is not a replique process, because of WHY.
+
+Once rather than per line: what a jvm that will not start writes is a
+stack trace, and a stack trace reported one line at a time in the echo
+area is how a message stops being read.  EXCEPTION, when the process got
+far enough to send one, is written as a way into the whole of it -
+SUMMARY being what it would have been reported as."
+  (unless (eq 'failed (process-get proc 'replique-state))
+    (process-put proc 'replique-state 'failed)
+    (let ((buffer (replique-process--startup-buffer proc)))
+      ;; WHY is said in the echo area and nowhere else: the buffer holds what
+      ;; the process wrote, and a line of replique's own in the middle of a
+      ;; stack trace is a line the process did not write
+      (when exception
+        (replique-insert-output
+         buffer
+         (replique-exception-button "browse the exception\n" exception summary nil
+                                    "starting the process")
+         'replique-note))
+      (message "replique: %s - see %s" why (buffer-name buffer))
+      (display-buffer buffer))))
 
 (defun replique-process--spawn-filter (proc string)
-  "Read the startup line PROC wrote in STRING, then let its output through."
-  (let ((process (process-get proc 'replique-process)))
-    (if process
-        (replique-process--insert process string)
+  "Read the startup line PROC wrote in STRING, then let its output through.
+
+The startup line is protocol: a client reads it to find the process it
+just started.  Anything else means the process is not one, and from there
+what it writes is a diagnostic - which belongs in a buffer, whole, rather
+than in the echo area a line at a time."
+  (if (eq 'starting (process-get proc 'replique-state))
       (let* ((acc (concat (or (process-get proc 'replique-acc) "") string))
              (idx (string-search "\n" acc)))
         (if (not idx)
             (process-put proc 'replique-acc acc)
-          (let ((line (substring acc 0 idx))
-                (rest (substring acc (1+ idx))))
-            (process-put proc 'replique-acc nil)
-            (replique-process--started proc line)
+          (process-put proc 'replique-acc nil)
+          (replique-process--started proc (substring acc 0 idx))
+          (let ((rest (substring acc (1+ idx))))
             (unless (string-empty-p rest)
-              (replique-process--spawn-filter proc rest))))))))
+              (replique-process--spawn-filter proc rest)))))
+    (replique-process--wrote proc string)))
+
+(defun replique-process--wrote (proc string)
+  "Show STRING, which PROC wrote, in the output buffer PROC belongs to.
+
+Only until the control connection is up.  What the process prints goes
+both to the pipe and to the connections, so from there the two say the
+same thing - and the connection is the one that keeps saying it when Emacs
+is not the one holding the pipe.  What comes before is the pipe alone: the
+jvm, the clojure script, and anything printed while there was nothing to
+be an event on.
+
+Read to the end whatever is done with it - a pipe nobody reads fills up,
+and the process stops on the write that fills it."
+  (unless (eq 'connected (process-get proc 'replique-state))
+    (let ((process (process-get proc 'replique-process)))
+      (if process
+          (replique-process--insert process string)
+        (replique-insert-output (replique-process--startup-buffer proc) string)))))
+
+(defun replique-process--adopt-buffer (process proc)
+  "Give PROCESS the buffer the startup output of PROC went to."
+  (let ((buffer (replique-process--startup-buffer proc)))
+    (when (buffer-live-p buffer)
+      (setf (replique-process--output-buffer process) buffer)
+      (with-current-buffer buffer
+        (rename-buffer (format "*replique-process: %s*"
+                               (replique-process--id process))
+                       t)))))
 
 (defun replique-process--started (proc line)
   "Act on LINE, the startup line PROC wrote."
@@ -283,81 +640,172 @@ would not make one."
                                      :false-object nil)
                 (error nil))))
     (cond
-     ((null info)
-      (message "replique: the process did not say it started: %s" line))
-     ((equal "error" (plist-get info :tag))
-      (message "replique: the process could not start: %s"
-               (plist-get info :message)))
-     (t
+     ((equal "started" (plist-get info :tag))
+      (process-put proc 'replique-state 'started)
       (let ((process (replique-process--connect
                       info proc
                       (lambda (process)
+                        (process-put proc 'replique-state 'connected)
                         (message "replique: %s listening on %s:%s"
                                  (replique-process--id process)
                                  (replique-process--host process)
                                  (replique-process--port process))
-                        (run-hook-with-args 'replique-process-started-hook process)))))
-        (process-put proc 'replique-process process)
-        ;; The buffer exists from the start: what the process prints while a
-        ;; repl is being opened belongs in it
-        (replique-process-buffer process))))))
+                        (run-hook-with-args 'replique-process-started-hook process))
+                      ;; The process said where it was listening and is not
+                      ;; there.  Nothing was read from a file here, so there
+                      ;; is nothing to clean up - what is left is to say it
+                      ;; where the rest of the start is reported
+                      (lambda (_reason why)
+                        (replique-process--failed proc why)))))
+        (when process
+          (process-put proc 'replique-process process)
+          ;; The buffer the startup output went to becomes the buffer of the
+          ;; process: what it printed before it was up belongs with the rest
+          (replique-process--adopt-buffer process proc))))
+     ((equal "error" (plist-get info :tag))
+      (replique-process--failed
+       proc
+       (format "The process could not start: %s" (plist-get info :message))
+       (plist-get info :exception)
+       (plist-get info :message)))
+     (t
+      ;; Not protocol at all.  The line belongs in the buffer with whatever
+      ;; else the process is about to say
+      (replique-insert-output (replique-process--startup-buffer proc)
+                              (concat line "\n"))
+      (replique-process--failed proc "The process did not announce itself")))))
 
 (defun replique-process--spawn-sentinel (proc _event)
   "Notice that the operating system process PROC is gone."
   (unless (process-live-p proc)
     (let ((process (process-get proc 'replique-process)))
-      (when process
-        (replique-process--note process "The process exited")))))
+      (if process
+          (replique-process--note process "The process exited")
+        (replique-insert-output
+         (replique-process--startup-buffer proc)
+         (format "\nThe process exited with status %s\n" (process-exit-status proc))
+         'replique-note)
+        (replique-process--link-report (replique-process--startup-buffer proc))
+        (message "replique: the process exited without starting - see %s"
+                 (buffer-name (replique-process--startup-buffer proc)))))))
+
+(defun replique-process--link-report (buffer)
+  "Turn the report clojure wrote, named in BUFFER, into a file to open."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward "^Full report at:\n\\(.*\\)$" nil t)
+          (let ((inhibit-read-only t))
+            (make-text-button
+             (match-beginning 1) (match-end 1)
+             'action (lambda (button) (find-file (button-label button)))
+             'help-echo "RET: open the report clojure wrote")))))))
 
 ;;;###autoload
 (defun replique-start (directory)
-  "Start a replique process in DIRECTORY and connect to it."
-  (interactive (list (read-directory-name "Project directory: " nil nil t)))
+  "Start a replique process in DIRECTORY and connect to it.
+
+The project needs no change to be worked on: `replique-coordinates' is
+put on the classpath alongside its own dependencies, together with
+whatever `replique-aliases-file' defines, under the aliases
+`replique-aliases' and `replique-user-aliases' name.
+
+A directory that already has a process is refused - see
+`replique-kill-process'.  The port file of a process that is gone is
+deleted first: a crash leaves one behind, and the process will not start
+where there is one."
+  (interactive (list (read-directory-name "Project directory: "
+                                          (replique-process--directory-to-start)
+                                          nil t)))
   (unless (executable-find replique-clojure-program)
     (user-error "No %s on exec-path - see replique-clojure-program"
                 replique-clojure-program))
-  (let* ((directory (file-name-as-directory (expand-file-name directory)))
-         (default-directory directory)
-         (command (replique-process--command directory)))
-    (message "replique: %s" (string-join command " "))
-    (let ((proc (make-process
-                 :name "replique"
-                 :buffer nil
-                 :command command
-                 :coding 'utf-8-unix
-                 :connection-type 'pipe
-                 :noquery t
-                 :filter #'replique-process--spawn-filter
-                 :sentinel #'replique-process--spawn-sentinel)))
-      proc)))
+  (let ((directory (file-name-as-directory (expand-file-name directory))))
+    ;; Before anything is spawned or any buffer made.  A process names its
+    ;; port file after its directory, so a second process there would take
+    ;; the file of the first - which would leave the first unreachable to
+    ;; anything that connects, and the two of them one id the commands
+    ;; cannot tell apart
+    (when-let* ((running (replique-process-in directory)))
+      (user-error "%s is already running in %s - M-x replique-kill-process to start another"
+                  (replique-process--id running) directory))
+    ;; After that guard and before the spawn: what is reaped here is a file
+    ;; naming a process that is not there, and a process Emacs holds is
+    ;; there whatever its file says
+    (replique-process--reap-directory directory)
+    (let* ((default-directory directory)
+           (replique-aliases (replique-process--project-aliases directory))
+           (command (replique-process--command directory))
+           (buffer (generate-new-buffer
+                    (format "*replique-process: %s*"
+                            (file-name-nondirectory (directory-file-name directory))))))
+      (with-current-buffer buffer (replique-process-mode))
+      (message "replique: %s" (string-join command " "))
+      (let ((proc (make-process
+                   :name "replique"
+                   :buffer nil
+                   :command command
+                   :coding 'utf-8-unix
+                   :connection-type 'pipe
+                   :noquery t
+                   :filter #'replique-process--spawn-filter
+                   :sentinel #'replique-process--spawn-sentinel)))
+        (process-put proc 'replique-buffer buffer)
+        (process-put proc 'replique-state 'starting)
+        (process-put proc 'replique-directory directory)
+        proc))))
 
 ;;;###autoload
 (defun replique-connect (directory)
   "Connect to a replique process already running in DIRECTORY."
-  (interactive (list (read-directory-name "Project directory: " nil nil t)))
+  (interactive (list (read-directory-name "Project directory: "
+                                          (replique-process--directory-to-connect)
+                                          nil t)))
   (let* ((directory (file-name-as-directory (expand-file-name directory)))
          (descriptions (replique-process-descriptions directory)))
     (cond
      ((null descriptions)
       (user-error "No process is running in %s" directory))
      (t
-      (let* ((choices (mapcar (lambda (info)
-                                (cons (format "%s (%s:%s)"
-                                              (plist-get info :process-id)
-                                              (plist-get info :host)
-                                              (plist-get info :port))
-                                      info))
+      (let* ((choices (mapcar (lambda (description)
+                                (let ((info (cdr description)))
+                                  (cons (format "%s (%s:%s)"
+                                                (plist-get info :process-id)
+                                                (plist-get info :host)
+                                                (plist-get info :port))
+                                        description)))
                               descriptions))
-             (info (if (cdr choices)
-                       (cdr (assoc (completing-read "Process: " choices nil t)
-                                   choices))
-                     (cdar choices))))
-        (replique-process--connect
-         info nil
-         (lambda (process)
-           (replique-process-buffer process)
-           (message "replique: connected to %s" (replique-process--id process))
-           (run-hook-with-args 'replique-process-started-hook process))))))))
+             (description (if (cdr choices)
+                              (cdr (assoc (completing-read "Process: " choices nil t)
+                                          choices))
+                            (cdar choices)))
+             (file (car description))
+             (info (cdr description))
+             (connected (replique-process-connected info)))
+        (if connected
+            ;; Connecting again to what Emacs is already connected to is
+            ;; asking for the process, not for a second connection to it.
+            ;; The second would be a poor one: a process Emacs started is
+            ;; asked not to tee, because Emacs reads its pipe, so what it
+            ;; prints would never reach that connection - and two processes
+            ;; of one id are two entries the commands cannot tell apart
+            (progn
+              (setq replique-current-process connected)
+              (message "replique: already connected to %s"
+                       (replique-process--id connected)))
+          (replique-process--connect
+           info nil
+           (lambda (process)
+             (replique-process-buffer process)
+             (message "replique: connected to %s" (replique-process--id process))
+             (run-hook-with-args 'replique-process-started-hook process))
+           ;; The file said where a process was and it is not there.  It is
+           ;; deleted rather than left: it would go on being offered here,
+           ;; and the directory is what says what is running
+           (lambda (reason why)
+             (replique-process--reap file info reason)
+             (message "replique: %s" why)))))))))
 
 ;;; Ops
 
