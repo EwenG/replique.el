@@ -774,6 +774,43 @@ guess at."
   (should (equal '("(def a 1)")
                  (replique-test-forms ";; a comment\n(def a 1)\n;; another\n"))))
 
+(ert-deftest replique-test-a-comment-is-never-what-gets-sent ()
+  "Not from a region, not from point, not from a region holding one.
+
+The directive replique writes applies to the next form, and a comment is
+not one: the reader answers it with a prompt and the directive stays
+pending, so what is read next - a form typed at the prompt - is recorded
+in a file it was never in."
+  (replique-test-grammar)
+  ;; What is signalled and not only that something is: there is no repl
+  ;; here, so a comment that got as far as being sent would fail too - and
+  ;; it would fail saying there is nowhere to send it
+  ;; point on it
+  (replique-test-with-clojure "(def a 1)\n;; a note\n"
+    (search-forward "a note")
+    (should (equal '(user-error "No form at point")
+                   (should-error (replique-eval-defun) :type 'user-error))))
+  ;; and the blank line under it, where the fallback for point just after
+  ;; a form looks
+  (replique-test-with-clojure "(def a 1)\n;; a note\n\n"
+    (goto-char (point-max))
+    (should (equal '(user-error "No form at point")
+                   (should-error (replique-eval-defun) :type 'user-error))))
+  ;; a region that is exactly one, which is the whole of what it covers
+  (replique-test-with-clojure ";; only a note\n"
+    (should (equal '(user-error "Nothing to evaluate")
+                   (should-error (replique-eval-region (point-min) (1- (point-max)))
+                                 :type 'user-error)))))
+
+(ert-deftest replique-test-a-comment-is-skipped-to-the-form-behind-it ()
+  "Which is what `eval-last-sexp\=' does in Emacs Lisp, and what makes
+C-x C-e work at the end of a file whose last line is a note."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(def a 1)\n;; a note\n;; and another\n"
+    (goto-char (point-max))
+    (should (equal "(def a 1)"
+                   (treesit-node-text (replique-eval--before (point)) t)))))
+
 (ert-deftest replique-test-a-discarded-form-is-one-form ()
   "What #_ discards is part of the form it discards, not a form before it.
 
@@ -786,6 +823,21 @@ form that was commented out is then the one evaluated."
                  (replique-test-forms "#_#_(x)(y)\n(z)\n")))
   (should (equal '("#_ ;; why\n(z)")
                  (replique-test-forms "#_ ;; why\n(z)\n"))))
+
+(ert-deftest replique-test-nothing-empty-is-sent ()
+  "A trailing #_ discards a form that is not there, so the grammar invents
+one: a zero width node standing where it would have been.  Sending that
+writes a directive with nothing after it, which is a directive nothing
+consumes - the same damage a comment does, by another road."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(def a 1)\n#_\n"
+    (goto-char (point-max))
+    (should (equal '(user-error "Nothing to evaluate")
+                   (should-error (replique-eval-defun) :type 'user-error))))
+  (replique-test-with-clojure "(def a 1)\n#_ ;; why\n"
+    (goto-char (point-max))
+    (should (equal '(user-error "Nothing to evaluate")
+                   (should-error (replique-eval-defun) :type 'user-error)))))
 
 (ert-deftest replique-test-metadata-is-part-of-the-form-it-is-on ()
   "A directive between the metadata and the definition is what the
@@ -895,6 +947,63 @@ it is a transcript of the wire rather than of the session."
             (let ((text (replique-test-text repl)))
               (should (string-match-p "(def marker :here)" text))
               (should-not (string-match-p "replique/src" text))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-a-comment-leaves-no-directive-behind ()
+  "The whole of it, against a real reader.
+
+A directive is consumed by the next form and by nothing else, and a
+comment is answered with a prompt rather than with a form - so a client
+that sends one leaves the directive pending, and the form read after it
+is recorded in the file and at the line of the comment.  What is asserted
+is the form typed at the prompt afterwards, which is where the damage
+would show."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique-test-comment.clj" temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "(def a 1)\n\n\n\n\n\n;; a note on line 7\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (setq replique-current-repl repl)
+                    (goto-char (point-max))
+                    (should-error (replique-eval-defun) :type 'user-error))
+                (kill-buffer buffer)))
+            (replique-test-eval repl "(defn typed-at-the-prompt [])")
+            (should (string-match-p
+                     "^1$" (replique-test-eval
+                            repl "(:line (meta #'typed-at-the-prompt))"))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-a-trailing-discard-leaves-no-directive-behind ()
+  "The other road to a directive nothing consumes, against a real reader.
+
+Quieter than the comment: a comment is answered with a prompt, and this
+is answered with nothing at all - the repl goes on waiting, and what says
+something happened is the line the next form is recorded at."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique-test-discard-alone.clj"
+                                  temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "(def a 1)\n\n\n\n\n\n#_\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (setq replique-current-repl repl)
+                    (goto-char (point-max))
+                    (should (equal '(user-error "Nothing to evaluate")
+                                   (should-error (replique-eval-defun)
+                                                 :type 'user-error))))
+                (kill-buffer buffer)))
+            (replique-test-eval repl "(defn after-the-discard [])")
+            (should (string-match-p
+                     "^1$" (replique-test-eval
+                            repl "(:line (meta #'after-the-discard))"))))
         (delete-file file)))))
 
 (ert-deftest replique-test-a-discarded-form-is-not-evaluated ()

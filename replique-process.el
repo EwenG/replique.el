@@ -224,8 +224,8 @@ paint over them."
 (defun replique-process--note (process format &rest args)
   "Say something about PROCESS in its output buffer, from FORMAT and ARGS."
   (replique-process--insert process
-                          (concat (apply #'format format args) "\n")
-                          'replique-note))
+                            (concat (apply #'format format args) "\n")
+                            'replique-note))
 
 ;;; Events
 
@@ -248,7 +248,7 @@ paint over them."
     ("dropped"
      ;; Written where the gap is: everything that survived came before it
      (replique-process--note process "... %s events were dropped ..."
-                            (plist-get frame :count)))
+                             (plist-get frame :count)))
     (_ nil)))
 
 (defun replique-process--frame (process frame)

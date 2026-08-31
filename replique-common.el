@@ -112,10 +112,10 @@ file in a buffer list; in a mode line naming nothing else it is noise."
                                  (buffer-name buffer))
               'local-map (let ((map (make-sparse-keymap)))
                            (define-key map [mode-line mouse-1]
-                             (lambda ()
-                               (interactive)
-                               (when (buffer-live-p buffer)
-                                 (pop-to-buffer buffer))))
+                                       (lambda ()
+                                         (interactive)
+                                         (when (buffer-live-p buffer)
+                                           (pop-to-buffer buffer))))
                            map)))
 
 (defun replique-unread-mode-line ()

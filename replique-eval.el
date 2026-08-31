@@ -48,9 +48,17 @@
 ;; was commented out with #_ evaluates it, which is the way back from having
 ;; commented it out.  A region does not, since a discard inside a region was
 ;; commented out by whoever selected it.
+;;
+;; A comment is not a form and is never sent, whichever command asks.  What
+;; it would produce is a directive nothing consumes: the reader answers a
+;; comment with a prompt rather than with a form, so the directive stays
+;; pending and lands on whatever is read next - a form typed at the prompt,
+;; recorded in a file it was never in.  Nothing empty is sent either, for
+;; the same reason - see `replique-eval--send'.
 
 ;;; Code:
 
+(require 'seq)
 (require 'subr-x)
 (require 'treesit)
 (require 'replique-clojure-mode)
@@ -94,15 +102,26 @@ repl."
     ;; nil for the root: it is the buffer, not a form in it
     (and node (treesit-node-parent node) node)))
 
+(defun replique-eval--comment-p (node)
+  "Return non-nil when NODE is a comment rather than a form.
+
+Asked wherever a node becomes something to send.  A comment consumes no
+directive - see the commentary - so a command that finds one has found
+nothing to evaluate, and says so rather than sending it."
+  (and node (equal "comment" (treesit-node-type node))))
+
 (defun replique-eval--covering (pos)
   "Return the top level form covering POS, or nil when none does.
 
 `treesit-node-at' answers with the first node after POS when nothing
 covers it, which is a form somewhere below rather than the one asked
-about."
+about.  A comment covering POS is nothing covering it: point on a comment
+is point on no form.  Only a top level one is ever answered with - inside
+a list the walk lands on the list."
   (let ((node (replique-eval--top-level
                (treesit-node-at pos (replique-eval--parser)))))
     (when (and node
+               (not (replique-eval--comment-p node))
                (<= (treesit-node-start node) pos)
                (< pos (treesit-node-end node)))
       node)))
@@ -123,6 +142,29 @@ the outer one."
       (setq node (treesit-node-parent node)))
     found))
 
+(defun replique-eval--back-over-space (pos)
+  "Return POS with the whitespace before it skipped."
+  (save-excursion
+    (goto-char pos)
+    (skip-chars-backward " \t\n\r\f")
+    (point)))
+
+(defun replique-eval--before (pos)
+  "Return the form ending at or before POS, or nil when there is none.
+
+The whitespace behind POS is skipped, and so are the comments behind
+that: a comment is not a form, and what was asked for is the form before
+it.  Which is what `eval-last-sexp\=' does in Emacs Lisp, and it is the
+answer that makes \\[replique-eval-last-sexp] work at the end of a file
+whose last line is a note."
+  (let ((pos (replique-eval--back-over-space pos))
+        (node nil))
+    (while (progn
+             (setq node (replique-eval--ending-at pos))
+             (and node (replique-eval--comment-p node)))
+      (setq pos (replique-eval--back-over-space (treesit-node-start node))))
+    node))
+
 (defun replique-eval--discarded (node)
   "Return what NODE discards, or NODE when it discards nothing.
 
@@ -135,7 +177,7 @@ being no better answer to a question that has two."
     (setq node (let ((target nil))
                  (dotimes (i (treesit-node-child-count node t))
                    (let ((child (treesit-node-child node i t)))
-                     (unless (equal "comment" (treesit-node-type child))
+                     (unless (replique-eval--comment-p child)
                        (setq target child))))
                  target)))
   node)
@@ -158,14 +200,15 @@ region selected what was commented out in it too."
              (>= (treesit-node-start cover) start))
         ;; The region is one form, whether or not all of it was selected.
         ;; Its children are the parts of that form, which is not what was
-        ;; asked for, and half a form is still the form it is half of
-        (list cover)
+        ;; asked for, and half a form is still the form it is half of -
+        ;; unless it is a comment, which is not a form at all
+        (unless (replique-eval--comment-p cover) (list cover))
       (let ((nodes nil))
         (dotimes (i (treesit-node-child-count cover t))
           (let ((child (treesit-node-child cover i t)))
             (when (and (>= (treesit-node-start child) start)
                        (< (treesit-node-start child) end)
-                       (not (equal "comment" (treesit-node-type child))))
+                       (not (replique-eval--comment-p child)))
               (push child nodes))))
         (nreverse nodes)))))
 
@@ -184,28 +227,39 @@ stays in order with the code it describes."
                                     (when line (list :line line))))))
 
 (defun replique-eval--send (nodes)
-  "Evaluate NODES, forms of the current buffer, in the current repl."
-  (unless nodes (user-error "Nothing to evaluate"))
-  (let ((repl (replique-repl-ensure))
-        (file (buffer-file-name)))
-    ;; The parse is of the whole buffer, so a form of it can be outside what
-    ;; a narrowing left reachable
-    (save-restriction
-      (widen)
-      (replique-repl-send-code
-       repl
-       (mapconcat (lambda (node)
-                    (concat (replique-src-directive
-                             file (line-number-at-pos (treesit-node-start node) t))
-                            "\n"
-                            (treesit-node-text node t)))
-                  nodes
-                  "\n")
-       ;; What the buffer is shown leaves the directives out: they are
-       ;; protocol, not something anybody wrote
-       (mapconcat (lambda (node) (treesit-node-text node t)) nodes "\n")
-       ;; Only one form has one result to show
-       (null (cdr nodes))))))
+  "Evaluate NODES, forms of the current buffer, in the current repl.
+
+A node with no text in it is dropped.  That is what a grammar answers an
+unfinished construct with - a zero width node standing where the form
+would have been, which is what a trailing #_ produces - and writing a
+directive with nothing after it is writing a directive nothing consumes:
+it stays pending, and the next form read, typed at the prompt, is
+recorded where the buffer said this one was."
+  ;; Widened around the whole of it: the parse is of the buffer, so a form
+  ;; of it can be outside what a narrowing left reachable - and reading the
+  ;; text of one is how that is noticed
+  (save-restriction
+    (widen)
+    (let ((nodes (seq-remove (lambda (node)
+                               (string-blank-p (treesit-node-text node t)))
+                             nodes)))
+      (unless nodes (user-error "Nothing to evaluate"))
+      (let ((repl (replique-repl-ensure))
+            (file (buffer-file-name)))
+        (replique-repl-send-code
+         repl
+         (mapconcat (lambda (node)
+                      (concat (replique-src-directive
+                               file (line-number-at-pos (treesit-node-start node) t))
+                              "\n"
+                              (treesit-node-text node t)))
+                    nodes
+                    "\n")
+         ;; What the buffer is shown leaves the directives out: they are
+         ;; protocol, not something anybody wrote
+         (mapconcat (lambda (node) (treesit-node-text node t)) nodes "\n")
+         ;; Only one form has one result to show
+         (null (cdr nodes)))))))
 
 ;;; Commands
 
@@ -213,11 +267,12 @@ stays in order with the code it describes."
 (defun replique-eval-last-sexp ()
   "Evaluate the form before point.
 
+A comment behind point is skipped the way whitespace is, so the last line
+of a file being a note does not stop this - see `replique-eval--before'.
 A form commented out with #_ is evaluated rather than discarded - see
 `replique-eval--discarded'."
   (interactive)
-  (let* ((pos (save-excursion (skip-chars-backward " \t\n\r\f") (point)))
-         (node (replique-eval--discarded (replique-eval--ending-at pos))))
+  (let ((node (replique-eval--discarded (replique-eval--before (point)))))
     (unless node (user-error "No form before point"))
     (replique-eval--send (list node))))
 
@@ -229,13 +284,13 @@ The metadata a definition carries goes with it, and a form commented out
 with #_ is evaluated rather than discarded.
 
 Point just after a form counts as being on it, which is where point is
-left by having typed it."
+left by having typed it.  Point on a comment is on no form: what is
+behind the comment was not what was asked for."
   (interactive)
-  (let* ((covering (or (replique-eval--covering (point))
-                       (save-excursion
-                         (skip-chars-backward " \t\n\r\f")
-                         (and (> (point) (point-min))
-                              (replique-eval--covering (1- (point)))))))
+  (let* ((back (replique-eval--back-over-space (point)))
+         (covering (or (replique-eval--covering (point))
+                       (and (> back (point-min))
+                            (replique-eval--covering (1- back)))))
          (node (replique-eval--discarded covering)))
     (unless node (user-error "No form at point"))
     (replique-eval--send (list node))))

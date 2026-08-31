@@ -99,10 +99,10 @@ KIND is `control' or `repl'.  KEYS may hold:
         ;; going away is handled
         ((equal replique-conn-closed-error (plist-get frame :error)) nil)
         ((equal "error" (plist-get frame :tag))
-           ;; The connection is closed after an unsuccessful handshake, so
-           ;; there is nothing to recover - say what happened and let go.
-           ;; What a refusal means is the caller\='s to know: a port file
-           ;; naming a process that is not there is a refusal it can act on
+         ;; The connection is closed after an unsuccessful handshake, so
+         ;; there is nothing to recover - say what happened and let go.
+         ;; What a refusal means is the caller\='s to know: a port file
+         ;; naming a process that is not there is a refusal it can act on
          (if on-error
              (funcall on-error frame)
            (message "replique: the handshake was refused: %s (%s)"
