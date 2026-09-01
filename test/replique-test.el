@@ -912,6 +912,117 @@ at the line of the first."
                                (line-number-at-pos (treesit-node-start n) t))
                              nodes))))))
 
+(defun replique-test-ns-at (text needle)
+  "Return the namespace TEXT names where NEEDLE is found in it."
+  (replique-test-with-clojure text
+    (search-forward needle)
+    (goto-char (match-beginning 0))
+    (replique-eval--ns-at (point))))
+
+(ert-deftest replique-test-a-form-is-written-in-the-namespace-above-it ()
+  "Which is what the code has to be read and evaluated in: a repl left in
+another namespace would compile the definitions of one file into another."
+  (replique-test-grammar)
+  (should (equal "foo.bar"
+                 (replique-test-ns-at "(ns foo.bar)\n(def a 1)\n" "(def a")))
+  (should (equal "foo.bar"
+                 (replique-test-ns-at "(ns ^{:author \"me\"} foo.bar)\n(def a 1)\n"
+                                      "(def a")))
+  ;; nothing above it names one
+  (should (null (replique-test-ns-at "(def a 1)\n(ns foo.bar)\n" "(def a")))
+  (should (null (replique-test-ns-at "(def a 1)\n" "(def a"))))
+
+(ert-deftest replique-test-an-in-ns-applies-to-what-is-under-it ()
+  "Evaluating code in another namespace is done by writing an in-ns above
+it, which is how a scratch file reaches into one namespace and then
+another.  Written the way it is written where clojure.core is not
+referred, too."
+  (replique-test-grammar)
+  (should (equal "one"
+                 (replique-test-ns-at "(ns foo.bar)\n(in-ns 'one)\n(def a 1)\n" "(def a")))
+  (should (equal "foo.bar"
+                 (replique-test-ns-at "(ns foo.bar)\n(def a 1)\n(in-ns 'one)\n" "(def a")))
+  (should (equal "one"
+                 (replique-test-ns-at "(clojure.core/in-ns 'one)\n(def a 1)\n" "(def a")))
+  ;; the in-ns form itself is evaluated where it stands rather than in the
+  ;; namespace it is about to enter
+  (should (null (replique-test-ns-at "(in-ns 'one)\n(def a 1)\n" "(in-ns"))))
+
+(ert-deftest replique-test-an-in-ns-inside-a-form-does-not-outlive-it ()
+  "The (comment ...) case: a namespace entered inside a form is entered
+for what is inside that form, and what follows the form is under whatever
+was above it.  A level deeper than another overrides it, and only there."
+  (replique-test-grammar)
+  (let ((text (concat "(ns foo.bar)\n"
+                      "(comment\n"
+                      "  (in-ns 'scratch)\n"
+                      "  (def inside 1))\n"
+                      "(def after 2)\n")))
+    (should (equal "scratch" (replique-test-ns-at text "(def inside")))
+    (should (equal "foo.bar" (replique-test-ns-at text "(def after")))))
+
+(ert-deftest replique-test-a-namespace-nobody-wrote-is-not-read ()
+  "The buffer is read from the parse rather than from its text, so a
+namespace named inside a string or behind a semicolon is a namespace
+nobody asked to be in.  An argument that is computed rather than written
+out names nothing that can be read either, and a qualified symbol is not
+the name of a namespace at all."
+  (replique-test-grammar)
+  (should (null (replique-test-ns-at "\"(in-ns 'evil)\"\n(def a 1)\n" "(def a")))
+  (should (null (replique-test-ns-at ";; (in-ns 'evil)\n(def a 1)\n" "(def a")))
+  (should (null (replique-test-ns-at "(in-ns (symbol \"evil\"))\n(def a 1)\n" "(def a")))
+  (should (null (replique-test-ns-at "(in-ns 'foo/bar)\n(def a 1)\n" "(def a")))
+  ;; somebody else's in-ns, which does something else
+  (should (null (replique-test-ns-at "(other.lib/in-ns 'evil)\n(def a 1)\n" "(def a"))))
+
+(ert-deftest replique-test-evaluating-moves-the-repl-to-the-buffers-namespace ()
+  "Code taken from a buffer is read and evaluated in the namespace that
+buffer is in, and the repl stays there: going to the repl after having
+evaluated something lands at a prompt of the namespace being worked in.
+
+The definition is looked for in that namespace and not in the one the
+repl was left in, which is the thing that would silently go wrong."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (replique-test-with-clojure "(ns replique.test-target)\n(defn from-a-buffer [] :yes)\n"
+      (setq replique-current-repl repl)
+      (goto-char (point-max))
+      (replique-eval-last-sexp))
+    (replique-test-wait-for
+     (lambda () (string-match-p "from-a-buffer" (replique-test-text repl))))
+    (should (string-match-p "^:yes$"
+                            (replique-test-eval
+                             repl "(replique.test-target/from-a-buffer)")))
+    ;; the prompt itself, which is what an editor reads the namespace off
+    (should (equal "replique.test-target" (replique-repl--ns repl)))
+    ;; and a namespace the process did not have is one it can work in:
+    ;; in-ns alone makes a namespace where defn does not resolve
+    (should (string-match-p "^:yes$" (replique-test-eval repl "(from-a-buffer)")))))
+
+(ert-deftest replique-test-the-namespace-is-not-shown-as-something-somebody-wrote ()
+  "The directive is protocol, like the source one: a transcript showing it
+is a transcript of the wire."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (replique-test-with-clojure "(ns replique.test-quiet)\n(def a 1)\n"
+      (setq replique-current-repl repl)
+      (goto-char (point-max))
+      (replique-eval-last-sexp))
+    (replique-test-wait-for
+     (lambda () (string-match-p "replique.test-quiet/a" (replique-test-text repl))))
+    (should-not (string-match-p "#replique/ns" (replique-test-text repl)))
+    (should-not (string-match-p "#replique/src" (replique-test-text repl)))))
+
+(ert-deftest replique-test-every-form-of-a-region-says-which-namespace-it-is-in ()
+  "Asked of every form rather than once of the first: a region reaching
+over an in-ns holds forms of two namespaces, and each of them is written
+in the one it is under."
+  (replique-test-grammar)
+  (replique-test-with-clojure "(ns foo.bar)\n(def a 1)\n(in-ns 'one)\n(def b 2)\n"
+    (should (equal '(nil "foo.bar" "foo.bar" "one")
+                   (mapcar (lambda (n) (replique-eval--ns-at (treesit-node-start n)))
+                           (replique-eval--nodes (point-min) (point-max)))))))
+
 (ert-deftest replique-test-a-clojure-buffer-has-the-commands-in-it ()
   "The keys are bound in a Clojure file without anything being turned on
 by hand: the mode replique opens one in is what turns them on."

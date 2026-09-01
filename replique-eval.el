@@ -49,6 +49,12 @@
 ;; commented it out.  A region does not, since a discard inside a region was
 ;; commented out by whoever selected it.
 ;;
+;; Code taken from a buffer belongs to the namespace that buffer is in, and
+;; the repl is wherever it was last left.  So a form is sent with the
+;; namespace it was written in as well as with the place it came from - see
+;; `replique-eval--ns-at' for how the buffer is asked, and
+;; `replique-ns-directive' for what the process does about it.
+;;
 ;; A comment is not a form and is never sent, whichever command asks.  What
 ;; it would produce is a directive nothing consumes: the reader answers a
 ;; comment with a prompt rather than with a form, so the directive stays
@@ -212,6 +218,75 @@ region selected what was commented out in it too."
               (push child nodes))))
         (nreverse nodes)))))
 
+;;; The namespace of a form
+
+(defconst replique-eval--ns-form-names '("ns" "in-ns")
+  "The forms that say which namespace the code after them is written in.")
+
+(defun replique-eval--unquote (node)
+  "Return what NODE quotes, or NODE when it quotes nothing.
+
+The argument of `in-ns\=' is quoted and the argument of `ns\=' is not, and
+both are the same answer to the same question."
+  (if (equal "quote" (treesit-node-type node))
+      (replique-clojure--unwrap-meta (car (treesit-node-children node t)))
+    node))
+
+(defun replique-eval--ns-form-name (node)
+  "Return the namespace NODE names, or nil when it names none.
+
+NODE names one when it is an `ns\=' or `in-ns\=' form whose argument is a
+symbol written out - `clojure.core/in-ns\=' too, since that is how the form
+is written where `clojure.core\=' is not referred.  An argument that is
+computed says nothing that can be read from the text, and a qualified one
+is not the name of a namespace at all."
+  (let ((node (replique-clojure--unwrap-meta node)))
+    (when (replique-clojure--list-node-p node)
+      (let ((head (replique-clojure--first-value-child node))
+            (arg (replique-clojure--unwrap-meta
+                  (nth 1 (treesit-node-children node t)))))
+        (when (and head arg
+                   (replique-clojure--symbol-node-p head)
+                   (member (replique-clojure--named-node-text head)
+                           replique-eval--ns-form-names)
+                   ;; `clojure.core\=' or nothing.  Any other namespace on it
+                   ;; is somebody else\='s in-ns, which does something else
+                   (let ((qualifier (treesit-node-child-by-field-name
+                                     head "namespace")))
+                     (or (null qualifier)
+                         (equal "clojure.core" (treesit-node-text qualifier t)))))
+          (let ((arg (replique-eval--unquote arg)))
+            (when (and arg
+                       (replique-clojure--symbol-node-p arg)
+                       (null (treesit-node-child-by-field-name arg "namespace")))
+              (treesit-node-text arg t))))))))
+
+(defun replique-eval--ns-at (pos)
+  "Return the namespace POS is written in, or nil when the buffer names none.
+
+Found by descending from the root of the parse to POS: at each level the
+last `ns\=' or `in-ns\=' form starting before POS wins, and a level deeper
+than another overrides it.  Which is what the reader would have done had
+it read the buffer from the top - an `in-ns\=' written at the top level
+applies to everything below it, and one written inside a form, which is
+the (comment ...) case, applies only until that form ends.
+
+Read from the parse rather than from the text, so a namespace named
+inside a string or behind a semicolon is a namespace nobody asked for."
+  (let ((node (replique-eval--root))
+        (found nil))
+    (while node
+      (let ((into nil))
+        (dolist (child (treesit-node-children node t))
+          (when (< (treesit-node-start child) pos)
+            (when-let* ((name (replique-eval--ns-form-name child)))
+              (setq found name)))
+          (when (and (<= (treesit-node-start child) pos)
+                     (< pos (treesit-node-end child)))
+            (setq into child)))
+        (setq node into)))
+    found))
+
 ;;; Sending them
 
 (defun replique-src-directive (file line)
@@ -225,6 +300,21 @@ stays in order with the code it describes."
   (format "#replique/src %s"
           (replique-edn-map (append (when file (list :file file))
                                     (when line (list :line line))))))
+
+(defun replique-ns-directive (ns)
+  "Return the directive saying that what follows is read in namespace NS.
+
+Unlike the source directive this is not about the next form only: it is
+`in-ns\=' without the evaluation, and the repl stays there.  Which is what
+makes going to the repl after having evaluated something land at a prompt
+of the namespace that was being worked in.
+
+Without the evaluation because an `in-ns\=' sent as a form is a form: it
+has a result, and a prompt after it, and both appear in the transcript as
+something the developer did not write.  A namespace the process does not
+have yet is created, with `clojure.core\=' referred into it - see
+`enter-ns!\=' in replique.repl."
+  (format "#replique/ns %s" ns))
 
 (defun replique-eval--send (nodes)
   "Evaluate NODES, forms of the current buffer, in the current repl.
@@ -249,10 +339,17 @@ recorded where the buffer said this one was."
         (replique-repl-send-code
          repl
          (mapconcat (lambda (node)
-                      (concat (replique-src-directive
-                               file (line-number-at-pos (treesit-node-start node) t))
-                              "\n"
-                              (treesit-node-text node t)))
+                      (let* ((start (treesit-node-start node))
+                             ;; Asked of every form rather than once of the
+                             ;; first: a region reaching over an in-ns holds
+                             ;; forms of two namespaces, and each of them is
+                             ;; written in the one it is under
+                             (ns (replique-eval--ns-at start)))
+                        (concat (when ns (concat (replique-ns-directive ns) "\n"))
+                                (replique-src-directive
+                                 file (line-number-at-pos start t))
+                                "\n"
+                                (treesit-node-text node t))))
                     nodes
                     "\n")
          ;; What the buffer is shown leaves the directives out: they are
