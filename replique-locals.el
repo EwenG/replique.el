@@ -100,7 +100,10 @@ on describing inside it.")
 
 (defconst replique-locals--deftype-like
   '("deftype" "defrecord")
-  "The forms that bind a vector of fields and then methods.")
+  "The forms that bind a vector of fields and then methods.
+
+The only forms here whose methods are not closures, which is why the
+walk stops at one - see `replique-locals--closes-over-p\='.")
 
 (defconst replique-locals--method-like
   '("reify" "proxy" "extend-type" "extend-protocol")
@@ -483,6 +486,22 @@ after POS is not what POS is inside of."
       (setq node (treesit-node-parent node)))
     (nreverse found)))
 
+(defun replique-locals--closes-over-p (node)
+  "Say whether what is written inside NODE can see the locals around it.
+
+Almost everything can, and the exception is `deftype\=' and `defrecord\='.
+Their methods are compiled to methods of a class, and a class has
+nowhere to keep what was around it - so a name bound outside one is not
+a local inside it, it is a name Clojure refuses to compile a use of.  A
+`reify\=' or a `proxy\=' is a closure and is not one of these, which is
+why they are read as ordinary forms on the way out.
+
+Asked of every form POS is inside rather than of the binding ones only:
+what a `deftype\=' does to the ones around it, it does whether or not it
+binds anything at POS itself."
+  (not (member (replique-locals--head-name node)
+               replique-locals--deftype-like)))
+
 (defun replique-locals-at (pos)
   "Return the locals in scope at POS as (NAME . POSITION), nearest first.
 
@@ -494,6 +513,9 @@ A name bound twice is in the answer twice.  What the parse says is left
 in rather than tidied away, since nothing else can tell that a binding
 was shadowed - so showing the names to somebody wants `delete-dups\='
 over them.
+
+Nothing written around a `deftype\=' or a `defrecord\=' is in scope inside
+one, so the walk out stops there - see `replique-locals--closes-over-p\='.
 
 Read from the whole of the buffer rather than from what a narrowing left
 reachable: a form is inside what it is written inside whether or not that
@@ -507,9 +529,13 @@ the answer is that nothing is in scope.  Whether it was a buffer worth
 asking is the caller\='s to know."
   (save-restriction
     (widen)
-    (let ((found nil))
-      (dolist (node (replique-locals--enclosing pos))
-        (setq found (append found (replique-locals--bound-by node pos))))
+    (let ((nodes (replique-locals--enclosing pos))
+          (found nil)
+          (closes-over t))
+      (while (and nodes closes-over)
+        (let ((node (pop nodes)))
+          (setq found (append found (replique-locals--bound-by node pos)))
+          (setq closes-over (replique-locals--closes-over-p node))))
       found)))
 
 (provide 'replique-locals)

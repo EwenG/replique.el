@@ -257,6 +257,35 @@
                    (replique-locals-test--names
                     (format "(%s P (m [this x] |))" form))))))
 
+(ert-deftest replique-locals-test-a-deftype-method-is-not-a-closure ()
+  ;; its methods are methods of a class, which has nowhere to keep what was
+  ;; around it - Clojure refuses to compile a use of the x here
+  (should (equal '("this")
+                 (replique-locals-test--names
+                  "(let [x 1] (deftype T [] P (m [this] |)))")))
+  (should (equal '("this" "a")
+                 (replique-locals-test--names
+                  "(let [x 1] (defrecord T [a] P (m [this] |)))"))))
+
+(ert-deftest replique-locals-test-a-deftype-stops-the-walk-wherever-it-is-in-one ()
+  ;; not only in a method body: nothing around one is in scope anywhere in it
+  (should (equal '("a")
+                 (replique-locals-test--names "(let [x 1] (deftype T [a |] P))")))
+  (should (equal '("y" "this" "a")
+                 (replique-locals-test--names
+                  "(let [x 1] (deftype T [a] P (m [this] (let [y 2] |))))"))))
+
+(ert-deftest replique-locals-test-what-else-holds-methods-is-a-closure ()
+  (dolist (form '("reify" "proxy" "extend-type" "extend-protocol"))
+    (should (equal '("this" "x")
+                   (replique-locals-test--names
+                    (format "(let [x 1] (%s P (m [this] |)))" form))))))
+
+(ert-deftest replique-locals-test-a-deftype-inside-a-closure-still-stops-the-walk ()
+  (should (equal '("this")
+                 (replique-locals-test--names
+                  "(let [x 1] (reify P (m [_] (deftype T [] Q (n [this] |)))))"))))
+
 ;;; defmethod
 
 (ert-deftest replique-locals-test-a-defmethod-binds-its-parameters ()
