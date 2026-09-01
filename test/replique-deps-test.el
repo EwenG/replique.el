@@ -62,7 +62,17 @@
   ;; a list whose head is a keyword is a lookup in that keyword anywhere else
   (should-not (replique-deps-test--context "(:require b|)"))
   (should-not (replique-deps-test--context "(foo :require b|)"))
+  (should-not (replique-deps-test--context "(foo (:require b|))"))
+  (should-not (replique-deps-test--context "(let [x 1] (:require b|))"))
   (should-not (replique-deps-test--context "(ns a (:foo/require b|))")))
+
+(ert-deftest replique-deps-test-a-clause-is-in-the-nearest-form-around-it ()
+  ;; one written inside a reader conditional is written in the ns form,
+  ;; whatever the conditional is made of holds it
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(ns a #?(:clj (:require [b|])))")))
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(ns a #?@(:clj [(:require [b|])]))"))))
 
 ;;; Namespaces
 
@@ -143,6 +153,29 @@
   (should-not (replique-deps-test--context "(ns a (:require [b :as c|]))"))
   (should-not (replique-deps-test--context "(ns a (:require [b :as-alias c|]))"))
   (should-not (replique-deps-test--context "(require '[b :as c|])")))
+
+(ert-deftest replique-deps-test-a-namespace-that-is-not-a-name-names-nothing ()
+  ;; what is asked with a namespace is asked of the process, so a namespace
+  ;; that is not one would be a question about nothing
+  (should-not (replique-deps-test--context "(ns a (:require [\"b\" :refer [d|]]))"))
+  (should-not (replique-deps-test--context "(ns a (:require [[b] :refer [d|]]))"))
+  ;; and one written as a reader conditional names a different thing on each
+  ;; platform, with no point inside it to read for
+  (should-not (replique-deps-test--context
+               "(ns a (:require [#?(:clj b :cljs c) :refer [d|]]))"))
+  (should-not (replique-deps-test--context "(ns a (:require (#?(:clj c) b|)))"))
+  ;; an option of the spec needs no namespace and is answered anyway
+  (should (equal '(:position :libspec-option)
+                 (replique-deps-test--context "(ns a (:require [#?(:clj b) :a|s c]))"))))
+
+(ert-deftest replique-deps-test-a-refer-of-no-namespace-names-no-vars ()
+  (should-not (replique-deps-test--context "(refer (get-ns) :only [y|])"))
+  (should-not (replique-deps-test--context "(refer :kw :only [y|])")))
+
+(ert-deftest replique-deps-test-a-package-that-is-not-a-name-holds-nothing ()
+  (should-not (replique-deps-test--context "(ns a (:import ([x] Da|te)))"))
+  (should-not (replique-deps-test--context
+               "(ns a (:import (#?(:clj java.util) Da|te)))")))
 
 (ert-deftest replique-deps-test-what-follows-a-rename-is-answered-as-nothing ()
   ;; only the keys of it are vars, and vars for both would be wrong for one

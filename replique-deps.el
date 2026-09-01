@@ -171,12 +171,20 @@ outside it, so only what point is at counts for that."
     (replique-clojure--named-node-text node)))
 
 (defun replique-deps--under (prefix node)
-  "Return the namespace NODE names, written under PREFIX.
+  "Return the namespace NODE names, written under PREFIX, or nil.
 
-A prefix list says the start of a name once and the rest of it as many
-times as it has specs: (clojure [string :as s]) names clojure.string."
-  (let ((name (treesit-node-text node t)))
-    (if (equal "" prefix) name (concat prefix "." name))))
+A prefix list gives the start of a name once and the rest of it as many
+times as it has specs: (clojure [string :as s]) names clojure.string.
+
+Nil where NODE is not a name.  A spec whose first element is a string or
+a vector names nothing, and one written as a reader conditional names a
+different thing on each platform - which of them being a question about
+what the form means, and there is no point inside it to read for.  What
+is asked with a namespace is asked of the process, and a namespace that
+is not one is a question about nothing: nothing is the answer to give."
+  (when (replique-clojure--symbol-node-p node)
+    (let ((name (treesit-node-text node t)))
+      (if (equal "" prefix) name (concat prefix "." name)))))
 
 (defun replique-deps--namespace-position (kind)
   "Return the position a namespace is at in a form of kind KIND.
@@ -219,6 +227,9 @@ at all is a spec of its own, written under the prefix this one makes."
       (let ((option (replique-deps--option-name (nth (1- index) children)))
             (namespace (replique-deps--under prefix (car children))))
         (cond
+         ;; everything left is read against the namespace the spec names,
+         ;; as the vars of it or as the prefix of another one
+         ((null namespace) nil)
          ((member option replique-deps--var-options)
           (when (replique-deps--sequential-node-p child)
             (list :position :var :namespace namespace)))
@@ -252,7 +263,9 @@ any spec."
 (defun replique-deps--import-context (node pos)
   "Return the slot of the import-like form NODE that POS is written in.
 
-An import is written as a class, or as a package and the classes of it."
+An import is written as a class, or as a package and the classes of it.
+A package that is not a name names no classes, as in
+`replique-deps--under\='."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
@@ -261,21 +274,26 @@ An import is written as a class, or as a package and the classes of it."
      ((or (null index) (= 0 index)) nil)
      ((replique-clojure--symbol-node-p child) (list :position :package-or-class))
      ((replique-deps--sequential-node-p child)
-      (let* ((spec (treesit-node-children child t))
+      (let* ((package (replique-deps--unwrap
+                       (car (treesit-node-children child t))))
              (inner (replique-deps--child-index-at child pos)))
         (cond
          ((null inner) nil)
          ((= 0 inner) (list :position :package-or-class))
-         (t (list :position :class
-                  :package (treesit-node-text
-                            (replique-deps--unwrap (car spec)) t)))))))))
+         ((replique-clojure--symbol-node-p package)
+          (list :position :class
+                :package (treesit-node-text package t)))))))))
 
 (defun replique-deps--refer-context (node pos namespace from)
   "Return the slot of the refer-like form NODE that POS is in, for NAMESPACE.
 
 FROM is the index of the first element that is an option, which is one
 for a clause and two for a (refer \\='the-ns ...) - what a call names
-first is the namespace to refer from."
+first is the namespace to refer from.
+
+NAMESPACE is nil where the form names one that is not a name, and the
+vars of it are answered as nothing for the reason `replique-deps--under\='
+answers as nothing."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
@@ -287,7 +305,8 @@ first is the namespace to refer from."
         (list :position :namespace :prefix "")))
      ((replique-clojure--keyword-node-p child)
       (list :position :libspec-option-refer))
-     ((and (member (replique-deps--option-name (nth (1- index) children))
+     ((and namespace
+           (member (replique-deps--option-name (nth (1- index) children))
                    replique-deps--var-options)
            (replique-deps--sequential-node-p child))
       (list :position :var :namespace namespace)))))
@@ -313,9 +332,22 @@ What is written in one is paths, and a path is written as a string."
     (when (and index (> index 0) (replique-clojure--string-node-p child))
       (list :position :load-path))))
 
-(defun replique-deps--ns-form-p (node)
-  "Return non-nil if NODE is an ns form."
-  (equal "ns" (replique-clojure--list-node-sym-text node)))
+(defun replique-deps--written-in-ns-form-p (node)
+  "Return non-nil if NODE is written in an ns form.
+
+The nearest form around it rather than whatever holds it, so that a
+clause written inside a reader conditional is written in what the
+conditional is written in.  What a conditional is made of - the list of
+its platforms, the vector of a splicing one - is not a form anything is
+written in, and neither is a vector or a map: a form is a list whose head
+is a symbol, and the rest is read through."
+  (let ((parent (treesit-node-parent node))
+        (found nil))
+    (while (and parent (null found))
+      (when (replique-clojure--list-node-sym-text parent)
+        (setq found parent))
+      (setq parent (treesit-node-parent parent)))
+    (equal "ns" (replique-clojure--list-node-sym-text found))))
 
 (defun replique-deps--form-kind (node)
   "Return what dependency form NODE is, or nil.
@@ -327,7 +359,7 @@ it is written, and the one thing it is not is a require."
     (let ((head (replique-clojure--first-value-child node)))
       (cond
        ((and (replique-deps--option-name head)
-             (replique-deps--ns-form-p (treesit-node-parent node)))
+             (replique-deps--written-in-ns-form-p node))
         (cdr (assoc (replique-clojure--named-node-text head)
                     replique-deps--clauses)))
        ((and head (replique-clojure--symbol-node-p head))
