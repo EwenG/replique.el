@@ -538,6 +538,117 @@ asking is the caller\='s to know."
           (setq closes-over (replique-locals--closes-over-p node))))
       found)))
 
+(defun replique-locals--pairs-naming (vec)
+  "Return the names the binding vector VEC gives, wherever they are.
+
+Every other element of it, and every name in the pattern each of those
+is - which is `replique-locals--pairs-bound\=' with nothing said about
+scope.  That is the whole of the difference, and it is the point: a name
+is being given exactly where scope has not reached it yet.
+
+An element with nothing after it counts like the rest.  A binding vector
+is written a target at a time, and a target with no init yet is what a
+name half typed looks like."
+  (let ((vec (replique-clojure--unwrap-meta vec))
+        (found nil))
+    (when (replique-locals--vector-node-p vec)
+      (let ((children (treesit-node-children vec t)))
+        (while children
+          (setq found (append (replique-locals--pattern-bound (car children)) found))
+          (setq children (cddr children)))))
+    found))
+
+(defun replique-locals--for-naming (node)
+  "Return the names the `for\='-like form NODE gives, wherever they are.
+
+What follows a :let is a binding vector of its own, read here the way
+`replique-locals--for-bound\=' reads it."
+  (let ((vec (replique-clojure--unwrap-meta
+              (replique-locals--binding-vector node)))
+        (found nil))
+    (when (replique-locals--vector-node-p vec)
+      (let ((children (treesit-node-children vec t)))
+        (while children
+          (let ((target (replique-clojure--unwrap-meta (car children))))
+            (if (and (replique-clojure--keyword-node-p target)
+                     (equal "let" (replique-locals--name-text target)))
+                (setq found (append (replique-locals--pairs-naming (nth 1 children))
+                                    found))
+              (setq found (append (replique-locals--pattern-bound target) found))))
+          (setq children (cddr children)))))
+    found))
+
+(defun replique-locals--named (node)
+  "Return the name NODE gives itself, as a list of one, or nil.
+
+Its second element, when that is a symbol."
+  (let ((name (replique-clojure--unwrap-meta
+               (nth 1 (treesit-node-children node t)))))
+    (when (replique-clojure--symbol-node-p name)
+      (replique-locals--pattern-bound name))))
+
+(defun replique-locals--naming-by (node)
+  "Return the names NODE gives that are not in scope where they are written.
+
+Two kinds of name are missing from what `replique-locals-at\=' answers,
+and both of them on purpose.  A sequential binding is not in scope at its
+own target - in (let [x x] ...) the second x is the one from outside - so
+a point at the first x is a point at a name being given and at nothing
+that is in scope.  And the name of a `defn\=' or a `deftype\=' is a var or
+a class rather than a local, so nothing binds it anywhere.
+
+Everything else is already answered where it is written.  A parameter, a
+field, a `letfn\=' name, what a catch caught: all of them take effect at
+the start of what they are written in, which is in front of themselves.
+The name of a `fn\=' is read here as well as there - it is a local and it
+is answered twice, which two of the same name is the right answer to."
+  (let ((name (replique-locals--head-name node)))
+    (cond
+     ((member name replique-locals--let-like)
+      (replique-locals--pairs-naming (replique-locals--binding-vector node)))
+     ((member name replique-locals--for-like)
+      (replique-locals--for-naming node))
+     ((or (member name replique-locals--fn-like)
+          (member name replique-locals--deftype-like))
+      (replique-locals--named node))
+     (t nil))))
+
+(defun replique-locals--at-name-p (pos names)
+  "Say whether POS is at one of NAMES, each of them a (NAME . POSITION).
+
+A name covers where it is written and the point just after it, which is
+where point is while it is still being typed."
+  (let ((found nil))
+    (dolist (name names)
+      (when (and (<= (cdr name) pos)
+                 (<= pos (+ (cdr name) (length (car name)))))
+        (setq found t)))
+    found))
+
+(defun replique-locals-at-binding-position-p (pos)
+  "Say whether POS is where a name is being given rather than used.
+
+The point in (let [x| 1] x) and in (defn f|oo [] 1), and not the point in
+\(let [x 1] x|).  What is being written there is a new name, so nothing
+knows it yet and nothing should be offered for it: a completion at a
+binding position can only offer something the name is not.
+
+Read as the names bound around POS rather than as the shapes a form is
+written in, so that a name in a destructuring is one of these wherever it
+is nested, and the default after an :or is not one - it is an expression
+written where an expression goes.
+
+Reads the whole of the buffer, for the reason `replique-locals-at\=' does."
+  (save-restriction
+    (widen)
+    (or (replique-locals--at-name-p pos (replique-locals-at pos))
+        (let ((nodes (replique-locals--enclosing pos))
+              (found nil))
+          (while (and nodes (not found))
+            (setq found (replique-locals--at-name-p
+                         pos (replique-locals--naming-by (pop nodes)))))
+          found))))
+
 (provide 'replique-locals)
 
 ;;; replique-locals.el ends here

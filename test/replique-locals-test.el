@@ -37,6 +37,19 @@
   "Return the names of the locals in scope where | is in TEXT."
   (mapcar #'car (replique-locals-test--locals text)))
 
+(defun replique-locals-test--binding-position (text)
+  "Say whether | is at a name being given in TEXT."
+  (replique-test-grammar)
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert text)
+    (goto-char (point-min))
+    (unless (search-forward "|" nil t)
+      (error "The text says nowhere to look: %s" text))
+    (let ((pos (match-beginning 0)))
+      (delete-region (match-beginning 0) (match-end 0))
+      (replique-locals-at-binding-position-p pos))))
+
 (defun replique-locals-test--names-narrowed (text)
   "Return the names in scope where | is in TEXT, with only its line reachable."
   (replique-test-grammar)
@@ -402,6 +415,74 @@
   (let ((locals (replique-locals-test--locals "(let [x 1] (fn [x] |))")))
     (should (equal '("x" "x") (mapcar #'car locals)))
     (should (equal 17 (cdr (assoc "x" locals))))))
+
+;;; Where a name is being given
+
+(ert-deftest replique-locals-test-a-sequential-target-is-a-binding-position ()
+  (should (replique-locals-test--binding-position "(let [x| 1] x)"))
+  (should (replique-locals-test--binding-position "(let [a 1 b| 2] a)"))
+  (should (replique-locals-test--binding-position "(loop [x| 1] x)")))
+
+(ert-deftest replique-locals-test-a-target-with-no-init-yet-is-one ()
+  ;; what a name looks like while it is being typed
+  (should (replique-locals-test--binding-position "(let [foo|] x)")))
+
+(ert-deftest replique-locals-test-the-end-of-a-name-is-in-it ()
+  ;; where point is once the name has been typed and nothing else has
+  (should (replique-locals-test--binding-position "(let [foo| 1] foo)")))
+
+(ert-deftest replique-locals-test-a-name-in-a-destructuring-is-one-however-deep ()
+  (should (replique-locals-test--binding-position "(let [{:keys [a|]} m] a)"))
+  (should (replique-locals-test--binding-position "(let [[a b|] m] a)"))
+  (should (replique-locals-test--binding-position "(fn [{:keys [a|]}] a)")))
+
+(ert-deftest replique-locals-test-a-for-target-is-one ()
+  (should (replique-locals-test--binding-position "(for [x| c] x)"))
+  (should (replique-locals-test--binding-position "(doseq [x c :let [y| 2]] y)")))
+
+(ert-deftest replique-locals-test-what-a-def-names-is-one-though-it-is-no-local ()
+  (should (replique-locals-test--binding-position "(defn f|oo [] 1)"))
+  (should (replique-locals-test--binding-position "(defmacro m| [] 1)"))
+  (should (replique-locals-test--binding-position "(deftype T| [a] P)"))
+  (should (replique-locals-test--binding-position "(defrecord T| [a] P)")))
+
+(ert-deftest replique-locals-test-what-is-in-scope-where-it-is-written-is-one-too ()
+  ;; these come back from `replique-locals-at' and need nothing of their own
+  (should (replique-locals-test--binding-position "(fn f| [] 1)"))
+  (should (replique-locals-test--binding-position "(defn g [x|] x)"))
+  (should (replique-locals-test--binding-position "(deftype T [a|] P)"))
+  (should (replique-locals-test--binding-position "(letfn [(f| [] 1)] f)"))
+  (should (replique-locals-test--binding-position "(letfn [(f [x|] 1)] f)"))
+  (should (replique-locals-test--binding-position "(defmethod area :circle [x|] x)"))
+  (should (replique-locals-test--binding-position "(reify P (m [this|] 1))"))
+  (should (replique-locals-test--binding-position "(try x (catch E e| e))"))
+  (should (replique-locals-test--binding-position "(as-> x $| (f $))")))
+
+(ert-deftest replique-locals-test-a-use-is-not-a-binding-position ()
+  (should-not (replique-locals-test--binding-position "(let [x 1] x|)"))
+  (should-not (replique-locals-test--binding-position "(fn [x] |x)"))
+  (should-not (replique-locals-test--binding-position "(let [x (in|c 1)] x)")))
+
+(ert-deftest replique-locals-test-what-a-binding-is-bound-to-is-not-one ()
+  (should-not (replique-locals-test--binding-position "(let [x |1] x)"))
+  (should-not (replique-locals-test--binding-position "(defn f [] |1)"))
+  ;; a name, and a use of one: what the let is about to bind x to
+  (should-not (replique-locals-test--binding-position "(let [x y|] x)")))
+
+(ert-deftest replique-locals-test-an-or-default-is-an-expression ()
+  ;; nested inside a pattern, and still not a name being given
+  (should-not (replique-locals-test--binding-position "(let [{:or {a 1|}} m] a)")))
+
+(ert-deftest replique-locals-test-what-is-being-referred-to-is-not-one ()
+  ;; each of these names something that exists, and is worth completing
+  (should-not (replique-locals-test--binding-position "(defmethod ar|ea :circle [x] x)"))
+  (should-not (replique-locals-test--binding-position "(try x (catch E| e e))"))
+  (should-not (replique-locals-test--binding-position "(deftype T [a] P|)"))
+  (should-not (replique-locals-test--binding-position "(as-> x| $ (f $))"))
+  (should-not (replique-locals-test--binding-position "(le|t [x 1] x)")))
+
+(ert-deftest replique-locals-test-nowhere-in-particular-is-not-one ()
+  (should-not (replique-locals-test--binding-position "|(let [x 1] x)")))
 
 (provide 'replique-locals-test)
 
