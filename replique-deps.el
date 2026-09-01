@@ -47,12 +47,15 @@
 ;; A spec whose elements are themselves specs is a prefix list, and the only
 ;; thing that carries down through the descent is the prefix it makes.
 ;;
-;; Three things are left alone.  What follows a :rename is a map of one name
-;; to another, and only the keys of it are vars - it is answered as nothing
-;; rather than as vars, which is the safe way round.  A reader conditional
-;; written among the specs is not descended into.  And :require-macros is
-;; read as a :require, where ClojureScript would have it name a namespace of
-;; a different world: there is no ClojureScript here to tell them apart.
+;; One thing is left alone.  What follows a :rename is a map of one name to
+;; another, and only the keys of it are vars - it is answered as nothing
+;; rather than as vars, which is the safe way round.
+;;
+;; So is what follows a :refer-macros, for a reason worth writing down.  The
+;; vars it names are macros of the Clojure namespace of that name, and there
+;; is nothing in the answer that says which of the two worlds a var is from.
+;; A namespace has :namespace-macros to say it with and a var has nothing,
+;; so a var is answered as nothing until it has.
 
 ;;; Code:
 
@@ -60,12 +63,12 @@
 (require 'replique-clojure-mode)
 
 (defconst replique-deps--clauses
-  '(("require" . require) ("require-macros" . require) ("use" . use)
+  '(("require" . require) ("require-macros" . require-macros) ("use" . use)
     ("import" . import) ("refer-clojure" . refer-clojure) ("load" . load))
   "The clauses of an ns form, and what each of them is read as.")
 
 (defconst replique-deps--calls
-  '(("require" . require) ("require-macros" . require) ("use" . use)
+  '(("require" . require) ("require-macros" . require-macros) ("use" . use)
     ("import" . import) ("refer" . refer) ("refer-clojure" . refer-clojure)
     ("load" . load))
   "The calls that say what a clause says, and what each of them is read as.
@@ -89,6 +92,44 @@ and quoting says nothing about which slot is which."
   (let ((type (and node (treesit-node-type node))))
     (if (member type '("with_metadata" "quote" "syntax_quote"))
         (replique-deps--unwrap (treesit-node-child-by-field-name node "target"))
+      node)))
+
+(defun replique-deps--branch-at (node pos)
+  "Return what the reader conditional NODE stands for at POS, or nil.
+
+One is written as platforms and what each of them stands for, and the
+one that counts is the one POS is written in - which platform is read
+for is a question about what the form means rather than about where the
+text is, and the branch POS is in is the branch being written.
+
+The platforms are written where a key goes and what they stand for
+where a value goes, so a branch is at an odd index and a platform at an
+even one - and a point at a platform is at a platform, which is not a
+dependency of anything.
+
+A splicing one stands for several things at once, written in a vector,
+and the one that counts is again the one POS is in."
+  (let* ((body (treesit-node-child-by-field-name node "body"))
+         (children (and body (treesit-node-children body t)))
+         (index (and body (replique-deps--child-index-at body pos)))
+         (branch (and index (= 1 (mod index 2)) (nth index children))))
+    (when branch
+      (if (equal "marker_splicing"
+                 (treesit-node-type (treesit-node-child-by-field-name node "marker")))
+          (let ((inner (replique-deps--child-index-at branch pos)))
+            (and inner (nth inner (treesit-node-children branch t))))
+        branch))))
+
+(defun replique-deps--effective (node pos)
+  "Return what NODE stands for at POS.
+
+Its quoting and its metadata read through, and a reader conditional read
+down into - what is written in one of those is written where the
+conditional is."
+  (let ((node (replique-deps--unwrap node)))
+    (if (equal "reader_conditional" (treesit-node-type node))
+        (when-let* ((branch (replique-deps--branch-at node pos)))
+          (replique-deps--effective branch pos))
       node)))
 
 (defun replique-deps--sequential-node-p (node)
@@ -137,11 +178,27 @@ times as it has specs: (clojure [string :as s]) names clojure.string."
   (let ((name (treesit-node-text node t)))
     (if (equal "" prefix) name (concat prefix "." name))))
 
-(defun replique-deps--spec-context (spec pos prefix use)
+(defun replique-deps--namespace-position (kind)
+  "Return the position a namespace is at in a form of kind KIND.
+
+What a :require-macros names is a namespace of the other of the two
+worlds ClojureScript compiles with - a Clojure one, holding the macros
+that its own namespaces use.  The names to offer there are not the names
+to offer in a :require, so the two are not one position."
+  (if (eq kind 'require-macros) :namespace-macros :namespace))
+
+(defun replique-deps--option-position (kind)
+  "Return the position an option is at in a form of kind KIND.
+
+What a :use takes is what a refer takes, :only and :exclude, where a
+:require takes :as and :refer."
+  (if (eq kind 'use) :libspec-option-refer :libspec-option))
+
+(defun replique-deps--spec-context (spec pos prefix kind)
   "Return the slot of SPEC that POS is written in, under PREFIX.
 
-USE is non-nil where the spec is written in a :use, whose options are
-the options of a refer rather than of a require.
+KIND is what the form the spec is written in is, which decides what a
+namespace and an option are read as.
 
 The first element of a spec is the namespace it names.  The rest are read
 against what precedes them, so that a vector after a :refer is vars and a
@@ -151,12 +208,13 @@ at all is a spec of its own, written under the prefix this one makes."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children spec t)))
          (index (replique-deps--child-index-at spec pos))
-         (child (and index (nth index children))))
+         (child (and index (replique-deps--effective (nth index children) pos))))
     (cond
      ((null index) nil)
-     ((= 0 index) (list :position :namespace :prefix prefix))
+     ((= 0 index)
+      (list :position (replique-deps--namespace-position kind) :prefix prefix))
      ((replique-clojure--keyword-node-p child)
-      (list :position (if use :libspec-option-refer :libspec-option)))
+      (list :position (replique-deps--option-position kind)))
      (t
       (let ((option (replique-deps--option-name (nth (1- index) children)))
             (namespace (replique-deps--under prefix (car children))))
@@ -168,27 +226,28 @@ at all is a spec of its own, written under the prefix this one makes."
          ;; the name given by an :as, the map of a :rename
          (option nil)
          ((replique-clojure--symbol-node-p child)
-          (list :position :namespace :prefix namespace))
+          (list :position (replique-deps--namespace-position kind)
+                :prefix namespace))
          ((replique-deps--sequential-node-p child)
-          (replique-deps--spec-context child pos namespace use))))))))
+          (replique-deps--spec-context child pos namespace kind))))))))
 
-(defun replique-deps--require-context (node pos use)
+(defun replique-deps--require-context (node pos kind)
   "Return the slot of the require-like form NODE that POS is written in.
 
-USE is non-nil where it is a :use.  What is written in one is specs, and
-keywords among them are the flags of the whole form rather than the
-options of any spec."
+KIND is what the form is.  What is written in one is specs, and keywords
+among them are the flags of the whole form rather than the options of
+any spec."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
-         (child (and index (nth index children))))
+         (child (and index (replique-deps--effective (nth index children) pos))))
     (cond
      ((or (null index) (= 0 index)) nil)
      ((replique-clojure--keyword-node-p child) (list :position :flag))
      ((replique-clojure--symbol-node-p child)
-      (list :position :namespace :prefix ""))
+      (list :position (replique-deps--namespace-position kind) :prefix ""))
      ((replique-deps--sequential-node-p child)
-      (replique-deps--spec-context child pos "" use)))))
+      (replique-deps--spec-context child pos "" kind)))))
 
 (defun replique-deps--import-context (node pos)
   "Return the slot of the import-like form NODE that POS is written in.
@@ -197,7 +256,7 @@ An import is written as a class, or as a package and the classes of it."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
-         (child (and index (nth index children))))
+         (child (and index (replique-deps--effective (nth index children) pos))))
     (cond
      ((or (null index) (= 0 index)) nil)
      ((replique-clojure--symbol-node-p child) (list :position :package-or-class))
@@ -220,7 +279,7 @@ first is the namespace to refer from."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
-         (child (and index (nth index children))))
+         (child (and index (replique-deps--effective (nth index children) pos))))
     (cond
      ((null index) nil)
      ((< index from)
@@ -301,6 +360,7 @@ A plist holding :position, and what the process needs to answer it:
 
   :dependency-type    the :require or :import of an ns form
   :namespace          a namespace, :prefix being what it is written under
+  :namespace-macros   a namespace of macros, written under a :prefix too
   :var                a var, :namespace being the one to look in
   :package-or-class   an import written as one name
   :class              a class, :package being the one it is in
@@ -333,7 +393,7 @@ since a clause is in an ns form whether or not the ns form is on screen."
          ((eq kind 'refer-clojure)
           (replique-deps--refer-context node pos :refer-clojure 1))
          ((eq kind 'refer) (replique-deps--refer-call-context node pos))
-         (t (replique-deps--require-context node pos (eq kind 'use))))))))
+         (t (replique-deps--require-context node pos kind)))))))
 
 (provide 'replique-deps)
 

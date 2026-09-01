@@ -181,9 +181,58 @@
   (should-not (replique-deps-test--context "(ns a| (:require [b]))"))
   (should-not (replique-deps-test--context "|(ns a (:require [b]))")))
 
-(ert-deftest replique-deps-test-a-reader-conditional-is-not-descended-into ()
-  ;; written down as what it does rather than as what it should do
-  (should-not (replique-deps-test--context "(ns a (:require #?(:clj [b|])))")))
+(ert-deftest replique-deps-test-a-reader-conditional-is-read-branch-by-branch ()
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(ns a (:require #?(:clj [b|] :cljs [c])))")))
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(ns a (:require #?(:clj [b] :cljs [c|])))")))
+  (should (equal '(:position :var :namespace "b")
+                 (replique-deps-test--context "(ns a (:require #?(:clj [b :refer [d|]])))")))
+  (should (equal '(:position :class :package "java.util")
+                 (replique-deps-test--context "(ns a (:import #?(:clj (java.util Da|te))))")))
+  ;; one written among the specs of a prefix list is under it like the rest
+  (should (equal '(:position :namespace :prefix "c")
+                 (replique-deps-test--context "(ns a (:require (c #?(:clj [b|]))))")))
+  ;; and the quoting of a call reads through it
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(require #?(:clj '[b|]))"))))
+
+(ert-deftest replique-deps-test-a-splicing-conditional-holds-several-specs ()
+  (should (equal '(:position :namespace :prefix "")
+                 (replique-deps-test--context "(ns a (:require #?@(:clj [[b|] [c]])))")))
+  (should (equal '(:position :var :namespace "c")
+                 (replique-deps-test--context
+                  "(ns a (:require #?@(:clj [[b] [c :refer [d|]]])))"))))
+
+(ert-deftest replique-deps-test-a-platform-is-not-a-dependency ()
+  (should-not (replique-deps-test--context "(ns a (:require #?(:c|lj [b])))"))
+  (should-not (replique-deps-test--context "(ns a (:require #?@(:clj [[b] |[c]])))")))
+
+;;; Macros
+
+(ert-deftest replique-deps-test-a-require-macros-names-a-namespace-of-macros ()
+  ;; a Clojure namespace, where the :require beside it names a ClojureScript
+  ;; one - the names to offer are not the same names
+  (should (equal '(:position :namespace-macros :prefix "")
+                 (replique-deps-test--context "(ns a (:require-macros b|))")))
+  (should (equal '(:position :namespace-macros :prefix "")
+                 (replique-deps-test--context "(ns a (:require-macros [b| :as c]))")))
+  (should (equal '(:position :namespace-macros :prefix "c")
+                 (replique-deps-test--context "(ns a (:require-macros (c b|)))")))
+  (should (equal '(:position :namespace-macros :prefix "")
+                 (replique-deps-test--context "(require-macros '[b|])"))))
+
+(ert-deftest replique-deps-test-a-require-macros-is-a-require-in-every-other-way ()
+  (should (equal '(:position :libspec-option)
+                 (replique-deps-test--context "(ns a (:require-macros [b :a|s c]))")))
+  (should (equal '(:position :var :namespace "b")
+                 (replique-deps-test--context "(ns a (:require-macros [b :refer [d|]]))"))))
+
+(ert-deftest replique-deps-test-what-follows-a-refer-macros-is-answered-as-nothing ()
+  ;; the vars it names are macros of the Clojure namespace of that name, and
+  ;; nothing in the answer says which of the two worlds a var is from
+  (should-not (replique-deps-test--context "(ns a (:require [b :refer-macros [d|]]))"))
+  (should-not (replique-deps-test--context "(ns a (:require [b :include-macros tru|e]))")))
 
 (ert-deftest replique-deps-test-a-narrowing-does-not-hide-the-ns-form ()
   ;; a clause is in an ns form whether or not the ns form is on screen
