@@ -250,14 +250,25 @@ be shown as cut rather than as a whole one."
         'replique-exception)
        (replique-repl--echo repl message)))
     ("prompt"
-     (setf (replique-repl--ns repl) (plist-get frame :ns))
-     (setf (replique-repl--params repl) (plist-get frame :params))
-     ;; A form is not what produces a prompt - a read error and a comment
-     ;; produce one too - so the buffer is what says whether one is needed
-     (unless (replique-repl--at-prompt repl)
-       (replique-repl--insert repl (format "%s=> " (plist-get frame :ns))
-                              'replique-prompt)
-       (setf (replique-repl--at-prompt repl) t))
+     (let ((moved (not (equal (replique-repl--ns repl) (plist-get frame :ns)))))
+       (setf (replique-repl--ns repl) (plist-get frame :ns))
+       (setf (replique-repl--params repl) (plist-get frame :params))
+       ;; A form is not what produces a prompt - a read error and a comment
+       ;; produce one too - so the buffer is what says whether one is needed.
+       ;; Unless the namespace moved under a prompt that is already written,
+       ;; which is what a directive does: nothing was evaluated, so nothing
+       ;; consumed that prompt, and leaving it standing would leave the
+       ;; buffer saying the repl is somewhere it is not
+       (unless (and (replique-repl--at-prompt repl) (not moved))
+         ;; On a line of its own.  What normally comes before a prompt is
+         ;; the newline of whatever was printed above it, and a prompt
+         ;; written under a prompt has nothing above it but the one it is
+         ;; replacing
+         (when (replique-repl--at-prompt repl)
+           (replique-repl--insert repl "\n"))
+         (replique-repl--insert repl (format "%s=> " (plist-get frame :ns))
+                                'replique-prompt)
+         (setf (replique-repl--at-prompt repl) t)))
      ;; What was sent while the repl was busy is written now: the transcript
      ;; reads in the order the repl answered, not the order the editor asked
      (when-let* ((queued (replique-repl--queued repl)))
@@ -338,11 +349,21 @@ it better than anything here could."
 
 ;;; The mode
 
+;; Defined in replique-eval, which requires this file rather than the other
+;; way round: what the command offers to move to is read out of a buffer, and
+;; reading a buffer is that file's job.  Bound here because this is where it
+;; is used from
+(declare-function replique-in-ns "replique-eval")
+
 (defvar replique-repl-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'replique-interrupt)
     (define-key map (kbd "C-c C-q") #'replique-quit-repl)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)
+    ;; Autoloaded from replique-eval: what it offers is read from a buffer,
+    ;; and a repl buffer is one it has nothing to read out of - but the
+    ;; command is the same one, and it is bound where it is used
+    (define-key map (kbd "C-c M-n") #'replique-in-ns)
     (define-key map (kbd "RET") #'replique-repl-return)
     map)
   "Keymap of a repl buffer.")
@@ -547,6 +568,14 @@ live repl of the current process."
       (setq replique-current-repl (cdr (assoc choice choices)))
       (message "replique: %s" choice))))
 
+(defun replique-repl-process (repl)
+  "Return the process REPL is a repl of.
+
+Which is what its control connection belongs to, and so what answers the
+ops asked about a repl - rather than whatever process the commands are
+currently pointed at."
+  (replique-repl--process repl))
+
 (defun replique-repl-ensure ()
   "Return the repl the commands act on, or signal that there is none."
   (or (replique-repl-current)
@@ -579,6 +608,26 @@ in the echo area too."
     (when echo
       (setf (replique-repl--to-echo repl) (1+ (or (replique-repl--to-echo repl) 0))))
     (replique-conn-send-code conn code)))
+
+(defun replique-repl-send-directive (repl directive)
+  "Write DIRECTIVE on REPL, showing nothing in its buffer.
+
+A directive is not a form.  It has no result, so there is nothing for the
+transcript to show under it, and nobody wrote it, so there is nothing to
+show as having been typed either.  What comes back is the prompt of the
+next read, which is where the answer is: a directive that moved the repl
+moved the namespace the prompt says.
+
+Not `replique-repl-send-code\=', which is about forms and which would put a
+blank line in the buffer for something nobody wrote."
+  (let ((conn (replique-repl--conn repl)))
+    (unless (replique-conn-live-p conn)
+      (user-error "The repl is closed"))
+    ;; The blank line is what makes the prompt come back.  A directive is
+    ;; consumed and then the reader goes on looking for the form it is about;
+    ;; it is the end of a line with nothing pending that tells the repl there
+    ;; is nothing more coming, and a repl with nothing to read prints a prompt
+    (replique-conn-send-code conn (concat directive "\n"))))
 
 ;;; Commands
 

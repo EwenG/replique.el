@@ -50,10 +50,16 @@
 ;; commented out by whoever selected it.
 ;;
 ;; Code taken from a buffer belongs to the namespace that buffer is in, and
-;; the repl is wherever it was last left.  So a form is sent with the
-;; namespace it was written in as well as with the place it came from - see
-;; `replique-eval--ns-at' for how the buffer is asked, and
-;; `replique-ns-directive' for what the process does about it.
+;; the repl is wherever it was last left, so what is sent says which
+;; namespace to read it in - see `replique-eval--ns-at' for how the buffer is
+;; asked, and `replique-ns-directive' for what the process does about it.
+;;
+;; Once, before the first form, unlike the source directive: it moves the repl
+;; and leaves it moved, and what would move it again further down is a form
+;; the region holds and is about to evaluate.
+;;
+;; Moving the repl is also what `replique-in-ns' does on its own, for the
+;; times the namespace to work in is not the one any buffer is in.
 ;;
 ;; A comment is not a form and is never sent, whichever command asks.  What
 ;; it would produce is a directive nothing consumes: the reader answers a
@@ -69,6 +75,7 @@
 (require 'treesit)
 (require 'replique-clojure-mode)
 (require 'replique-edn)
+(require 'replique-process)
 (require 'replique-repl)
 
 (defconst replique-eval-grammar 'treejure
@@ -338,20 +345,24 @@ recorded where the buffer said this one was."
             (file (buffer-file-name)))
         (replique-repl-send-code
          repl
-         (mapconcat (lambda (node)
-                      (let* ((start (treesit-node-start node))
-                             ;; Asked of every form rather than once of the
-                             ;; first: a region reaching over an in-ns holds
-                             ;; forms of two namespaces, and each of them is
-                             ;; written in the one it is under
-                             (ns (replique-eval--ns-at start)))
-                        (concat (when ns (concat (replique-ns-directive ns) "\n"))
-                                (replique-src-directive
-                                 file (line-number-at-pos start t))
-                                "\n"
-                                (treesit-node-text node t))))
-                    nodes
-                    "\n")
+         ;; One namespace, before the first form, where the source directive
+         ;; needs one per form.  The two are not alike: a source directive
+         ;; is about the next form only, and this one moves the repl and
+         ;; leaves it moved.  What could make the namespace change further
+         ;; down is an ns or an in-ns form between two of these, and such a
+         ;; form is one of these - a region takes in every form it reaches
+         ;; over, dropping only comments, and a comment moves nothing.  So
+         ;; the rest of the region says where it is going by being evaluated
+         (concat
+          (when-let* ((ns (replique-eval--ns-at (treesit-node-start (car nodes)))))
+            (concat (replique-ns-directive ns) "\n"))
+          (mapconcat (lambda (node)
+                       (concat (replique-src-directive
+                                file (line-number-at-pos (treesit-node-start node) t))
+                               "\n"
+                               (treesit-node-text node t)))
+                     nodes
+                     "\n"))
          ;; What the buffer is shown leaves the directives out: they are
          ;; protocol, not something anybody wrote
          (mapconcat (lambda (node) (treesit-node-text node t)) nodes "\n")
@@ -391,6 +402,87 @@ behind the comment was not what was asked for."
          (node (replique-eval--discarded covering)))
     (unless node (user-error "No form at point"))
     (replique-eval--send (list node))))
+
+(defconst replique-ns-name-regexp
+  (rx bos (one-or-more (not (any "()[]{}\"@^`~\\#;'," "/" space "\n"))) eos)
+  "What a namespace name may look like: one symbol, unqualified.
+
+Not a full reading of what the reader accepts, which is the reader\='s
+business.  What is checked is that it holds none of the characters that
+would make the reader read something other than one plain symbol, and
+this matters because what is typed becomes a line of the repl\='s input:
+the reader takes the first token of it as the directive\='s argument and
+reads whatever follows as a form.  Sending \"foo bar\" would move the repl
+to foo and then evaluate bar, which is neither of the things that were
+asked for; \"foo)\" would be a read error; and \"#foo\" is a tagged literal,
+which would swallow whatever came next.  The process cannot catch any of
+them - it can only say something about what it managed to read.
+
+The slash is out because a namespace name carries no namespace of its
+own.  The process says that too, and about that one it can.")
+
+(defconst replique-namespaces-timeout 5
+  "How long to wait for the process to say what namespaces it has, in seconds.")
+
+(defun replique-namespaces (process)
+  "Return the namespaces PROCESS has, sorted, or nil when it does not say.
+
+Waited for rather than answered later: these are the choices of a prompt
+about to be shown, and there is no showing a prompt before there is
+anything to put in it.  Bounded, so that a process which stopped
+answering is a command that fails rather than an Emacs that hangs.
+
+What has been loaded, which is what a repl can be moved into: a namespace
+that exists only as a file on the classpath is one nothing can be
+evaluated in yet."
+  (let ((answer nil)
+        (done nil))
+    (replique-process-request
+     process (list :op :namespaces)
+     (lambda (frame)
+       (setq done t)
+       (unless (equal "error" (plist-get frame :tag))
+         (setq answer (plist-get frame :namespaces)))))
+    (let ((limit (+ (float-time) replique-namespaces-timeout)))
+      (while (and (not done) (< (float-time) limit))
+        (accept-process-output nil 0.05)))
+    answer))
+
+;;;###autoload
+(defun replique-in-ns (ns)
+  "Move the current repl into the namespace NS.
+
+The namespace the buffer is in is offered first, since moving the repl to
+where the code being worked on lives is what this is nearly always for -
+see `replique-eval--ns-at\='.  In a repl buffer there is no such namespace
+and nothing is offered.
+
+What the process has is what can be chosen, but what is typed is what is
+sent: a namespace that is not in the list is one the process will make,
+with `clojure.core\=' referred into it, rather than one this refuses.
+What is refused is text that is not the name of a namespace at all - see
+`replique-ns-name-regexp\=' for why that cannot be left to the process."
+  (interactive
+   (let* ((repl (replique-repl-ensure))
+          (namespaces (replique-namespaces (replique-repl-process repl)))
+          (default (and (derived-mode-p 'replique-clojure-mode)
+                        ;; Widened, the way `replique-eval--send\=' is: the ns
+                        ;; form of a buffer can be outside what a narrowing
+                        ;; left reachable, and what is parsed then is what is
+                        ;; reachable - a buffer narrowed to below its ns form
+                        ;; would be a buffer that names no namespace
+                        (save-restriction
+                          (widen)
+                          (replique-eval--ns-at (point))))))
+     (list (completing-read (format-prompt "Set ns" default)
+                            namespaces nil nil nil nil default))))
+  (let ((ns (string-trim ns)))
+    (when (string-empty-p ns)
+      (user-error "No namespace"))
+    (unless (string-match-p replique-ns-name-regexp ns)
+      (user-error "Not the name of a namespace: %s" ns))
+    (replique-repl-send-directive (replique-repl-ensure)
+                                  (replique-ns-directive ns))))
 
 ;;;###autoload
 (defun replique-eval-region (start end)

@@ -60,6 +60,7 @@
     (define-key map (kbd "C-M-x") #'replique-eval-defun)
     (define-key map (kbd "C-c C-r") #'replique-eval-region)
     (define-key map (kbd "C-c C-c") #'replique-interrupt)
+    (define-key map (kbd "C-c M-n") #'replique-in-ns)
     (define-key map (kbd "C-c C-z") #'replique-switch-to-repl)
     (define-key map (kbd "C-c C-o") #'replique-show-process-output)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)

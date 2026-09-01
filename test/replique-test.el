@@ -60,6 +60,9 @@ open on it."
      (goto-char (point-min))
      ,@body))
 
+(defvar replique-test-sent nil
+  "What was written on a repl connection, newest first, while captured.")
+
 (defun replique-test-node-texts (nodes)
   "Return the text of NODES."
   (mapcar (lambda (node) (treesit-node-text node t)) nodes))
@@ -1013,15 +1016,163 @@ is a transcript of the wire."
     (should-not (string-match-p "#replique/ns" (replique-test-text repl)))
     (should-not (string-match-p "#replique/src" (replique-test-text repl)))))
 
-(ert-deftest replique-test-every-form-of-a-region-says-which-namespace-it-is-in ()
-  "Asked of every form rather than once of the first: a region reaching
-over an in-ns holds forms of two namespaces, and each of them is written
-in the one it is under."
+(ert-deftest replique-test-the-process-says-what-namespaces-it-has ()
+  "What has been loaded, which is what a repl can be moved into: a
+namespace that exists only as a file on the classpath is one nothing can
+be evaluated in yet."
+  (replique-test-with-repl repl
+    (let ((namespaces (replique-namespaces (replique-repl-process repl))))
+      (should (member "clojure.core" namespaces))
+      (should (member "user" namespaces))
+      (should-not (member "replique.test-not-loaded" namespaces))
+      ;; and it is the process being asked rather than a list from anywhere
+      ;; else: a namespace made now is in the next answer
+      (replique-test-eval repl "(create-ns 'replique.test-just-made)")
+      (should (member "replique.test-just-made"
+                      (replique-namespaces (replique-repl-process repl)))))))
+
+(ert-deftest replique-test-the-repl-can-be-moved-to-a-namespace ()
+  "The command sends a directive rather than a form: there is no result
+under it in the transcript, and nothing shown as having been typed.  What
+says it worked is the prompt, which is what an editor reads the namespace
+off anyway."
+  (replique-test-with-repl repl
+    (setq replique-current-repl repl)
+    ;; one the process has: clojure.set is not loaded in a fresh one, and a
+    ;; namespace that exists only as a file on the classpath is a different
+    ;; case - see the tests of the directive itself
+    (replique-test-eval repl "(require 'clojure.set)")
+    (let ((before (replique-test-text repl)))
+      (replique-in-ns "clojure.set")
+      (replique-test-wait-for
+       (lambda () (equal "clojure.set" (replique-repl--ns repl))))
+      (should (equal "clojure.set" (replique-repl--ns repl)))
+      ;; the prompt that was standing said user, and nothing consumed it, so
+      ;; the new one goes on a line of its own under it rather than beside it
+      (should (equal "\nclojure.set=> "
+                     (substring (replique-test-text repl) (length before)))))
+    ;; and the repl really is in it: what that namespace holds resolves
+    ;; without being named
+    (should (string-match-p "^:in-there$"
+                            (replique-test-eval
+                             repl "(if (resolve 'union) :in-there :not)")))
+    ;; a namespace the process does not have is one it makes, with
+    ;; clojure.core referred into it - see `enter-ns!\=' in replique.repl
+    (replique-in-ns "replique.test-brand-new")
+    (replique-test-wait-for
+     (lambda () (equal "replique.test-brand-new" (replique-repl--ns repl))))
+    (should (string-match-p "^2$" (replique-test-eval repl "(inc 1)")))))
+
+(ert-deftest replique-test-the-namespace-offered-is-the-one-the-buffer-is-in ()
+  "Moving the repl to where the code being worked on lives is what the
+command is nearly always for, so that is what pressing RET does.  In a
+repl buffer there is no such namespace and nothing is offered.
+
+Asked of the whole buffer rather than of what a narrowing left of it: a
+parse of what is reachable does not hold an ns form that is not, and a
+buffer narrowed to one function is still a buffer of that namespace."
   (replique-test-grammar)
-  (replique-test-with-clojure "(ns foo.bar)\n(def a 1)\n(in-ns 'one)\n(def b 2)\n"
-    (should (equal '(nil "foo.bar" "foo.bar" "one")
-                   (mapcar (lambda (n) (replique-eval--ns-at (treesit-node-start n)))
-                           (replique-eval--nodes (point-min) (point-max)))))))
+  (replique-test-with-repl repl
+    (setq replique-current-repl repl)
+    (let ((asked nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest args)
+                   (setq asked (list (nth 4 args) collection))
+                   "clojure.set")))
+        (replique-test-with-clojure "(ns replique.test-offered)\n(def a 1)\n"
+          (setq replique-current-repl repl)
+          (goto-char (point-max))
+          (call-interactively #'replique-in-ns))
+        (should (equal "replique.test-offered" (car asked)))
+        (should (member "clojure.core" (nth 1 asked)))
+        ;; and the same buffer narrowed to below its ns form
+        (setq asked nil)
+        (replique-test-with-clojure "(ns replique.test-offered)\n(def a 1)\n"
+          (setq replique-current-repl repl)
+          (goto-char (point-min))
+          (search-forward "(def a")
+          (narrow-to-region (match-beginning 0) (point-max))
+          (call-interactively #'replique-in-ns))
+        (should (equal "replique.test-offered" (car asked)))
+        ;; a repl buffer is not a buffer with a namespace written in it
+        (setq asked nil)
+        (with-current-buffer (replique-repl--buffer repl)
+          (call-interactively #'replique-in-ns))
+        (should (null (car asked)))))))
+
+(ert-deftest replique-test-what-is-not-a-namespace-name-is-not-sent ()
+  "What is typed becomes a line of the repl's input, and the reader takes
+the first token of it as the directive and reads the rest as a form.  So
+\"foo bar\" would move the repl to foo and evaluate bar, and neither is
+what was asked for.  The process cannot report that: it only ever sees
+what it managed to read."
+  (replique-test-with-repl repl
+    (setq replique-current-repl repl)
+    (let ((before (replique-test-text repl)))
+      (dolist (typed '("foo bar" "foo)" "#foo" "foo/bar" "^foo" "a;b" "  "))
+        (should-error (replique-in-ns typed) :type 'user-error))
+      (replique-test-settle)
+      ;; nothing of it reached the repl
+      (should (equal before (replique-test-text repl)))
+      (should (equal "user" (replique-repl--ns repl))))
+    ;; and a name that is one is sent
+    (replique-in-ns "replique.test-well-formed")
+    (should (replique-test-wait-for
+             (lambda () (equal "replique.test-well-formed"
+                               (replique-repl--ns repl)))))))
+
+(ert-deftest replique-test-a-region-reaching-over-an-in-ns-lands-in-both ()
+  "One directive is sent, before the first form, where a source directive
+is needed per form: this one moves the repl and leaves it moved.  What
+would move it again further down is an ns or an in-ns form between two of
+the forms being sent - and such a form is one of them, since a region
+takes in every form it reaches over and drops only comments.  So the rest
+of the region says where it is going by being evaluated, and a directive
+per form would be sending what the code already says.
+
+The region starts under the ns form rather than at it, which is what
+makes the directive the only thing that can put the first def where it
+belongs: the repl is in user, and nothing evaluated here moves it there."
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (setq replique-test-sent nil)
+    (should (equal "user" (replique-repl--ns repl)))
+    (replique-test-with-clojure
+        (concat "(ns replique.test-region-first)\n"
+                "(def a :first)\n"
+                "(in-ns 'replique.test-region-second)\n"
+                "(def b :second)\n")
+      (setq replique-current-repl repl)
+      (goto-char (point-min))
+      (search-forward "(def a")
+      (cl-letf* ((send (symbol-function 'replique-conn-send-code))
+                 ((symbol-function 'replique-conn-send-code)
+                  (lambda (conn code)
+                    (push code replique-test-sent)
+                    (funcall send conn code))))
+        (replique-eval-region (match-beginning 0) (point-max))))
+    (should (replique-test-wait-for
+             (lambda () (equal "replique.test-region-second" (replique-repl--ns repl)))))
+    ;; each def where the code says, and nothing of the second half left
+    ;; behind in the first
+    (should (string-match-p
+             "\"replique.test-region-first\""
+             (replique-test-eval
+              repl (concat "(clojure.core/str (:ns (clojure.core/meta "
+                           "(clojure.core/resolve 'replique.test-region-first/a))))"))))
+    (should (string-match-p
+             "\"replique.test-region-second\""
+             (replique-test-eval
+              repl (concat "(clojure.core/str (:ns (clojure.core/meta "
+                           "(clojure.core/resolve 'replique.test-region-second/b))))"))))
+    (should (string-match-p
+             "^false$"
+             (replique-test-eval
+              repl (concat "(clojure.core/some? (clojure.core/resolve "
+                           "'replique.test-region-first/b))"))))
+    ;; and only the one went out, whatever the region held
+    (should (equal 1 (1- (length (split-string (car replique-test-sent)
+                                               "#replique/ns")))))))
 
 (ert-deftest replique-test-a-clojure-buffer-has-the-commands-in-it ()
   "The keys are bound in a Clojure file without anything being turned on
