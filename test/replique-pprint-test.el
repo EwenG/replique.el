@@ -1,0 +1,253 @@
+;;; replique-pprint-test.el --- Tests for laying out data  -*- lexical-binding: t; -*-
+
+;;; Commentary:
+
+;; Laying a printed value out over lines.  These need no process: what they
+;; check is text in and text out.
+;;
+;; Several of them are written against what master's printer does with the
+;; same input, since that is what this replaces - the tests named for a
+;; column budget, for a token being written as it was written, and for a map
+;; that fits are the three places master gets it wrong.
+
+;;; Code:
+
+(require 'ert)
+(require 'replique-test)
+(require 'replique-pprint)
+
+(defun replique-pprint-test--pp (text &optional width)
+  "Return TEXT laid out to fit WIDTH columns, or skip without the grammar."
+  (replique-test-grammar)
+  (replique-pprint-string text width))
+
+(defun replique-pprint-test--command (text width)
+  "Return TEXT after `replique-pprint\=' ran at | in it, to fit WIDTH."
+  (replique-test-grammar)
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert text)
+    (goto-char (point-min))
+    (unless (search-forward "|" nil t)
+      (error "The text says nowhere to run: %s" text))
+    (delete-region (match-beginning 0) (match-end 0))
+    (goto-char (match-beginning 0))
+    (let ((replique-pprint-width width))
+      (replique-pprint))
+    (buffer-substring-no-properties (point-min) (point-max))))
+
+;;; The budget
+
+(ert-deftest replique-pprint-test-what-fits-is-left-on-one-line ()
+  ;; master breaks a map at every entry whatever its width, so this one comes
+  ;; out over two lines there
+  (should (equal "{:a 1 :b 2}" (replique-pprint-test--pp "{:a 1 :b 2}" 20)))
+  (should (equal "[1 2 3]" (replique-pprint-test--pp "[1 2 3]" 20)))
+  (should (equal "{:a 1 :b 2}" (replique-pprint-test--pp "{:a 1\n :b 2}" 20))))
+
+(ert-deftest replique-pprint-test-what-does-not-fit-is-broken ()
+  (should (equal "{:aaaa 1\n :bbbb 2}"
+                 (replique-pprint-test--pp "{:aaaa 1 :bbbb 2}" 10))))
+
+(ert-deftest replique-pprint-test-the-budget-is-the-column-not-the-form ()
+  ;; master measures each collection from its own opening bracket, so the
+  ;; innermost of these is eleven columns wide against a budget of twelve
+  ;; and the whole thing stays on one line there, nineteen columns wide
+  (should (equal "[[[[[1 2 3 4\n     5]]]]]"
+                 (replique-pprint-test--pp "[[[[[1 2 3 4 5]]]]]" 12)))
+  (should (equal "[[[[[1 2 3 4 5]]]]]"
+                 (replique-pprint-test--pp "[[[[[1 2 3 4 5]]]]]" 19))))
+
+(ert-deftest replique-pprint-test-a-form-is-laid-out-from-where-it-starts ()
+  ;; the same map, written three columns in, has three fewer to spend
+  (should (equal "   {:aaa 1\n    :bbb 2}"
+                 (replique-pprint-test--command "   {:aaa 1 :bbb |2}" 16)))
+  (should (equal "   {:aaa 1 :bbb 2}"
+                 (replique-pprint-test--command "   {:aaa 1 :bbb |2}" 18))))
+
+;;; Tokens
+
+(ert-deftest replique-pprint-test-a-token-is-written-as-it-was-written ()
+  ;; master indents the lines of a broken up form one at a time, walking
+  ;; over whatever characters are in the range - so it writes spaces into
+  ;; the middle of this string and the value stops being the value
+  (should (equal "{:k [\"aa\nbb\"\n     11111\n     22222]}"
+                 (replique-pprint-test--pp "{:k [\"aa\nbb\" 11111 22222]}" 12)))
+  (should (equal "\"aa\nbb\"" (replique-pprint-test--pp "\"aa\nbb\"" 3)))
+  ;; and it is never measured as though it were one line: what a width for
+  ;; it would say is a number that is not a column, and every decision made
+  ;; after it on that line would be made against it
+  (should (equal "[\"aa\nbb\"\n 1]" (replique-pprint-test--pp "[\"aa\nbb\" 1]" 20))))
+
+(ert-deftest replique-pprint-test-a-token-that-does-not-fit-is-written-anyway ()
+  (should (equal "[aaaaaaaaaa\n bbbbbbbbbb]"
+                 (replique-pprint-test--pp "[aaaaaaaaaa bbbbbbbbbb]" 4))))
+
+;;; How a break is chosen
+
+(ert-deftest replique-pprint-test-a-map-breaks-one-entry-to-a-line ()
+  (should (equal "{:a 1\n :b 2\n :c 3}"
+                 (replique-pprint-test--pp "{:a 1 :b 2 :c 3}" 8)))
+  ;; and one to a line however many would have fit on it: a map filled the
+  ;; way a vector is is a map whose entries have to be counted out to be read
+  (should (equal "{:a 1\n :b 2\n :c 3}"
+                 (replique-pprint-test--pp "{:a 1 :b 2 :c 3}" 12))))
+
+(ert-deftest replique-pprint-test-everything-else-fills ()
+  (should (equal "[1 2 3\n 4 5 6\n 7]" (replique-pprint-test--pp "[1 2 3 4 5 6 7]" 7)))
+  (should (equal "#{1 2 3\n  4 5 6}" (replique-pprint-test--pp "#{1 2 3 4 5 6}" 8)))
+  (should (equal "(1 2 3\n 4 5 6)" (replique-pprint-test--pp "(1 2 3 4 5 6)" 7))))
+
+(ert-deftest replique-pprint-test-an-element-of-several-lines-gets-its-own ()
+  ;; without this the 1 and the 2 carry on after the closing bracket of the
+  ;; vector above them, and read as part of it
+  (should (equal "[[1 2 3 4 5\n  6]\n 1 2]"
+                 (replique-pprint-test--pp "[[1 2 3 4 5 6] 1 2]" 12))))
+
+(ert-deftest replique-pprint-test-a-value-hangs-after-its-key ()
+  ;; under the key is where the next key goes
+  (should (equal "{:a [1 2 3\n     4 5]\n :b 2}"
+                 (replique-pprint-test--pp "{:a [1 2 3 4 5] :b 2}" 11)))
+  ;; and what it costs is a map of maps, where each key hangs the next one
+  ;; further in than the last - past the width once there are enough of
+  ;; them.  The exchange is deliberate: this is the width being run past on
+  ;; a shape that is rare, against every map being ambiguous to read
+  (should (equal "{:a {:b {:c [1\n             2]}}}"
+                 (replique-pprint-test--pp "{:a {:b {:c [1 2]}}}" 12))))
+
+;;; Reader macros
+
+(ert-deftest replique-pprint-test-a-reader-macro-keeps-what-it-is-applied-to ()
+  (should (equal "#foo.Bar{:a 1\n         :b 2}"
+                 (replique-pprint-test--pp "#foo.Bar{:a 1 :b 2}" 14)))
+  (should (equal "#:x{:a 1\n    :b 2}" (replique-pprint-test--pp "#:x{:a 1 :b 2}" 8)))
+  (should (equal "#?(:clj 1\n   :cljs 2)"
+                 (replique-pprint-test--pp "#?(:clj 1 :cljs 2)" 10)))
+  (should (equal "'(1 2)" (replique-pprint-test--pp "'(1 2)" 20)))
+  (should (equal "@a" (replique-pprint-test--pp "@a" 20)))
+  (should (equal "#'a" (replique-pprint-test--pp "#'a" 20)))
+  (should (equal "[1 #_2 3]" (replique-pprint-test--pp "[1 #_2 3]" 20))))
+
+(ert-deftest replique-pprint-test-a-space-is-kept-where-there-was-one ()
+  ;; removing it would push the two together into a third token
+  (should (equal "^:m x" (replique-pprint-test--pp "^:m x" 20)))
+  (should (equal "^:m x" (replique-pprint-test--pp "^:m\n   x" 20)))
+  (should (equal "#inst \"2020\"" (replique-pprint-test--pp "#inst \"2020\"" 20)))
+  ;; and none is added where there was none
+  (should (equal "#foo{:a 1}" (replique-pprint-test--pp "#foo{:a 1}" 20))))
+
+;;; What is refused
+
+(ert-deftest replique-pprint-test-a-comment-is-refused-not-deleted ()
+  ;; master deletes it, which loses what was written without saying so
+  (should-error (replique-pprint-test--pp "{:a 1 ;; why\n :b 2}") :type 'user-error)
+  (should-error (replique-pprint-test--pp ";; why\n{:a 1}") :type 'user-error))
+
+(ert-deftest replique-pprint-test-what-did-not-parse-is-refused ()
+  (should-error (replique-pprint-test--pp "[1 2") :type 'user-error)
+  (should-error (replique-pprint-test--pp "{:a 1 :b}") :type 'user-error)
+  (should-error (replique-pprint-test--pp "'") :type 'user-error))
+
+;;; Nothing, and more than one thing
+
+(ert-deftest replique-pprint-test-nothing-lays-out-as-nothing ()
+  (should (equal "" (replique-pprint-test--pp "")))
+  (should (equal "" (replique-pprint-test--pp "   \n  ")))
+  (should (equal "()" (replique-pprint-test--pp "(  )" 2)))
+  (should (equal "[]" (replique-pprint-test--pp "[]" 1)))
+  (should (equal "{}" (replique-pprint-test--pp "{}" 1)))
+  (should (equal "#{}" (replique-pprint-test--pp "#{}" 1))))
+
+(ert-deftest replique-pprint-test-several-forms-come-back-one-to-a-line ()
+  (should (equal "{:a 1}\n{:b 2}" (replique-pprint-test--pp "{:a 1} {:b 2}"))))
+
+;;; Laying out what is already laid out
+
+(ert-deftest replique-pprint-test-laying-out-twice-is-laying-out-once ()
+  ;; master grows the string in the last of these by four spaces a time
+  (dolist (text '("{:a 1 :b 2 :c 3}"
+                  "[1 2 3 4 5 6 7 8 9 10 11 12]"
+                  "{:a {:b {:c [1 2 3 4 5]}}}"
+                  "[{:name \"aa\" :id 1} {:name \"bb\" :id 2}]"
+                  "#foo.Bar{:a 1 :b 2}"
+                  "#:x{:a [1 2 3 4 5 6] :b 2}"
+                  "#?(:clj 1 :cljs 2)"
+                  "^:m [1 2 3 4 5 6 7 8]"
+                  "{:k [\"aa\nbb\" 11111 22222]}"))
+    (dolist (width '(4 12 40))
+      (let* ((once (replique-pprint-test--pp text width))
+             (twice (replique-pprint-string once width)))
+        (should (equal once twice))))))
+
+;;; The command
+
+(ert-deftest replique-pprint-test-the-command-lays-out-the-form-point-is-in ()
+  (should (equal "(a)\n{:aa 1\n :bb 2}"
+                 (replique-pprint-test--command "(a)\n{:aa 1 :b|b 2}" 8)))
+  ;; and leaves the form it is not in alone
+  (should (equal "{:aa 1 :bb 2}\n{:cc 1\n :dd 2}"
+                 (replique-pprint-test--command
+                  "{:aa 1 :bb 2}\n{:cc 1 :d|d 2}" 8))))
+
+(ert-deftest replique-pprint-test-the-command-lays-out-the-form-before-point ()
+  ;; which is where point is at the prompt of a repl, after what was printed
+  (should (equal "{:aa 1\n :bb 2}\n"
+                 (replique-pprint-test--command "{:aa 1 :bb 2}\n|" 8))))
+
+(ert-deftest replique-pprint-test-the-command-puts-it-back-in-one-undo ()
+  (replique-test-grammar)
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert "{:aa 1 :bb 2}")
+    (goto-char 3)
+    (setq buffer-undo-list nil)
+    (let ((replique-pprint-width 8))
+      (replique-pprint))
+    (should (equal "{:aa 1\n :bb 2}" (buffer-string)))
+    (primitive-undo 1 buffer-undo-list)
+    (should (equal "{:aa 1 :bb 2}" (buffer-string)))))
+
+(ert-deftest replique-pprint-test-the-command-changes-nothing-it-need-not ()
+  (replique-test-grammar)
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert "{:aa 1 :bb 2}")
+    (set-buffer-modified-p nil)
+    (goto-char 3)
+    (let ((replique-pprint-width 80))
+      (replique-pprint))
+    (should-not (buffer-modified-p))))
+
+(ert-deftest replique-pprint-test-the-command-needs-a-parse-and-a-form ()
+  (replique-test-grammar)
+  (with-temp-buffer
+    (insert "{:a 1}")
+    (should-error (replique-pprint) :type 'user-error))
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert "   ")
+    (goto-char (point-min))
+    (should-error (replique-pprint) :type 'user-error)))
+
+(ert-deftest replique-pprint-test-a-deeply-nested-value-is-laid-out ()
+  ;; Writing a form out recurses a frame or so a level, so how deeply a value
+  ;; is nested is bounded by the stack rather than by anything here.  Where
+  ;; the bound is is worth pinning: master manages a value nested three
+  ;; hundred deep, and a change that spent one more frame a level would take
+  ;; this under that without anything else noticing.
+  ;;
+  ;; Only when compiled.  Interpreted, every level costs several times the
+  ;; frames it costs compiled, and what is being pinned here is how many
+  ;; levels fit in a stack, not how elisp was loaded
+  (skip-unless (compiled-function-p (symbol-function 'replique-pprint--emit)))
+  (let* ((depth 300)
+         (text (concat (make-string depth ?\[) "1 2 3" (make-string depth ?\])))
+         ;; a width every one of those levels is past, so that the deep way
+         ;; through is the one taken
+         (once (replique-pprint-test--pp text 10)))
+    (should (stringp once))
+    (should (equal once (replique-pprint-string once 10)))))
+
+(provide 'replique-pprint-test)
+
+;;; replique-pprint-test.el ends here

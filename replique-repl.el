@@ -82,6 +82,7 @@
 (require 'replique-conn)
 (require 'replique-exception)
 (require 'replique-process)
+(require 'replique-pprint)
 
 (defcustom replique-prompt-read-only t
   "Whether the prompt of a repl buffer is read only."
@@ -360,6 +361,7 @@ it better than anything here could."
     (define-key map (kbd "C-c C-c") #'replique-interrupt)
     (define-key map (kbd "C-c C-q") #'replique-quit-repl)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)
+    (define-key map (kbd "C-c C-p") #'replique-pprint)
     ;; Autoloaded from replique-eval: what it offers is read from a buffer,
     ;; and a repl buffer is one it has nothing to read out of - but the
     ;; command is the same one, and it is bound where it is used

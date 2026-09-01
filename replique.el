@@ -53,6 +53,7 @@
 (require 'replique-process)
 (require 'replique-repl)
 (require 'replique-eval)
+(require 'replique-pprint)
 
 (defvar replique-mode-map
   (let ((map (make-sparse-keymap)))
@@ -64,6 +65,7 @@
     (define-key map (kbd "C-c C-z") #'replique-switch-to-repl)
     (define-key map (kbd "C-c C-o") #'replique-show-process-output)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)
+    (define-key map (kbd "C-c C-p") #'replique-pprint)
     map)
   "Keymap of `replique-mode'.")
 
