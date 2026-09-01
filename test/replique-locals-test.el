@@ -434,7 +434,21 @@
 (ert-deftest replique-locals-test-a-name-in-a-destructuring-is-one-however-deep ()
   (should (replique-locals-test--binding-position "(let [{:keys [a|]} m] a)"))
   (should (replique-locals-test--binding-position "(let [[a b|] m] a)"))
-  (should (replique-locals-test--binding-position "(fn [{:keys [a|]}] a)")))
+  (should (replique-locals-test--binding-position "(fn [{:keys [a|]}] a)"))
+  (should (replique-locals-test--binding-position "(let [{:strs [a|]} m] a)"))
+  (should (replique-locals-test--binding-position "(let [{:as m|} x] m)")))
+
+(ert-deftest replique-locals-test-a-key-is-a-name-all-the-way-through ()
+  ;; what {:keys [foo/bar]} binds is bar and where it binds it is the start
+  ;; of foo/bar, so a name and the text it is written as are different
+  ;; lengths - the whole of the text is still a name being given
+  (should (replique-locals-test--binding-position "(let [{:keys [foo/b|ar]} m] bar)"))
+  (should (replique-locals-test--binding-position "(let [{:keys [f|oo/bar]} m] bar)"))
+  (should (replique-locals-test--binding-position "(let [{:keys [:a|]} m] a)")))
+
+(ert-deftest replique-locals-test-metadata-does-not-hide-a-name ()
+  (should (replique-locals-test--binding-position "(let [^long x| 1] x)"))
+  (should (replique-locals-test--binding-position "(defn ^:private f|oo [] 1)")))
 
 (ert-deftest replique-locals-test-a-for-target-is-one ()
   (should (replique-locals-test--binding-position "(for [x| c] x)"))
@@ -479,7 +493,19 @@
   (should-not (replique-locals-test--binding-position "(try x (catch E| e e))"))
   (should-not (replique-locals-test--binding-position "(deftype T [a] P|)"))
   (should-not (replique-locals-test--binding-position "(as-> x| $ (f $))"))
-  (should-not (replique-locals-test--binding-position "(le|t [x 1] x)")))
+  (should-not (replique-locals-test--binding-position "(le|t [x 1] x)"))
+  ;; the method a deftype implements, which the protocol has a name for
+  (should-not (replique-locals-test--binding-position "(deftype T [a] P (m| [this] 1))")))
+
+(ert-deftest replique-locals-test-a-space-in-front-of-a-name-is-not-in-it ()
+  ;; a name covers the point after it and not the point before it, so a
+  ;; point with a space on either side of it is at no name at all
+  (should-not (replique-locals-test--binding-position "(let [x 1 | y 2] y)"))
+  (should-not (replique-locals-test--binding-position "(let [| x 1] x)")))
+
+(ert-deftest replique-locals-test-a-modifier-with-nothing-after-it-is-read-anyway ()
+  ;; the :let of a for, written and not yet given its vector
+  (should-not (replique-locals-test--binding-position "(for [x c :let|] x)")))
 
 (ert-deftest replique-locals-test-nowhere-in-particular-is-not-one ()
   (should-not (replique-locals-test--binding-position "|(let [x 1] x)")))

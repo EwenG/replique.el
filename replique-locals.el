@@ -613,17 +613,45 @@ is answered twice, which two of the same name is the right answer to."
       (replique-locals--named node))
      (t nil))))
 
-(defun replique-locals--at-name-p (pos names)
-  "Say whether POS is at one of NAMES, each of them a (NAME . POSITION).
+(defun replique-locals--name-node-at (probe pos)
+  "Return the symbol or keyword written at PROBE, when POS is in it.
 
-A name covers where it is written and the point just after it, which is
-where point is while it is still being typed."
-  (let ((found nil))
-    (dolist (name names)
-      (when (and (<= (cdr name) pos)
-                 (<= pos (+ (cdr name) (length (car name)))))
-        (setq found t)))
+PROBE is where to look and POS is what the answer has to cover, and they
+are two because `treesit-node-at\=' answers for a position inside a token
+rather than for one at either of its edges.  POS is in a name from where
+the name starts to just after it ends, that last being where point is
+once a name has been typed and nothing else has."
+  (let ((node (treesit-node-at probe))
+        (found nil))
+    (while (and node (null found))
+      (when (and (or (replique-clojure--symbol-node-p node)
+                     (replique-clojure--keyword-node-p node))
+                 (<= (treesit-node-start node) pos)
+                 (<= pos (treesit-node-end node)))
+        (setq found node))
+      (setq node (treesit-node-parent node)))
     found))
+
+(defun replique-locals--name-node (pos)
+  "Return the symbol or keyword POS is at, or nil.
+
+Looked for at POS and then at the character before it, since
+`treesit-node-at\=' answers with what follows POS where nothing covers it
+- and what POS is just after is a name POS is at, where what follows POS
+is not."
+  (or (replique-locals--name-node-at pos pos)
+      (and (> pos (point-min))
+           (replique-locals--name-node-at (1- pos) pos))))
+
+(defun replique-locals--at-name-p (start names)
+  "Say whether one of NAMES is the name written at START.
+
+Each of NAMES is a (NAME . POSITION), and the two are compared by where
+they are rather than by what they say.  A name and the text it is written
+as are not the same length: what {:keys [foo/bar]} binds is bar, and
+where it binds it is the start of foo/bar - so a name plus its length
+covers the namespace and stops before the name."
+  (and (rassoc start names) t))
 
 (defun replique-locals-at-binding-position-p (pos)
   "Say whether POS is where a name is being given rather than used.
@@ -638,16 +666,22 @@ written in, so that a name in a destructuring is one of these wherever it
 is nested, and the default after an :or is not one - it is an expression
 written where an expression goes.
 
+A name is at POS or it is not, all of it: the whole of the foo/bar in
+{:keys [foo/bar]} is a name being given, though only the bar of it is
+the name that it gives.
+
 Reads the whole of the buffer, for the reason `replique-locals-at\=' does."
   (save-restriction
     (widen)
-    (or (replique-locals--at-name-p pos (replique-locals-at pos))
-        (let ((nodes (replique-locals--enclosing pos))
-              (found nil))
-          (while (and nodes (not found))
-            (setq found (replique-locals--at-name-p
-                         pos (replique-locals--naming-by (pop nodes)))))
-          found))))
+    (when-let* ((node (replique-locals--name-node pos))
+                (start (treesit-node-start node)))
+      (or (replique-locals--at-name-p start (replique-locals-at pos))
+          (let ((nodes (replique-locals--enclosing pos))
+                (found nil))
+            (while (and nodes (not found))
+              (setq found (replique-locals--at-name-p
+                           start (replique-locals--naming-by (pop nodes)))))
+            found)))))
 
 (provide 'replique-locals)
 
