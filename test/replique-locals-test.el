@@ -37,6 +37,22 @@
   "Return the names of the locals in scope where | is in TEXT."
   (mapcar #'car (replique-locals-test--locals text)))
 
+(defun replique-locals-test--names-narrowed (text)
+  "Return the names in scope where | is in TEXT, with only its line reachable."
+  (replique-test-grammar)
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert text)
+    (goto-char (point-min))
+    (unless (search-forward "|" nil t)
+      (error "The text says nowhere to look: %s" text))
+    (let ((pos (match-beginning 0)))
+      (delete-region (match-beginning 0) (match-end 0))
+      (goto-char pos)
+      (save-restriction
+        (narrow-to-region (line-beginning-position) (line-end-position))
+        (mapcar #'car (replique-locals-at pos))))))
+
 ;;; let and what is shaped like it
 
 (ert-deftest replique-locals-test-a-let-binds-in-its-body ()
@@ -320,6 +336,17 @@
 
 (ert-deftest replique-locals-test-a-parameter-vector-covers-itself ()
   (should (equal '("y" "x") (replique-locals-test--names "(fn [x |y] x)"))))
+
+;;; What a narrowing leaves out
+
+(ert-deftest replique-locals-test-a-narrowing-does-not-unbind-anything ()
+  ;; a form is inside what it is written inside whether or not that is on
+  ;; screen, and a name not known to be a local is asked about as a var
+  (should (equal '("x")
+                 (replique-locals-test--names-narrowed "(let [x 1]\n  (inc |))")))
+  (should (equal '("y" "x")
+                 (replique-locals-test--names-narrowed
+                  "(let [x 1]\n  (fn [y]\n    (inc |)))"))))
 
 ;;; Nowhere in particular
 

@@ -90,6 +90,14 @@ on describing inside it.")
   '("fn" "defn" "defn-" "defmacro")
   "The forms that bind a parameter vector, one per arity.")
 
+(defconst replique-locals--letfn-like
+  '("letfn")
+  "The forms that bind names to the functions written beside them.")
+
+(defconst replique-locals--defmethod-like
+  '("defmethod")
+  "The forms that bind a parameter vector written after a dispatch value.")
+
 (defconst replique-locals--deftype-like
   '("deftype" "defrecord")
   "The forms that bind a vector of fields and then methods.")
@@ -446,9 +454,9 @@ where each of them is bound is the #( they are written in."
        ((member name replique-locals--fn-like)
         (replique-locals--fn-bound
          node pos (and (member name replique-locals--self-naming) t)))
-       ((equal name "letfn")
+       ((member name replique-locals--letfn-like)
         (replique-locals--letfn-bound node pos))
-       ((equal name "defmethod")
+       ((member name replique-locals--defmethod-like)
         (replique-locals--defmethod-bound node pos))
        ((member name replique-locals--deftype-like)
         (replique-locals--deftype-bound node pos))
@@ -480,13 +488,29 @@ after POS is not what POS is inside of."
 
 POSITION is where the name is bound, which is where a client that jumps
 to a definition jumps to.  Nearest first means `assoc\=' answers with the
-binding that shadows the others, and that the answer is usable as it
-comes: what to describe a name by, whether a name is a local at all, and
-what names are in scope, are the same list read three ways."
-  (let ((found nil))
-    (dolist (node (replique-locals--enclosing pos))
-      (setq found (append found (replique-locals--bound-by node pos))))
-    found))
+binding that shadows the rest, and `cdr\=' with where that one of them is.
+
+A name bound twice is in the answer twice.  What the parse says is left
+in rather than tidied away, since nothing else can tell that a binding
+was shadowed - so showing the names to somebody wants `delete-dups\='
+over them.
+
+Read from the whole of the buffer rather than from what a narrowing left
+reachable: a form is inside what it is written inside whether or not that
+is on screen, and a narrowing below a `let\=' would otherwise make the
+names it binds stop being locals.  Which is the wrong way round to be
+wrong - a name not known to be a local is asked about, and answered with
+whatever var happens to be called that.
+
+A buffer with no Clojure parse has nothing written around anything, and
+the answer is that nothing is in scope.  Whether it was a buffer worth
+asking is the caller\='s to know."
+  (save-restriction
+    (widen)
+    (let ((found nil))
+      (dolist (node (replique-locals--enclosing pos))
+        (setq found (append found (replique-locals--bound-by node pos))))
+      found)))
 
 (provide 'replique-locals)
 
