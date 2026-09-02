@@ -67,6 +67,14 @@
 ;; going under it, because under it is where the next key goes and a value
 ;; written there reads as one.
 ;;
+;; Hanging is also what runs a line past the width, each key hanging the next
+;; one further in than the last, and it is worth knowing how much: over four
+;; hundred generated values, at the width this is set to by default one in
+;; thirty has a line past it and never by more than three columns; at half
+;; that width one in five does and the worst is twenty four columns over.  So
+;; the exchange is a narrow width for a map whose entries can be told apart,
+;; and it is a narrow width that pays for it.
+;;
 ;; Whitespace between a reader macro and what it applies to is written as one
 ;; space rather than removed.  `#inst "…"' keeps the space it was written
 ;; with, `#foo{…}' gains none it did not have, and - this is the reason - no
@@ -80,7 +88,6 @@
 
 ;;; Code:
 
-(require 'seq)
 (require 'subr-x)
 (require 'treesit)
 (require 'replique-common)
@@ -153,13 +160,19 @@ text is written out as it stands."
     (treesit-node-child-by-field-name node field)))
 
 (defun replique-pprint--elements (node)
-  "Return what NODE is made of, the parts with no text in them dropped.
+  "Return what NODE is made of.
 
-A zero width part is what the grammar answers a missing one with, and
-writing one out writes nothing where something was expected."
-  (seq-remove (lambda (child)
-                (= (treesit-node-start child) (treesit-node-end child)))
-              (treesit-node-children node t)))
+Every part of it, with nothing dropped and nothing checked, because the
+parse was checked before any of this ran - see `replique-pprint--check\='.
+What there would be to drop is the zero width part a grammar answers a
+missing one with, and a missing part is what makes a parse one with an
+error in it, which is a parse this refuses.
+
+Worth saying because dropping them anyway is not free: asking each part
+where it starts and ends is two calls into the parse per part, and this
+is asked of every node twice - once to measure it and once to write it
+out.  Doing it cost more than everything else here put together."
+  (treesit-node-children node t))
 
 (defun replique-pprint--prefix (node wrapped)
   "Return the text NODE writes in front of WRAPPED.
@@ -312,7 +325,7 @@ things and reading as one run."
 The value hangs after the key however little room is left for it.  Under
 the key is where the next key goes, so a value written there reads as
 one, and a map whose entries cannot be told apart is worse than a map
-that runs past the width."
+that runs past the width - see the commentary for how far past."
   (let ((first t))
     (dolist (child (replique-pprint--elements node))
       (unless first (insert " "))
@@ -358,7 +371,11 @@ that is written far in has that much less room - see the commentary."
 
 Two things stop it.  Text that did not parse, which is what an unbalanced
 form is: what would be written back is not what was read.  And a comment,
-which has nowhere to go - see the commentary."
+which has nowhere to go - see the commentary.
+
+Refusing the first is also what lets the rest of this take the parse as
+it finds it: a node with nothing in it belongs to a parse with an error
+in it, so past here there are none - see `replique-pprint--elements\='."
   (when (treesit-node-check node 'has-error)
     (user-error "This does not read as Clojure data"))
   (when (treesit-search-subtree node "\\`comment\\'" nil t)
@@ -396,20 +413,45 @@ covers it, so what it answers is checked against POS rather than taken."
                (< pos (treesit-node-end node)))
       node)))
 
+(defun replique-pprint--back-over-space (pos)
+  "Return POS with the whitespace before it skipped.
+
+Commas among it: a comma is whitespace in Clojure, and one written after
+a value is written after it the way a space is."
+  (save-excursion
+    (goto-char pos)
+    (skip-chars-backward " \t\n\r\f,")
+    (point)))
+
+(defun replique-pprint--before (pos parser)
+  "Return the top level form of PARSER ending before POS, or nil.
+
+The whitespace behind POS is skipped and so are the comments behind that,
+which is what `replique-eval-last-sexp\=' does with them: a comment is
+not a form, and what was asked for is the form before it.  Behind point
+only - a comment POS is in is one point was put on, and that one is
+refused rather than read past."
+  (let ((pos (replique-pprint--back-over-space pos))
+        (node nil)
+        (done nil))
+    (while (not done)
+      (setq node (and (> pos (point-min))
+                      (replique-pprint--top-level-at (1- pos) parser)))
+      (if (and node (equal "comment" (treesit-node-type node)))
+          ;; strictly back each time, so this ends at the top of the buffer
+          ;; on a buffer that is nothing but comments
+          (setq pos (replique-pprint--back-over-space (treesit-node-start node)))
+        (setq done t)))
+    node))
+
 (defun replique-pprint--form-at (pos parser)
   "Return the form of PARSER to lay out for point at POS, or nil.
 
-The one POS is in, or - where POS is in none - the one that ends before
-it, whitespace between them skipped.  The second is what makes the
-command work at the end of a repl buffer, where point is after the value
-that was printed rather than in it."
+The one POS is in, or - where POS is in none - the one before it.  The
+second is what makes the command work at the end of a repl buffer, where
+point is after the value that was printed rather than in it."
   (or (replique-pprint--top-level-at pos parser)
-      (let ((end (save-excursion
-                   (goto-char pos)
-                   (skip-chars-backward " \t\n\r\f,")
-                   (point))))
-        (and (> end (point-min))
-             (replique-pprint--top-level-at (1- end) parser)))))
+      (replique-pprint--before pos parser)))
 
 
 ;;;; Commands

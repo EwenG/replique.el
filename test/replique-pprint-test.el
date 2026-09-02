@@ -110,8 +110,8 @@
                  (replique-pprint-test--pp "{:a [1 2 3 4 5] :b 2}" 11)))
   ;; and what it costs is a map of maps, where each key hangs the next one
   ;; further in than the last - past the width once there are enough of
-  ;; them.  The exchange is deliberate: this is the width being run past on
-  ;; a shape that is rare, against every map being ambiguous to read
+  ;; them.  The exchange is deliberate, and the commentary says what it
+  ;; comes to at a width somebody would actually set
   (should (equal "{:a {:b {:c [1\n             2]}}}"
                  (replique-pprint-test--pp "{:a {:b {:c [1 2]}}}" 12))))
 
@@ -193,6 +193,20 @@
   ;; which is where point is at the prompt of a repl, after what was printed
   (should (equal "{:aa 1\n :bb 2}\n"
                  (replique-pprint-test--command "{:aa 1 :bb 2}\n|" 8))))
+
+(ert-deftest replique-pprint-test-a-comment-behind-point-is-read-past ()
+  ;; the way `replique-eval-last-sexp\=' reads past one, so that the last
+  ;; line of a file being a note does not stop this
+  (should (equal "{:aa 1\n :bb 2}\n;; a note\n"
+                 (replique-pprint-test--command "{:aa 1 :bb 2}\n;; a note\n|" 8)))
+  (should (equal "{:aa 1\n :bb 2}\n;; one\n;; two\n"
+                 (replique-pprint-test--command
+                  "{:aa 1 :bb 2}\n;; one\n;; two\n|" 8)))
+  ;; but a comment point is in is one point was put on
+  (should-error (replique-pprint-test--command "{:aa 1 :bb 2}\n;; a no|te\n" 8)
+                :type 'user-error)
+  ;; and nothing behind a comment is still nothing
+  (should-error (replique-pprint-test--command ";; a note\n|" 8) :type 'user-error))
 
 (ert-deftest replique-pprint-test-the-command-puts-it-back-in-one-undo ()
   (replique-test-grammar)
