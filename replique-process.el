@@ -304,7 +304,7 @@ nothing is not one to act on."
 Each is a cons of the port file and what the process wrote in it.  A stale
 file - one whose process is gone - is not told apart here: connecting is
 the only thing that says whether anything is there, and
-`replique-process--reap\=' is what acts on the answer."
+`replique-process--reap' is what acts on the answer."
   (let ((dir (replique-processes-directory directory)))
     (when (file-directory-p dir)
       (seq-keep
@@ -320,9 +320,9 @@ the only thing that says whether anything is there, and
 (defun replique-process--reap (file info reason)
   "Delete FILE, the port file that said INFO, when REASON proves it wrong.
 
-A port file is deleted on evidence and on nothing else.  `mismatch\=' is an
+A port file is deleted on evidence and on nothing else.  `mismatch' is an
 answer from a process that is not the one the file names, which says the
-file is wrong wherever that process runs.  `unreachable\=' is nothing
+file is wrong wherever that process runs.  `unreachable' is nothing
 answering at all, which says the same thing only when the file names this
 machine: a host that is somewhere else can be unreachable for reasons of
 its own, and a process that is alive must not lose the file that makes it
@@ -369,7 +369,7 @@ to be typed anyway.
 
 Only a port on this machine is probed, and only nothing listening is taken
 as an answer.  A port that answers, with a handshake or with a refusal, is
-a slower question, and `replique-connect\=' is where it is asked."
+a slower question, and `replique-connect' is where it is asked."
   (dolist (description (replique-process-descriptions directory))
     (let* ((info (cdr description))
            (host (plist-get info :host))
@@ -387,7 +387,7 @@ is called with the replique process once the handshake is in.  Returns the
 process, or nil when there was nothing to connect to.
 
 ON-FAILURE is called with why the connection was not made and a sentence
-saying it: `unreachable\=' when nothing answered on that port, `mismatch\='
+saying it: `unreachable' when nothing answered on that port, `mismatch'
 when what answered is not the process INFO describes.  Both are what a
 port file produces once it is old enough - the process it names has
 exited, or has exited and left its port to somebody else - and a caller
@@ -395,7 +395,7 @@ that read INFO from one has a file to do something about.  Said in the
 echo area when there is no ON-FAILURE.
 
 The two arrive differently: nothing to connect to is known before this
-returns, since the connection is made before `replique-conn-open\='
+returns, since the connection is made before `replique-conn-open'
 returns, while a refused handshake is an answer that comes later."
   (let* ((host (plist-get info :host))
          (port (plist-get info :port))
@@ -434,7 +434,7 @@ returns, while a refused handshake is an answer that comes later."
                                 (when on-ready (funcall on-ready process))))
                  (file-error
                   ;; The reason and not the whole error: what
-                  ;; `error-message-string\=' makes of one holds every
+                  ;; `error-message-string' makes of one holds every
                   ;; argument the connection was attempted with
                   (let ((reason (nth 2 err)))
                     (funcall fail 'unreachable
@@ -557,8 +557,8 @@ What the project asks for and what you asked for, in that order: yours
 last, so that yours is what wins where they say the same thing.
 
 Yours are the global value and not the value the calling buffer has, for
-the reason `replique-process--project-aliases\=' reads the global one: a
-buffer visiting a file in one project carries that project\='s directory
+the reason `replique-process--project-aliases' reads the global one: a
+buffer visiting a file in one project carries that project's directory
 local variables, and a start is for the project that was named.  A buffer
 local value here would not add to yours - it would be read instead of
 them, and the tooling you start every process with would go missing from
@@ -576,7 +576,7 @@ the one process it was set in the way of."
 
 Under nohup where there is one: Emacs sends SIGHUP to what it started when
 it exits, and a process that is meant to be connected to again has to live
-through that.  Where there is none the process is Emacs\='s to lose."
+through that.  Where there is none the process is Emacs's to lose."
   (let ((id (replique-process--id-for directory)))
     (append (when (executable-find "nohup") (list "nohup"))
             (list replique-clojure-program)
@@ -857,6 +857,18 @@ where there is one."
       (user-error "The process is not connected"))
     (replique-conn-request conn msg callback)))
 
+(defun replique-process-request-sync (process msg &optional timeout)
+  "Send MSG on the control connection of PROCESS and wait for the reply.
+
+TIMEOUT is passed on to `replique-conn-request-sync', which is where what
+is returned is described.
+
+Where `replique-process-request' signals that there is no connection,
+this answers with the frame that says so.  What waits for a reply is a
+keystroke: a command that raises in the middle of one stops the editor
+where offering nothing would have let the typing go on."
+  (replique-conn-request-sync (replique-process--control process) msg timeout))
+
 (defun replique-describe-process ()
   "Say what the current process is."
   (interactive)
@@ -896,7 +908,7 @@ where there is one."
 
 A repl reads what is typed at its prompt, and that is a socket.  The
 standard input of the jvm is a different thing entirely, and it is what
-`java.io.Console\=' reads - a keystore passphrase asked for at startup, an
+`java.io.Console' reads - a keystore passphrase asked for at startup, an
 agent asking something before any repl exists.  Nothing of that reaches a
 repl, and nothing typed at a repl reaches it."
   (let ((proc (replique-process--proc process)))
@@ -911,7 +923,7 @@ repl, and nothing typed at a repl reaches it."
   "Send LINE to the standard input of the current process.
 
 What the jvm reads there, and what it asks for there, is not what a repl
-reads - see `replique-process--stdin\='.  What it prints in answer is in
+reads - see `replique-process--stdin'.  What it prints in answer is in
 the process buffer, which \[replique-show-process-output] shows."
   (interactive (list (read-string "Process input: ")))
   (process-send-string (replique-process--stdin (replique-process-ensure))
@@ -920,7 +932,7 @@ the process buffer, which \[replique-show-process-output] shows."
 (defun replique-process-input-password (password)
   "Send PASSWORD to the standard input of the current process, unechoed.
 
-The same as `replique-process-input\=', asked for in a way that does not
+The same as `replique-process-input', asked for in a way that does not
 show it, does not keep it in the minibuffer history, and does not leave
 it where \[view-lossage] can be asked for it.  A command of its own
 rather than an argument to that one: a password echoed because the

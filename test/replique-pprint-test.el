@@ -22,7 +22,7 @@
   (replique-pprint-string text width))
 
 (defun replique-pprint-test--command (text width)
-  "Return TEXT after `replique-pprint\=' ran at | in it, to fit WIDTH."
+  "Return TEXT after `replique-pprint' ran at | in it, to fit WIDTH."
   (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
@@ -195,7 +195,7 @@
                  (replique-pprint-test--command "{:aa 1 :bb 2}\n|" 8))))
 
 (ert-deftest replique-pprint-test-a-comment-behind-point-is-read-past ()
-  ;; the way `replique-eval-last-sexp\=' reads past one, so that the last
+  ;; the way `replique-eval-last-sexp' reads past one, so that the last
   ;; line of a file being a note does not stop this
   (should (equal "{:aa 1\n :bb 2}\n;; a note\n"
                  (replique-pprint-test--command "{:aa 1 :bb 2}\n;; a note\n|" 8)))

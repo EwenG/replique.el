@@ -73,7 +73,7 @@
     ("load" . load))
   "The calls that say what a clause says, and what each of them is read as.
 
-`refer\=' is here and not among the clauses: an ns form has no :refer of
+`refer' is here and not among the clauses: an ns form has no :refer of
 its own, and the one written in a libspec is an option of it.")
 
 (defconst replique-deps--var-options
@@ -265,7 +265,7 @@ any spec."
 
 An import is written as a class, or as a package and the classes of it.
 A package that is not a name names no classes, as in
-`replique-deps--under\='."
+`replique-deps--under'."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))
          (index (replique-deps--child-index-at node pos))
@@ -292,7 +292,7 @@ for a clause and two for a (refer \\='the-ns ...) - what a call names
 first is the namespace to refer from.
 
 NAMESPACE is nil where the form names one that is not a name, and the
-vars of it are answered as nothing for the reason `replique-deps--under\='
+vars of it are answered as nothing for the reason `replique-deps--under'
 answers as nothing."
   (let* ((children (mapcar #'replique-deps--unwrap
                            (treesit-node-children node t)))

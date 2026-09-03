@@ -167,7 +167,7 @@ the outer one."
 
 The whitespace behind POS is skipped, and so are the comments behind
 that: a comment is not a form, and what was asked for is the form before
-it.  Which is what `eval-last-sexp\=' does in Emacs Lisp, and it is the
+it.  Which is what `eval-last-sexp' does in Emacs Lisp, and it is the
 answer that makes \\[replique-eval-last-sexp] work at the end of a file
 whose last line is a note."
   (let ((pos (replique-eval--back-over-space pos))
@@ -233,7 +233,7 @@ region selected what was commented out in it too."
 (defun replique-eval--unquote (node)
   "Return what NODE quotes, or NODE when it quotes nothing.
 
-The argument of `in-ns\=' is quoted and the argument of `ns\=' is not, and
+The argument of `in-ns' is quoted and the argument of `ns' is not, and
 both are the same answer to the same question."
   (if (equal "quote" (treesit-node-type node))
       (replique-clojure--unwrap-meta (car (treesit-node-children node t)))
@@ -242,9 +242,9 @@ both are the same answer to the same question."
 (defun replique-eval--ns-form-name (node)
   "Return the namespace NODE names, or nil when it names none.
 
-NODE names one when it is an `ns\=' or `in-ns\=' form whose argument is a
-symbol written out - `clojure.core/in-ns\=' too, since that is how the form
-is written where `clojure.core\=' is not referred.  An argument that is
+NODE names one when it is an `ns' or `in-ns' form whose argument is a
+symbol written out - `clojure.core/in-ns' too, since that is how the form
+is written where `clojure.core' is not referred.  An argument that is
 computed says nothing that can be read from the text, and a qualified one
 is not the name of a namespace at all."
   (let ((node (replique-clojure--unwrap-meta node)))
@@ -256,8 +256,8 @@ is not the name of a namespace at all."
                    (replique-clojure--symbol-node-p head)
                    (member (replique-clojure--named-node-text head)
                            replique-eval--ns-form-names)
-                   ;; `clojure.core\=' or nothing.  Any other namespace on it
-                   ;; is somebody else\='s in-ns, which does something else
+                   ;; `clojure.core' or nothing.  Any other namespace on it
+                   ;; is somebody else's in-ns, which does something else
                    (let ((qualifier (treesit-node-child-by-field-name
                                      head "namespace")))
                      (or (null qualifier)
@@ -272,9 +272,9 @@ is not the name of a namespace at all."
   "Return the namespace POS is written in, or nil when the buffer names none.
 
 Found by descending from the root of the parse to POS: at each level the
-last `ns\=' or `in-ns\=' form starting before POS wins, and a level deeper
+last `ns' or `in-ns' form starting before POS wins, and a level deeper
 than another overrides it.  Which is what the reader would have done had
-it read the buffer from the top - an `in-ns\=' written at the top level
+it read the buffer from the top - an `in-ns' written at the top level
 applies to everything below it, and one written inside a form, which is
 the (comment ...) case, applies only until that form ends.
 
@@ -312,15 +312,15 @@ stays in order with the code it describes."
   "Return the directive saying that what follows is read in namespace NS.
 
 Unlike the source directive this is not about the next form only: it is
-`in-ns\=' without the evaluation, and the repl stays there.  Which is what
+`in-ns' without the evaluation, and the repl stays there.  Which is what
 makes going to the repl after having evaluated something land at a prompt
 of the namespace that was being worked in.
 
-Without the evaluation because an `in-ns\=' sent as a form is a form: it
+Without the evaluation because an `in-ns' sent as a form is a form: it
 has a result, and a prompt after it, and both appear in the transcript as
 something the developer did not write.  A namespace the process does not
-have yet is created, with `clojure.core\=' referred into it - see
-`enter-ns!\=' in replique.repl."
+have yet is created, with `clojure.core' referred into it - see
+`enter-ns!' in replique.repl."
   (format "#replique/ns %s" ns))
 
 (defun replique-eval--send (nodes)
@@ -407,11 +407,11 @@ behind the comment was not what was asked for."
   (rx bos (one-or-more (not (any "()[]{}\"@^`~\\#;'," "/" space "\n"))) eos)
   "What a namespace name may look like: one symbol, unqualified.
 
-Not a full reading of what the reader accepts, which is the reader\='s
+Not a full reading of what the reader accepts, which is the reader's
 business.  What is checked is that it holds none of the characters that
 would make the reader read something other than one plain symbol, and
-this matters because what is typed becomes a line of the repl\='s input:
-the reader takes the first token of it as the directive\='s argument and
+this matters because what is typed becomes a line of the repl's input:
+the reader takes the first token of it as the directive's argument and
 reads whatever follows as a form.  Sending \"foo bar\" would move the repl
 to foo and then evaluate bar, which is neither of the things that were
 asked for; \"foo)\" would be a read error; and \"#foo\" is a tagged literal,
@@ -454,19 +454,19 @@ evaluated in yet."
 
 The namespace the buffer is in is offered first, since moving the repl to
 where the code being worked on lives is what this is nearly always for -
-see `replique-eval--ns-at\='.  In a repl buffer there is no such namespace
+see `replique-eval--ns-at'.  In a repl buffer there is no such namespace
 and nothing is offered.
 
 What the process has is what can be chosen, but what is typed is what is
 sent: a namespace that is not in the list is one the process will make,
-with `clojure.core\=' referred into it, rather than one this refuses.
+with `clojure.core' referred into it, rather than one this refuses.
 What is refused is text that is not the name of a namespace at all - see
-`replique-ns-name-regexp\=' for why that cannot be left to the process."
+`replique-ns-name-regexp' for why that cannot be left to the process."
   (interactive
    (let* ((repl (replique-repl-ensure))
           (namespaces (replique-namespaces (replique-repl-process repl)))
           (default (and (derived-mode-p 'replique-clojure-mode)
-                        ;; Widened, the way `replique-eval--send\=' is: the ns
+                        ;; Widened, the way `replique-eval--send' is: the ns
                         ;; form of a buffer can be outside what a narrowing
                         ;; left reachable, and what is parsed then is what is
                         ;; reachable - a buffer narrowed to below its ns form

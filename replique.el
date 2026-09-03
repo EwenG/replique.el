@@ -29,8 +29,9 @@
 ;;   M-x replique-repl       open a repl on it
 ;;
 ;; This is the editor client of the replique protocol, plus the mode it reads
-;; Clojure with.  Completion, documentation and finding a definition are the
-;; tooling ops, which the process does not answer yet.
+;; Clojure with.  Completion is answered in the dependency forms - see
+;; `replique-completion'.  Documentation and finding a definition are the
+;; tooling ops the process does not answer yet.
 ;;
 ;; `replique-clojure-mode' is what .clj, .cljs, .cljc and .edn open in, and
 ;; what the eval commands read a buffer with - see `replique-eval'.  Where a
@@ -54,6 +55,7 @@
 (require 'replique-repl)
 (require 'replique-eval)
 (require 'replique-pprint)
+(require 'replique-completion)
 
 (defvar replique-mode-map
   (let ((map (make-sparse-keymap)))
@@ -79,7 +81,20 @@ that needs one says so when it is used.
 
 \\{replique-mode-map}"
   :lighter " replique"
-  :keymap replique-mode-map)
+  :keymap replique-mode-map
+  ;; Added to the buffer rather than to the default value of the hook: what
+  ;; answers here is a process, and a buffer that is not Clojure has none to
+  ;; ask.  Turning the mode off takes it back out, which is what makes it
+  ;; the way to stop replique answering completion in a buffer
+  (if replique-mode
+      (replique-completion-install)
+    (replique-completion-uninstall)))
+
+;; A repl reads Clojure at its prompt, requires included, and it is parsed
+;; the way a Clojure buffer is - see `replique-repl--clojure'.  Added from
+;; here rather than by the repl mode itself, which would make the file that
+;; defines a repl depend on the one that completes in it
+(add-hook 'replique-repl-mode-hook #'replique-completion-install)
 
 ;; From the autoloads rather than from this file: opening a Clojure file
 ;; loads the major mode and nothing else, and a keymap that arrived only

@@ -49,7 +49,7 @@ without its newline."
   proc kind id info pending next-id acc on-frame on-close)
 
 (defconst replique-conn-closed-error "connection-closed"
-  "The `:error\=' of the frame a request gets when the connection dies.
+  "The `:error' of the frame a request gets when the connection dies.
 
 Not something a process sends - it is the answer replique gives on its
 behalf when there will be no answer.  A caller that only ever hears back
@@ -95,13 +95,13 @@ KIND is `control' or `repl'.  KEYS may hold:
      (lambda (frame)
        (cond
         ;; A connection that died is not a process that refused: there is
-        ;; nothing here to report or to act on, and `:on-close\=' is where
+        ;; nothing here to report or to act on, and `:on-close' is where
         ;; going away is handled
         ((equal replique-conn-closed-error (plist-get frame :error)) nil)
         ((equal "error" (plist-get frame :tag))
          ;; The connection is closed after an unsuccessful handshake, so
          ;; there is nothing to recover - say what happened and let go.
-         ;; What a refusal means is the caller\='s to know: a port file
+         ;; What a refusal means is the caller's to know: a port file
          ;; naming a process that is not there is a refusal it can act on
          (if on-error
              (funcall on-error frame)
@@ -136,6 +136,87 @@ the same id.  Returns the id."
             (append (replique-conn--pending conn) (list (cons id callback)))))
     (replique-conn-send-line conn (replique-edn-map (append msg (list :id id))))
     id))
+
+(defconst replique-conn-timeout-error "timeout"
+  "The `:error' of the frame a synchronous request gets when none came back.
+
+Like `replique-conn-closed-error', not something a process sends: it is
+what replique answers on its behalf when the wait ran out.  A control
+connection answers its requests in order, so a request made behind a slow
+one waits for that one too - what this says is that the process is busy,
+and not that it refused.")
+
+(defconst replique-conn--unanswered (make-symbol "unanswered")
+  "What a synchronous request holds until its reply arrives.
+
+A symbol of its own because every other value is one a reply could be:
+nil is what a frame that has not arrived and a frame that arrived empty
+would both look like.")
+
+(defun replique-conn-request-sync (conn msg &optional timeout)
+  "Send MSG on CONN and wait for the reply, which is returned.
+
+Nil where nobody waited to the end, which is what \\[keyboard-quit]
+says: a keystroke that was abandoned has nothing to report.  Everything
+else comes back as a frame, an error one included - a request that cannot
+be answered is answered all the same, so that there is one thing to look
+at and not two.
+
+For what a keystroke asks.  `replique-conn-request' is what everything
+else uses: an answer that arrives in a callback is an answer nothing had
+to wait for, and waiting is right only where the caller cannot carry on
+without it - `completion-at-point-functions' is called for what it
+returns and has nowhere to put an answer that comes later.
+
+Quitting is what makes this safe to call while somebody is typing.  Emacs
+is held inside `accept-process-output' for as long as the process takes,
+so \\[keyboard-quit] has to be heard: `inhibit-quit' keeps it from
+unwinding out of the middle of the wait, and `with-local-quit' is where
+it is heard instead,
+which leaves the connection whole and the request pending.  A pending
+request is the right thing to leave: its reply is read and handed to a
+callback nobody is listening to, where dropping it would leave a reply
+with nothing to match and it would be handled as if the process had said
+it unprompted.
+
+TIMEOUT is how long to wait, in seconds, two of them by default.  The
+wait is made in short pieces rather than in one, because a timer that
+fires while this one waits can ask a question of its own, and a frame
+that arrives is read by whichever call to `accept-process-output' is
+running - so a wait that asked to be woken by output alone could be woken
+by none of it.  Each piece looks at what arrived while it was not
+running."
+  (if (not (replique-conn-live-p conn))
+      (list :tag "error"
+            :error replique-conn-closed-error
+            :message "The connection to the process closed")
+    (let* ((answer replique-conn--unanswered)
+           (proc (replique-conn--proc conn))
+           (timeout (or timeout 2.0))
+           (deadline (+ (float-time) timeout))
+           (id (replique-conn-request conn msg (lambda (frame) (setq answer frame)))))
+      (let ((inhibit-quit t))
+        (while (and (eq answer replique-conn--unanswered)
+                    (null quit-flag)
+                    (> deadline (float-time)))
+          (with-local-quit
+            (accept-process-output
+             proc
+             (min 0.1 (max 0.001 (- deadline (float-time))))
+             nil
+             ;; Only this process: what another one wrote is not what this
+             ;; wait is about, and reading it here would run its filter
+             ;; underneath whatever asked for this
+             t)))
+        (cond
+         ;; Before the answer, so that a C-g pressed as one arrived is a
+         ;; C-g: what was asked for is no longer wanted either way
+         (quit-flag (setq quit-flag nil) nil)
+         ((not (eq answer replique-conn--unanswered)) answer)
+         (t (list :tag "error"
+                  :error replique-conn-timeout-error
+                  :message (format "The process did not answer in %ss" timeout)
+                  :id id)))))))
 
 (defun replique-conn-send-line (conn line)
   "Write LINE, a message, on CONN."
@@ -198,7 +279,7 @@ it is - over as many lines as it takes."
   "Tell whoever is waiting on CONN that no answer is coming.
 
 The same shape a process would have refused with, so that a caller has
-one way of hearing about both - see `replique-conn-closed-error\=' for
+one way of hearing about both - see `replique-conn-closed-error' for
 telling this one apart."
   (let ((pending (replique-conn--pending conn)))
     (setf (replique-conn--pending conn) nil)

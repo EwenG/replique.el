@@ -34,7 +34,7 @@
   "Return the Clojure project to start a process in, or skip the test.
 
 An empty REPLIQUE_PROJECT is no project rather than the current
-directory, which is what `expand-file-name\=' would make of it: the
+directory, which is what `expand-file-name' would make of it: the
 makefile passes the variable through whether it was set or not, and the
 tests that need a process would otherwise start one in the checkout they
 are being run from - taking the name of the process the developer has
@@ -165,7 +165,7 @@ while."
 (defun replique-test-hide (buffer)
   "Make sure no window shows BUFFER.
 
-`replique-repl\=' shows the buffer it opened, and what a buffer no window
+`replique-repl' shows the buffer it opened, and what a buffer no window
 shows is told about is the point of half of these tests."
   (dolist (window (get-buffer-window-list buffer nil t))
     (set-window-buffer window (get-buffer-create "*scratch*"))))
@@ -225,7 +225,7 @@ not be honoured there."
 (ert-deftest replique-test-a-start-that-lost-its-buffer-still-says-what-happened ()
   "The buffer holding what a process wrote can be killed while it is
 starting.  There is then nowhere to point at, and pointing anyway is
-`display-buffer\=' on a buffer that is not there - which is a signal
+`display-buffer' on a buffer that is not there - which is a signal
 raised inside a process filter, in place of the report of what went
 wrong."
   (let ((proc (make-process :name "replique-test-lost-buffer"
@@ -375,7 +375,7 @@ classpath beside its dependencies rather than into them."
       (should (member "-M:dev:test" (replique-process--command "/tmp/a-project/"))))))
 
 (ert-deftest replique-test-your-aliases-are-yours-whatever-buffer-asks ()
-  "A buffer visiting a file in one project carries that project\='s
+  "A buffer visiting a file in one project carries that project's
 directory local variables, and a start is for the project that was named.
 A buffer local value would not be added to yours - it would be read
 instead of them, and what you start every process with would go missing
@@ -397,7 +397,7 @@ from the one process it was set in the way of."
   "The .dir-locals.el of a project being opened must not be able to offer
 what the process runs with - not quietly, and not behind a prompt that
 offers to remember the answer.  Which aliases a project needs is the
-project\='s to say, and it is the one that is safe."
+project's to say, and it is the one that is safe."
   (dolist (setting '(replique-clojure-program replique-coordinates
                                               replique-user-aliases
                                               replique-aliases-file))
@@ -592,7 +592,7 @@ is only usually the same directory."
 
 (ert-deftest replique-test-a-start-reaps-before-it-spawns ()
   "A crash leaves a port file, and the process will not start where there is
-one.  `true\=' stands in for clojure: what is asserted is what the command did
+one.  `true' stands in for clojure: what is asserted is what the command did
 before it spawned anything."
   (let* ((dir (file-name-as-directory (make-temp-file "replique-test" t)))
          (file (expand-file-name ".replique/processes/gone.json" dir))
@@ -710,7 +710,7 @@ tells a newline to send from a newline to insert."
 (ert-deftest replique-test-return-waits-for-the-form-to-be-finished ()
   "That the repl is still at its prompt is the assertion that means
 something.  What the buffer holds does not tell a newline made here from
-one `comint-send-input\=' made on its way out: both leave the same text
+one `comint-send-input' made on its way out: both leave the same text
 behind, and the repl answers an unfinished form with nothing to show for
 it either way.  What only one of them does is stop the repl reading
 forms."
@@ -765,7 +765,7 @@ and a guess is worth a way to overrule it."
 (ert-deftest replique-test-recalling-an-input-keeps-the-lines-already-typed ()
   "The input ring replaces what is at the prompt, and what is at the
 prompt is the line being typed - not the form it is the third line of.
-`comint-accumulate\=' is what says where that line began; a newline
+`comint-accumulate' is what says where that line began; a newline
 inserted without it leaves the ring taking back to the process mark, and
 recalling a previous input in the middle of a form throws away the lines
 of it already written."
@@ -840,7 +840,7 @@ input the repl is not."
         (should-not asked)))))
 
 (ert-deftest replique-test-what-is-typed-at-the-prompt-is-clojure ()
-  "The buffer is given the syntax and the parse `replique-clojure-mode\='
+  "The buffer is given the syntax and the parse `replique-clojure-mode'
 reads Clojure with, so that what is typed at the prompt is the code it is
 rather than the text a comint buffer holds by default.  What comint puts
 on the buffer itself survives being fontified by the parse: the prompt is
@@ -1057,7 +1057,7 @@ off anyway."
                             (replique-test-eval
                              repl "(if (resolve 'union) :in-there :not)")))
     ;; a namespace the process does not have is one it makes, with
-    ;; clojure.core referred into it - see `enter-ns!\=' in replique.repl
+    ;; clojure.core referred into it - see `enter-ns!' in replique.repl
     (replique-in-ns "replique.test-brand-new")
     (replique-test-wait-for
      (lambda () (equal "replique.test-brand-new" (replique-repl--ns repl))))
@@ -1226,7 +1226,7 @@ in a file it was never in."
                                  :type 'user-error)))))
 
 (ert-deftest replique-test-a-comment-is-skipped-to-the-form-behind-it ()
-  "Which is what `eval-last-sexp\=' does in Emacs Lisp, and what makes
+  "Which is what `eval-last-sexp' does in Emacs Lisp, and what makes
 C-x C-e work at the end of a file whose last line is a note."
   (replique-test-grammar)
   (replique-test-with-clojure "(def a 1)\n;; a note\n;; and another\n"
@@ -1716,7 +1716,7 @@ is what is left, and it is what makes the process clean up after itself."
 
 (ert-deftest replique-test-the-standard-input-of-the-process-is-not-the-repl ()
   "What a repl reads is a socket.  The standard input of the jvm is
-another thing entirely - it is what `java.io.Console\=' reads, which is
+another thing entirely - it is what `java.io.Console' reads, which is
 where a keystore passphrase is asked for, before any repl exists - and
 nothing typed at a repl reaches it."
   (replique-test-with-repl repl
@@ -1729,7 +1729,7 @@ nothing typed at a repl reaches it."
 
 (ert-deftest replique-test-a-password-for-the-process-is-not-read-out-loud ()
   "A command of its own rather than an argument to
-`replique-process-input\=': a password echoed because the argument was
+`replique-process-input': a password echoed because the argument was
 forgotten is a password that has already been echoed."
   (replique-test-with-repl repl
     (let ((echoed nil)
@@ -1764,7 +1764,7 @@ being typed into nothing."
 (ert-deftest replique-test-a-process-that-will-not-stop-says-so ()
   "A process Emacs did not start that does not answer is a process this
 command cannot stop.  What it must not do then is behave the way
-`replique-disconnect\=' does under the name that promises the opposite: a
+`replique-disconnect' does under the name that promises the opposite: a
 developer who is told the process stopped stops looking for it."
   (let* ((workdir (file-name-as-directory (make-temp-file "replique-test" t)))
          (outside (replique-test-start
@@ -1901,7 +1901,7 @@ is busy."
 (ert-deftest replique-test-a-process-that-is-stopped-takes-its-port-file-with-it ()
   "A process is asked to stop rather than killed outright, so that the
 shutdown hook deleting its port file runs.  A file left behind is a
-process `replique-connect\=' goes on offering."
+process `replique-connect' goes on offering."
   (let ((project (replique-test-project)))
     (replique-test-with-project dir
       (let* ((replique-coordinates
@@ -1917,7 +1917,7 @@ process `replique-connect\=' goes on offering."
                                   (replique-process--id process))
                           dir)))
           (should (file-exists-p port-file))
-          ;; the wait is the command\='s, not the test\='s: what it says it did
+          ;; the wait is the command's, not the test's: what it says it did
           ;; is done when it returns
           (replique-kill-process process)
           (should-not (file-exists-p port-file)))))))

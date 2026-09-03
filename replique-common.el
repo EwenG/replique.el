@@ -80,10 +80,10 @@ arrives on its own - what a future printed, what a thread threw."
   '((t (:inherit mode-line-emphasis)))
   "Face naming a buffer with unseen output, in the mode line.
 
-Not `replique-unread\=' inheriting `shadow\=' like the rest of what replique
-says about itself: `shadow\=' is a foreground picked to recede against the
+Not `replique-unread' inheriting `shadow' like the rest of what replique
+says about itself: `shadow' is a foreground picked to recede against the
 background of a buffer, and a mode line has neither that background nor
-that purpose.  `mode-line-emphasis\=' is what a theme defines for
+that purpose.  `mode-line-emphasis' is what a theme defines for
 something a mode line should be read for, so it is legible wherever the
 mode line is."
   :group 'replique)
@@ -142,7 +142,7 @@ been changed."
 (defun replique-note-unread (buffer)
   "Note that BUFFER received output while no window showed it.
 
-Named apart from `replique-track-unread\=', the setting it reads: one
+Named apart from `replique-track-unread', the setting it reads: one
 symbol that is both a variable and a function is a symbol whose two
 descriptions are about different things.
 

@@ -23,8 +23,8 @@
 ;; prints is one line however long the value is, and a map of two hundred
 ;; keys arrives as two hundred keys of one line.
 ;;
-;; Data, not code.  Nothing here knows that the second element of a `let\=' is
-;; a binding vector or that a `defn\=' takes its arglist on the first line -
+;; Data, not code.  Nothing here knows that the second element of a `let' is
+;; a binding vector or that a `defn' takes its arglist on the first line -
 ;; the input is a value something printed, and a value has no such shape.
 ;; Code laid out by this comes out formatted like data, which is not wrong so
 ;; much as beside the point.
@@ -137,7 +137,7 @@ written with the delimiters its kind has, whatever was in the text.")
   "The reader macros, each with the field holding what it applies to.
 
 What is in front of that field is the macro's own text and is written out
-unchanged - see `replique-pprint--prefix\=' - so nothing here needs to know
+unchanged - see `replique-pprint--prefix' - so nothing here needs to know
 that a tagged literal is a # and a symbol while a namespaced map is a #
 and a keyword.")
 
@@ -163,7 +163,7 @@ text is written out as it stands."
   "Return what NODE is made of.
 
 Every part of it, with nothing dropped and nothing checked, because the
-parse was checked before any of this ran - see `replique-pprint--check\='.
+parse was checked before any of this ran - see `replique-pprint--check'.
 What there would be to drop is the zero width part a grammar answers a
 missing one with, and a missing part is what makes a parse one with an
 error in it, which is a parse this refuses.
@@ -375,7 +375,7 @@ which has nowhere to go - see the commentary.
 
 Refusing the first is also what lets the rest of this take the parse as
 it finds it: a node with nothing in it belongs to a parse with an error
-in it, so past here there are none - see `replique-pprint--elements\='."
+in it, so past here there are none - see `replique-pprint--elements'."
   (when (treesit-node-check node 'has-error)
     (user-error "This does not read as Clojure data"))
   (when (treesit-search-subtree node "\\`comment\\'" nil t)
@@ -399,7 +399,7 @@ width has to know where it begins to know how much of it is left."
 (defun replique-pprint--top-level-at (pos parser)
   "Return the top level form of PARSER covering POS, or nil when none does.
 
-`treesit-node-at\=' answers with the first node after POS where nothing
+`treesit-node-at' answers with the first node after POS where nothing
 covers it, so what it answers is checked against POS rather than taken."
   (let ((node (treesit-node-at pos parser)))
     (while (and node
@@ -427,7 +427,7 @@ a value is written after it the way a space is."
   "Return the top level form of PARSER ending before POS, or nil.
 
 The whitespace behind POS is skipped and so are the comments behind that,
-which is what `replique-eval-last-sexp\=' does with them: a comment is
+which is what `replique-eval-last-sexp' does with them: a comment is
 not a form, and what was asked for is the form before it.  Behind point
 only - a comment POS is in is one point was put on, and that one is
 refused rather than read past."
@@ -459,10 +459,10 @@ point is after the value that was printed rather than in it."
 (defun replique-pprint-string (text &optional width)
   "Return TEXT, which must be Clojure data, laid out to fit WIDTH columns.
 
-WIDTH defaults to `replique-pprint-width\='.  Several forms in TEXT come
+WIDTH defaults to `replique-pprint-width'.  Several forms in TEXT come
 back one to a line, each laid out on its own.  Nothing is evaluated and
 nothing is read: what comes back is the same tokens in another
-arrangement - see `replique-pprint--check\=' for the two arrangements
+arrangement - see `replique-pprint--check' for the two arrangements
 this refuses to make."
   (unless (treesit-language-available-p 'treejure)
     (error "The treejure grammar is not installed"))
@@ -479,7 +479,7 @@ this refuses to make."
 
 ;;;###autoload
 (defun replique-pprint ()
-  "Lay out the data at point so that it fits `replique-pprint-width\='.
+  "Lay out the data at point so that it fits `replique-pprint-width'.
 
 The form point is in, or the one before it - which is the one a repl just
 printed, when point is at the prompt after it.  It is replaced by the

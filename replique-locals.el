@@ -35,7 +35,7 @@
 ;; a form binds a name at POS when POS is past the point where that binding
 ;; takes effect and inside the form.  Which is what makes the two scoping
 ;; rules a comparison each.  Bindings are sequential in `let' and what is
-;; shaped like it - in (let [x 1 y x] ...) the x of y is this let\='s, and in
+;; shaped like it - in (let [x 1 y x] ...) the x of y is this let's, and in
 ;; (let [x x] ...) it is not, it is whatever x was outside.  They are
 ;; parallel in a parameter vector, where all of them take effect at once.
 ;;
@@ -78,7 +78,7 @@
     "with-open" "with-local-vars" "dotimes")
   "The forms that bind pairwise, in a vector, sequentially.
 
-`binding\=' is not one of them.  It rebinds vars rather than binding
+`binding' is not one of them.  It rebinds vars rather than binding
 locals, and a var of its own name is exactly what the tooling should go
 on describing inside it.")
 
@@ -103,7 +103,7 @@ on describing inside it.")
   "The forms that bind a vector of fields and then methods.
 
 The only forms here whose methods are not closures, which is why the
-walk stops at one - see `replique-locals--closes-over-p\='.")
+walk stops at one - see `replique-locals--closes-over-p'.")
 
 (defconst replique-locals--method-like
   '("reify" "proxy" "extend-type" "extend-protocol")
@@ -115,7 +115,7 @@ walk stops at one - see `replique-locals--closes-over-p\='.")
 
 (defconst replique-locals--self-naming
   '("fn")
-  "The forms of `replique-locals--fn-like\=' that also bind their own name.
+  "The forms of `replique-locals--fn-like' that also bind their own name.
 
 The name of an (fn name [x] ...) is a local, which is how it calls
 itself.  The name of a defn is a var, and a var is what the process
@@ -125,8 +125,8 @@ should be asked about.")
   "Return the name of the form NODE is, or nil when it is not one.
 
 A form is a list whose head is a symbol qualified by nothing or by
-`clojure.core\=', which is how it is written where `clojure.core\=' is not
-referred - the same rule `replique-eval--ns-form-name\=' reads `in-ns\=' by.
+`clojure.core', which is how it is written where `clojure.core' is not
+referred - the same rule `replique-eval--ns-form-name' reads `in-ns' by.
 A head reached through an alias is not recognised."
   (when (replique-clojure--list-node-p node)
     (let ((head (replique-clojure--first-value-child node)))
@@ -149,7 +149,7 @@ A head reached through an alias is not recognised."
 
 Last first because a pattern can name the same thing twice, and the one
 that counts is the last of them - which is the order the whole answer is
-in, so that `assoc\=' finds what shadows.
+in, so that `assoc' finds what shadows.
 
 A pattern is a name, or a vector or map to be taken apart, and either of
 those can hold another pattern - so this and the two below call each
@@ -257,9 +257,9 @@ its own and the body, and not its own."
   (nth 1 (treesit-node-children node t)))
 
 (defun replique-locals--for-bound (node pos)
-  "Return what the `for\='-like form NODE binds that is in scope at POS.
+  "Return what the `for'-like form NODE binds that is in scope at POS.
 
-Written as pairs like a `let\=', with modifiers among them.  What follows
+Written as pairs like a `let', with modifiers among them.  What follows
 a :let is a binding vector of its own, which is the whole of what is
 read differently here.  A :when or a :while needs nothing said about it:
 the keyword is written where a name goes, and a keyword names nothing,
@@ -282,7 +282,7 @@ after it stay where they are."
     found))
 
 (defun replique-locals--arity-vector (node pos)
-  "Return the parameter vector of the `fn\='-like NODE that covers POS.
+  "Return the parameter vector of the `fn'-like NODE that covers POS.
 
 The vector of a form written with one arity, and of the arity POS is in
 where there are several.  Which one that is has to be looked for rather
@@ -317,10 +317,10 @@ map before its parameters, so there is no index the vector is at."
           found)))))
 
 (defun replique-locals--fn-bound (node pos self-naming)
-  "Return what the `fn\='-like form NODE binds that is in scope at POS.
+  "Return what the `fn'-like form NODE binds that is in scope at POS.
 
 SELF-NAMING says whether the name it may be written with is a local -
-see `replique-locals--self-naming\='."
+see `replique-locals--self-naming'."
   (let ((found nil))
     (when self-naming
       (let ((name (replique-clojure--unwrap-meta
@@ -337,7 +337,7 @@ see `replique-locals--self-naming\='."
 
 A method is written as a name and a parameter vector, which is the shape
 of one arity of a fn - so what it binds is read the same way.  The this
-of a `reify\=' or a `deftype\=' is a local like the others by being written
+of a `reify' or a `deftype' is a local like the others by being written
 where a parameter is, and needs nothing said about it here."
   (let ((found nil))
     (dolist (child (treesit-node-children node t))
@@ -350,7 +350,7 @@ where a parameter is, and needs nothing said about it here."
     found))
 
 (defun replique-locals--letfn-bound (node pos)
-  "Return what the `letfn\=' form NODE binds that is in scope at POS.
+  "Return what the `letfn' form NODE binds that is in scope at POS.
 
 The names it gives are in scope in the whole of it, one another
 included, which is what it is written for.  The parameters of one of
@@ -375,7 +375,7 @@ them are in scope in that one only."
     (append params names)))
 
 (defun replique-locals--deftype-bound (node pos)
-  "Return what the `deftype\='-like form NODE binds that is in scope at POS.
+  "Return what the `deftype'-like form NODE binds that is in scope at POS.
 
 The fields are in scope in every method it is written with, and each
 method binds what it is written with of its own."
@@ -391,7 +391,7 @@ method binds what it is written with of its own."
     (append (replique-locals--method-bound node pos) found)))
 
 (defun replique-locals--defmethod-bound (node pos)
-  "Return what the `defmethod\=' form NODE binds that is in scope at POS.
+  "Return what the `defmethod' form NODE binds that is in scope at POS.
 
 Counted to rather than looked for, unlike a fn: what is written between
 the name of the multimethod and the parameters is the value dispatched
@@ -419,7 +419,7 @@ way: two things, and then a name for what the rest of them is about."
   "Return the % parameters written anywhere in NODE, in order, once each.
 
 Everything below NODE is looked at.  A #() cannot be written inside
-another, so nothing found down there is somebody else\='s."
+another, so nothing found down there is somebody else's."
   (let ((found nil))
     (dolist (child (treesit-node-children node t))
       (dolist (name (if (replique-clojure--symbol-node-p child)
@@ -474,7 +474,7 @@ where each of them is bound is the #( they are written in."
 
 Read upwards from the node at POS rather than downwards from the root,
 which comes to the same forms and does not need the parse to be asked
-for.  The ones that do not hold POS are dropped: `treesit-node-at\='
+for.  The ones that do not hold POS are dropped: `treesit-node-at'
 answers with the node after POS where nothing covers it, and what is
 after POS is not what POS is inside of."
   (let ((node (treesit-node-at pos))
@@ -489,15 +489,15 @@ after POS is not what POS is inside of."
 (defun replique-locals--closes-over-p (node)
   "Say whether what is written inside NODE can see the locals around it.
 
-Almost everything can, and the exception is `deftype\=' and `defrecord\='.
+Almost everything can, and the exception is `deftype' and `defrecord'.
 Their methods are compiled to methods of a class, and a class has
 nowhere to keep what was around it - so a name bound outside one is not
 a local inside it, it is a name Clojure refuses to compile a use of.  A
-`reify\=' or a `proxy\=' is a closure and is not one of these, which is
+`reify' or a `proxy' is a closure and is not one of these, which is
 why they are read as ordinary forms on the way out.
 
 Asked of every form POS is inside rather than of the binding ones only:
-what a `deftype\=' does to the ones around it, it does whether or not it
+what a `deftype' does to the ones around it, it does whether or not it
 binds anything at POS itself."
   (not (member (replique-locals--head-name node)
                replique-locals--deftype-like)))
@@ -506,27 +506,27 @@ binds anything at POS itself."
   "Return the locals in scope at POS as (NAME . POSITION), nearest first.
 
 POSITION is where the name is bound, which is where a client that jumps
-to a definition jumps to.  Nearest first means `assoc\=' answers with the
-binding that shadows the rest, and `cdr\=' with where that one of them is.
+to a definition jumps to.  Nearest first means `assoc' answers with the
+binding that shadows the rest, and `cdr' with where that one of them is.
 
 A name bound twice is in the answer twice.  What the parse says is left
 in rather than tidied away, since nothing else can tell that a binding
-was shadowed - so showing the names to somebody wants `delete-dups\='
+was shadowed - so showing the names to somebody wants `delete-dups'
 over them.
 
-Nothing written around a `deftype\=' or a `defrecord\=' is in scope inside
-one, so the walk out stops there - see `replique-locals--closes-over-p\='.
+Nothing written around a `deftype' or a `defrecord' is in scope inside
+one, so the walk out stops there - see `replique-locals--closes-over-p'.
 
 Read from the whole of the buffer rather than from what a narrowing left
 reachable: a form is inside what it is written inside whether or not that
-is on screen, and a narrowing below a `let\=' would otherwise make the
+is on screen, and a narrowing below a `let' would otherwise make the
 names it binds stop being locals.  Which is the wrong way round to be
 wrong - a name not known to be a local is asked about, and answered with
 whatever var happens to be called that.
 
 A buffer with no Clojure parse has nothing written around anything, and
 the answer is that nothing is in scope.  Whether it was a buffer worth
-asking is the caller\='s to know."
+asking is the caller's to know."
   (save-restriction
     (widen)
     (let ((nodes (replique-locals--enclosing pos))
@@ -542,7 +542,7 @@ asking is the caller\='s to know."
   "Return the names the binding vector VEC gives, wherever they are.
 
 Every other element of it, and every name in the pattern each of those
-is - which is `replique-locals--pairs-bound\=' with nothing said about
+is - which is `replique-locals--pairs-bound' with nothing said about
 scope.  That is the whole of the difference, and it is the point: a name
 is being given exactly where scope has not reached it yet.
 
@@ -559,10 +559,10 @@ name half typed looks like."
     found))
 
 (defun replique-locals--for-naming (node)
-  "Return the names the `for\='-like form NODE gives, wherever they are.
+  "Return the names the `for'-like form NODE gives, wherever they are.
 
 What follows a :let is a binding vector of its own, read here the way
-`replique-locals--for-bound\=' reads it."
+`replique-locals--for-bound' reads it."
   (let ((vec (replique-clojure--unwrap-meta
               (replique-locals--binding-vector node)))
         (found nil))
@@ -590,17 +590,17 @@ Its second element, when that is a symbol."
 (defun replique-locals--naming-by (node)
   "Return the names NODE gives that are not in scope where they are written.
 
-Two kinds of name are missing from what `replique-locals-at\=' answers,
+Two kinds of name are missing from what `replique-locals-at' answers,
 and both of them on purpose.  A sequential binding is not in scope at its
 own target - in (let [x x] ...) the second x is the one from outside - so
 a point at the first x is a point at a name being given and at nothing
-that is in scope.  And the name of a `defn\=' or a `deftype\=' is a var or
+that is in scope.  And the name of a `defn' or a `deftype' is a var or
 a class rather than a local, so nothing binds it anywhere.
 
 Everything else is already answered where it is written.  A parameter, a
-field, a `letfn\=' name, what a catch caught: all of them take effect at
+field, a `letfn' name, what a catch caught: all of them take effect at
 the start of what they are written in, which is in front of themselves.
-The name of a `fn\=' is read here as well as there - it is a local and it
+The name of a `fn' is read here as well as there - it is a local and it
 is answered twice, which two of the same name is the right answer to."
   (let ((name (replique-locals--head-name node)))
     (cond
@@ -617,7 +617,7 @@ is answered twice, which two of the same name is the right answer to."
   "Return the symbol or keyword written at PROBE, when POS is in it.
 
 PROBE is where to look and POS is what the answer has to cover, and they
-are two because `treesit-node-at\=' answers for a position inside a token
+are two because `treesit-node-at' answers for a position inside a token
 rather than for one at either of its edges.  POS is in a name from where
 the name starts to just after it ends, that last being where point is
 once a name has been typed and nothing else has."
@@ -636,7 +636,7 @@ once a name has been typed and nothing else has."
   "Return the symbol or keyword POS is at, or nil.
 
 Looked for at POS and then at the character before it, since
-`treesit-node-at\=' answers with what follows POS where nothing covers it
+`treesit-node-at' answers with what follows POS where nothing covers it
 - and what POS is just after is a name POS is at, where what follows POS
 is not."
   (or (replique-locals--name-node-at pos pos)
@@ -670,7 +670,7 @@ A name is at POS or it is not, all of it: the whole of the foo/bar in
 {:keys [foo/bar]} is a name being given, though only the bar of it is
 the name that it gives.
 
-Reads the whole of the buffer, for the reason `replique-locals-at\=' does."
+Reads the whole of the buffer, for the reason `replique-locals-at' does."
   (save-restriction
     (widen)
     (when-let* ((node (replique-locals--name-node pos))

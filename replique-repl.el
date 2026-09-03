@@ -302,7 +302,7 @@ be shown as cut rather than as a whole one."
   "Enough of the syntax of Clojure to tell where a form ends.
 
 Its own rather than the table the buffer is in.  A repl buffer is given
-`replique-clojure-mode-syntax-table\=', which is a table somebody can
+`replique-clojure-mode-syntax-table', which is a table somebody can
 change; whether RET sends what is at the prompt or starts a new line is
 not an answer a customization should be able to move.  All this is asked
 is where the delimiters, the strings and the comments are, which is
@@ -323,9 +323,9 @@ what says forms are being read again - the one this repl wrote, or the
 one a nested repl wrote, which arrives as output and is a prompt all the
 same.
 
-The line the prompt is on is asked for with `inhibit-field-text-motion\='
+The line the prompt is on is asked for with `inhibit-field-text-motion'
 bound.  comint gives what it printed a field of its own, and the process
-mark is the boundary of it, so `line-beginning-position\=' answers there
+mark is the boundary of it, so `line-beginning-position' answers there
 with the process mark itself - a limit with the prompt outside it, which
 is a prompt nothing can match."
   (save-excursion
@@ -374,8 +374,8 @@ it better than anything here could."
   "Major mode for a replique REPL.
 
 What is typed at the prompt is Clojure, so the buffer is given the syntax
-and the parse `replique-clojure-mode\=' reads Clojure with - see
-`replique-repl--clojure\='.
+and the parse `replique-clojure-mode' reads Clojure with - see
+`replique-repl--clojure'.
 
 \\{replique-repl-mode-map}"
   :syntax-table replique-clojure-mode-syntax-table
@@ -388,7 +388,7 @@ and the parse `replique-clojure-mode\=' reads Clojure with - see
   ;; here is the repl connection, where it would be read as code.  A repl
   ;; printing "Password: " is a repl printing something.  What does ask on a
   ;; terminal is the jvm itself, through java.io.Console, which reads the
-  ;; standard input the repl is not - see `replique-process-input-password\='
+  ;; standard input the repl is not - see `replique-process-input-password'
   (setq-local comint-output-filter-functions
               (remq 'comint-watch-for-password-prompt
                     comint-output-filter-functions))
@@ -396,7 +396,7 @@ and the parse `replique-clojure-mode\=' reads Clojure with - see
   (replique-repl--clojure))
 
 (defun replique-repl--clojure ()
-  "Read the current buffer as Clojure, the way `replique-clojure-mode\=' does.
+  "Read the current buffer as Clojure, the way `replique-clojure-mode' does.
 
 Which is what makes what is typed at the prompt highlighted, indented and
 navigable as the code it is, rather than as the text a comint buffer
@@ -436,14 +436,14 @@ makes a form spanning several lines something that can be typed rather
 than pasted.
 
 Whether it is balanced is not enough to go on by itself.  A closing
-delimiter inserted with its opening one - `electric-pair-mode\=' and the
+delimiter inserted with its opening one - `electric-pair-mode' and the
 like - leaves a form finished before it has been written, and sending
 every one of those the moment its first line was done would leave nothing
 that can be typed over two lines at all.  Where point is says which of
 the two was meant: a form still being written is written from inside it.
 
 Both questions are only asked of what is typed where the repl is reading
-forms - see `replique-repl--reading-a-form-p\=' - and never of what is
+forms - see `replique-repl--reading-a-form-p' - and never of what is
 typed to a form that is running.
 
 With a prefix argument, ANYWAY, send what is there whatever state it is
@@ -451,7 +451,7 @@ in: an unclosed delimiter, or point left in the middle of it.  Where the
 text ends is a guess made about text nothing has read yet, and a guess is
 worth a way to overrule it.
 
-Point above the input sends what is under it, the way `comint-send-input\='
+Point above the input sends what is under it, the way `comint-send-input'
 does: everything above the prompt is a transcript, and a transcript is
 read rather than continued."
   (interactive "P")
@@ -462,14 +462,14 @@ read rather than continued."
              (replique-repl--reading-a-form-p proc)
              (or (< (point) (point-max))
                  (replique-repl--unfinished-p (process-mark proc) (point-max))))
-        ;; `comint-accumulate\=' rather than an insert of a newline: it marks
-        ;; where the line being typed begins, and `comint-delete-input\=' -
+        ;; `comint-accumulate' rather than an insert of a newline: it marks
+        ;; where the line being typed begins, and `comint-delete-input' -
         ;; which is how the input ring replaces what is at the prompt - takes
         ;; back to that mark rather than to the process mark.  Without it,
         ;; recalling a previous input in the middle of a form throws away the
-        ;; lines of that form already written.  Not `newline\=' either: there
+        ;; lines of that form already written.  Not `newline' either: there
         ;; is no indenting a comint buffer - the line above the input can be
-        ;; anything the process printed - and `electric-indent-mode\=' would
+        ;; anything the process printed - and `electric-indent-mode' would
         ;; try
         (comint-accumulate)
       (comint-send-input))))
@@ -546,7 +546,7 @@ read rather than continued."
   "Return the repl the commands act on, or nil.
 
 The repl of the current buffer when it is one - a repl buffer acts on
-itself - then the one `replique-select-repl\=' chose, then the most recent
+itself - then the one `replique-select-repl' chose, then the most recent
 live repl of the current process."
   (or (and (replique-repl-live-p replique--buffer-repl) replique--buffer-repl)
       (and (replique-repl-live-p replique-current-repl) replique-current-repl)
@@ -620,7 +620,7 @@ show as having been typed either.  What comes back is the prompt of the
 next read, which is where the answer is: a directive that moved the repl
 moved the namespace the prompt says.
 
-Not `replique-repl-send-code\=', which is about forms and which would put a
+Not `replique-repl-send-code', which is about forms and which would put a
 blank line in the buffer for something nobody wrote."
   (let ((conn (replique-repl--conn repl)))
     (unless (replique-conn-live-p conn)
@@ -677,7 +677,7 @@ left alone."
 
 An interrupt rather than a kill: the jvm answers it by running its
 shutdown hooks, and one of them deletes the port file the process wrote.
-A process killed outright leaves that file behind, and `replique-connect\='
+A process killed outright leaves that file behind, and `replique-connect'
 goes on offering a process that is not there.
 
 Waited for rather than left to happen, so that what the command says it
@@ -723,7 +723,7 @@ to."
 What to do with a process that is not yours to stop - one that belongs to
 a terminal, or to whoever is working on the machine it runs on.  It goes
 on running and its port file goes on saying where it is, so
-`replique-connect\=' finds it again."
+`replique-connect' finds it again."
   (interactive (list (replique-process-ensure)))
   (replique-process--close process)
   (message "replique: let go of %s" (replique-process--id process)))
@@ -740,9 +740,9 @@ here stops saying it is running.
 A process that answers neither - one Emacs did not start, which did not go
 when it was asked - is left running, and saying so is all this can do about
 it.  Silence there would be this command behaving the way
-`replique-disconnect\=' does, under the name that promises the opposite.
+`replique-disconnect' does, under the name that promises the opposite.
 
-To let go of a process without stopping it, see `replique-disconnect\='."
+To let go of a process without stopping it, see `replique-disconnect'."
   (interactive (list (replique-process-ensure)))
   (let* ((id (replique-process--id process))
          (proc (replique-process--proc process))
