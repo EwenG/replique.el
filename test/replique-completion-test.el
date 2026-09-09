@@ -492,6 +492,28 @@ on the name itself rather than on a vector around it."
                   (replique-completion-test--at "(require 'clojure.st|)"
                     (replique-completion-test--offered)))))
 
+(ert-deftest replique-completion-test-what-a-member-would-be-written-on ()
+  "What this side can say about it without running anything: the type a
+^String declares, and the target itself where it is not a local."
+  (cl-flet ((on (text)
+              (replique-completion-test--at text
+                (replique-completion--written-on replique-locals-default-forms))))
+    (should (equal '(:tag "String") (on "(defn f [^String s] (.leng| s))")))
+    (should (equal '(:tag "String") (on "(defn f [] (.leng| ^String (g)))")))
+    (should (equal '(:target "some-var") (on "(defn f [] (.leng| some-var))")))
+    (should (equal '(:target "\"abc\"") (on "(defn f [] (.leng| \"abc\"))")))
+    ;; a local that declares nothing says nothing, and its name is not a var
+    ;; for the process to look up
+    (should-not (on "(defn f [s] (.leng| s))"))
+    ;; and a name written anywhere but the head of a list is no call at all
+    (should-not (on "(defn f [^String s] (g s .leng|))"))))
+
+(ert-deftest replique-completion-test-a-member-is-offered-in-code ()
+  (replique-test-process)
+  (should (member ".length"
+                  (replique-completion-test--at "(defn f [^String s] (.leng| s))"
+                    (replique-completion-test--offered)))))
+
 (ert-deftest replique-completion-test-a-keyword-in-code-is-asked-with-its-colons ()
   "A keyword without them is not what can be written where it is, and which
 kind it is is written in the colons - so the whole of it travels, and the

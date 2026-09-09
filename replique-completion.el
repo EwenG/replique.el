@@ -203,6 +203,65 @@ written, and a name bound twice is one name to write."
         (push (list :name (car local)) found)))
     (nreverse found)))
 
+(defconst replique-completion--literals
+  '("string" "keyword" "number" "character" "boolean" "regex")
+  "The nodes that are their own class.
+
+What is written as one of these needs nothing resolved to be known: a
+string is a String wherever it is written, and nothing has to be
+evaluated to find that out.")
+
+(defun replique-completion--head-list ()
+  "Return the list point is writing the head of, or nil.
+
+Which is the only place a member is written: (.length s) calls a method
+on what the list holds next, and a .name written anywhere else is not a
+call at all."
+  (let ((node (treesit-node-at (point)))
+        (found nil))
+    (while (and node (null found))
+      (when (and (replique-clojure--list-node-p node)
+                 (<= (treesit-node-start node) (point))
+                 (< (point) (treesit-node-end node)))
+        (setq found node))
+      (setq node (treesit-node-parent node)))
+    (when-let* ((head (and found (car (treesit-node-children found t))))
+                ((<= (treesit-node-start head) (point)))
+                ((<= (point) (treesit-node-end head))))
+      found)))
+
+(defun replique-completion--written-on (forms)
+  "Return what a member written at point would be written on.
+
+Which is what the list holds after the name being written: the s of
+\(.length s).  What travels is what this side can say about it without
+running anything - the type a ^String declares, on the local or at the
+call site, and the target itself where it is not a local, which the
+process reads as a var that declares its type or as a literal that is
+its own.
+
+FORMS says what each written form binds - see `replique-locals-forms\='.
+
+Sent whether or not a member is what is being written, because that is
+not known here: the table this hands back is asked again for every
+keystroke, and what point is written on does not change between them."
+  (when-let* ((list (replique-completion--head-list))
+              (children (treesit-node-children list t))
+              (written (nth 1 children))
+              (target (replique-clojure--unwrap-meta written))
+              (text (treesit-node-text target t))
+              (tag (or (replique-locals-tag-at (treesit-node-start target)) :none)))
+    (let ((type (treesit-node-type target))
+          (tag (and (stringp tag) tag)))
+      (cond
+       ((equal "symbol" type)
+        (if-let* ((local (assoc text (replique-locals-at (point) forms))))
+            (when-let* ((tag (or tag (replique-locals-tag-at (cdr local)))))
+              (list :tag tag))
+          (append (list :target text) (when tag (list :tag tag)))))
+       ((member type replique-completion--literals) (list :target text))
+       (tag (list :tag tag))))))
+
 (defun replique-completion--code-context ()
   "Return what point is asking for in ordinary code, or nil.
 
@@ -231,7 +290,8 @@ hook included."
           (append (list :position :code)
                   (when ns (list :ns ns))
                   (when-let* ((locals (replique-completion--locals forms)))
-                    (list :locals locals))))))))
+                    (list :locals locals))
+                  (replique-completion--written-on forms)))))))
 
 (defun replique-completion--message (context text)
   "Return the request that asks for the candidates of TEXT in CONTEXT.

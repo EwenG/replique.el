@@ -555,6 +555,36 @@ binds anything at POS itself.
 FORMS says what each written form binds - see `replique-locals-forms'."
   (not (eq 'deftype-like (replique-locals--kind node forms))))
 
+(defun replique-locals-tag-at (pos)
+  "Return the type declared on the name written at POS, or nil.
+
+Which is a ^Type written in front of it - (let [^String s ...] ...) says
+every s below it holds a string, and it is the one thing a Clojure file
+says about what a local holds.  POS is where the name is, which is what
+`replique-locals-at\=' answers with, and it is where a name written
+anywhere else is too: a ^String at the call site is written the same way.
+
+A ^Symbol and nothing else.  ^{:tag String} means the same to the
+compiler and is not read here - it is written where somebody wants to
+say more than the type, and reading the type out of it is reading a map
+whose other keys this knows nothing about.
+
+Nil where nothing is declared, which is the usual answer: a name says
+nothing about what it holds unless somebody wrote it down."
+  (when-let* ((node (treesit-node-at pos)))
+    ;; up to the outermost node that still starts where the name does, since
+    ;; a symbol is a node inside a node and what wraps it starts before it
+    (while (and (treesit-node-parent node)
+                (= pos (treesit-node-start (treesit-node-parent node))))
+      (setq node (treesit-node-parent node)))
+    (when-let* ((parent (treesit-node-parent node))
+                ((equal "with_metadata" (treesit-node-type parent)))
+                (meta (car (treesit-node-children parent t)))
+                ((equal "metadata" (treesit-node-type meta)))
+                (tag (car (treesit-node-children meta t)))
+                ((replique-clojure--symbol-node-p tag)))
+      (treesit-node-text tag t))))
+
 (defun replique-locals-at (pos &optional forms)
   "Return the locals in scope at POS as (NAME . POSITION), nearest first.
 

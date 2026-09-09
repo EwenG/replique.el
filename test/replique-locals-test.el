@@ -311,6 +311,22 @@
 
 ;;; What is named third
 
+(ert-deftest replique-locals-test-what-a-local-declares-it-holds ()
+  "A ^Type written in front of a name is the one thing a Clojure file says
+about what the local holds."
+  (replique-test-grammar)
+  (cl-flet ((tag (text)
+              (with-temp-buffer
+                (replique-clojure-mode)
+                (insert text)
+                (let ((local (car (replique-locals-at (- (point-max) 2)))))
+                  (and local (replique-locals-tag-at (cdr local)))))))
+    (should (equal "String" (tag "(defn f [^String s] 1)")))
+    (should (equal "java.util.Date" (tag "(let [^java.util.Date d 1] 1)")))
+    (should-not (tag "(let [x 1] 1)"))
+    ;; a map says more than the type, and what else it says is not this
+    (should-not (tag "(let [^{:tag String} m 1] 1)"))))
+
 (ert-deftest replique-locals-test-a-catch-binds-what-it-caught ()
   (should (equal '("e") (replique-locals-test--names "(try x (catch Exception e |))"))))
 
