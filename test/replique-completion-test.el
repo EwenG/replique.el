@@ -106,6 +106,23 @@ so where it starts is the quote and not wherever a symbol would begin."
                  (replique-completion-test--at "(load \"my dir/co|\")"
                    (replique-completion-test--text)))))
 
+(ert-deftest replique-completion-test-a-reader-macro-is-not-part-of-the-name ()
+  "Emacs reads one as part of the symbol behind it, and a candidate written
+over it would unquote what was quoted."
+  (should (equal "clojure.st"
+                 (replique-completion-test--at "(require 'clojure.st|)"
+                   (replique-completion-test--text))))
+  (should (equal "ma" (replique-completion-test--at "(f #_ma|)"
+                        (replique-completion-test--text))))
+  (should (equal "ma" (replique-completion-test--at "(f #'ma|)"
+                        (replique-completion-test--text))))
+  ;; a name may begin with an underscore, so one is skipped only behind a
+  ;; hash - where it is the discard rather than the start of the name
+  (should (equal "_fo" (replique-completion-test--at "(f _fo|)"
+                         (replique-completion-test--text))))
+  (should (equal "_fo" (replique-completion-test--at "(f '_fo|)"
+                         (replique-completion-test--text)))))
+
 (ert-deftest replique-completion-test-nothing-typed-is-a-region-of-no-width ()
   "Point after a bracket is nothing typed rather than nothing to offer, and
 nothing typed is every name."
@@ -466,6 +483,34 @@ value of the hook included."
     (insert "(inc x)")
     (goto-char (1- (point-max)))
     (should-not (replique-completion--code-context))))
+
+(ert-deftest replique-completion-test-a-quoted-require-completes ()
+  "Which is how a namespace is loaded from a repl, and the quote is written
+on the name itself rather than on a vector around it."
+  (replique-test-process)
+  (should (member "clojure.string"
+                  (replique-completion-test--at "(require 'clojure.st|)"
+                    (replique-completion-test--offered)))))
+
+(ert-deftest replique-completion-test-a-keyword-in-code-is-asked-with-its-colons ()
+  "A keyword without them is not what can be written where it is, and which
+kind it is is written in the colons - so the whole of it travels, and the
+process reads it."
+  (should (equal "::str/jo"
+                 (replique-completion-test--at "(f ::str/jo|)"
+                   (replique-completion-test--text))))
+  (should (equal '(:op :completions :text "::na" :position :code)
+                 (replique-completion-test--at "(f ::na|)"
+                   (replique-completion--message
+                    (replique-completion--code-context) "::na")))))
+
+(ert-deftest replique-completion-test-a-keyword-is-offered-in-code ()
+  "One the process has interned, which is the only place there is to read
+them from: `:replique/error' is written in the source of the process itself."
+  (replique-test-process)
+  (should (member ":replique/error"
+                  (replique-completion-test--at "(f :replique/err|)"
+                    (replique-completion-test--offered)))))
 
 (ert-deftest replique-completion-test-a-local-is-offered-in-code ()
   (replique-test-process)

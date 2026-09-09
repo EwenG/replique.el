@@ -130,14 +130,38 @@ has been in, and the one it is in now was never written there at all."
       (replique-repl--ns replique--buffer-repl)
     (replique-eval--ns-at (point))))
 
+(defun replique-completion--name-start (start end)
+  "Return where the name written between START and END begins.
+
+Emacs reads a symbol as starting at the reader macro in front of it: the
+whole of a quoted name is one symbol to `bounds-of-thing-at-point\=', and
+so are a var quote and a discarded form.  What a candidate replaces is
+the name, and the macro in front of it stays where it is - a require
+written as (require \='clojure.st) is completing a namespace, and writing
+the candidate over the quote as well would unquote it.
+
+An underscore is skipped only behind a hash, since a name may begin with
+one: _x is a symbol somebody wrote and #_x is a symbol somebody wrote
+behind a discard."
+  (let ((start start))
+    (while (and (< start end) (memq (char-after start) '(?# ?\')))
+      (setq start (1+ start))
+      (when (and (< start end)
+                 (eq ?_ (char-after start))
+                 (eq ?# (char-after (1- start))))
+        (setq start (1+ start))))
+    start))
+
 (defun replique-completion--bounds ()
   "Return the region point is completing in, as a cons of two positions.
 
 Inside a string it starts after the quote, because what is written there
 is a path: a slash is not part of a symbol, and the whole of what was
 typed is what a candidate replaces.  Outside one it is the symbol point
-is in, which is where a keyword is too - the colon is part of it, and a
-candidate for a keyword carries its colon for that reason.
+is in, less whatever reader macro is written in front of it - see
+`replique-completion--name-start\='.  A keyword is a symbol here, and its
+colon is part of it: a candidate for one carries its colon for that
+reason.
 
 It ends at point rather than at the end of what point is in.  What
 follows point is what somebody has already written and did not ask about,
@@ -151,7 +175,7 @@ nothing to offer, and nothing typed is every name."
          (symbol (bounds-of-thing-at-point 'symbol)))
     (cond
      (string (cons (1+ string) (point)))
-     (symbol (cons (car symbol) (point)))
+     (symbol (cons (replique-completion--name-start (car symbol) (point)) (point)))
      (t (cons (point) (point))))))
 
 (defun replique-completion--locals (forms)
