@@ -52,7 +52,12 @@
 
 Emacs has no false and no keyword type of its own: t is true, the symbol
 `false' is false, and a symbol whose name starts with a colon - which is
-what a keyword literal reads as - is a keyword."
+what a keyword literal reads as - is a keyword.
+
+A list that starts with a keyword is a map, written as a property list.
+Which is what a message is, and now what anything inside one is too: a
+keyword is what a key is here, and a list of values that begins with one
+is not a thing this protocol sends."
   (cond
    ((null x) "nil")
    ((eq x t) "true")
@@ -61,7 +66,10 @@ what a keyword literal reads as - is a keyword."
    ((integerp x) (number-to-string x))
    ((floatp x) (number-to-string x))
    ((vectorp x) (concat "[" (mapconcat #'replique-edn-print x " ") "]"))
-   ((consp x) (concat "(" (mapconcat #'replique-edn-print x " ") ")"))
+   ((consp x)
+    (if (keywordp (car x))
+        (replique-edn-map x)
+      (concat "(" (mapconcat #'replique-edn-print x " ") ")")))
    (t (error "Cannot print as EDN: %S" x))))
 
 (defun replique-edn-map (plist)

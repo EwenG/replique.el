@@ -206,6 +206,15 @@ string must be escaped rather than written."
                  (replique-edn-map (list :op :hello :role :control))))
   (should (equal "{}" (replique-edn-map nil))))
 
+(ert-deftest replique-test-edn-a-list-that-starts-with-a-keyword-is-a-map ()
+  "Which is what lets a message hold one: a keyword is what a key is here,
+and a list of values that begins with one is not a thing this sends."
+  (should (equal "{:name \"x\"}" (replique-edn-print (list :name "x"))))
+  (should (equal "{:locals ({:name \"x\"} {:name \"y\"})}"
+                 (replique-edn-map (list :locals (list (list :name "x")
+                                                       (list :name "y"))))))
+  (should (equal "(1 2)" (replique-edn-print (list 1 2)))))
+
 (ert-deftest replique-test-process-output-is-coloured ()
   "The output buffer has no font lock, so a `font-lock-face' would simply
 not be honoured there."

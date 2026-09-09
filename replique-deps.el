@@ -385,6 +385,20 @@ as itself."
       (setq node (treesit-node-parent node)))
     found))
 
+(defun replique-deps-form-at-p (pos)
+  "Say whether POS is written inside a dependency form.
+
+A different question from what that form is asking for there, and the one
+worth asking before offering anything else: what follows an :as is
+written inside a require and is asking for nothing at all, and a name
+offered there would be offered where a name is being given.
+
+Reads the whole of the buffer, for the reason `replique-deps-context-at'
+does."
+  (save-restriction
+    (widen)
+    (and (replique-deps--form-at pos) t)))
+
 (defun replique-deps-context-at (pos)
   "Return what the dependency form at POS is asking for there, or nil.
 

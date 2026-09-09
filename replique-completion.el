@@ -43,6 +43,15 @@
 ;; short text is what a longer one would have found - so a longer text is
 ;; asked again rather than filtered out of the answer to a shorter one.
 ;;
+;; In ordinary code every kind of name goes at once - a local, a var the
+;; namespace maps, a class it imported, an alias, a namespace, a special
+;; form - and the locals are the half of that only this side knows: a name
+;; bound by the form being written is a name the process has never seen.  So
+;; they travel with the request, and the process answers all of them in one
+;; list.  That is also what makes a local shadow: a `let' that binds `map'
+;; is answered as that local rather than as the var, and the two lists meet
+;; nowhere else.
+;;
 ;; The wait is what a capf leaves no way around.  It is called for what it
 ;; returns, so the answer has to be there by then; what makes that safe to do
 ;; behind a keystroke is that C-g is heard while it waits, which is
@@ -52,10 +61,13 @@
 
 (require 'seq)
 (require 'subr-x)
+(require 'treesit)
 (require 'replique-clojure-mode)
 (require 'replique-conn)
 (require 'replique-deps)
 (require 'replique-eval)
+(require 'replique-forms)
+(require 'replique-locals)
 (require 'replique-process)
 (require 'replique-repl)
 
@@ -79,7 +91,9 @@ nobody is watching."
     ("function" . "f")
     ("var" . "v")
     ("keyword" . "k")
-    ("path" . "r"))
+    ("path" . "r")
+    ("local" . "l")
+    ("special-form" . "s"))
   "What each kind of candidate is shown as, by the name the process gives it.
 
 Two letters at most, because this is written beside every candidate of a
@@ -140,13 +154,66 @@ nothing to offer, and nothing typed is every name."
      (symbol (cons (car symbol) (point)))
      (t (cons (point) (point))))))
 
+(defun replique-completion--locals (forms)
+  "Return the locals in scope at point, as the request carries them.
+
+FORMS says what each written form binds - see `replique-locals-forms'.
+
+Each of them is a map holding its name, which is a shape with room in
+it: what else this side knows about a local - the type a ^String on it
+declares, which is what says what can be called on it - has somewhere to
+go the day the process reads it.
+
+A name bound twice is answered twice by `replique-locals-at', nearest
+first, since nothing else could tell that a binding was shadowed.  What
+travels is each name once: what is being asked is which names could be
+written, and a name bound twice is one name to write."
+  (let ((seen nil)
+        (found nil))
+    (dolist (local (replique-locals-at (point) forms))
+      (unless (member (car local) seen)
+        (push (car local) seen)
+        (push (list :name (car local)) found)))
+    (nreverse found)))
+
+(defun replique-completion--code-context ()
+  "Return what point is asking for in ordinary code, or nil.
+
+Which is every kind of name at once, where a dependency form asks for
+one kind and no other.  The process is the half that has most of them -
+the vars of the namespace, the classes it imported, what is on the
+classpath - and the locals are the half only this side has, so they
+travel with the request.  It is the process that then puts them in one
+order and drops the var a local shadows, which is work that can only
+happen where the two lists meet.
+
+Nil inside a string or a comment, where what is written is not a name
+being written.  Nil too where the name at point is one being given
+rather than used, which is a name nothing knows yet - see
+`replique-locals-at-binding-position-p'.
+
+Nil as well in a buffer that is not read as Clojure.  The parse is what
+says a name written here is a Clojure name, which is what makes this
+safe to turn on wherever somebody wants it - the default value of the
+hook included."
+  (let ((state (syntax-ppss)))
+    (unless (or (nth 3 state) (nth 4 state) (null (treesit-parser-list nil 'treejure)))
+      (let* ((ns (replique-completion--namespace))
+             (forms (replique-forms-for (replique-completion--process) ns)))
+        (unless (replique-locals-at-binding-position-p (point) forms)
+          (append (list :position :code)
+                  (when ns (list :ns ns))
+                  (when-let* ((locals (replique-completion--locals forms)))
+                    (list :locals locals))))))))
+
 (defun replique-completion--message (context text)
   "Return the request that asks for the candidates of TEXT in CONTEXT.
 
-CONTEXT is what `replique-deps-context-at' read, and what it holds is
-already what the op asks for: a position, and the prefix or the namespace
-or the package that position needs.  The namespace a load is written in
-is the one thing it cannot hold, since it is not written in the load."
+CONTEXT is what was read at point - the slot of a dependency form, or the
+name being written in ordinary code - and what it holds is already what
+the op asks for: a position, and the prefix or the namespace or the
+locals that position needs.  The namespace a load is written in is the
+one thing it cannot hold, since it is not written in the load."
   (let ((msg (append (list :op :completions :text text) context)))
     (if (eq (plist-get context :position) :load-path)
         (append msg (list :ns (replique-completion--namespace)))
@@ -163,6 +230,7 @@ is for the list it is shown in."
   (propertize (plist-get candidate :candidate)
               'replique-type (plist-get candidate :type)
               'replique-ns (plist-get candidate :ns)
+              'replique-package (plist-get candidate :package)
               'replique-match-index (plist-get candidate :match-index)))
 
 (defun replique-completion--ask (context text)
@@ -233,16 +301,18 @@ that must not happen: the process matched, and it capped what it found."
 (defun replique-completion-annotation (candidate)
   "Return what CANDIDATE is and where it came from, or nil.
 
-Where it came from is the namespace a var is referred from, which is the
-one thing about a var that its own name does not say: what is written
-after a :refer is written without it."
+Where it came from is the one thing a name does not say about itself: a
+var is written without the namespace it is public in, a class without
+the package it is in, and an alias says nothing at all about what it
+reaches."
   (let* ((type (get-text-property 0 'replique-type candidate))
-         (ns (get-text-property 0 'replique-ns candidate))
+         (from (or (get-text-property 0 'replique-ns candidate)
+                   (get-text-property 0 'replique-package candidate)))
          (short (cdr (assoc type replique-completion--annotations))))
     (cond
-     ((and ns short) (format " %s <%s>" ns short))
+     ((and from short) (format " %s <%s>" from short))
      (short (format " <%s>" short))
-     (ns (format " %s" ns)))))
+     (from (format " %s" from)))))
 
 (defun replique-completion--matched (candidate)
   "Return CANDIDATE with the part that matched faced.
@@ -310,13 +380,21 @@ that way."))
 (defun replique-completion-at-point ()
   "Return what could be written at point, for `completion-at-point-functions'.
 
-Nil where nothing here has an answer: with no process to ask, and - the
-usual case - at a point that is in no dependency form at all, where every
-other completion in the buffer is left to answer for itself.  A buffer
-that is not read as Clojure is in no dependency form either, so nothing
-here has to ask which buffer this is."
+The slot of a dependency form point is in, and where point is in none of
+those, the name it is writing in ordinary code.  Which of the two it is
+is settled before either of them is asked, because the two mean
+different things by having no answer: inside a require, what follows an
+:as is a name being given and nothing is offered for it, where the same
+nil outside one would be a point in ordinary code.
+
+Nil where nothing here has an answer: with no process to ask, in a
+buffer that is not read as Clojure, and where point is somewhere no name
+goes at all - in a comment, in a string that is not a path, or at a name
+being given rather than used."
   (when (replique-completion--process)
-    (when-let* ((context (replique-deps-context-at (point))))
+    (when-let* ((context (if (replique-deps-form-at-p (point))
+                             (replique-deps-context-at (point))
+                           (replique-completion--code-context))))
       (let ((bounds (replique-completion--bounds)))
         (list (car bounds)
               (cdr bounds)

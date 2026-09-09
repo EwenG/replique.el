@@ -29,9 +29,10 @@
 ;;   M-x replique-repl       open a repl on it
 ;;
 ;; This is the editor client of the replique protocol, plus the mode it reads
-;; Clojure with.  Completion is answered in the dependency forms - see
-;; `replique-completion'.  Documentation and finding a definition are the
-;; tooling ops the process does not answer yet.
+;; Clojure with.  Completion is answered wherever a name is written, in the
+;; dependency forms and in ordinary code - see `replique-completion'.
+;; Documentation and finding a definition are the tooling ops the process
+;; does not answer yet.
 ;;
 ;; `replique-clojure-mode' is what .clj, .cljs, .cljc and .edn open in, and
 ;; what the eval commands read a buffer with - see `replique-eval'.  Where a

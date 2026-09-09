@@ -73,68 +73,119 @@
 (require 'treesit)
 (require 'replique-clojure-mode)
 
-(defconst replique-locals--let-like
-  '("let" "loop" "when-let" "if-let" "when-some" "if-some"
-    "with-open" "with-local-vars" "dotimes")
-  "The forms that bind pairwise, in a vector, sequentially.
+(defconst replique-locals-vars
+  '((let-like "clojure.core/let" "clojure.core/loop"
+              "clojure.core/when-let" "clojure.core/if-let"
+              "clojure.core/when-some" "clojure.core/if-some"
+              "clojure.core/with-open" "clojure.core/with-local-vars"
+              "clojure.core/dotimes")
+    (for-like "clojure.core/for" "clojure.core/doseq")
+    (defn-like "clojure.core/defn" "clojure.core/defn-" "clojure.core/defmacro")
+    (fn-like "clojure.core/fn")
+    (letfn-like "clojure.core/letfn")
+    (defmethod-like "clojure.core/defmethod")
+    (deftype-like "clojure.core/deftype" "clojure.core/defrecord")
+    (method-like "clojure.core/reify" "clojure.core/proxy"
+                 "clojure.core/extend-type" "clojure.core/extend-protocol")
+    (named-third "clojure.core/as->"))
+  "The vars that bind, by what each of them binds.
+
+let-like binds pairwise, in a vector, sequentially.  for-like binds
+pairwise with modifiers written among the pairs.  defn-like binds a
+parameter vector, one per arity, and fn-like binds its own name as well:
+the name of an (fn name [x] ...) is a local and is how it calls itself,
+where the name of a defn is a var and a var is what the process should
+be asked about.  letfn-like binds names to the functions written beside
+them.  defmethod-like binds a parameter vector written
+after a dispatch value.  deftype-like binds a vector of fields and then
+methods, and is the only kind whose methods are not closures - which is
+why the walk out stops at one, see `replique-locals--closes-over-p'.
+method-like binds nothing of its own and holds methods.  named-third
+names what the rest of the form is written about, third.
 
 `binding' is not one of them.  It rebinds vars rather than binding
 locals, and a var of its own name is exactly what the tooling should go
-on describing inside it.")
+on describing inside it.
 
-(defconst replique-locals--for-like
-  '("for" "doseq")
-  "The forms that bind pairwise, with modifiers written among the pairs.")
+Named qualified because that is what is asked about them: which symbol a
+namespace writes clojure.core/let as is a question only a process can
+answer - see `replique-locals-forms'.
 
-(defconst replique-locals--fn-like
-  '("fn" "defn" "defn-" "defmacro")
-  "The forms that bind a parameter vector, one per arity.")
+What each of them binds is named after the form it is shaped like, which
+is what somebody with a macro of their own would reach for: a macro that
+takes a binding vector is let-like whatever it is called.  Those names
+are the vocabulary a process would declare a var in - see the protocol,
+under what a namespace calls a var - so they are chosen to be written by
+somebody who knows the shape of their macro and nothing about this.")
 
-(defconst replique-locals--letfn-like
-  '("letfn")
-  "The forms that bind names to the functions written beside them.")
+(defconst replique-locals-special-forms
+  '((named-third "catch"))
+  "The forms that bind and are not vars, by what each of them binds.
 
-(defconst replique-locals--defmethod-like
-  '("defmethod")
-  "The forms that bind a parameter vector written after a dispatch value.")
+A special form is read by the compiler rather than resolved, so no
+namespace writes it differently and there is nothing to ask about one:
+catch is catch everywhere.  It cannot be aliased, referred under another
+name, or shadowed by a var of its own name.")
 
-(defconst replique-locals--deftype-like
-  '("deftype" "defrecord")
-  "The forms that bind a vector of fields and then methods.
+(defun replique-locals--simple-name (var)
+  "Return the qualified name VAR without its namespace."
+  (if (string-match "/\\(.+\\)\\'" var) (match-string 1 var) var))
 
-The only forms here whose methods are not closures, which is why the
-walk stops at one - see `replique-locals--closes-over-p'.")
+(defun replique-locals-forms (&optional spellings)
+  "Return what each form that binds is called, as an alist of (WRITTEN . KIND).
 
-(defconst replique-locals--method-like
-  '("reify" "proxy" "extend-type" "extend-protocol")
-  "The forms that bind nothing of their own and hold methods.")
+SPELLINGS says how one namespace writes the vars of
+`replique-locals-vars': an alist of the qualified name of each to the
+names that namespace can write it as.  It is what the :spellings op
+answers, and it is the half of this that only a process has - a namespace
+that aliases clojure.core writes let as c/let, one that referred it under
+another name writes it as that name, and one that excluded it and defined
+its own writes let for a var that binds nothing at all.
 
-(defconst replique-locals--named-third
-  '("catch" "as->")
-  "The forms that name what the rest of them is written about, third.")
+Without it, the names of clojure.core as a namespace that refers them
+plainly writes them.  Which is what they are called nearly everywhere,
+and what has to be assumed of a namespace nothing has been asked
+about."
+  (append
+   (mapcan (lambda (entry)
+             (let ((kind (car entry)))
+               (mapcan (lambda (var)
+                         (mapcar (lambda (written) (cons written kind))
+                                 (or (cdr (assoc var spellings))
+                                     (list (replique-locals--simple-name var) var))))
+                       (cdr entry))))
+           replique-locals-vars)
+   (mapcan (lambda (entry)
+             (let ((kind (car entry)))
+               (mapcar (lambda (written) (cons written kind)) (cdr entry))))
+           replique-locals-special-forms)))
 
-(defconst replique-locals--self-naming
-  '("fn")
-  "The forms of `replique-locals--fn-like' that also bind their own name.
+(defconst replique-locals-default-forms (replique-locals-forms)
+  "What each form that binds is called, nothing having been asked.
 
-The name of an (fn name [x] ...) is a local, which is how it calls
-itself.  The name of a defn is a var, and a var is what the process
-should be asked about.")
+Which is the answer for every buffer with no process behind it.  Worked
+out once, because rebuilding it per name looked at would be the same
+list every time.")
 
-(defun replique-locals--head-name (node)
-  "Return the name of the form NODE is, or nil when it is not one.
+(defun replique-locals--head-text (node)
+  "Return the symbol at the head of the form NODE is, as it is written.
 
-A form is a list whose head is a symbol qualified by nothing or by
-`clojure.core', which is how it is written where `clojure.core' is not
-referred - the same rule `replique-eval--ns-form-name' reads `in-ns' by.
-A head reached through an alias is not recognised."
+Nil where NODE is not a form.  As it is written, with whatever namespace
+is on it, because that is what says which var it names: let and c/let and
+clojure.core/let are three ways of writing one form and three different
+symbols, and which of them a namespace writes is what
+`replique-locals-forms' is given."
   (when (replique-clojure--list-node-p node)
     (let ((head (replique-clojure--first-value-child node)))
       (when (and head (replique-clojure--symbol-node-p head))
-        (let ((qualifier (treesit-node-child-by-field-name head "namespace")))
-          (when (or (null qualifier)
-                    (equal "clojure.core" (treesit-node-text qualifier t)))
-            (replique-clojure--named-node-text head)))))))
+        (treesit-node-text head t)))))
+
+(defun replique-locals--kind (node forms)
+  "Return what the form NODE is binds, or nil for neither.
+
+FORMS is what each written form binds - see `replique-locals-forms'."
+  (when-let* ((written (replique-locals--head-text node)))
+    (cdr (assoc written forms))))
 
 (defun replique-locals--vector-node-p (node)
   "Return non-nil when NODE is a vector."
@@ -320,7 +371,7 @@ map before its parameters, so there is no index the vector is at."
   "Return what the `fn'-like form NODE binds that is in scope at POS.
 
 SELF-NAMING says whether the name it may be written with is a local -
-see `replique-locals--self-naming'."
+which is what fn-like says in `replique-locals-vars'."
   (let ((found nil))
     (when self-naming
       (let ((name (replique-clojure--unwrap-meta
@@ -444,28 +495,29 @@ where each of them is bound is the #( they are written in."
       (push (cons name start) found))
     found))
 
-(defun replique-locals--bound-by (node pos)
-  "Return what NODE binds that is in scope at POS, nearest first."
+(defun replique-locals--bound-by (node pos forms)
+  "Return what NODE binds that is in scope at POS, nearest first.
+
+FORMS says what each written form binds - see `replique-locals-forms'."
   (if (replique-clojure--anon-fn-node-p node)
       (replique-locals--fn-literal-bound node)
-    (let ((name (replique-locals--head-name node)))
+    (let ((kind (replique-locals--kind node forms)))
       (cond
-       ((member name replique-locals--let-like)
+       ((eq kind 'let-like)
         (replique-locals--pairs-bound (replique-locals--binding-vector node) pos))
-       ((member name replique-locals--for-like)
+       ((eq kind 'for-like)
         (replique-locals--for-bound node pos))
-       ((member name replique-locals--fn-like)
-        (replique-locals--fn-bound
-         node pos (and (member name replique-locals--self-naming) t)))
-       ((member name replique-locals--letfn-like)
+       ((memq kind '(defn-like fn-like))
+        (replique-locals--fn-bound node pos (eq kind 'fn-like)))
+       ((eq kind 'letfn-like)
         (replique-locals--letfn-bound node pos))
-       ((member name replique-locals--defmethod-like)
+       ((eq kind 'defmethod-like)
         (replique-locals--defmethod-bound node pos))
-       ((member name replique-locals--deftype-like)
+       ((eq kind 'deftype-like)
         (replique-locals--deftype-bound node pos))
-       ((member name replique-locals--method-like)
+       ((eq kind 'method-like)
         (replique-locals--method-bound node pos))
-       ((member name replique-locals--named-third)
+       ((eq kind 'named-third)
         (replique-locals--third-bound node pos))
        (t nil)))))
 
@@ -486,7 +538,7 @@ after POS is not what POS is inside of."
       (setq node (treesit-node-parent node)))
     (nreverse found)))
 
-(defun replique-locals--closes-over-p (node)
+(defun replique-locals--closes-over-p (node forms)
   "Say whether what is written inside NODE can see the locals around it.
 
 Almost everything can, and the exception is `deftype' and `defrecord'.
@@ -498,11 +550,12 @@ why they are read as ordinary forms on the way out.
 
 Asked of every form POS is inside rather than of the binding ones only:
 what a `deftype' does to the ones around it, it does whether or not it
-binds anything at POS itself."
-  (not (member (replique-locals--head-name node)
-               replique-locals--deftype-like)))
+binds anything at POS itself.
 
-(defun replique-locals-at (pos)
+FORMS says what each written form binds - see `replique-locals-forms'."
+  (not (eq 'deftype-like (replique-locals--kind node forms))))
+
+(defun replique-locals-at (pos &optional forms)
   "Return the locals in scope at POS as (NAME . POSITION), nearest first.
 
 POSITION is where the name is bound, which is where a client that jumps
@@ -526,16 +579,20 @@ whatever var happens to be called that.
 
 A buffer with no Clojure parse has nothing written around anything, and
 the answer is that nothing is in scope.  Whether it was a buffer worth
-asking is the caller's to know."
+asking is the caller's to know.
+
+FORMS says what each written form binds, `replique-locals-default-forms'
+by default - see `replique-locals-forms' for what a process adds to it."
   (save-restriction
     (widen)
-    (let ((nodes (replique-locals--enclosing pos))
+    (let ((forms (or forms replique-locals-default-forms))
+          (nodes (replique-locals--enclosing pos))
           (found nil)
           (closes-over t))
       (while (and nodes closes-over)
         (let ((node (pop nodes)))
-          (setq found (append found (replique-locals--bound-by node pos)))
-          (setq closes-over (replique-locals--closes-over-p node))))
+          (setq found (append found (replique-locals--bound-by node pos forms)))
+          (setq closes-over (replique-locals--closes-over-p node forms))))
       found)))
 
 (defun replique-locals--pairs-naming (vec)
@@ -587,7 +644,7 @@ Its second element, when that is a symbol."
     (when (replique-clojure--symbol-node-p name)
       (replique-locals--pattern-bound name))))
 
-(defun replique-locals--naming-by (node)
+(defun replique-locals--naming-by (node forms)
   "Return the names NODE gives that are not in scope where they are written.
 
 Two kinds of name are missing from what `replique-locals-at' answers,
@@ -601,15 +658,16 @@ Everything else is already answered where it is written.  A parameter, a
 field, a `letfn' name, what a catch caught: all of them take effect at
 the start of what they are written in, which is in front of themselves.
 The name of a `fn' is read here as well as there - it is a local and it
-is answered twice, which two of the same name is the right answer to."
-  (let ((name (replique-locals--head-name node)))
+is answered twice, which two of the same name is the right answer to.
+
+FORMS says what each written form binds - see `replique-locals-forms'."
+  (let ((kind (replique-locals--kind node forms)))
     (cond
-     ((member name replique-locals--let-like)
+     ((eq kind 'let-like)
       (replique-locals--pairs-naming (replique-locals--binding-vector node)))
-     ((member name replique-locals--for-like)
+     ((eq kind 'for-like)
       (replique-locals--for-naming node))
-     ((or (member name replique-locals--fn-like)
-          (member name replique-locals--deftype-like))
+     ((memq kind '(defn-like fn-like deftype-like))
       (replique-locals--named node))
      (t nil))))
 
@@ -653,7 +711,7 @@ where it binds it is the start of foo/bar - so a name plus its length
 covers the namespace and stops before the name."
   (and (rassoc start names) t))
 
-(defun replique-locals-at-binding-position-p (pos)
+(defun replique-locals-at-binding-position-p (pos &optional forms)
   "Say whether POS is where a name is being given rather than used.
 
 The point in (let [x| 1] x) and in (defn f|oo [] 1), and not the point in
@@ -670,18 +728,20 @@ A name is at POS or it is not, all of it: the whole of the foo/bar in
 {:keys [foo/bar]} is a name being given, though only the bar of it is
 the name that it gives.
 
-Reads the whole of the buffer, for the reason `replique-locals-at' does."
+Reads the whole of the buffer, for the reason `replique-locals-at' does.
+FORMS is what that one takes, and means the same thing here."
   (save-restriction
     (widen)
-    (when-let* ((node (replique-locals--name-node pos))
-                (start (treesit-node-start node)))
-      (or (replique-locals--at-name-p start (replique-locals-at pos))
-          (let ((nodes (replique-locals--enclosing pos))
-                (found nil))
-            (while (and nodes (not found))
-              (setq found (replique-locals--at-name-p
-                           start (replique-locals--naming-by (pop nodes)))))
-            found)))))
+    (let ((forms (or forms replique-locals-default-forms)))
+      (when-let* ((node (replique-locals--name-node pos))
+                  (start (treesit-node-start node)))
+        (or (replique-locals--at-name-p start (replique-locals-at pos forms))
+            (let ((nodes (replique-locals--enclosing pos))
+                  (found nil))
+              (while (and nodes (not found))
+                (setq found (replique-locals--at-name-p
+                             start (replique-locals--naming-by (pop nodes) forms))))
+              found))))))
 
 (provide 'replique-locals)
 

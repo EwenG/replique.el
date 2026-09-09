@@ -205,6 +205,11 @@ of one found the other."
   (should (equal " clojure.string <f>"
                  (replique-completion-annotation
                   (propertize "join" 'replique-type "function" 'replique-ns "clojure.string"))))
+  (should (equal " java.util <c>"
+                 (replique-completion-annotation
+                  (propertize "Date" 'replique-type "class" 'replique-package "java.util"))))
+  (should (equal " <l>" (replique-completion-annotation
+                         (propertize "x" 'replique-type "local"))))
   (should-not (replique-completion-annotation "unsaid")))
 
 ;;; Waiting for an answer
@@ -369,13 +374,14 @@ nobody asked for, put in the echo area of somebody who had moved on."
          (replique-conn-request-sync conn (list :op :no-such-op)))
        (replique-test-settle)))))
 
-(ert-deftest replique-completion-test-nothing-is-offered-where-nothing-is-asked ()
-  "The usual case, which is a point in no dependency form at all: every
-other completion in the buffer is left to answer for itself."
+(ert-deftest replique-completion-test-a-name-being-given-is-not-one-to-offer ()
+  "What follows an :as is a new name and nothing knows it yet.  It is
+written inside a require, which is what settles it: the same nil outside
+one would be a point in ordinary code, where every name is offered."
   (replique-test-process)
-  (should-not (replique-completion-test--at "(defn f [x] (inc x|))"
-                (replique-completion-at-point)))
   (should-not (replique-completion-test--at "(ns a (:require [b :as c|]))"
+                (replique-completion-at-point)))
+  (should-not (replique-completion-test--at "(let [my-nam|] 1)"
                 (replique-completion-at-point))))
 
 (ert-deftest replique-completion-test-the-name-is-written-in-place-of-what-was-typed ()
@@ -414,6 +420,110 @@ namespace is loaded from one."
       (insert "(require '[clojure.st])")
       (goto-char (- (point-max) 2))
       (should (member "clojure.string" (replique-completion-test--offered))))))
+
+;;; A name written in code
+
+(ert-deftest replique-completion-test-the-locals-travel-with-the-request ()
+  "A name bound by the form being written is a name the process has never
+seen, and it is the process that puts them in one order with the vars."
+  (should (equal '((:name "y") (:name "x"))
+                 (replique-completion-test--at "(defn f [x] (let [y 1] (inc |)))"
+                   (plist-get (replique-completion--code-context) :locals)))))
+
+(ert-deftest replique-completion-test-a-name-bound-twice-travels-once ()
+  "`replique-locals-at' answers with it twice, nearest first, since nothing
+else could tell that a binding was shadowed.  What is being asked is
+which names could be written there, and that is one name."
+  (should (equal '((:name "x"))
+                 (replique-completion-test--at "(let [x 1] (let [x 2] (inc |)))"
+                   (plist-get (replique-completion--code-context) :locals)))))
+
+(ert-deftest replique-completion-test-what-is-asked-in-code ()
+  "The namespace as well as the locals: what a name means is read against
+the namespace it is written in, and only the buffer says which that is."
+  (should (equal '(:op :completions :text "in" :position :code :ns "a.b"
+                       :locals ((:name "x")))
+                 (replique-completion-test--at "(ns a.b)\n(defn f [x] (in|))"
+                   (replique-completion--message
+                    (replique-completion--code-context) "in")))))
+
+(ert-deftest replique-completion-test-nothing-is-asked-where-no-name-goes ()
+  "Inside a string and inside a comment, where what is written is not a
+name being written; and at a name being given, which nothing knows yet."
+  (should-not (replique-completion-test--at "(inc \"a str|\")"
+                (replique-completion--code-context)))
+  (should-not (replique-completion-test--at "(inc 1) ; a comme|nt"
+                (replique-completion--code-context)))
+  (should-not (replique-completion-test--at "(let [x| 1] x)"
+                (replique-completion--code-context))))
+
+(ert-deftest replique-completion-test-code-is-answered-where-clojure-is-read ()
+  "The parse is what says a name written here is a Clojure name, which is
+what makes this safe to turn on wherever somebody wants it - the default
+value of the hook included."
+  (replique-test-grammar)
+  (with-temp-buffer
+    (insert "(inc x)")
+    (goto-char (1- (point-max)))
+    (should-not (replique-completion--code-context))))
+
+(ert-deftest replique-completion-test-a-local-is-offered-in-code ()
+  (replique-test-process)
+  (should (member "map-of-mine"
+                  (replique-completion-test--at "(defn f [map-of-mine] (map-of|))"
+                    (replique-completion-test--offered)))))
+
+(ert-deftest replique-completion-test-a-local-shadows-the-var-of-that-name ()
+  "Which is the reason the locals travel: a name is answered once, and
+dropping the var can only happen where both lists are."
+  (replique-test-process)
+  (let* ((candidates (replique-completion-test--at "(defn f [map] (ma|))"
+                       (replique-completion-test--list (replique-completion-test--all))))
+         (found (car (seq-filter (lambda (c) (equal "map" (substring-no-properties c)))
+                                 candidates))))
+    (should found)
+    (should (equal " <l>" (replique-completion-annotation found)))))
+
+(ert-deftest replique-completion-test-a-var-is-offered-in-code ()
+  (replique-test-process)
+  (should (member "map-indexed"
+                  (replique-completion-test--at "(defn f [] (map-inde|))"
+                    (replique-completion-test--offered)))))
+
+(ert-deftest replique-completion-test-a-var-under-a-namespace-is-offered-in-code ()
+  "With the scope written back on, since a candidate is what goes in the
+buffer and the scope is part of what is written there."
+  (replique-test-process)
+  (should (member "clojure.string/join"
+                  (replique-completion-test--at "(defn f [] (clojure.string/joi|))"
+                    (replique-completion-test--offered)))))
+
+(ert-deftest replique-completion-test-a-class-is-offered-in-code ()
+  "One that was imported, under the name it is written as; and one that was
+not, in full - which is what the dot in the text says is being written."
+  (replique-test-process)
+  (should (member "String"
+                  (replique-completion-test--at "(defn f [] (Strin|))"
+                    (replique-completion-test--offered))))
+  (should (member "java.util.Date"
+                  (replique-completion-test--at "(defn f [] (java.util.Da|))"
+                    (replique-completion-test--offered)))))
+
+(ert-deftest replique-completion-test-a-name-in-code-is-written-in-place ()
+  (replique-test-process)
+  (replique-completion-test--at "(defn f [] (map-inde|))"
+    (completion-at-point)
+    (should (equal "(defn f [] (map-indexed))"
+                   (buffer-substring-no-properties (point-min) (point-max))))))
+
+(ert-deftest replique-completion-test-a-repl-completes-code-at-its-prompt ()
+  (replique-test-grammar)
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (replique-test-hide (current-buffer))
+      (goto-char (point-max))
+      (insert "(map-inde")
+      (should (member "map-indexed" (replique-completion-test--offered))))))
 
 (provide 'replique-completion-test)
 
