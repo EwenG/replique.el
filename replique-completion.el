@@ -93,7 +93,10 @@ nobody is watching."
     ("keyword" . "k")
     ("path" . "r")
     ("local" . "l")
-    ("special-form" . "s"))
+    ("special-form" . "s")
+    ("method" . "mt")
+    ("field" . "fd")
+    ("constructor" . "ct"))
   "What each kind of candidate is shown as, by the name the process gives it.
 
 Two letters at most, because this is written beside every candidate of a

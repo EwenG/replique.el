@@ -543,6 +543,17 @@ buffer and the scope is part of what is written there."
                   (replique-completion-test--at "(defn f [] (clojure.string/joi|))"
                     (replique-completion-test--offered)))))
 
+(ert-deftest replique-completion-test-a-member-of-a-class-is-offered-in-code ()
+  "Written behind the class, which is where clojure reads a static method, a
+constructor and - since 1.12 - an instance method."
+  (replique-test-process)
+  (should (member "String/valueOf"
+                  (replique-completion-test--at "(defn f [] (String/valueO|))"
+                    (replique-completion-test--offered))))
+  (should (member "String/new"
+                  (replique-completion-test--at "(defn f [] (String/ne|))"
+                    (replique-completion-test--offered)))))
+
 (ert-deftest replique-completion-test-a-class-is-offered-in-code ()
   "One that was imported, under the name it is written as; and one that was
 not, in full - which is what the dot in the text says is being written."
