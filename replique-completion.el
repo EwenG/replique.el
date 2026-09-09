@@ -211,30 +211,53 @@ What is written as one of these needs nothing resolved to be known: a
 string is a String wherever it is written, and nothing has to be
 evaluated to find that out.")
 
-(defun replique-completion--head-list ()
-  "Return the list point is writing the head of, or nil.
+(defconst replique-completion--threading
+  '("->" "->>" "some->" "some->>" "doto")
+  "The forms that write what they thread into each step of themselves.
 
-Which is the only place a member is written: (.length s) calls a method
-on what the list holds next, and a .name written anywhere else is not a
-call at all."
-  (let ((node (treesit-node-at (point)))
-        (found nil))
-    (while (and node (null found))
-      (when (and (replique-clojure--list-node-p node)
-                 (<= (treesit-node-start node) (point))
-                 (< (point) (treesit-node-end node)))
-        (setq found node))
+A member written as a step of one is written on what is threaded:
+\(-> s .length) calls .length on s.  Only the first step, since every step
+after it is written on what the one before it returned, and what an
+expression returns is not knowable without running it.
+
+Read plainly or qualified with clojure.core, which is how
+`replique-deps\=' reads the forms it knows.")
+
+(defun replique-completion--threading-p (node)
+  "Return non-nil if NODE is the head of a threading form."
+  (when (and node (replique-clojure--symbol-node-p node))
+    (let ((qualifier (treesit-node-child-by-field-name node "namespace")))
+      (and (or (null qualifier)
+               (equal "clojure.core" (treesit-node-text qualifier t)))
+           (member (replique-clojure--named-node-text node)
+                   replique-completion--threading)
+           t))))
+
+(defun replique-completion--member-target ()
+  "Return the node a member written at point would be written on, or nil.
+
+Which is what the list holds next where point is writing its head - the s
+of (.length s) - and what a threading form threads where point is writing
+its first step.  A .name written anywhere else is not a call on anything,
+so nothing is written on."
+  (when-let* ((node (treesit-node-at (car (replique-completion--bounds)))))
+    (while (and (treesit-node-parent node)
+                (not (replique-clojure--list-node-p (treesit-node-parent node))))
       (setq node (treesit-node-parent node)))
-    (when-let* ((head (and found (car (treesit-node-children found t))))
-                ((<= (treesit-node-start head) (point)))
-                ((<= (point) (treesit-node-end head))))
-      found)))
+    (when-let* ((list (treesit-node-parent node))
+                ((replique-clojure--list-node-p list))
+                (children (treesit-node-children list t))
+                (index (treesit-node-index node t)))
+      (when (or (= index 0)
+                (and (= index 2) (replique-completion--threading-p (car children))))
+        (nth 1 children)))))
 
 (defun replique-completion--written-on (forms)
   "Return what a member written at point would be written on.
 
-Which is what the list holds after the name being written: the s of
-\(.length s).  What travels is what this side can say about it without
+Which is what the list holds after the name being written, or what a
+threading form threads - see `replique-completion--member-target\='.  What
+travels is what this side can say about it without
 running anything - the type a ^String declares, on the local or at the
 call site, and the target itself where it is not a local, which the
 process reads as a var that declares its type or as a literal that is
@@ -245,9 +268,7 @@ FORMS says what each written form binds - see `replique-locals-forms\='.
 Sent whether or not a member is what is being written, because that is
 not known here: the table this hands back is asked again for every
 keystroke, and what point is written on does not change between them."
-  (when-let* ((list (replique-completion--head-list))
-              (children (treesit-node-children list t))
-              (written (nth 1 children))
+  (when-let* ((written (replique-completion--member-target))
               (target (replique-clojure--unwrap-meta written))
               (text (treesit-node-text target t))
               (tag (or (replique-locals-tag-at (treesit-node-start target)) :none)))

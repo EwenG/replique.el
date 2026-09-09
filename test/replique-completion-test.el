@@ -505,7 +505,14 @@ on the name itself rather than on a vector around it."
     ;; a local that declares nothing says nothing, and its name is not a var
     ;; for the process to look up
     (should-not (on "(defn f [s] (.leng| s))"))
-    ;; and a name written anywhere but the head of a list is no call at all
+    ;; a threading form is written on what it threads, and only its first
+    ;; step is: every step after that is written on what the one before it
+    ;; returned, which is not knowable without running it
+    (should (equal '(:tag "String") (on "(defn f [^String s] (-> s .leng|))")))
+    (should (equal '(:tag "String") (on "(defn f [^String s] (doto s .leng|))")))
+    (should-not (on "(defn f [^String s] (-> s (.substring 1) .leng|))"))
+    (should-not (on "(defn f [^String s] (other/-> s .leng|))"))
+    ;; and a name written anywhere but those is no call on anything
     (should-not (on "(defn f [^String s] (g s .leng|))"))))
 
 (ert-deftest replique-completion-test-a-member-is-offered-in-code ()
