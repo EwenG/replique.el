@@ -23,12 +23,13 @@ compile:
 	$(EMACS) -Q -batch -L . -L test -f batch-byte-compile $(SRC) \
 	  test/replique-test.el test/replique-locals-test.el test/replique-deps-test.el \
 	  test/replique-pprint-test.el test/replique-completion-test.el \
-	  test/replique-forms-test.el
+	  test/replique-completion-fuzz-test.el test/replique-forms-test.el
 
 test:
 	REPLIQUE_PROJECT=$(REPLIQUE_PROJECT) $(EMACS) -Q -batch -L . -L test \
 	  -l replique-test -l replique-locals-test -l replique-deps-test \
-	  -l replique-pprint-test -l replique-completion-test -l replique-forms-test \
+	  -l replique-pprint-test -l replique-completion-test \
+	  -l replique-completion-fuzz-test -l replique-forms-test \
 	  -f ert-run-tests-batch-and-exit
 
 lint:
