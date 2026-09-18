@@ -365,6 +365,24 @@
     (should (equal '(1 4) (replique-parse-test--bounds 1)))
     (should (equal '(9 12) (replique-parse-test--bounds 9)))))
 
+(ert-deftest replique-parse-test-a-form-nothing-closes-has-no-end ()
+  ;; Point at the end of `(map inc \' is point inside the call, not after
+  ;; it: there is nothing after it, which is why it is still being written
+  (with-temp-buffer
+    (insert "(map inc ")
+    (should (equal '(1 10) (replique-parse-test--bounds (point-max))))
+    (should (eq 'list (replique-parse-type
+                       (replique-parse-form-at (point-max)))))
+    ;; and the same the whole way down
+    (should (equal '(root list)
+                   (mapcar #'replique-parse-type
+                           (replique-parse-path (replique-parse-buffer)
+                                                (point-max))))))
+  ;; where a form something closes ends where it closes
+  (with-temp-buffer
+    (insert "(map inc)")
+    (should (null (replique-parse-test--bounds (point-max))))))
+
 (ert-deftest replique-parse-test-index-can-be-forgotten ()
   (with-temp-buffer
     (insert "(a)")

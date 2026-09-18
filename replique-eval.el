@@ -72,48 +72,16 @@
 
 (require 'seq)
 (require 'subr-x)
-(require 'treesit)
-(require 'replique-clojure-mode)
+(require 'replique-parse)
 (require 'replique-edn)
 (require 'replique-process)
 (require 'replique-repl)
 
-(defconst replique-eval-grammar 'treejure
-  "The grammar `replique-clojure-mode' parses with, and replique reads with.")
-
-;;; The parse
-
-(defun replique-eval--parser ()
-  "Return the parse of the current buffer that forms are read from.
-
-`replique-clojure-mode' is what makes it, and installs the grammar it
-needs - see `replique-clojure-ensure-grammars'.  Nothing is made here:
-the mode is asked for rather than worked around, so that a buffer answers
-where a form begins once rather than once for the editor and once for the
-repl."
-  (unless (derived-mode-p 'replique-clojure-mode)
-    (user-error "Not a Clojure buffer of replique's - M-x replique-clojure-mode"))
-  (or (car (treesit-parser-list nil replique-eval-grammar))
-      ;; The mode parses only once the grammar is ready, and says so itself
-      ;; when it is not
-      (user-error "This buffer has no %s parse - see replique-clojure-mode"
-                  replique-eval-grammar)))
-
-(defun replique-eval--root ()
-  "Return the root of the parse of the current buffer."
-  (treesit-parser-root-node (replique-eval--parser)))
-
 ;;; Finding forms
-
-(defun replique-eval--top-level (node)
-  "Return the top level form NODE is part of, or nil when it is in none."
-  (let ((node node))
-    (while (and node
-                (treesit-node-parent node)
-                (treesit-node-parent (treesit-node-parent node)))
-      (setq node (treesit-node-parent node)))
-    ;; nil for the root: it is the buffer, not a form in it
-    (and node (treesit-node-parent node) node)))
+;;
+;; The buffer is read where a form is asked for - see `replique-parse-form-at'
+;; - so there is no parse to be missing and no mode a buffer has to be in for
+;; a form of it to be found.
 
 (defun replique-eval--comment-p (node)
   "Return non-nil when NODE is a comment rather than a form.
@@ -121,39 +89,31 @@ repl."
 Asked wherever a node becomes something to send.  A comment consumes no
 directive - see the commentary - so a command that finds one has found
 nothing to evaluate, and says so rather than sending it."
-  (and node (equal "comment" (treesit-node-type node))))
+  (and node (eq 'comment (replique-parse-type node))))
 
 (defun replique-eval--covering (pos)
   "Return the top level form covering POS, or nil when none does.
 
-`treesit-node-at' answers with the first node after POS when nothing
-covers it, which is a form somewhere below rather than the one asked
-about.  A comment covering POS is nothing covering it: point on a comment
-is point on no form.  Only a top level one is ever answered with - inside
-a list the walk lands on the list."
-  (let ((node (replique-eval--top-level
-               (treesit-node-at pos (replique-eval--parser)))))
-    (when (and node
-               (not (replique-eval--comment-p node))
-               (<= (treesit-node-start node) pos)
-               (< pos (treesit-node-end node)))
-      node)))
+A comment covering POS is nothing covering it: point on a comment is
+point on no form."
+  (let ((node (replique-parse-form-at pos)))
+    (unless (replique-eval--comment-p node) node)))
 
 (defun replique-eval--ending-at (pos)
   "Return the largest form ending exactly at POS, or nil.
 
 The largest rather than the smallest: point after the last paren of
 \"(a (b))\" is at the end of both, and the one that was just finished is
-the outer one."
-  (let ((node (treesit-node-at (max (point-min) (1- pos)) (replique-eval--parser)))
-        (found nil))
-    (while node
-      (when (and (treesit-node-parent node)
-                 (treesit-node-check node 'named)
-                 (= (treesit-node-end node) pos))
-        (setq found node))
-      (setq node (treesit-node-parent node)))
-    found))
+the outer one - which is the first of them on the way down from the top
+level form, where it was the last of them on the way up from the token."
+  (when-let* ((form (replique-parse-form-at (max (point-min) (1- pos)))))
+    (let ((path (replique-parse-path form (max (point-min) (1- pos))))
+          (found nil))
+      (while (and path (null found))
+        (let ((node (pop path)))
+          (when (= (replique-parse-end node) pos)
+            (setq found node))))
+      found)))
 
 (defun replique-eval--back-over-space (pos)
   "Return POS with the whitespace before it skipped."
@@ -175,7 +135,7 @@ whose last line is a note."
     (while (progn
              (setq node (replique-eval--ending-at pos))
              (and node (replique-eval--comment-p node)))
-      (setq pos (replique-eval--back-over-space (treesit-node-start node))))
+      (setq pos (replique-eval--back-over-space (replique-parse-start node))))
     node))
 
 (defun replique-eval--discarded (node)
@@ -186,13 +146,8 @@ on: that is the way back from having commented it out, and it is what
 putting point on a form and asking for it means.  A stacked discard -
 #_#_(x)(y), which discards both - answers with the last of them, there
 being no better answer to a question that has two."
-  (while (and node (equal "discard" (treesit-node-type node)))
-    (setq node (let ((target nil))
-                 (dotimes (i (treesit-node-child-count node t))
-                   (let ((child (treesit-node-child node i t)))
-                     (unless (replique-eval--comment-p child)
-                       (setq target child))))
-                 target)))
+  (while (and node (eq 'discard (replique-parse-type node)))
+    (setq node (replique-parse-target node)))
   node)
 
 (defun replique-eval--nodes (start end)
@@ -206,23 +161,26 @@ the body of a function are three forms.
 Comments are left out - a comment is not a form, and the reader answers
 one with a prompt of its own.  A discard is not: whoever selected a
 region selected what was commented out in it too."
-  (let* ((root (replique-eval--root))
-         (cover (or (treesit-node-descendant-for-range root start (max start end))
-                    root)))
-    (if (and (treesit-node-parent cover)
-             (>= (treesit-node-start cover) start))
+  (let* ((end (max start end))
+         (form (replique-parse-form-at start))
+         (cover (and form
+                     (>= (replique-parse-end form) end)
+                     (replique-parse-node-spanning form start end))))
+    (if (and cover (>= (replique-parse-start cover) start))
         ;; The region is one form, whether or not all of it was selected.
-        ;; Its children are the parts of that form, which is not what was
-        ;; asked for, and half a form is still the form it is half of -
-        ;; unless it is a comment, which is not a form at all
+        ;; What it is made of is not what was asked for, and half a form is
+        ;; still the form it is half of - unless it is a comment, which is
+        ;; not a form at all
         (unless (replique-eval--comment-p cover) (list cover))
       (let ((nodes nil))
-        (dotimes (i (treesit-node-child-count cover t))
-          (let ((child (treesit-node-child cover i t)))
-            (when (and (>= (treesit-node-start child) start)
-                       (< (treesit-node-start child) end)
-                       (not (replique-eval--comment-p child)))
-              (push child nodes))))
+        (dolist (child (if cover
+                           (replique-parse-children cover)
+                         ;; the region reaches over more than one of them
+                         (replique-parse-forms-in start end)))
+          (when (and (>= (replique-parse-start child) start)
+                     (< (replique-parse-start child) end)
+                     (not (replique-eval--comment-p child)))
+            (push child nodes)))
         (nreverse nodes)))))
 
 ;;; The namespace of a form
@@ -235,8 +193,8 @@ region selected what was commented out in it too."
 
 The argument of `in-ns' is quoted and the argument of `ns' is not, and
 both are the same answer to the same question."
-  (if (equal "quote" (treesit-node-type node))
-      (replique-clojure--unwrap-meta (car (treesit-node-children node t)))
+  (if (eq 'quote (replique-parse-type node))
+      (replique-parse-unwrap-meta (replique-parse-target node))
     node))
 
 (defun replique-eval--ns-form-name (node)
@@ -247,26 +205,27 @@ symbol written out - `clojure.core/in-ns' too, since that is how the form
 is written where `clojure.core' is not referred.  An argument that is
 computed says nothing that can be read from the text, and a qualified one
 is not the name of a namespace at all."
-  (let ((node (replique-clojure--unwrap-meta node)))
-    (when (replique-clojure--list-node-p node)
-      (let ((head (replique-clojure--first-value-child node))
-            (arg (replique-clojure--unwrap-meta
-                  (nth 1 (treesit-node-children node t)))))
+  (let ((node (replique-parse-unwrap-meta node)))
+    (when (and node (eq 'list (replique-parse-type node)))
+      (let* ((forms (replique-parse-forms node))
+             (head (replique-parse-unwrap-meta (car forms)))
+             (arg (replique-parse-unwrap-meta (nth 1 forms))))
         (when (and head arg
-                   (replique-clojure--symbol-node-p head)
-                   (member (replique-clojure--named-node-text head)
-                           replique-eval--ns-form-names)
-                   ;; `clojure.core' or nothing.  Any other namespace on it
-                   ;; is somebody else's in-ns, which does something else
-                   (let ((qualifier (treesit-node-child-by-field-name
-                                     head "namespace")))
-                     (or (null qualifier)
-                         (equal "clojure.core" (treesit-node-text qualifier t)))))
+                   (eq 'symbol (replique-parse-type head))
+                   (let ((parts (replique-parse-name-parts
+                                 (replique-parse-text head))))
+                     (and (member (cdr parts) replique-eval--ns-form-names)
+                          ;; `clojure.core' or nothing.  Any other namespace
+                          ;; on it is somebody else's in-ns, which does
+                          ;; something else
+                          (or (null (car parts))
+                              (equal "clojure.core" (car parts))))))
           (let ((arg (replique-eval--unquote arg)))
             (when (and arg
-                       (replique-clojure--symbol-node-p arg)
-                       (null (treesit-node-child-by-field-name arg "namespace")))
-              (treesit-node-text arg t))))))))
+                       (eq 'symbol (replique-parse-type arg))
+                       (null (car (replique-parse-name-parts
+                                   (replique-parse-text arg)))))
+              (replique-parse-text arg))))))))
 
 (defun replique-eval--ns-at (pos)
   "Return the namespace POS is written in, or nil when the buffer names none.
@@ -280,18 +239,23 @@ the (comment ...) case, applies only until that form ends.
 
 Read from the parse rather than from the text, so a namespace named
 inside a string or behind a semicolon is a namespace nobody asked for."
-  (let ((node (replique-eval--root))
-        (found nil))
-    (while node
-      (let ((into nil))
-        (dolist (child (treesit-node-children node t))
-          (when (< (treesit-node-start child) pos)
-            (when-let* ((name (replique-eval--ns-form-name child)))
-              (setq found name)))
-          (when (and (<= (treesit-node-start child) pos)
-                     (< pos (treesit-node-end child)))
-            (setq into child)))
-        (setq node into)))
+  (let ((found nil))
+    ;; the top level first, which the forms of the buffer already are
+    (dolist (form (replique-parse-forms-in (point-min) pos))
+      (when-let* ((name (replique-eval--ns-form-name form)))
+        (setq found name)))
+    ;; and then down through the one POS is written in
+    (let ((node (replique-parse-form-at pos)))
+      (while node
+        (let ((into nil))
+          (dolist (child (replique-parse-children node))
+            (when (< (replique-parse-start child) pos)
+              (when-let* ((name (replique-eval--ns-form-name child)))
+                (setq found name)))
+            (when (and (<= (replique-parse-start child) pos)
+                       (< pos (replique-parse-end child)))
+              (setq into child)))
+          (setq node into))))
     found))
 
 ;;; Sending them
@@ -337,9 +301,7 @@ recorded where the buffer said this one was."
   ;; text of one is how that is noticed
   (save-restriction
     (widen)
-    (let ((nodes (seq-remove (lambda (node)
-                               (string-blank-p (treesit-node-text node t)))
-                             nodes)))
+    (progn
       (unless nodes (user-error "Nothing to evaluate"))
       (let ((repl (replique-repl-ensure))
             (file (buffer-file-name)))
@@ -354,18 +316,18 @@ recorded where the buffer said this one was."
          ;; over, dropping only comments, and a comment moves nothing.  So
          ;; the rest of the region says where it is going by being evaluated
          (concat
-          (when-let* ((ns (replique-eval--ns-at (treesit-node-start (car nodes)))))
+          (when-let* ((ns (replique-eval--ns-at (replique-parse-start (car nodes)))))
             (concat (replique-ns-directive ns) "\n"))
           (mapconcat (lambda (node)
                        (concat (replique-src-directive
-                                file (line-number-at-pos (treesit-node-start node) t))
+                                file (line-number-at-pos (replique-parse-start node) t))
                                "\n"
-                               (treesit-node-text node t)))
+                               (replique-parse-text node)))
                      nodes
                      "\n"))
          ;; What the buffer is shown leaves the directives out: they are
          ;; protocol, not something anybody wrote
-         (mapconcat (lambda (node) (treesit-node-text node t)) nodes "\n")
+         (mapconcat (lambda (node) (replique-parse-text node)) nodes "\n")
          ;; Only one form has one result to show
          (null (cdr nodes)))))))
 

@@ -49,10 +49,11 @@ open on it."
 
 (defun replique-test-grammar ()
   "Skip the test unless the grammar replique reads Clojure with is there."
-  (unless (and (fboundp 'treesit-available-p)
-               (treesit-available-p)
-               (treesit-language-available-p replique-eval-grammar))
-    (ert-skip (format "the %s grammar is not installed" replique-eval-grammar))))
+  (let ((grammar (caar replique-clojure-grammar-recipes)))
+    (unless (and (fboundp 'treesit-available-p)
+                 (treesit-available-p)
+                 (treesit-language-available-p grammar))
+      (ert-skip (format "the %s grammar is not installed" grammar)))))
 
 (defmacro replique-test-with-clojure (text &rest body)
   "Run BODY in a Clojure buffer holding TEXT, with point at its beginning."
@@ -68,7 +69,7 @@ open on it."
 
 (defun replique-test-node-texts (nodes)
   "Return the text of NODES."
-  (mapcar (lambda (node) (treesit-node-text node t)) nodes))
+  (mapcar (lambda (node) (replique-parse-text node)) nodes))
 
 (defun replique-test-forms (text &optional start end)
   "Return the text of the forms TEXT holds, as replique reads them.
@@ -941,7 +942,7 @@ at the line of the first."
       (should (equal '("(def a 1)" "(def b 2)") (replique-test-node-texts nodes)))
       (should (equal '(1 3)
                      (mapcar (lambda (n)
-                               (line-number-at-pos (treesit-node-start n) t))
+                               (line-number-at-pos (replique-parse-start n) t))
                              nodes))))))
 
 (defun replique-test-ns-at (text needle)
@@ -1261,7 +1262,7 @@ C-x C-e work at the end of a file whose last line is a note."
   (replique-test-with-clojure "(def a 1)\n;; a note\n;; and another\n"
     (goto-char (point-max))
     (should (equal "(def a 1)"
-                   (treesit-node-text (replique-eval--before (point)) t)))))
+                   (replique-parse-text (replique-eval--before (point)))))))
 
 (ert-deftest replique-test-a-discarded-form-is-one-form ()
   "What #_ discards is part of the form it discards, not a form before it.
@@ -1277,18 +1278,23 @@ form that was commented out is then the one evaluated."
                  (replique-test-forms "#_ ;; why\n(z)\n"))))
 
 (ert-deftest replique-test-nothing-empty-is-sent ()
-  "A trailing #_ discards a form that is not there, so the grammar invents
-one: a zero width node standing where it would have been.  Sending that
-writes a directive with nothing after it, which is a directive nothing
-consumes - the same damage a comment does, by another road."
-  (replique-test-grammar)
+  "A trailing #_ discards a form that is not there, and what it discards
+is what would be sent.  Sending nothing writes a directive with nothing
+after it, which is a directive nothing consumes - the same damage a
+comment does, by another road.
+
+It is refused for having no form rather than for having an empty one.
+A grammar answers a construct left unfinished with a node of no width
+standing where the form would have been, and reading the text says so
+only once the node is in hand; a reader that answers with nothing says
+so where the form was looked for."
   (replique-test-with-clojure "(def a 1)\n#_\n"
     (goto-char (point-max))
-    (should (equal '(user-error "Nothing to evaluate")
+    (should (equal '(user-error "No form at point")
                    (should-error (replique-eval-defun) :type 'user-error))))
   (replique-test-with-clojure "(def a 1)\n#_ ;; why\n"
     (goto-char (point-max))
-    (should (equal '(user-error "Nothing to evaluate")
+    (should (equal '(user-error "No form at point")
                    (should-error (replique-eval-defun) :type 'user-error)))))
 
 (ert-deftest replique-test-metadata-is-part-of-the-form-it-is-on ()
@@ -1344,11 +1350,11 @@ which is where typing one leaves point."
   (replique-test-with-clojure "(def a 1)\n^{:m 1}\n(def c 3)\n"
     (search-forward "def c")
     (should (equal "^{:m 1}\n(def c 3)"
-                   (treesit-node-text (replique-eval--covering (point)) t)))
+                   (replique-parse-text (replique-eval--covering (point)))))
     (goto-char (point-min))
     (end-of-line)
     (should (equal "(def a 1)"
-                   (treesit-node-text (replique-eval--covering (1- (point))) t)))))
+                   (replique-parse-text (replique-eval--covering (1- (point))))))))
 
 (ert-deftest replique-test-the-form-before-point ()
   "The largest form ending there: point after the last paren of (a (b))
@@ -1356,10 +1362,10 @@ is at the end of both, and the one just finished is the outer one."
   (replique-test-grammar)
   (replique-test-with-clojure "(a (b))"
     (should (equal "(a (b))"
-                   (treesit-node-text (replique-eval--ending-at (point-max)) t))))
+                   (replique-parse-text (replique-eval--ending-at (point-max))))))
   (replique-test-with-clojure "(x)\n^{:m 1} (def c 3)"
     (should (equal "^{:m 1} (def c 3)"
-                   (treesit-node-text (replique-eval--ending-at (point-max)) t)))))
+                   (replique-parse-text (replique-eval--ending-at (point-max)))))))
 
 (ert-deftest replique-test-a-discard-under-point-is-evaluated ()
   "The way back from having commented a form out: putting point on it and
@@ -1370,13 +1376,13 @@ commented out."
   (replique-test-with-clojure "#_(def b 2)\n"
     (search-forward "def b")
     (should (equal "(def b 2)"
-                   (treesit-node-text
-                    (replique-eval--discarded (replique-eval--covering (point))) t))))
+                   (replique-parse-text
+                    (replique-eval--discarded (replique-eval--covering (point)))))))
   ;; and the last of a stacked one, there being no better answer
   (replique-test-with-clojure "#_#_(x)(y)\n"
     (should (equal "(y)"
-                   (treesit-node-text
-                    (replique-eval--discarded (replique-eval--covering (point))) t)))))
+                   (replique-parse-text
+                    (replique-eval--discarded (replique-eval--covering (point))))))))
 
 (ert-deftest replique-test-the-transcript-does-not-show-the-source-directive ()
   "The directive is protocol.  Nobody wrote it, so a transcript that shows
@@ -1450,7 +1456,7 @@ something happened is the line the next form is recorded at."
                   (with-current-buffer buffer
                     (setq replique-current-repl repl)
                     (goto-char (point-max))
-                    (should (equal '(user-error "Nothing to evaluate")
+                    (should (equal '(user-error "No form at point")
                                    (should-error (replique-eval-defun)
                                                  :type 'user-error))))
                 (kill-buffer buffer)))

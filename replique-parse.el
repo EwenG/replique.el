@@ -704,12 +704,20 @@ form that changed, and `replique-parse-top-level-at' is how to find it."
   "Read the whole of what is accessible in the current buffer."
   (replique-parse-region (point-min) (point-max)))
 
-(defun replique-parse-covers-p (node pos)
+(defsubst replique-parse--covers (node pos)
   "Return non-nil when NODE is written over POS.
 
-Its start counts and its end does not, so that the position between two
-forms belongs to neither and the position a form opens at belongs to it."
-  (and (<= (aref node 1) pos) (< pos (aref node 2))))
+Its start counts and its end does not, so a position between two forms
+belongs to neither and the position a form opens at belongs to it.
+
+Unless nothing closes the form, in which case its end counts too: a form
+nothing closes has no end, it stops where the text stops, and a position
+there is a position inside it.  Which is where point is while one is
+being typed - `(map inc ' is a call somebody is in the middle of writing
+and point is in it, not after it."
+  (and (<= (aref node 1) pos)
+       (or (< pos (aref node 2))
+           (and (= pos (aref node 2)) (eq 'unclosed (aref node 4))))))
 
 (defun replique-parse-path (root pos)
   "The nodes of ROOT's tree written over POS, outermost first."
@@ -721,11 +729,28 @@ forms belongs to neither and the position a form opens at belongs to it."
       (let ((children (aref node 3)))
         (while children
           (let ((child (car children)))
-            (if (and (<= (aref child 1) pos) (< pos (aref child 2)))
+            (if (replique-parse--covers child pos)
                 (progn (push child path)
                        (setq node child descended t children nil))
               (setq children (cdr children)))))))
     (nreverse path)))
+
+(defun replique-parse-node-spanning (node from to)
+  "The innermost part of NODE that is written over all of FROM to TO.
+
+NODE itself where nothing inside it reaches over the whole of that, which
+is what a region holding several forms comes back as."
+  (let ((found node)
+        (descended t))
+    (while descended
+      (setq descended nil)
+      (let ((children (aref found 3)))
+        (while children
+          (let ((child (car children)))
+            (if (and (<= (aref child 1) from) (>= (aref child 2) to))
+                (setq found child descended t children nil)
+              (setq children (cdr children)))))))
+    found))
 
 (defun replique-parse-node-at (root pos)
   "The innermost node of ROOT's tree written over POS."
@@ -737,7 +762,7 @@ forms belongs to neither and the position a form opens at belongs to it."
         (found nil))
     (while children
       (let ((child (car children)))
-        (if (and (<= (aref child 1) pos) (< pos (aref child 2)))
+        (if (replique-parse--covers child pos)
             (setq found child children nil)
           (setq children (cdr children)))))
     found))
@@ -838,8 +863,9 @@ somebody next asks something rather than while somebody is typing.")
 (defun replique-parse--entry-at (pos)
   "The entry of this buffer's forms written over POS, or nil."
   (let* ((forms (replique-parse--index))
+         (count (length forms))
          (low 0)
-         (high (1- (length forms)))
+         (high (1- count))
          (found nil))
     (while (<= low high)
       (let* ((middle (/ (+ low high) 2))
@@ -848,7 +874,15 @@ somebody next asks something rather than while somebody is typing.")
          ((< pos (aref entry 0)) (setq high (1- middle)))
          ((>= pos (aref entry 1)) (setq low (1+ middle)))
          (t (setq found entry low (1+ high))))))
-    found))
+    (or found
+        ;; The last of them, where nothing closes it: it stops where the
+        ;; text stops, and a position there is written inside it rather
+        ;; than after it.  Read to be asked, which is why it is asked last
+        (let ((last (and (> count 0) (aref forms (1- count)))))
+          (when (and last
+                     (= pos (aref last 1))
+                     (eq 'unclosed (aref (replique-parse--entry-tree last) 4)))
+            last)))))
 
 (defun replique-parse--entry-before (pos)
   "The entry of the last of this buffer's forms ending at or before POS."
@@ -870,6 +904,26 @@ somebody next asks something rather than while somebody is typing.")
       (aset entry 2
             (car (aref (replique-parse-region (aref entry 0) (aref entry 1))
                        3)))))
+
+(defun replique-parse-forms-in (from to)
+  "The top level forms of this buffer that start between FROM and TO.
+
+TO is not one of them, so a form opening exactly at TO is left out - a
+region reaches up to where it ends and not into what comes after."
+  (let ((forms (replique-parse--index))
+        (found nil)
+        (i 0)
+        (count 0))
+    (setq count (length forms))
+    (while (< i count)
+      (let ((entry (aref forms i)))
+        (cond
+         ((>= (aref entry 0) to) (setq i count))
+         ((>= (aref entry 0) from)
+          (push (replique-parse--entry-tree entry) found)
+          (setq i (1+ i)))
+         (t (setq i (1+ i))))))
+    (nreverse found)))
 
 (defun replique-parse-top-level-bounds (pos)
   "Where the top level form written over POS starts and ends, as a cons.

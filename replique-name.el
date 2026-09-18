@@ -40,8 +40,7 @@
 
 (require 'seq)
 (require 'subr-x)
-(require 'treesit)
-(require 'replique-clojure-mode)
+(require 'replique-parse)
 (require 'replique-deps)
 (require 'replique-eval)
 (require 'replique-forms)
@@ -164,8 +163,18 @@ written, and a name bound twice is one name to write."
         (push (list :name (car local)) found)))
     (nreverse found)))
 
+(defun replique-name--clojure-p ()
+  "Return non-nil when this buffer is one replique reads as Clojure.
+
+The mode says so, where it used to be the parse that did: the text is
+read where a name is asked about, so every buffer can be read and being
+readable no longer tells a Clojure buffer from a prose one.  What this
+keeps is why the question was asked - these are safe to turn on wherever
+somebody wants them, the default value of the hook included."
+  (and (derived-mode-p 'replique-clojure-mode) t))
+
 (defconst replique-name--literals
-  '("string" "keyword" "number" "character" "boolean" "regex")
+  '(string keyword number character boolean regex)
   "The nodes that are their own class.
 
 What is written as one of these needs nothing resolved to be known: a
@@ -186,12 +195,11 @@ Read plainly or qualified with clojure.core, which is how
 
 (defun replique-name--threading-p (node)
   "Return non-nil if NODE is the head of a threading form."
-  (when (and node (replique-clojure--symbol-node-p node))
-    (let ((qualifier (treesit-node-child-by-field-name node "namespace")))
-      (and (or (null qualifier)
-               (equal "clojure.core" (treesit-node-text qualifier t)))
-           (member (replique-clojure--named-node-text node)
-                   replique-name--threading)
+  (when (and node (eq 'symbol (replique-parse-type node)))
+    (let ((parts (replique-parse-name-parts (replique-parse-text node))))
+      (and (or (null (car parts))
+               (equal "clojure.core" (car parts)))
+           (member (cdr parts) replique-name--threading)
            t))))
 
 (defun replique-name--member-target ()
@@ -201,17 +209,25 @@ Which is what the list holds next where point is writing its head - the s
 of (.length s) - and what a threading form threads where point is writing
 its first step.  A .name written anywhere else is not a call on anything,
 so nothing is written on."
-  (when-let* ((node (treesit-node-at (car (replique-name-bounds)))))
-    (while (and (treesit-node-parent node)
-                (not (replique-clojure--list-node-p (treesit-node-parent node))))
-      (setq node (treesit-node-parent node)))
-    (when-let* ((list (treesit-node-parent node))
-                ((replique-clojure--list-node-p list))
-                (children (treesit-node-children list t))
-                (index (treesit-node-index node t)))
-      (when (or (= index 0)
-                (and (= index 2) (replique-name--threading-p (car children))))
-        (nth 1 children)))))
+  (when-let* ((start (car (replique-name-bounds)))
+              (form (replique-parse-form-at start)))
+    ;; the innermost list with something of it written at point, which is
+    ;; the deepest one the way down has a step after it
+    (let ((path (replique-parse-path form start))
+          (list nil)
+          (node nil))
+      (while (cdr path)
+        (when (eq 'list (replique-parse-type (car path)))
+          (setq list (car path) node (cadr path)))
+        (setq path (cdr path)))
+      (when list
+        (let* ((forms (replique-parse-forms list))
+               (index (seq-position forms node #'eq)))
+          (when (and index
+                     (or (= index 0)
+                         (and (= index 2)
+                              (replique-name--threading-p (car forms)))))
+            (nth 1 forms)))))))
 
 (defun replique-name--written-on (written forms)
   "Return what the node WRITTEN is, as far as this side can tell.
@@ -230,28 +246,28 @@ about what it is.  The process answers a member with nothing then, which
 is the right answer: what an expression would return is not knowable
 without running it."
   (when-let* ((written written)
-              (target (replique-clojure--unwrap-meta written))
-              (text (treesit-node-text target t))
-              (tag (or (replique-locals-tag-at (treesit-node-start target)) :none)))
-    (let ((type (treesit-node-type target))
+              (target (replique-parse-unwrap-meta written))
+              (text (replique-parse-text target))
+              (tag (or (replique-locals-tag-at (replique-parse-start target)) :none)))
+    (let ((type (replique-parse-type target))
           (tag (and (stringp tag) tag)))
       (cond
-       ((equal "symbol" type)
+       ((eq 'symbol type)
         (if-let* ((local (assoc text (replique-locals-at (point) forms))))
             (when-let* ((tag (or tag (replique-locals-tag-at (cdr local)))))
               (list :tag tag))
           (append (list :target text) (when tag (list :tag tag)))))
-       ((member type replique-name--literals) (list :target text))
+       ((memq type replique-name--literals) (list :target text))
        (tag (list :tag tag))))))
 
 (defun replique-name--call-node ()
   "Return the innermost list or function literal point is inside, or nil."
-  (when-let* ((node (treesit-node-at (point))))
-    (treesit-parent-until node
-                          (lambda (found)
-                            (or (replique-clojure--list-node-p found)
-                                (replique-clojure--anon-fn-node-p found)))
-                          t)))
+  (when-let* ((form (replique-parse-form-at (point))))
+    (let ((found nil))
+      (dolist (node (replique-parse-path form (point)))
+        (when (memq (replique-parse-type node) '(list fn))
+          (setq found node)))
+      found)))
 
 (defun replique-name--enclosing ()
   "Return the form point is writing in, or nil when point is in none.
@@ -271,13 +287,13 @@ ask about, and neither is the nothing at the head of a form somebody has
 just opened - and point is writing an argument of both of those all the
 same, so :argument is there where :call is not."
   (when-let* ((form (replique-name--call-node)))
-    (let ((children (treesit-node-children form t))
-          (head (replique-clojure--first-value-child form)))
+    (let* ((children (replique-parse-forms form))
+           (head (replique-parse-unwrap-meta (car children))))
       (append (list :argument (seq-count (lambda (child)
-                                           (< (treesit-node-end child) (point)))
+                                           (< (replique-parse-end child) (point)))
                                          children))
-              (when (and head (replique-clojure--symbol-node-p head))
-                (list :call (treesit-node-text head t)))
+              (when (and head (eq 'symbol (replique-parse-type head)))
+                (list :call (replique-parse-text head)))
               (when-let* ((on (nth 1 children)))
                 (list :on on))))))
 
@@ -313,12 +329,10 @@ being written.  Nil too where the name at point is one being given
 rather than used, which is a name nothing knows yet - see
 `replique-locals-at-binding-position-p'.
 
-Nil as well in a buffer that is not read as Clojure.  The parse is what
-says a name written here is a Clojure name, which is what makes this
-safe to turn on wherever somebody wants it - the default value of the
-hook included."
+Nil as well in a buffer that is not read as Clojure - see
+`replique-name--clojure-p'."
   (let ((state (syntax-ppss)))
-    (unless (or (nth 3 state) (nth 4 state) (null (treesit-parser-list nil 'treejure)))
+    (unless (or (nth 3 state) (nth 4 state) (not (replique-name--clojure-p)))
       (let* ((ns (replique-name-namespace))
              (forms (replique-forms-for (replique-name-process) ns)))
         (unless (replique-locals-at-binding-position-p (point) forms)
@@ -349,7 +363,7 @@ that is a question worth asking of any of them.
 
 Nil outside a string, and nil in a buffer that is not read as Clojure."
   (let ((state (syntax-ppss)))
-    (when (and (nth 3 state) (treesit-parser-list nil 'treejure))
+    (when (and (nth 3 state) (replique-name--clojure-p))
       (let ((enclosing (replique-name--enclosing)))
         (append (list :position :string)
                 (when-let* ((ns (replique-name-namespace))) (list :ns ns))
@@ -464,7 +478,7 @@ Answered inside a string, where a completion has an answer of its own:
 what a call takes is worth saying while any of its arguments is being
 written, and a path is an argument like the rest of them."
   (let ((state (syntax-ppss)))
-    (unless (or (nth 4 state) (null (treesit-parser-list nil 'treejure)))
+    (unless (or (nth 4 state) (not (replique-name--clojure-p)))
       (when-let* ((enclosing (replique-name--enclosing))
                   (text (plist-get enclosing :call))
                   (argument (plist-get enclosing :argument))
