@@ -25,7 +25,7 @@ all: compile test
 compile:
 	$(EMACS) -Q -batch -L . -L test -f batch-byte-compile $(SRC) \
 	  test/replique-test.el test/replique-locals-test.el test/replique-deps-test.el \
-	  test/replique-parse-test.el \
+	  test/replique-parse-test.el test/replique-clojure-mode-test.el \
 	  test/replique-pprint-test.el test/replique-completion-test.el \
 	  test/replique-forms-test.el test/replique-symbol-test.el \
 	  test/replique-name-fuzz-test.el
@@ -54,7 +54,8 @@ native: compile
 test:
 	REPLIQUE_PROJECT=$(REPLIQUE_PROJECT) $(EMACS) -Q -batch -L . -L test \
 	  -l replique-test -l replique-locals-test -l replique-deps-test \
-	  -l replique-parse-test -l replique-pprint-test -l replique-completion-test \
+	  -l replique-parse-test -l replique-clojure-mode-test \
+	  -l replique-pprint-test -l replique-completion-test \
 	  -l replique-forms-test -l replique-symbol-test \
 	  -l replique-name-fuzz-test \
 	  -f ert-run-tests-batch-and-exit
