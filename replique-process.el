@@ -59,7 +59,7 @@
   :type 'string
   :group 'replique)
 
-(defcustom replique-coordinates "{:local/root \"/Users/ewen/clojure/replique-2\"}"
+(defcustom replique-coordinates nil
   "The tools.deps coordinate of replique itself, as EDN.
 
 Replique is a tool the editor brings, not something a project should have
@@ -69,10 +69,6 @@ project builds.  So the editor puts it on the classpath itself, and a
 project needs no change to be worked on.
 
 Nil leaves it out, for a project that does depend on replique.
-
-This default points at a checkout, because replique 2 is not published
-anywhere yet.  It has to become a git or a maven coordinate before anyone
-but its author can use it.
 
 Risky, like everything here that builds the command line: what it names
 is put on the classpath of the process, so it is not a setting a project

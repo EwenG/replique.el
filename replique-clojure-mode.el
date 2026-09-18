@@ -17,9 +17,6 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 2.0.0-SNAPSHOT
-;; Package-Requires: ((emacs "30"))
-
 ;;; Commentary:
 
 ;; `replique-clojure-mode' is the Tree-sitter *syntax layer* for Clojure and

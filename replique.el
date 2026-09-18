@@ -17,7 +17,9 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Version 2.0.0-SNAPSHOT
+;; Author: Ewen Grosjean
+;; URL: https://github.com/EwenG/replique.el
+;; Version: 2.0.0-SNAPSHOT
 ;; Package-Requires: ((emacs "30"))
 
 ;;; Commentary:
@@ -60,6 +62,18 @@
 (require 'replique-name)
 (require 'replique-completion)
 (require 'replique-symbol)
+
+(defconst replique--version (package-get-version)
+  "Which replique this is, read from the Version header of this file.
+
+Read rather than written out again, so that there is one place to change
+it and no way for two of them to disagree - the header being the one
+package.el, and everything built on it, goes by.
+
+Read once, here, because `package-get-version' answers about the file it
+is being read in, and that is this one only while this file is loading.
+Asked from inside a command it would answer about whatever buffer
+happened to be current, which is a buffer of somebody else's.")
 
 (defvar replique-mode-map
   (let ((map (make-sparse-keymap)))
@@ -114,7 +128,7 @@ that needs one says so when it is used.
 (defun replique-version ()
   "Say which replique this is."
   (interactive)
-  (message "replique 2.0.0-SNAPSHOT, protocol version 1"))
+  (message "replique %s, protocol version 1" (or replique--version "unknown")))
 
 (provide 'replique)
 

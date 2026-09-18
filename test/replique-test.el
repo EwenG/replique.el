@@ -20,6 +20,9 @@
 
 (require 'ert)
 (require 'cl-lib)
+;; for the test that reads the package headers of replique.el
+(require 'package)
+(require 'find-func)
 (require 'replique)
 
 ;; A test run never installs a grammar: it fetches a repository and runs a
@@ -401,6 +404,23 @@ from the one process it was set in the way of."
             (should (member "-M:my-tools"
                             (replique-process--command "/tmp/a-project/")))))
       (setq-default replique-user-aliases saved))))
+
+(ert-deftest replique-test-what-replique-says-it-is-is-said-once ()
+  "The version lives in the Version header of replique.el and nowhere
+else: it is what package.el reads to know what it installed, and what
+`replique-version\=' says when somebody asks.
+
+Written without its colon it is not a header - it is a comment that looks
+like one, and what package.el makes of the file is a package with no
+version at all.  Nothing else in the tree would notice, which is why this
+is asked here."
+  (let ((info (with-temp-buffer
+                (insert-file-contents (find-library-name "replique"))
+                (emacs-lisp-mode)
+                (package-buffer-info))))
+    (should (eq 'replique (package-desc-name info)))
+    (should (equal (version-to-list replique--version)
+                   (package-desc-version info)))))
 
 (ert-deftest replique-test-what-builds-the-command-line-is-not-a-projects-to-set ()
   "The .dir-locals.el of a project being opened must not be able to offer
