@@ -284,6 +284,96 @@
   (should (replique-parse-auto-resolve-p "::foo"))
   (should (not (replique-parse-auto-resolve-p ":foo"))))
 
+
+;;;; Keeping a buffer's forms
+
+(defun replique-parse-test--bounds (pos)
+  "The bounds of the top level form at POS, as a list."
+  (let ((bounds (replique-parse-top-level-bounds pos)))
+    (and bounds (list (car bounds) (cdr bounds)))))
+
+(ert-deftest replique-parse-test-index-finds-forms ()
+  (with-temp-buffer
+    (insert "(a) [b] ;; c\n:d")
+    (should (equal '(1 4) (replique-parse-test--bounds 1)))
+    (should (equal '(1 4) (replique-parse-test--bounds 3)))
+    ;; the space between two forms is in neither
+    (should (null (replique-parse-test--bounds 4)))
+    (should (equal '(5 8) (replique-parse-test--bounds 5)))
+    (should (eq 'comment (replique-parse-type (replique-parse-form-at 9))))
+    (should (eq 'keyword (replique-parse-type (replique-parse-form-at 14))))
+    ;; and the one before a position is the last one that ends by it
+    (should (eq 'vector (replique-parse-type (replique-parse-form-before 9))))
+    (should (null (replique-parse-form-before 1)))))
+
+(ert-deftest replique-parse-test-index-is-kept ()
+  (with-temp-buffer
+    (insert "(a) (b)")
+    ;; the same form comes back rather than being read again
+    (should (eq (replique-parse-form-at 1) (replique-parse-form-at 2)))))
+
+(ert-deftest replique-parse-test-index-follows-an-edit ()
+  (with-temp-buffer
+    (insert "(a) (b)")
+    (let ((first (replique-parse-form-at 1)))
+      ;; What is written after the edit moves, and is read again
+      (goto-char 3)
+      (insert "aa")
+      (should (equal '(1 6) (replique-parse-test--bounds 1)))
+      (should (equal '(7 10) (replique-parse-test--bounds 7)))
+      (should (equal "(aaa)" (replique-parse-text (replique-parse-form-at 1))))
+      (should (equal "(b)" (replique-parse-text (replique-parse-form-at 7))))
+      ;; and the form that changed is not the one that was read before
+      (should-not (eq first (replique-parse-form-at 1))))))
+
+(ert-deftest replique-parse-test-index-keeps-what-the-edit-did-not-touch ()
+  (with-temp-buffer
+    (insert "(a) (b) (c)")
+    (let ((first (replique-parse-form-at 1)))
+      (goto-char 10)
+      (insert "c")
+      ;; the form before the edit is the one that was already read
+      (should (eq first (replique-parse-form-at 1)))
+      (should (equal "(cc)" (replique-parse-text (replique-parse-form-at 9)))))))
+
+(ert-deftest replique-parse-test-index-does-not-keep-a-form-typed-onto ()
+  ;; A character typed at the end of a form is typed onto it, so a form that
+  ;; ends where the edit starts is not one the edit left alone
+  (with-temp-buffer
+    (insert "ab cd")
+    (should (equal '(1 3) (replique-parse-test--bounds 1)))
+    (goto-char 3)
+    (insert "X")
+    (should (equal '(1 4) (replique-parse-test--bounds 1)))
+    (should (equal "abX" (replique-parse-text (replique-parse-form-at 1))))))
+
+(ert-deftest replique-parse-test-index-follows-forms-being-joined ()
+  ;; Two forms become one when what closed the first is taken away
+  (with-temp-buffer
+    (insert "(a) (b)")
+    (should (= 2 (length (replique-parse--index))))
+    (goto-char 3)
+    (delete-char 1)
+    (should (= 1 (length (replique-parse--index))))
+    (should (equal '(1 7) (replique-parse-test--bounds 1)))
+    (should (eq 'unclosed (replique-parse-error (replique-parse-form-at 1))))))
+
+(ert-deftest replique-parse-test-index-covers-what-a-narrowing-left-out ()
+  (with-temp-buffer
+    (insert "(a) (b) (c)")
+    (narrow-to-region 5 8)
+    (should (equal '(1 4) (replique-parse-test--bounds 1)))
+    (should (equal '(9 12) (replique-parse-test--bounds 9)))))
+
+(ert-deftest replique-parse-test-index-can-be-forgotten ()
+  (with-temp-buffer
+    (insert "(a)")
+    (let ((first (replique-parse-form-at 1)))
+      (replique-parse-forget)
+      (should (null replique-parse--forms))
+      (should-not (eq first (replique-parse-form-at 1)))
+      (should (equal "(a)" (replique-parse-text (replique-parse-form-at 1)))))))
+
 (provide 'replique-parse-test)
 
 ;;; replique-parse-test.el ends here

@@ -401,46 +401,31 @@ every token still is: what is written out is written somewhere else."
 
 ;;;; Finding what to lay out
 
-(defun replique-pprint--back-over-space (pos)
-  "Return POS with the whitespace before it skipped.
+(defun replique-pprint--before (pos)
+  "Return the top level form ending before POS, or nil.
 
-Commas among it: a comma is whitespace in Clojure, and one written after
-a value is written after it the way a space is."
-  (save-excursion
-    (goto-char pos)
-    (skip-chars-backward " \t\n\r\f,")
-    (point)))
-
-(defun replique-pprint--before (pos root)
-  "Return the form of ROOT ending before POS, or nil.
-
-The whitespace behind POS is skipped and so are the comments behind that,
-which is what `replique-eval-last-sexp' does with them: a comment is not
-a form, and what was asked for is the form before it.  Behind point only
-- a comment POS is in is one point was put on, and that one is refused
-rather than read past."
-  (let ((pos (replique-pprint--back-over-space pos))
-        (node nil)
+The comments behind POS are skipped, which is what `replique-eval-last-sexp'
+does with them: a comment is not a form, and what was asked for is the form
+before it.  Behind point only - a comment POS is in is one point was put on,
+and that one is refused rather than read past."
+  (let ((node (replique-parse-form-before pos))
         (done nil))
-    (while (not done)
-      (setq node (and (> pos (point-min))
-                      (replique-parse-top-level-at root (1- pos))))
-      (if (and node (eq 'comment (replique-parse-type node)))
+    (while (and node (not done))
+      (if (eq 'comment (replique-parse-type node))
           ;; strictly back each time, so this ends at the top of the buffer
           ;; on a buffer that is nothing but comments
-          (setq pos (replique-pprint--back-over-space
-                     (replique-parse-start node)))
+          (setq node (replique-parse-form-before (replique-parse-start node)))
         (setq done t)))
     node))
 
-(defun replique-pprint--form-at (pos root)
-  "Return the form of ROOT to lay out for point at POS, or nil.
+(defun replique-pprint--form-at (pos)
+  "Return the form to lay out for point at POS, or nil.
 
 The one POS is in, or - where POS is in none - the one before it.  The
 second is what makes the command work at the end of a repl buffer, where
 point is after the value that was printed rather than in it."
-  (or (replique-parse-top-level-at root pos)
-      (replique-pprint--before pos root)))
+  (or (replique-parse-form-at pos)
+      (replique-pprint--before pos)))
 
 
 ;;;; Commands
@@ -476,12 +461,11 @@ Data, not code: see the commentary.  A form that did not parse and one
 with a comment in it are both refused rather than guessed at."
   (interactive)
   (save-restriction
-    ;; The parse is of the whole buffer, so the form found can reach past
-    ;; what a narrowing left - and a form that cannot be written back is
-    ;; worse than one written back outside the narrowing
+    ;; The forms are the whole buffer's, so the one found can reach past what
+    ;; a narrowing left - and a form that cannot be written back is worse
+    ;; than one written back outside the narrowing
     (widen)
-    (let* ((root (replique-parse-buffer))
-           (node (or (replique-pprint--form-at (point) root)
+    (let* ((node (or (replique-pprint--form-at (point))
                      (user-error "Nothing to lay out here"))))
       (replique-pprint--check node)
       (let* ((start (replique-parse-start node))

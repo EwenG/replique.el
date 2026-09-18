@@ -732,6 +732,154 @@ forms belongs to neither and the position a form opens at belongs to it."
     found))
 
 
+;;;; Keeping a buffer's forms
+;;
+;; What the reader is asked for is a region, and what a consumer has is a
+;; position - so something has to say which region.  This is that something:
+;; the bounds of every top level form in the buffer, kept up to date as the
+;; buffer is edited, so that asking about a position is a lookup rather than
+;; a read.
+;;
+;; It is kept rather than worked out each time because there is no cheap way
+;; to work it out.  Finding where the form around a position opens means
+;; looking backwards, and looking backwards through Clojure is the hard
+;; direction: a bracket at the start of a line is the usual sign of a top
+;; level form and it is also what a string written over several lines has in
+;; it, and telling those apart means knowing what came before, which is the
+;; question being asked.  Reading forwards answers it and reading forwards is
+;; quick, so this reads forwards once and remembers.
+;;
+;; What an edit costs is what is written after it.  Everything before the
+;; earliest position touched is still where it was and still says what it
+;; said, so it is kept; from there to the end is read again.  That is the
+;; right shape for the buffer this is pointed at most: a repl buffer is
+;; written at the end, so what is kept is all of it but the last form.  It is
+;; the wrong shape for a keystroke at the top of a large file, which reads
+;; the rest of it again - if that turns out to matter the tail can be shifted
+;; instead of read, since an edit moves the forms after it without changing
+;; what they say.  Nothing here needs that yet, and a faster path with
+;; nothing asking for it is a faster path nobody has checked.
+;;
+;; The tree of a form is read when somebody asks for that form and not
+;; before.  What is held for a buffer nobody has asked anything about is
+;; three numbers a form, which is what lets this be kept for the repl buffer
+;; that has ten thousand of them.
+
+(defvar-local replique-parse--forms nil
+  "The top level forms of this buffer.
+
+A vector of [START END TREE], in the order they are written, where TREE is
+what the form was read as or nil for one nobody has asked about.")
+
+(defvar-local replique-parse--changed nil
+  "The earliest position edited since the forms were read, or nil for none.
+
+Written by a hook that runs on every change, so it does as little as a
+change can be noted with, and the reading it makes necessary is done when
+somebody next asks something rather than while somebody is typing.")
+
+(defun replique-parse--note-change (beginning _end _pre-length)
+  "Note that the buffer changed at BEGINNING."
+  (when (or (null replique-parse--changed)
+            (< beginning replique-parse--changed))
+    (setq replique-parse--changed beginning)))
+
+(defun replique-parse--forms-from (from)
+  "The top level forms written between FROM and the end of the buffer."
+  (let ((root (replique-parse-region from (point-max))))
+    (mapcar (lambda (node) (vector (aref node 1) (aref node 2) node))
+            (aref root 3))))
+
+(defun replique-parse--index ()
+  "The top level forms of this buffer, read again where it changed."
+  (save-restriction
+    (widen)
+    (cond
+     ((null replique-parse--forms)
+      (add-hook 'after-change-functions #'replique-parse--note-change nil t)
+      (setq replique-parse--forms (vconcat (replique-parse--forms-from (point-min)))
+            replique-parse--changed nil))
+     (replique-parse--changed
+      (let ((kept 0)
+            (count (length replique-parse--forms)))
+        ;; A form that ends before the earliest position touched is written
+        ;; where it was written and says what it said.  Ending at it is not
+        ;; ending before it: a character typed there is typed onto its end
+        (while (and (< kept count)
+                    (< (aref (aref replique-parse--forms kept) 1)
+                       replique-parse--changed))
+          (setq kept (1+ kept)))
+        (setq replique-parse--forms
+              (vconcat (substring replique-parse--forms 0 kept)
+                       (replique-parse--forms-from
+                        (if (> kept 0)
+                            (aref (aref replique-parse--forms (1- kept)) 1)
+                          (point-min)))))
+        (setq replique-parse--changed nil))))
+    replique-parse--forms))
+
+(defun replique-parse-forget ()
+  "Forget the top level forms of this buffer, so that they are read again."
+  (remove-hook 'after-change-functions #'replique-parse--note-change t)
+  (setq replique-parse--forms nil
+        replique-parse--changed nil))
+
+(defun replique-parse--entry-at (pos)
+  "The entry of this buffer's forms written over POS, or nil."
+  (let* ((forms (replique-parse--index))
+         (low 0)
+         (high (1- (length forms)))
+         (found nil))
+    (while (<= low high)
+      (let* ((middle (/ (+ low high) 2))
+             (entry (aref forms middle)))
+        (cond
+         ((< pos (aref entry 0)) (setq high (1- middle)))
+         ((>= pos (aref entry 1)) (setq low (1+ middle)))
+         (t (setq found entry low (1+ high))))))
+    found))
+
+(defun replique-parse--entry-before (pos)
+  "The entry of the last of this buffer's forms ending at or before POS."
+  (let* ((forms (replique-parse--index))
+         (low 0)
+         (high (1- (length forms)))
+         (found nil))
+    (while (<= low high)
+      (let* ((middle (/ (+ low high) 2))
+             (entry (aref forms middle)))
+        (if (<= (aref entry 1) pos)
+            (setq found entry low (1+ middle))
+          (setq high (1- middle)))))
+    found))
+
+(defun replique-parse--entry-tree (entry)
+  "What the form ENTRY holds was read as, reading it if nobody has."
+  (or (aref entry 2)
+      (aset entry 2
+            (car (aref (replique-parse-region (aref entry 0) (aref entry 1))
+                       3)))))
+
+(defun replique-parse-top-level-bounds (pos)
+  "Where the top level form written over POS starts and ends, as a cons.
+
+Nil where POS is written between forms rather than in one.  Its start
+counts and its end does not, so a position between two forms belongs to
+neither."
+  (let ((entry (replique-parse--entry-at pos)))
+    (when entry (cons (aref entry 0) (aref entry 1)))))
+
+(defun replique-parse-form-at (pos)
+  "The top level form written over POS, or nil where POS is in none."
+  (let ((entry (replique-parse--entry-at pos)))
+    (when entry (replique-parse--entry-tree entry))))
+
+(defun replique-parse-form-before (pos)
+  "The last top level form ending at or before POS, or nil where none does."
+  (let ((entry (replique-parse--entry-before pos)))
+    (when entry (replique-parse--entry-tree entry))))
+
+
 ;;;; Reading a name
 ;;
 ;; What a symbol or a keyword is written under, worked out from its text
