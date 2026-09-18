@@ -232,13 +232,18 @@
       (replique-pprint))
     (should-not (buffer-modified-p))))
 
-(ert-deftest replique-pprint-test-the-command-needs-a-parse-and-a-form ()
-  (replique-test-grammar)
+(ert-deftest replique-pprint-test-the-command-needs-a-form ()
+  ;; A form and nothing else.  The text is read where it is asked about, so
+  ;; there is no parse to be missing and no mode a buffer has to be in -
+  ;; which is what makes this work on a buffer that is just holding what
+  ;; something printed
   (with-temp-buffer
-    (insert "{:a 1}")
-    (should-error (replique-pprint) :type 'user-error))
+    (insert "{:aa 1 :bb 2}")
+    (goto-char 3)
+    (let ((replique-pprint-width 10))
+      (replique-pprint))
+    (should (equal "{:aa 1\n :bb 2}" (buffer-string))))
   (with-temp-buffer
-    (replique-clojure-mode)
     (insert "   ")
     (goto-char (point-min))
     (should-error (replique-pprint) :type 'user-error)))

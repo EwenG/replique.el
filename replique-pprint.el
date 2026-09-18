@@ -89,9 +89,8 @@
 ;;; Code:
 
 (require 'subr-x)
-(require 'treesit)
 (require 'replique-common)
-(require 'replique-clojure-mode)
+(require 'replique-parse)
 
 (defcustom replique-pprint-width 80
   "How many columns pretty printed data is laid out to fit in.
@@ -110,44 +109,43 @@ buffer locally where one buffer wants a different width."
 ;; The point of the default being "as it was written" is that a construct
 ;; nobody thought of here is put down whole rather than taken apart wrongly.
 
+(defvar replique-pprint--source nil
+  "The buffer the tree being written out was read from.
+
+The text is written into a buffer of its own, so the one the tree came
+from has to be named rather than assumed: a node holds where it starts
+and ends, and not what it starts and ends in.")
+
 (defconst replique-pprint--collections
-  '(("list_literal" "(" ")")
-    ("vector_literal" "[" "]")
-    ("map_literal" "{" "}")
-    ("set_literal" "#{" "}")
-    ("fn_literal" "#(" ")"))
+  '((list "(" ")")
+    (vector "[" "]")
+    (map "{" "}")
+    (set "#{" "}")
+    (fn "#(" ")"))
   "The collections, each with the text it opens and closes with.
 
 Taken from here rather than from the buffer so that a collection is
 written with the delimiters its kind has, whatever was in the text.")
 
-(defconst replique-pprint--wrapped-field
-  '(("quote" . "target")
-    ("syntax_quote" . "target")
-    ("unquote" . "target")
-    ("unquote_splicing" . "target")
-    ("deref" . "target")
-    ("var_quote" . "target")
-    ("discard" . "target")
-    ("with_metadata" . "target")
-    ("tagged_literal" . "target")
-    ("namespaced_map_literal" . "body")
-    ("reader_conditional" . "body")
-    ("eval_literal" . "value"))
-  "The reader macros, each with the field holding what it applies to.
+(defconst replique-pprint--macros
+  '(quote syntax-quote unquote unquote-splicing deref var-quote discard
+          meta tagged namespaced-map reader-conditional
+          reader-conditional-splicing eval)
+  "The reader macros, which are each written in front of a form.
 
-What is in front of that field is the macro's own text and is written out
-unchanged - see `replique-pprint--prefix' - so nothing here needs to know
-that a tagged literal is a # and a symbol while a namespaced map is a #
-and a keyword.")
+Which form that is, is the last one the macro is made of, whichever macro
+it is - see `replique-parse-target'.  What is written in front of it is
+the macro's own text and is written out unchanged - see
+`replique-pprint--prefix' - so nothing here needs to know that a tagged
+literal is a # and a symbol while a namespaced map is a # and a keyword.")
 
 (defun replique-pprint--delimiters (node)
   "Return how NODE opens and closes, or nil when it is not a collection."
-  (cdr (assoc (treesit-node-type node) replique-pprint--collections)))
+  (cdr (assq (replique-parse-type node) replique-pprint--collections)))
 
 (defun replique-pprint--pair-p (node)
   "Return non-nil when NODE is one entry of a map."
-  (equal "pair" (treesit-node-type node)))
+  (eq 'pair (replique-parse-type node)))
 
 (defun replique-pprint--wrapped (node)
   "Return the form the reader macro NODE is in front of, or nil for neither.
@@ -155,24 +153,16 @@ and a keyword.")
 Nil as well for a macro in front of nothing, which is a trailing #_:
 there is no form to write after the macro, so what is left is text, and
 text is written out as it stands."
-  (when-let* ((field (cdr (assoc (treesit-node-type node)
-                                 replique-pprint--wrapped-field))))
-    (treesit-node-child-by-field-name node field)))
+  (when (memq (replique-parse-type node) replique-pprint--macros)
+    (replique-parse-target node)))
 
 (defun replique-pprint--elements (node)
   "Return what NODE is made of.
 
 Every part of it, with nothing dropped and nothing checked, because the
-parse was checked before any of this ran - see `replique-pprint--check'.
-What there would be to drop is the zero width part a grammar answers a
-missing one with, and a missing part is what makes a parse one with an
-error in it, which is a parse this refuses.
+parse was checked before any of this ran - see `replique-pprint--check'."
+  (replique-parse-children node))
 
-Worth saying because dropping them anyway is not free: asking each part
-where it starts and ends is two calls into the parse per part, and this
-is asked of every node twice - once to measure it and once to write it
-out.  Doing it cost more than everything else here put together."
-  (treesit-node-children node t))
 
 (defun replique-pprint--prefix (node wrapped)
   "Return the text NODE writes in front of WRAPPED.
@@ -183,9 +173,9 @@ third - `^:m x' into `^:mx' - and keeping it is what lets `#inst \"…\"'
 stay as it is while `#foo{…}' gains nothing."
   (replace-regexp-in-string
    "[ \t\n\r\f,]+" " "
-   (with-current-buffer (treesit-node-buffer node)
-     (buffer-substring-no-properties (treesit-node-start node)
-                                     (treesit-node-start wrapped)))))
+   (with-current-buffer replique-pprint--source
+     (buffer-substring-no-properties (replique-parse-start node)
+                                     (replique-parse-start wrapped)))))
 
 
 ;;;; Measuring
@@ -211,7 +201,7 @@ stay as it is while `#foo{…}' gains nothing."
 
 (defun replique-pprint--width (node)
   "Return the width NODE has written on one line, or nil for one it has not."
-  (let* ((key (cons (treesit-node-start node) (treesit-node-end node)))
+  (let* ((key (cons (replique-parse-start node) (replique-parse-end node)))
          (known (gethash key replique-pprint--widths 'unmeasured)))
     (if (eq known 'unmeasured)
         (puthash key (replique-pprint--measure node) replique-pprint--widths)
@@ -251,7 +241,7 @@ there, and nil as soon as one of them cannot be written flat at all."
      ;; one written over several lines - a string, and nothing else - and it
      ;; is the reason this answers nil at all
      (t
-      (let ((text (treesit-node-text node t)))
+      (let ((text (replique-parse-text node replique-pprint--source)))
         (unless (string-search "\n" text)
           (string-width text)))))))
 
@@ -284,7 +274,7 @@ there, and nil as soon as one of them cannot be written flat at all."
      (wrapped
       (insert (replique-pprint--prefix node wrapped))
       (replique-pprint--emit-flat wrapped))
-     (t (insert (treesit-node-text node t))))))
+     (t (insert (replique-parse-text node replique-pprint--source))))))
 
 (defun replique-pprint--emit-collection (node open close width fill)
   "Write NODE, between OPEN and CLOSE, broken over lines to fit WIDTH.
@@ -341,7 +331,7 @@ that runs past the width - see the commentary for how far past."
       (replique-pprint--emit-collection
        node (car delimiters) (cadr delimiters) width
        ;; every collection fills but a map, whose entries are what is read
-       (not (equal "map_literal" (treesit-node-type node)))))
+       (not (eq 'map (replique-parse-type node)))))
      ((replique-pprint--pair-p node)
       (replique-pprint--emit-pair node width))
      (wrapped
@@ -366,19 +356,30 @@ that is written far in has that much less room - see the commentary."
 
 ;;;; What can be laid out
 
+(defun replique-pprint--commented-p (node)
+  "Return non-nil when a comment is written anywhere in NODE."
+  (or (eq 'comment (replique-parse-type node))
+      (let ((children (replique-parse-children node))
+            (found nil))
+        (while (and children (not found))
+          (setq found (replique-pprint--commented-p (car children)))
+          (setq children (cdr children)))
+        found)))
+
 (defun replique-pprint--check (node)
   "Signal unless NODE is data that can be written back out.
 
-Two things stop it.  Text that did not parse, which is what an unbalanced
+Two things stop it.  Text that did not read, which is what an unbalanced
 form is: what would be written back is not what was read.  And a comment,
 which has nowhere to go - see the commentary.
 
-Refusing the first is also what lets the rest of this take the parse as
-it finds it: a node with nothing in it belongs to a parse with an error
-in it, so past here there are none - see `replique-pprint--elements'."
-  (when (treesit-node-check node 'has-error)
+Refusing the first is also what lets the rest of this take the tree as it
+finds it: whatever did not read said so in the node it did not read into,
+and a node says as much for everything below it - see
+`replique-parse-error'."
+  (when (replique-parse-error node)
     (user-error "This does not read as Clojure data"))
-  (when (treesit-search-subtree node "\\`comment\\'" nil t)
+  (when (replique-pprint--commented-p node)
     (user-error "A comment cannot be laid out - this lays out data")))
 
 (defun replique-pprint--lay-out (node width column)
@@ -386,32 +387,19 @@ in it, so past here there are none - see `replique-pprint--elements'."
 
 COLUMN because a value is not always written at the left margin - the one
 a repl prints starts after the prompt - and what is laid out to fit a
-width has to know where it begins to know how much of it is left."
-  (with-temp-buffer
-    (insert (make-string column ?\s))
-    (let ((replique-pprint--widths (make-hash-table :test #'equal)))
-      (replique-pprint--emit node width))
-    (buffer-substring-no-properties (+ (point-min) column) (point-max))))
+width has to know where it begins to know how much of it is left.
+
+Called from the buffer NODE was read out of, which is where the text of
+every token still is: what is written out is written somewhere else."
+  (let ((replique-pprint--source (current-buffer)))
+    (with-temp-buffer
+      (insert (make-string column ?\s))
+      (let ((replique-pprint--widths (make-hash-table :test #'equal)))
+        (replique-pprint--emit node width))
+      (buffer-substring-no-properties (+ (point-min) column) (point-max)))))
 
 
 ;;;; Finding what to lay out
-
-(defun replique-pprint--top-level-at (pos parser)
-  "Return the top level form of PARSER covering POS, or nil when none does.
-
-`treesit-node-at' answers with the first node after POS where nothing
-covers it, so what it answers is checked against POS rather than taken."
-  (let ((node (treesit-node-at pos parser)))
-    (while (and node
-                (treesit-node-parent node)
-                (treesit-node-parent (treesit-node-parent node)))
-      (setq node (treesit-node-parent node)))
-    (when (and node
-               ;; the root is the buffer, not a form in it
-               (treesit-node-parent node)
-               (<= (treesit-node-start node) pos)
-               (< pos (treesit-node-end node)))
-      node)))
 
 (defun replique-pprint--back-over-space (pos)
   "Return POS with the whitespace before it skipped.
@@ -423,35 +411,36 @@ a value is written after it the way a space is."
     (skip-chars-backward " \t\n\r\f,")
     (point)))
 
-(defun replique-pprint--before (pos parser)
-  "Return the top level form of PARSER ending before POS, or nil.
+(defun replique-pprint--before (pos root)
+  "Return the form of ROOT ending before POS, or nil.
 
 The whitespace behind POS is skipped and so are the comments behind that,
-which is what `replique-eval-last-sexp' does with them: a comment is
-not a form, and what was asked for is the form before it.  Behind point
-only - a comment POS is in is one point was put on, and that one is
-refused rather than read past."
+which is what `replique-eval-last-sexp' does with them: a comment is not
+a form, and what was asked for is the form before it.  Behind point only
+- a comment POS is in is one point was put on, and that one is refused
+rather than read past."
   (let ((pos (replique-pprint--back-over-space pos))
         (node nil)
         (done nil))
     (while (not done)
       (setq node (and (> pos (point-min))
-                      (replique-pprint--top-level-at (1- pos) parser)))
-      (if (and node (equal "comment" (treesit-node-type node)))
+                      (replique-parse-top-level-at root (1- pos))))
+      (if (and node (eq 'comment (replique-parse-type node)))
           ;; strictly back each time, so this ends at the top of the buffer
           ;; on a buffer that is nothing but comments
-          (setq pos (replique-pprint--back-over-space (treesit-node-start node)))
+          (setq pos (replique-pprint--back-over-space
+                     (replique-parse-start node)))
         (setq done t)))
     node))
 
-(defun replique-pprint--form-at (pos parser)
-  "Return the form of PARSER to lay out for point at POS, or nil.
+(defun replique-pprint--form-at (pos root)
+  "Return the form of ROOT to lay out for point at POS, or nil.
 
 The one POS is in, or - where POS is in none - the one before it.  The
 second is what makes the command work at the end of a repl buffer, where
 point is after the value that was printed rather than in it."
-  (or (replique-pprint--top-level-at pos parser)
-      (replique-pprint--before pos parser)))
+  (or (replique-parse-top-level-at root pos)
+      (replique-pprint--before pos root)))
 
 
 ;;;; Commands
@@ -464,12 +453,9 @@ back one to a line, each laid out on its own.  Nothing is evaluated and
 nothing is read: what comes back is the same tokens in another
 arrangement - see `replique-pprint--check' for the two arrangements
 this refuses to make."
-  (unless (treesit-language-available-p 'treejure)
-    (error "The treejure grammar is not installed"))
   (with-temp-buffer
     (insert text)
-    (let* ((parser (treesit-parser-create 'treejure))
-           (root (treesit-parser-root-node parser)))
+    (let ((root (replique-parse-buffer)))
       (replique-pprint--check root)
       (mapconcat (lambda (node)
                    (replique-pprint--lay-out
@@ -494,13 +480,12 @@ with a comment in it are both refused rather than guessed at."
     ;; what a narrowing left - and a form that cannot be written back is
     ;; worse than one written back outside the narrowing
     (widen)
-    (let* ((parser (or (car (treesit-parser-list nil 'treejure))
-                       (user-error "This buffer has no Clojure parse")))
-           (node (or (replique-pprint--form-at (point) parser)
+    (let* ((root (replique-parse-buffer))
+           (node (or (replique-pprint--form-at (point) root)
                      (user-error "Nothing to lay out here"))))
       (replique-pprint--check node)
-      (let* ((start (treesit-node-start node))
-             (end (treesit-node-end node))
+      (let* ((start (replique-parse-start node))
+             (end (replique-parse-end node))
              (column (save-excursion (goto-char start) (current-column)))
              (text (replique-pprint--lay-out node replique-pprint-width column)))
         (unless (equal text (buffer-substring-no-properties start end))
