@@ -1,4 +1,4 @@
-;;; replique-completion-fuzz-test.el --- Random buffers, read at every point  -*- lexical-binding: t; -*-
+;;; replique-name-fuzz-test.el --- Random buffers, read at every point  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
@@ -59,26 +59,26 @@
 
 ;;; Random
 
-(defvar replique-completion-fuzz--state 1
+(defvar replique-name-fuzz--state 1
   "Where the generator has got to.")
 
-(defun replique-completion-fuzz--seed (seed)
+(defun replique-name-fuzz--seed (seed)
   "Start the generator again at SEED."
-  (setq replique-completion-fuzz--state (+ 1 (* 7 seed))))
+  (setq replique-name-fuzz--state (+ 1 (* 7 seed))))
 
-(defun replique-completion-fuzz--next (limit)
+(defun replique-name-fuzz--next (limit)
   "Return a number below LIMIT, the next of the sequence."
-  (setq replique-completion-fuzz--state
-        (mod (+ (* 1103515245 replique-completion-fuzz--state) 12345) 2147483648))
-  (mod (/ replique-completion-fuzz--state 65536) limit))
+  (setq replique-name-fuzz--state
+        (mod (+ (* 1103515245 replique-name-fuzz--state) 12345) 2147483648))
+  (mod (/ replique-name-fuzz--state 65536) limit))
 
-(defun replique-completion-fuzz--pick (list)
+(defun replique-name-fuzz--pick (list)
   "Return one of LIST."
-  (nth (replique-completion-fuzz--next (length list)) list))
+  (nth (replique-name-fuzz--next (length list)) list))
 
 ;;; What a buffer holds
 
-(defconst replique-completion-fuzz--pieces
+(defconst replique-name-fuzz--pieces
   '("(" ")" "[" "]" "{" "}" "\"" "\\" ";" "#_" "#" "'" "^" "@" "~" "`" "," "~@"
     " " "\n" "  " "#{" "#(" "@(" "#?@"
     "defn" "def" "let" "fn" "loop" "if-let" "when-let" "doseq" "for" "try"
@@ -96,7 +96,7 @@
 The brackets and the reader macros are what a parse has to survive, and
 the names are what the reading has to recognise between them.")
 
-(defconst replique-completion-fuzz--forms
+(defconst replique-name-fuzz--forms
   '("(ns my.app (:require [clojure.string :as str] [clojure.set :refer [union]]))"
     "(ns my.app (:import [java.util Date UUID]) (:load \"clojure/core\"))"
     "(defn f [^String s] (.length s))"
@@ -120,37 +120,37 @@ being typed: half a name at the end of it and nothing closed after that.
 Random pieces alone reach the parse and almost never reach the reading,
 which only has something to say where a form is nearly a form.")
 
-(defun replique-completion-fuzz--junk ()
+(defun replique-name-fuzz--junk ()
   "Return a string of random pieces."
-  (let ((count (replique-completion-fuzz--next 12))
+  (let ((count (replique-name-fuzz--next 12))
         (text ""))
     (dotimes (_ count)
-      (setq text (concat text (replique-completion-fuzz--pick
-                               replique-completion-fuzz--pieces))))
+      (setq text (concat text (replique-name-fuzz--pick
+                               replique-name-fuzz--pieces))))
     text))
 
-(defun replique-completion-fuzz--cut (text)
+(defun replique-name-fuzz--cut (text)
   "Return TEXT cut off at a random character."
-  (substring text 0 (replique-completion-fuzz--next (1+ (length text)))))
+  (substring text 0 (replique-name-fuzz--next (1+ (length text)))))
 
-(defun replique-completion-fuzz--text ()
+(defun replique-name-fuzz--text ()
   "Return the text of a fuzzed buffer."
-  (pcase (replique-completion-fuzz--next 6)
-    (0 (replique-completion-fuzz--junk))
-    (1 (replique-completion-fuzz--pick replique-completion-fuzz--forms))
-    (2 (concat (replique-completion-fuzz--cut
-                (replique-completion-fuzz--pick replique-completion-fuzz--forms))
-               (replique-completion-fuzz--junk)))
-    (3 (concat (replique-completion-fuzz--pick replique-completion-fuzz--forms)
+  (pcase (replique-name-fuzz--next 6)
+    (0 (replique-name-fuzz--junk))
+    (1 (replique-name-fuzz--pick replique-name-fuzz--forms))
+    (2 (concat (replique-name-fuzz--cut
+                (replique-name-fuzz--pick replique-name-fuzz--forms))
+               (replique-name-fuzz--junk)))
+    (3 (concat (replique-name-fuzz--pick replique-name-fuzz--forms)
                "\n"
-               (replique-completion-fuzz--cut
-                (replique-completion-fuzz--pick replique-completion-fuzz--forms))))
-    (_ (replique-completion-fuzz--cut
-        (replique-completion-fuzz--pick replique-completion-fuzz--forms)))))
+               (replique-name-fuzz--cut
+                (replique-name-fuzz--pick replique-name-fuzz--forms))))
+    (_ (replique-name-fuzz--cut
+        (replique-name-fuzz--pick replique-name-fuzz--forms)))))
 
 ;;; What must be true of what is read
 
-(defun replique-completion-fuzz--names (locals)
+(defun replique-name-fuzz--names (locals)
   "Return what is wrong with LOCALS, the locals of a request, or nil."
   (cond
    ((not (listp locals)) "the locals are not a list")
@@ -160,12 +160,12 @@ which only has something to say where a form is nearly a form.")
             (throw 'wrong (format "a local is %S" local))))
         nil))))
 
-(defun replique-completion-fuzz--ill-formed (context)
+(defun replique-name-fuzz--ill-formed (context)
   "Return what CONTEXT holds that a request does not hold, or nil."
   (or (unless (plistp context) "the context is not a plist")
       (unless (keywordp (plist-get context :position))
         (format "the position is %S" (plist-get context :position)))
-      (replique-completion-fuzz--names (plist-get context :locals))
+      (replique-name-fuzz--names (plist-get context :locals))
       (catch 'wrong
         (dolist (key '(:ns :prefix :package :tag :target))
           (let ((value (plist-get context key)))
@@ -179,14 +179,14 @@ which only has something to say where a form is nearly a form.")
             (throw 'wrong (format "the namespace is %S" namespace))))
         nil)))
 
-(defun replique-completion-fuzz--printable (op context text)
+(defun replique-name-fuzz--printable (op context text)
   "Return what is wrong with the request OP, CONTEXT and TEXT make, or nil."
-  (or (replique-completion-fuzz--ill-formed context)
+  (or (replique-name-fuzz--ill-formed context)
       (condition-case printing
           (progn (replique-edn-print (replique-name-message op context text)) nil)
         (error (format "the request does not print: %S" printing)))))
 
-(defun replique-completion-fuzz--asked ()
+(defun replique-name-fuzz--asked ()
   "Return what is wrong with what a completion reads at point, or nil.
 
 The region a candidate replaces, which ends where point is, and the slot
@@ -201,11 +201,11 @@ it would be written in."
         (unless (= (cdr bounds) (point))
           (format "the bounds end at %s, point being %s" (cdr bounds) (point)))
         (when context
-          (replique-completion-fuzz--printable
+          (replique-name-fuzz--printable
            :completions context
            (buffer-substring-no-properties (car bounds) (cdr bounds)))))))
 
-(defun replique-completion-fuzz--named ()
+(defun replique-name-fuzz--named ()
   "Return what is wrong with what a symbol op reads at point, or nil.
 
 The whole of the name point is in, which a completion stops at point
@@ -222,7 +222,7 @@ a buffer nobody could parse is what it has to hold up against."
               (unless (<= (car name) (point) (cdr name))
                 (format "the name is at %S, point being %s" name (point)))
               (when-let* ((context (replique-name-context)))
-                (replique-completion-fuzz--printable
+                (replique-name-fuzz--printable
                  :symbol context
                  (buffer-substring-no-properties (car name) (cdr name))))))
         (when call
@@ -231,34 +231,40 @@ a buffer nobody could parse is what it has to hold up against."
               (unless (and (integerp (plist-get call :argument))
                            (> (plist-get call :argument) 0))
                 (format "the argument is %S" (plist-get call :argument)))
-              (replique-completion-fuzz--printable
+              (replique-name-fuzz--printable
                :symbol (plist-get call :context) (plist-get call :text)))))))
 
-(defun replique-completion-fuzz--problem ()
+(defun replique-name-fuzz--problem ()
   "Return what is wrong with what is read at point, or nil when nothing is."
   (condition-case error
-      (or (replique-completion-fuzz--asked) (replique-completion-fuzz--named))
+      (or (replique-name-fuzz--asked) (replique-name-fuzz--named))
     (error (format "signalled %S" error))))
 
-(defun replique-completion-fuzz--failing (seed count)
+(defun replique-name-fuzz--failing (seed count)
   "Return the first of COUNT fuzzed buffers of SEED read wrongly, or nil.
 
 Read at eight positions each, one of them the end - which is where point
-is while somebody types, and the position every other test asks at."
-  (replique-completion-fuzz--seed seed)
+is while somebody types, and the position every other test asks at.
+
+One buffer, written again for each text, rather than one buffer each.
+What is being fuzzed is the text and where point is in it, and neither of
+those needs a buffer nobody has used yet - where making one and turning
+the major mode on in it is most of what this run costs."
+  (replique-name-fuzz--seed seed)
   (catch 'found
-    (dotimes (_ count)
-      (let ((text (replique-completion-fuzz--text)))
-        (with-temp-buffer
-          (replique-clojure-mode)
+    (with-temp-buffer
+      (replique-clojure-mode)
+      (dotimes (_ count)
+        (let ((text (replique-name-fuzz--text)))
+          (erase-buffer)
           (insert text)
           (dotimes (which 8)
             (goto-char (if (= which 0)
                            (point-max)
                          (+ (point-min)
-                            (replique-completion-fuzz--next
+                            (replique-name-fuzz--next
                              (max 1 (- (point-max) (point-min) -1))))))
-            (let ((problem (replique-completion-fuzz--problem)))
+            (let ((problem (replique-name-fuzz--problem)))
               (when problem
                 (throw 'found (list :seed seed :text text :point (point)
                                     :problem problem))))))))
@@ -266,7 +272,7 @@ is while somebody types, and the position every other test asks at."
 
 ;;; What is made of the answer
 
-(defconst replique-completion-fuzz--kinds
+(defconst replique-name-fuzz--kinds
   '("namespace" "namespace-prefix" "macro" "function" "var" "class" "package"
     "path" "keyword" "local" "special-form" "method" "field" "constructor")
   "Every kind of name the process says it found.
@@ -275,7 +281,7 @@ What holds a name is different for each of them - a var carries the
 namespace it is public in, a class its package, a member its class - so
 what is written where a client shows one is a different join for each.")
 
-(defconst replique-completion-fuzz--arglists
+(defconst replique-name-fuzz--arglists
   '("[]" "[f]" "[f coll]" "[x & more]" "[& more]" "[&]"
     "[{:keys [a b]} c]" "[[a b] & rest]" "[a {:as m} [b [c]]]"
     "^int []" "^String [int int]" "^Map$Entry [Object]" "^void [String[]]"
@@ -287,15 +293,15 @@ argument with an ampersand in front of it, and a destructured name as a
 map or a vector of its own - which is what makes finding the argument
 point is at more than splitting on a space.")
 
-(defun replique-completion-fuzz--maybe (key value)
+(defun replique-name-fuzz--maybe (key value)
   "Return the plist holding KEY and VALUE, or nothing, at random.
 
 Which is what an answer is: every key but the kind and the name is
 absent as often as it is there, because an absent value is an absent
 key and half of what the process finds carries none of them."
-  (when (zerop (replique-completion-fuzz--next 2)) (list key value)))
+  (when (zerop (replique-name-fuzz--next 2)) (list key value)))
 
-(defun replique-completion-fuzz--answer ()
+(defun replique-name-fuzz--answer ()
   "Return an answer the way the process gives one.
 
 Every kind, with the keys that kind carries there as often as not.  Not
@@ -303,30 +309,30 @@ an answer to anything in particular - what is being asked is what is
 made of one, and a run that only ever saw the answers a buffer led to
 would be a run that never saw a field, a rest argument or an arity
 nobody called."
-  (let ((kind (replique-completion-fuzz--pick replique-completion-fuzz--kinds)))
+  (let ((kind (replique-name-fuzz--pick replique-name-fuzz--kinds)))
     (append
-     (list :type kind :name (replique-completion-fuzz--pick
+     (list :type kind :name (replique-name-fuzz--pick
                              '("map" "join" "x" "/" "Date" "SIZE" "new" "if"
                                "substring" "Map$Entry" "a-name")))
-     (replique-completion-fuzz--maybe :ns "clojure.core")
-     (replique-completion-fuzz--maybe :class "java.lang.String")
-     (replique-completion-fuzz--maybe :package "java.util")
-     (replique-completion-fuzz--maybe :tag "int")
-     (replique-completion-fuzz--maybe :doc "What it is for.\nOn two lines.")
-     (replique-completion-fuzz--maybe
-      :arglists (let ((count (replique-completion-fuzz--next 4)))
+     (replique-name-fuzz--maybe :ns "clojure.core")
+     (replique-name-fuzz--maybe :class "java.lang.String")
+     (replique-name-fuzz--maybe :package "java.util")
+     (replique-name-fuzz--maybe :tag "int")
+     (replique-name-fuzz--maybe :doc "What it is for.\nOn two lines.")
+     (replique-name-fuzz--maybe
+      :arglists (let ((count (replique-name-fuzz--next 4)))
                   (mapcar (lambda (_)
-                            (replique-completion-fuzz--pick
-                             replique-completion-fuzz--arglists))
+                            (replique-name-fuzz--pick
+                             replique-name-fuzz--arglists))
                           (number-sequence 1 count)))))))
 
-(defun replique-completion-fuzz--faced (text)
+(defun replique-name-fuzz--faced (text)
   "Return where TEXT is faced as the argument point is at, or nil."
   (when (stringp text)
     (text-property-any 0 (length text) 'face
                        'eldoc-highlight-function-argument text)))
 
-(defun replique-completion-fuzz--miscounted (arglist)
+(defun replique-name-fuzz--miscounted (arglist)
   "Return what is wrong with the arguments read out of ARGLIST, or nil.
 
 Where each of them is written, which is what facing one means: a region
@@ -364,7 +370,7 @@ is indexing into it."
                                       argument where arglist)))))
           nil))))
 
-(defun replique-completion-fuzz--arguments-of (arglists)
+(defun replique-name-fuzz--arguments-of (arglists)
   "Return every argument written in ARGLISTS, as the text of each."
   (apply #'append
          (mapcar (lambda (arglist)
@@ -373,7 +379,7 @@ is indexing into it."
                            (replique-symbol--arguments arglist)))
                  arglists)))
 
-(defun replique-completion-fuzz--unsaid (found argument)
+(defun replique-name-fuzz--unsaid (found argument)
   "Return what is wrong with what is said about FOUND at ARGUMENT, or nil.
 
 The name is what everything else hangs off, so it is what is said first;
@@ -384,11 +390,11 @@ on, where nothing of the arglists is one of its arguments.
 Which argument it is is not checked here - there is no right answer to an
 argument nobody wrote - but that what was faced is an argument at all.
 Where each of them is written is `replique-symbol--arguments\=' to say
-and `replique-completion-fuzz--miscounted\=' to check; what is asked here
+and `replique-name-fuzz--miscounted\=' to check; what is asked here
 is of the two that read it."
   (let* ((name (replique-symbol-full-name found))
          (said (replique-symbol--said found argument))
-         (faced (replique-completion-fuzz--faced said)))
+         (faced (replique-name-fuzz--faced said)))
     (or (unless (stringp name) (format "the name is %S" name))
         (unless (stringp said) (format "what is said is %S" said))
         (unless (string-prefix-p name said)
@@ -404,32 +410,32 @@ is of the two that read it."
                   (format "the faced argument is blank in %S" said))
                 (when (string-search "\n" text)
                   (format "the faced argument runs over a line in %S" said))
-                (unless (member text (replique-completion-fuzz--arguments-of
+                (unless (member text (replique-name-fuzz--arguments-of
                                       (plist-get found :arglists)))
                   (format "%S is faced, which is no argument of %S"
                           text (plist-get found :arglists)))))))))
 
-(defun replique-completion-fuzz--unmade (seed count)
+(defun replique-name-fuzz--unmade (seed count)
   "Return the first of COUNT answers of SEED made something wrong of, or nil.
 
 Each of them read at every argument a call could be written with, and at
 nought, which is where point is while a method is being written on
 something."
-  (replique-completion-fuzz--seed seed)
+  (replique-name-fuzz--seed seed)
   (catch 'found
     (dotimes (_ count)
-      (let ((arglist (if (zerop (replique-completion-fuzz--next 2))
-                         (replique-completion-fuzz--pick
-                          replique-completion-fuzz--arglists)
-                       (replique-completion-fuzz--junk))))
+      (let ((arglist (if (zerop (replique-name-fuzz--next 2))
+                         (replique-name-fuzz--pick
+                          replique-name-fuzz--arglists)
+                       (replique-name-fuzz--junk))))
         (when-let* ((problem (condition-case error
-                                 (replique-completion-fuzz--miscounted arglist)
+                                 (replique-name-fuzz--miscounted arglist)
                                (error (format "signalled %S" error)))))
           (throw 'found (list :seed seed :arglist arglist :problem problem))))
-      (let ((answer (replique-completion-fuzz--answer)))
+      (let ((answer (replique-name-fuzz--answer)))
         (dolist (argument (number-sequence 0 6))
           (when-let* ((problem (condition-case error
-                                   (replique-completion-fuzz--unsaid answer argument)
+                                   (replique-name-fuzz--unsaid answer argument)
                                  (error (format "signalled %S" error)))))
             (throw 'found (list :seed seed :answer answer
                                 :argument argument :problem problem))))))
@@ -437,7 +443,7 @@ something."
 
 ;;; What the process answers what was read
 
-(defun replique-completion-fuzz--unanswered ()
+(defun replique-name-fuzz--unanswered ()
   "Return what is wrong with what the process answers at point, or nil.
 
 Asked for real, because the answers worth making something of are the
@@ -452,7 +458,7 @@ waiting."
   (or (when-let* ((call (replique-name-call-at-point))
                   (found (replique-symbol--ask (plist-get call :context)
                                                (plist-get call :text))))
-        (replique-completion-fuzz--unsaid
+        (replique-name-fuzz--unsaid
          found (replique-symbol--argument-of (plist-get call :text)
                                              (plist-get call :argument))))
       (when-let* ((bounds (replique-name-at-point))
@@ -472,7 +478,7 @@ waiting."
                         (<= (point-min) (marker-position marker) (point-max)))
                 (format "the marker is outside what it is in: %S" found)))))))
 
-(defun replique-completion-fuzz--unanswerable (seed count)
+(defun replique-name-fuzz--unanswerable (seed count)
   "Return the first of COUNT fuzzed buffers of SEED answered wrongly, or nil.
 
 Read at three positions each rather than eight: every one of them is a
@@ -484,22 +490,22 @@ What is being fuzzed is the text and where point is in it, and neither of
 those needs a buffer nobody has used yet - where turning the major mode
 on in a new one is four fifths of what this run costs, and every question
 it puts to the process together is a quarter of what is left."
-  (replique-completion-fuzz--seed seed)
+  (replique-name-fuzz--seed seed)
   (catch 'found
     (with-temp-buffer
       (replique-clojure-mode)
       (dotimes (_ count)
-        (let ((text (replique-completion-fuzz--text)))
+        (let ((text (replique-name-fuzz--text)))
           (erase-buffer)
           (insert text)
           (dotimes (which 3)
             (goto-char (if (= which 0)
                            (point-max)
                          (+ (point-min)
-                            (replique-completion-fuzz--next
+                            (replique-name-fuzz--next
                              (max 1 (- (point-max) (point-min) -1))))))
             (let ((problem (condition-case error
-                               (replique-completion-fuzz--unanswered)
+                               (replique-name-fuzz--unanswered)
                              (error (format "signalled %S" error)))))
               (when problem
                 (throw 'found (list :seed seed :text text :point (point)
@@ -508,21 +514,21 @@ it puts to the process together is a quarter of what is left."
 
 ;;; The runs
 
-(ert-deftest replique-completion-fuzz-nothing-in-a-buffer-breaks-the-reading ()
+(ert-deftest replique-name-fuzz-nothing-in-a-buffer-breaks-the-reading ()
   "Read a few thousand positions of a few hundred buffers."
   (replique-test-grammar)
   (dolist (seed '(1 2 3 4 5 6 7 8))
-    (should (null (replique-completion-fuzz--failing seed 100)))))
+    (should (null (replique-name-fuzz--failing seed 100)))))
 
-(ert-deftest replique-completion-fuzz-nothing-answered-breaks-what-is-said ()
+(ert-deftest replique-name-fuzz-nothing-answered-breaks-what-is-said ()
   "Every kind of answer, at every argument a call could be written with.
 
 No process: what is being asked is what is made of an answer, and an
 answer made up here reaches the kinds a buffer hardly ever leads to."
   (dolist (seed '(1 2 3 4 5 6 7 8))
-    (should (null (replique-completion-fuzz--unmade seed 500)))))
+    (should (null (replique-name-fuzz--unmade seed 500)))))
 
-(ert-deftest replique-completion-fuzz-nothing-in-a-buffer-breaks-the-answer ()
+(ert-deftest replique-name-fuzz-nothing-in-a-buffer-breaks-the-answer ()
   "A few hundred positions, each of them asked of a real process, and what
 comes back said and opened."
   (replique-test-grammar)
@@ -530,12 +536,12 @@ comes back said and opened."
   (let ((before (buffer-list)))
     (unwind-protect
         (dolist (seed '(1 2 3 4 5 6 7 8))
-          (should (null (replique-completion-fuzz--unanswerable seed 40))))
+          (should (null (replique-name-fuzz--unanswerable seed 40))))
       ;; the buffers a definition was opened in, which is a jar entry read
       ;; out into one of its own as often as a file
       (dolist (buffer (buffer-list))
         (unless (memq buffer before) (kill-buffer buffer))))))
 
-(provide 'replique-completion-fuzz-test)
+(provide 'replique-name-fuzz-test)
 
-;;; replique-completion-fuzz-test.el ends here
+;;; replique-name-fuzz-test.el ends here
