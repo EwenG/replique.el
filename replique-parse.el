@@ -179,6 +179,17 @@ asking whether a form reads at all is this, and not a walk."
         (push child forms)))
     (nreverse forms)))
 
+(defun replique-parse-unwrap-meta (node)
+  "NODE with the metadata written in front of it taken off.
+
+Metadata wraps what it is written on, and what it is written on can be
+wrapped again - `^:private ^String x\' is two of them around one symbol -
+so this takes off as many as there are.  Nil for metadata written in
+front of nothing, which is what a `^\' at the end of the buffer is."
+  (while (and node (eq 'meta (aref node 0)))
+    (setq node (replique-parse-target node)))
+  node)
+
 (defun replique-parse-target (node)
   "The form the reader macro NODE is written in front of, or nil for none.
 

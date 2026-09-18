@@ -70,8 +70,7 @@
 
 ;;; Code:
 
-(require 'treesit)
-(require 'replique-clojure-mode)
+(require 'replique-parse)
 
 (defconst replique-locals-vars
   '((let-like "clojure.core/let" "clojure.core/loop"
@@ -167,6 +166,26 @@ Which is the answer for every buffer with no process behind it.  Worked
 out once, because rebuilding it per name looked at would be the same
 list every time.")
 
+(defsubst replique-locals--list-p (node)
+  "Return non-nil when NODE is a list."
+  (and node (eq 'list (replique-parse-type node))))
+
+(defsubst replique-locals--fn-literal-p (node)
+  "Return non-nil when NODE is a `#()'."
+  (and node (eq 'fn (replique-parse-type node))))
+
+(defsubst replique-locals--symbol-p (node)
+  "Return non-nil when NODE is a symbol."
+  (and node (eq 'symbol (replique-parse-type node))))
+
+(defsubst replique-locals--keyword-p (node)
+  "Return non-nil when NODE is a keyword."
+  (and node (eq 'keyword (replique-parse-type node))))
+
+(defun replique-locals--first-value (node)
+  "Return the first form NODE is made of, with its metadata taken off."
+  (replique-parse-unwrap-meta (car (replique-parse-forms node))))
+
 (defun replique-locals--head-text (node)
   "Return the symbol at the head of the form NODE is, as it is written.
 
@@ -175,10 +194,10 @@ is on it, because that is what says which var it names: let and c/let and
 clojure.core/let are three ways of writing one form and three different
 symbols, and which of them a namespace writes is what
 `replique-locals-forms' is given."
-  (when (replique-clojure--list-node-p node)
-    (let ((head (replique-clojure--first-value-child node)))
-      (when (and head (replique-clojure--symbol-node-p head))
-        (treesit-node-text head t)))))
+  (when (replique-locals--list-p node)
+    (let ((head (replique-locals--first-value node)))
+      (when (and head (replique-locals--symbol-p head))
+        (replique-parse-text head)))))
 
 (defun replique-locals--kind (node forms)
   "Return what the form NODE is binds, or nil for neither.
@@ -189,11 +208,11 @@ FORMS is what each written form binds - see `replique-locals-forms'."
 
 (defun replique-locals--vector-node-p (node)
   "Return non-nil when NODE is a vector."
-  (and node (equal "vector_literal" (treesit-node-type node))))
+  (and node (eq 'vector (replique-parse-type node))))
 
 (defun replique-locals--name-text (node)
   "Return the name of the symbol or keyword NODE, without its namespace."
-  (treesit-node-text (treesit-node-child-by-field-name node "name") t))
+  (cdr (replique-parse-name-parts (replique-parse-text node))))
 
 (defun replique-locals--pattern-bound (node)
   "Return what the binding pattern NODE binds, last first.
@@ -207,20 +226,19 @@ those can hold another pattern - so this and the two below call each
 other for as deep as the pattern goes.  Anything else binds nothing: a
 number or a string can be written where a pattern goes, and what it
 would bind has no name."
-  (let ((node (replique-clojure--unwrap-meta node)))
+  (let ((node (replique-parse-unwrap-meta node)))
     (cond
      ((null node) nil)
-     ((replique-clojure--symbol-node-p node)
-      (list (cons (treesit-node-text node t) (treesit-node-start node))))
+     ((replique-locals--symbol-p node)
+      (list (cons (replique-parse-text node) (replique-parse-start node))))
      ((replique-locals--vector-node-p node)
       (replique-locals--vector-pattern-bound node))
-     ((equal "map_literal" (treesit-node-type node))
+     ((eq 'map (replique-parse-type node))
       (replique-locals--map-pattern-bound node))
      ;; #:person{:keys [a]} - the namespace says what the keys are called
      ;; and not what anything is bound to, so what is read is the map
-     ((equal "namespaced_map_literal" (treesit-node-type node))
-      (replique-locals--pattern-bound
-       (treesit-node-child-by-field-name node "body")))
+     ((eq 'namespaced-map (replique-parse-type node))
+      (replique-locals--pattern-bound (replique-parse-target node)))
      (t nil))))
 
 (defun replique-locals--vector-pattern-bound (node)
@@ -232,10 +250,10 @@ like any other.  Nothing is said here about the :as of a vector either -
 it is a keyword, which binds nothing, and the name it is written before
 is bound by being that name."
   (let ((found nil))
-    (dolist (child (treesit-node-children node t))
-      (let ((child (replique-clojure--unwrap-meta child)))
-        (unless (and (replique-clojure--symbol-node-p child)
-                     (equal "&" (treesit-node-text child t)))
+    (dolist (child (replique-parse-forms node))
+      (let ((child (replique-parse-unwrap-meta child)))
+        (unless (and (replique-locals--symbol-p child)
+                     (equal "&" (replique-parse-text child)))
           (setq found (append (replique-locals--pattern-bound child) found)))))
     found))
 
@@ -248,12 +266,12 @@ Except for the four keywords that are written as keys - :keys, :strs and
 :syms, where the names are in the vector they are given, and :as, where
 the name of the whole is."
   (let ((found nil))
-    (dolist (pair (treesit-node-children node t))
-      (when (equal "pair" (treesit-node-type pair))
-        (let ((key (replique-clojure--unwrap-meta
-                    (treesit-node-child-by-field-name pair "key")))
-              (value (treesit-node-child-by-field-name pair "value")))
-          (if (replique-clojure--keyword-node-p key)
+    (dolist (pair (replique-parse-forms node))
+      (when (eq 'pair (replique-parse-type pair))
+        (let* ((forms (replique-parse-forms pair))
+               (key (replique-parse-unwrap-meta (car forms)))
+               (value (cadr forms)))
+          (if (replique-locals--keyword-p key)
               (let ((name (replique-locals--name-text key)))
                 (cond
                  ((member name '("keys" "strs" "syms"))
@@ -273,15 +291,15 @@ the name of the whole is."
 Written as symbols or as keywords, and qualified or not.  What is bound
 is the name either way: {:keys [foo/bar]} binds bar, and where it is
 looked for is the rest of it."
-  (let ((node (replique-clojure--unwrap-meta node))
+  (let ((node (replique-parse-unwrap-meta node))
         (found nil))
     (when (replique-locals--vector-node-p node)
-      (dolist (child (treesit-node-children node t))
-        (let ((child (replique-clojure--unwrap-meta child)))
-          (when (or (replique-clojure--symbol-node-p child)
-                    (replique-clojure--keyword-node-p child))
+      (dolist (child (replique-parse-forms node))
+        (let ((child (replique-parse-unwrap-meta child)))
+          (when (or (replique-locals--symbol-p child)
+                    (replique-locals--keyword-p child))
             (push (cons (replique-locals--name-text child)
-                        (treesit-node-start child))
+                        (replique-parse-start child))
                   found)))))
     found))
 
@@ -291,21 +309,21 @@ looked for is the rest of it."
 A binding is in scope once the expression it is bound to has been read,
 which is what makes these sequential: it covers the expressions after
 its own and the body, and not its own."
-  (let ((vec (replique-clojure--unwrap-meta vec))
+  (let ((vec (replique-parse-unwrap-meta vec))
         (found nil))
     (when (replique-locals--vector-node-p vec)
-      (let ((children (treesit-node-children vec t)))
+      (let ((children (replique-parse-forms vec)))
         (while (cdr children)
           (let ((target (car children))
                 (init (nth 1 children)))
-            (when (<= (treesit-node-end init) pos)
+            (when (<= (replique-parse-end init) pos)
               (setq found (append (replique-locals--pattern-bound target) found))))
           (setq children (cddr children)))))
     found))
 
 (defun replique-locals--binding-vector (node)
   "Return the vector NODE is written with, which is its second element."
-  (nth 1 (treesit-node-children node t)))
+  (nth 1 (replique-parse-forms node)))
 
 (defun replique-locals--for-bound (node pos)
   "Return what the `for'-like form NODE binds that is in scope at POS.
@@ -316,18 +334,18 @@ read differently here.  A :when or a :while needs nothing said about it:
 the keyword is written where a name goes, and a keyword names nothing,
 so the expression after it falls where an expression falls and the pairs
 after it stay where they are."
-  (let ((vec (replique-clojure--unwrap-meta
+  (let ((vec (replique-parse-unwrap-meta
               (replique-locals--binding-vector node)))
         (found nil))
     (when (replique-locals--vector-node-p vec)
-      (let ((children (treesit-node-children vec t)))
+      (let ((children (replique-parse-forms vec)))
         (while (cdr children)
-          (let* ((target (replique-clojure--unwrap-meta (car children)))
+          (let* ((target (replique-parse-unwrap-meta (car children)))
                  (init (nth 1 children)))
-            (if (and (replique-clojure--keyword-node-p target)
+            (if (and (replique-locals--keyword-p target)
                      (equal "let" (replique-locals--name-text target)))
                 (setq found (append (replique-locals--pairs-bound init pos) found))
-              (when (<= (treesit-node-end init) pos)
+              (when (<= (replique-parse-end init) pos)
                 (setq found (append (replique-locals--pattern-bound target) found)))))
           (setq children (cddr children)))))
     found))
@@ -339,30 +357,30 @@ The vector of a form written with one arity, and of the arity POS is in
 where there are several.  Which one that is has to be looked for rather
 than counted to: a defn can be written with a docstring and an attribute
 map before its parameters, so there is no index the vector is at."
-  (let ((children (cdr (treesit-node-children node t))))
+  (let ((children (cdr (replique-parse-forms node))))
     ;; the name, where there is one, and then what can be written between
     ;; the name and the parameters
-    (when (and children (replique-clojure--symbol-node-p
-                         (replique-clojure--unwrap-meta (car children))))
+    (when (and children (replique-locals--symbol-p
+                         (replique-parse-unwrap-meta (car children))))
       (setq children (cdr children)))
     (while (and children
-                (member (treesit-node-type
-                         (replique-clojure--unwrap-meta (car children)))
-                        '("string" "map_literal")))
+                (memq (replique-parse-type
+                       (replique-parse-unwrap-meta (car children)))
+                      '(string map)))
       (setq children (cdr children)))
-    (let ((first (and children (replique-clojure--unwrap-meta (car children)))))
+    (let ((first (and children (replique-parse-unwrap-meta (car children)))))
       (if (replique-locals--vector-node-p first)
           ;; One arity: the parameters cover everything written after them,
           ;; which leaves out a docstring, and they cover themselves
-          (and (<= (treesit-node-start first) pos) first)
+          (and (<= (replique-parse-start first) pos) first)
         ;; Several: the parameters of one arity are not in scope in another
         (let ((found nil))
           (dolist (child children)
-            (let ((child (replique-clojure--unwrap-meta child)))
-              (when (and (replique-clojure--list-node-p child)
-                         (<= (treesit-node-start child) pos)
-                         (< pos (treesit-node-end child)))
-                (let ((vec (replique-clojure--first-value-child child)))
+            (let ((child (replique-parse-unwrap-meta child)))
+              (when (and (replique-locals--list-p child)
+                         (<= (replique-parse-start child) pos)
+                         (< pos (replique-parse-end child)))
+                (let ((vec (replique-locals--first-value child)))
                   (when (replique-locals--vector-node-p vec)
                     (setq found vec))))))
           found)))))
@@ -374,9 +392,9 @@ SELF-NAMING says whether the name it may be written with is a local -
 which is what fn-like says in `replique-locals-vars'."
   (let ((found nil))
     (when self-naming
-      (let ((name (replique-clojure--unwrap-meta
-                   (nth 1 (treesit-node-children node t)))))
-        (when (replique-clojure--symbol-node-p name)
+      (let ((name (replique-parse-unwrap-meta
+                   (nth 1 (replique-parse-forms node)))))
+        (when (replique-locals--symbol-p name)
           (setq found (replique-locals--pattern-bound name)))))
     ;; in front of the name it may have: the parameters shadow it
     (when-let* ((vec (replique-locals--arity-vector node pos)))
@@ -391,11 +409,11 @@ of one arity of a fn - so what it binds is read the same way.  The this
 of a `reify' or a `deftype' is a local like the others by being written
 where a parameter is, and needs nothing said about it here."
   (let ((found nil))
-    (dolist (child (treesit-node-children node t))
-      (let ((child (replique-clojure--unwrap-meta child)))
-        (when (and (replique-clojure--list-node-p child)
-                   (<= (treesit-node-start child) pos)
-                   (< pos (treesit-node-end child)))
+    (dolist (child (replique-parse-forms node))
+      (let ((child (replique-parse-unwrap-meta child)))
+        (when (and (replique-locals--list-p child)
+                   (<= (replique-parse-start child) pos)
+                   (< pos (replique-parse-end child)))
           (when-let* ((vec (replique-locals--arity-vector child pos)))
             (setq found (append (replique-locals--vector-pattern-bound vec) found))))))
     found))
@@ -406,19 +424,19 @@ where a parameter is, and needs nothing said about it here."
 The names it gives are in scope in the whole of it, one another
 included, which is what it is written for.  The parameters of one of
 them are in scope in that one only."
-  (let ((vec (replique-clojure--unwrap-meta
+  (let ((vec (replique-parse-unwrap-meta
               (replique-locals--binding-vector node)))
         (names nil)
         (params nil))
     (when (replique-locals--vector-node-p vec)
-      (dolist (child (treesit-node-children vec t))
-        (let ((child (replique-clojure--unwrap-meta child)))
-          (when (replique-clojure--list-node-p child)
+      (dolist (child (replique-parse-forms vec))
+        (let ((child (replique-parse-unwrap-meta child)))
+          (when (replique-locals--list-p child)
             (setq names (append (replique-locals--pattern-bound
-                                 (replique-clojure--first-value-child child))
+                                 (replique-locals--first-value child))
                                 names))
-            (when (and (<= (treesit-node-start child) pos)
-                       (< pos (treesit-node-end child)))
+            (when (and (<= (replique-parse-start child) pos)
+                       (< pos (replique-parse-end child)))
               (when-let* ((arity (replique-locals--arity-vector child pos)))
                 (setq params (append (replique-locals--vector-pattern-bound arity)
                                      params))))))))
@@ -430,14 +448,14 @@ them are in scope in that one only."
 
 The fields are in scope in every method it is written with, and each
 method binds what it is written with of its own."
-  (let ((children (cdr (treesit-node-children node t)))
+  (let ((children (cdr (replique-parse-forms node)))
         (found nil))
-    (when (and children (replique-clojure--symbol-node-p
-                         (replique-clojure--unwrap-meta (car children))))
+    (when (and children (replique-locals--symbol-p
+                         (replique-parse-unwrap-meta (car children))))
       (setq children (cdr children)))
-    (let ((fields (and children (replique-clojure--unwrap-meta (car children)))))
+    (let ((fields (and children (replique-parse-unwrap-meta (car children)))))
       (when (and (replique-locals--vector-node-p fields)
-                 (<= (treesit-node-start fields) pos))
+                 (<= (replique-parse-start fields) pos))
         (setq found (replique-locals--vector-pattern-bound fields))))
     (append (replique-locals--method-bound node pos) found)))
 
@@ -447,10 +465,10 @@ method binds what it is written with of its own."
 Counted to rather than looked for, unlike a fn: what is written between
 the name of the multimethod and the parameters is the value dispatched
 on, and that can be a vector - so the first vector is not the one."
-  (let* ((children (nthcdr 3 (treesit-node-children node t)))
-         (params (and children (replique-clojure--unwrap-meta (car children)))))
+  (let* ((children (nthcdr 3 (replique-parse-forms node)))
+         (params (and children (replique-parse-unwrap-meta (car children)))))
     (when (and (replique-locals--vector-node-p params)
-               (<= (treesit-node-start params) pos))
+               (<= (replique-parse-start params) pos))
       (replique-locals--vector-pattern-bound params))))
 
 (defun replique-locals--third-bound (node pos)
@@ -458,8 +476,8 @@ on, and that can be a vector - so the first vector is not the one."
 
 \(catch Exception e ...) and (as-> expr name ...) are written the same
 way: two things, and then a name for what the rest of them is about."
-  (let ((name (nth 2 (treesit-node-children node t))))
-    (when (and name (<= (treesit-node-end name) pos))
+  (let ((name (nth 2 (replique-parse-forms node))))
+    (when (and name (<= (replique-parse-end name) pos))
       (replique-locals--pattern-bound name))))
 
 (defconst replique-locals--implicit-parameter-regexp
@@ -472,9 +490,9 @@ way: two things, and then a name for what the rest of them is about."
 Everything below NODE is looked at.  A #() cannot be written inside
 another, so nothing found down there is somebody else's."
   (let ((found nil))
-    (dolist (child (treesit-node-children node t))
-      (dolist (name (if (replique-clojure--symbol-node-p child)
-                        (let ((text (treesit-node-text child t)))
+    (dolist (child (replique-parse-children node))
+      (dolist (name (if (replique-locals--symbol-p child)
+                        (let ((text (replique-parse-text child)))
                           (and (string-match-p
                                 replique-locals--implicit-parameter-regexp text)
                                (list text)))
@@ -489,7 +507,7 @@ another, so nothing found down there is somebody else's."
 They are bound by being written rather than named, so what is in scope
 is what is there: a % that has not been written is not offered, and
 where each of them is bound is the #( they are written in."
-  (let ((start (treesit-node-start node))
+  (let ((start (replique-parse-start node))
         (found nil))
     (dolist (name (replique-locals--implicit-parameters node))
       (push (cons name start) found))
@@ -499,7 +517,7 @@ where each of them is bound is the #( they are written in."
   "Return what NODE binds that is in scope at POS, nearest first.
 
 FORMS says what each written form binds - see `replique-locals-forms'."
-  (if (replique-clojure--anon-fn-node-p node)
+  (if (replique-locals--fn-literal-p node)
       (replique-locals--fn-literal-bound node)
     (let ((kind (replique-locals--kind node forms)))
       (cond
@@ -524,19 +542,19 @@ FORMS says what each written form binds - see `replique-locals-forms'."
 (defun replique-locals--enclosing (pos)
   "Return the forms POS is written inside, innermost first.
 
-Read upwards from the node at POS rather than downwards from the root,
-which comes to the same forms and does not need the parse to be asked
-for.  The ones that do not hold POS are dropped: `treesit-node-at'
-answers with the node after POS where nothing covers it, and what is
-after POS is not what POS is inside of."
-  (let ((node (treesit-node-at pos))
-        (found nil))
-    (while node
-      (when (and (<= (treesit-node-start node) pos)
-                 (< pos (treesit-node-end node)))
-        (push node found))
-      (setq node (treesit-node-parent node)))
-    (nreverse found)))
+Read down from the top level form POS is in rather than up from the name
+at POS.  A node does not hold what it is written inside - there is no
+parent to walk to - and that is on purpose: a parent in every node is a
+field written once per node and read only by the walks that go upwards,
+and every one of those starts from a form it was handed.  This one is
+handed it by `replique-parse-form-at', which is what the buffer has
+already been read into.
+
+Nothing has to be dropped from what comes back either.  What is written
+over POS is what a walk down goes through, where a walk up from the node
+after POS goes through forms POS is not inside of."
+  (when-let* ((form (replique-parse-form-at pos)))
+    (nreverse (replique-parse-path form pos))))
 
 (defun replique-locals--closes-over-p (node forms)
   "Say whether what is written inside NODE can see the locals around it.
@@ -571,19 +589,16 @@ whose other keys this knows nothing about.
 
 Nil where nothing is declared, which is the usual answer: a name says
 nothing about what it holds unless somebody wrote it down."
-  (when-let* ((node (treesit-node-at pos)))
-    ;; up to the outermost node that still starts where the name does, since
-    ;; a symbol is a node inside a node and what wraps it starts before it
-    (while (and (treesit-node-parent node)
-                (= pos (treesit-node-start (treesit-node-parent node))))
-      (setq node (treesit-node-parent node)))
-    (when-let* ((parent (treesit-node-parent node))
-                ((equal "with_metadata" (treesit-node-type parent)))
-                (meta (car (treesit-node-children parent t)))
-                ((equal "metadata" (treesit-node-type meta)))
-                (tag (car (treesit-node-children meta t)))
-                ((replique-clojure--symbol-node-p tag)))
-      (treesit-node-text tag t))))
+  (when-let* ((path (replique-locals--enclosing pos))
+              (name (car path))
+              (around (cadr path))
+              ((eq 'meta (replique-parse-type around)))
+              ;; written in front of the name itself, rather than in front
+              ;; of something the name is written inside of
+              ((eq name (replique-parse-target around)))
+              (tag (car (replique-parse-forms around)))
+              ((replique-locals--symbol-p tag)))
+    (replique-parse-text tag)))
 
 (defun replique-locals-at (pos &optional forms)
   "Return the locals in scope at POS as (NAME . POSITION), nearest first.
@@ -636,10 +651,10 @@ is being given exactly where scope has not reached it yet.
 An element with nothing after it counts like the rest.  A binding vector
 is written a target at a time, and a target with no init yet is what a
 name half typed looks like."
-  (let ((vec (replique-clojure--unwrap-meta vec))
+  (let ((vec (replique-parse-unwrap-meta vec))
         (found nil))
     (when (replique-locals--vector-node-p vec)
-      (let ((children (treesit-node-children vec t)))
+      (let ((children (replique-parse-forms vec)))
         (while children
           (setq found (append (replique-locals--pattern-bound (car children)) found))
           (setq children (cddr children)))))
@@ -650,14 +665,14 @@ name half typed looks like."
 
 What follows a :let is a binding vector of its own, read here the way
 `replique-locals--for-bound' reads it."
-  (let ((vec (replique-clojure--unwrap-meta
+  (let ((vec (replique-parse-unwrap-meta
               (replique-locals--binding-vector node)))
         (found nil))
     (when (replique-locals--vector-node-p vec)
-      (let ((children (treesit-node-children vec t)))
+      (let ((children (replique-parse-forms vec)))
         (while children
-          (let ((target (replique-clojure--unwrap-meta (car children))))
-            (if (and (replique-clojure--keyword-node-p target)
+          (let ((target (replique-parse-unwrap-meta (car children))))
+            (if (and (replique-locals--keyword-p target)
                      (equal "let" (replique-locals--name-text target)))
                 (setq found (append (replique-locals--pairs-naming (nth 1 children))
                                     found))
@@ -669,9 +684,9 @@ What follows a :let is a binding vector of its own, read here the way
   "Return the name NODE gives itself, as a list of one, or nil.
 
 Its second element, when that is a symbol."
-  (let ((name (replique-clojure--unwrap-meta
-               (nth 1 (treesit-node-children node t)))))
-    (when (replique-clojure--symbol-node-p name)
+  (let ((name (replique-parse-unwrap-meta
+               (nth 1 (replique-parse-forms node)))))
+    (when (replique-locals--symbol-p name)
       (replique-locals--pattern-bound name))))
 
 (defun replique-locals--naming-by (node forms)
@@ -705,28 +720,27 @@ FORMS says what each written form binds - see `replique-locals-forms'."
   "Return the symbol or keyword written at PROBE, when POS is in it.
 
 PROBE is where to look and POS is what the answer has to cover, and they
-are two because `treesit-node-at' answers for a position inside a token
-rather than for one at either of its edges.  POS is in a name from where
-the name starts to just after it ends, that last being where point is
+are two because a position is at a name from where it starts to just
+after it ends, where what is read at a position is what covers it - and
+just after a name is not covered by it.  That last is where point is
 once a name has been typed and nothing else has."
-  (let ((node (treesit-node-at probe))
+  (let ((path (replique-locals--enclosing probe))
         (found nil))
-    (while (and node (null found))
-      (when (and (or (replique-clojure--symbol-node-p node)
-                     (replique-clojure--keyword-node-p node))
-                 (<= (treesit-node-start node) pos)
-                 (<= pos (treesit-node-end node)))
-        (setq found node))
-      (setq node (treesit-node-parent node)))
+    (while (and path (null found))
+      (let ((node (pop path)))
+        (when (and (or (replique-locals--symbol-p node)
+                       (replique-locals--keyword-p node))
+                   (<= (replique-parse-start node) pos)
+                   (<= pos (replique-parse-end node)))
+          (setq found node))))
     found))
 
 (defun replique-locals--name-node (pos)
   "Return the symbol or keyword POS is at, or nil.
 
-Looked for at POS and then at the character before it, since
-`treesit-node-at' answers with what follows POS where nothing covers it
-- and what POS is just after is a name POS is at, where what follows POS
-is not."
+Looked for at POS and then at the character before it: nothing covers
+the position just after a name, and a name POS is just after is a name
+POS is at."
   (or (replique-locals--name-node-at pos pos)
       (and (> pos (point-min))
            (replique-locals--name-node-at (1- pos) pos))))
@@ -764,7 +778,7 @@ FORMS is what that one takes, and means the same thing here."
     (widen)
     (let ((forms (or forms replique-locals-default-forms)))
       (when-let* ((node (replique-locals--name-node pos))
-                  (start (treesit-node-start node)))
+                  (start (replique-parse-start node)))
         (or (replique-locals--at-name-p start (replique-locals-at pos forms))
             (let ((nodes (replique-locals--enclosing pos))
                   (found nil))

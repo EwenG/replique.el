@@ -2,13 +2,10 @@
 
 ;;; Commentary:
 
-;; Which names are locals where.  Unlike the rest of the suite these need no
-;; process: what they check is a reading of the parse, and a parse is
-;; something a temporary buffer has.
-;;
-;; `replique-test' is loaded for what says whether the grammar is installed,
-;; so that a run without one skips here for the same reason and in the same
-;; words as it skips there.
+;; Which names are locals where.  Unlike the rest of the suite these need
+;; nothing to run in: no process, no grammar and no major mode.  What they
+;; check is a reading of the text, and the text is something a temporary
+;; buffer has.
 ;;
 ;; Each of them is written as one form with a | in it where the question is
 ;; asked - which reads as the buffer would look with point in it, and keeps
@@ -17,14 +14,12 @@
 ;;; Code:
 
 (require 'ert)
-(require 'replique-test)
+(require 'cl-lib)
 (require 'replique-locals)
 
 (defun replique-locals-test--locals (text)
   "Return the locals in scope where | is in TEXT, nearest first."
-  (replique-test-grammar)
   (with-temp-buffer
-    (replique-clojure-mode)
     (insert text)
     (goto-char (point-min))
     (unless (search-forward "|" nil t)
@@ -39,9 +34,7 @@
 
 (defun replique-locals-test--binding-position (text)
   "Say whether | is at a name being given in TEXT."
-  (replique-test-grammar)
   (with-temp-buffer
-    (replique-clojure-mode)
     (insert text)
     (goto-char (point-min))
     (unless (search-forward "|" nil t)
@@ -52,9 +45,7 @@
 
 (defun replique-locals-test--names-narrowed (text)
   "Return the names in scope where | is in TEXT, with only its line reachable."
-  (replique-test-grammar)
   (with-temp-buffer
-    (replique-clojure-mode)
     (insert text)
     (goto-char (point-min))
     (unless (search-forward "|" nil t)
@@ -314,10 +305,8 @@
 (ert-deftest replique-locals-test-what-a-local-declares-it-holds ()
   "A ^Type written in front of a name is the one thing a Clojure file says
 about what the local holds."
-  (replique-test-grammar)
   (cl-flet ((tag (text)
               (with-temp-buffer
-                (replique-clojure-mode)
                 (insert text)
                 (let ((local (car (replique-locals-at (- (point-max) 2)))))
                   (and local (replique-locals-tag-at (cdr local)))))))
