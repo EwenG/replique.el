@@ -244,6 +244,43 @@ without running it."
        ((member type replique-name--literals) (list :target text))
        (tag (list :tag tag))))))
 
+(defun replique-name--call-node ()
+  "Return the innermost list or function literal point is inside, or nil."
+  (when-let* ((node (treesit-node-at (point))))
+    (treesit-parent-until node
+                          (lambda (found)
+                            (or (replique-clojure--list-node-p found)
+                                (replique-clojure--anon-fn-node-p found)))
+                          t)))
+
+(defun replique-name--enclosing ()
+  "Return the form point is writing in, or nil when point is in none.
+
+A plist holding :argument, which argument of that form point is at - 0 at
+the head of it, 1 at the first argument, and so on; :call, the name that
+head is, where the head is a name; and :on, whatever is written after the
+head, which is what a member written at the head would be called on.
+
+Which argument point is at, is how many of them end before it.  A name
+point is still inside has not ended, so point is at that one; a name
+point sits at the end of is the one being written, and not the next; and
+at the head none of them have ended, which is what makes the head nought.
+
+The head is not always a name.  What ((f x) y) calls is not something to
+ask about, and neither is the nothing at the head of a form somebody has
+just opened - and point is writing an argument of both of those all the
+same, so :argument is there where :call is not."
+  (when-let* ((form (replique-name--call-node)))
+    (let ((children (treesit-node-children form t))
+          (head (replique-clojure--first-value-child form)))
+      (append (list :argument (seq-count (lambda (child)
+                                           (< (treesit-node-end child) (point)))
+                                         children))
+              (when (and head (replique-clojure--symbol-node-p head))
+                (list :call (treesit-node-text head t)))
+              (when-let* ((on (nth 1 children)))
+                (list :on on))))))
+
 (defun replique-name--asking (ns written forms)
   "Return what to ask about a name written in ordinary code.
 
@@ -285,29 +322,67 @@ hook included."
       (let* ((ns (replique-name-namespace))
              (forms (replique-forms-for (replique-name-process) ns)))
         (unless (replique-locals-at-binding-position-p (point) forms)
-          (replique-name--asking ns (replique-name--member-target) forms))))))
+          (append (replique-name--asking ns (replique-name--member-target) forms)
+                  ;; and which argument of the form point is at, which is
+                  ;; what says a special form could be written there: one is
+                  ;; written at the head of a form and nowhere else
+                  (when-let* ((enclosing (replique-name--enclosing)))
+                    (list :argument (plist-get enclosing :argument)))))))))
+
+(defun replique-name--string-context ()
+  "Return what point is asking for inside a string, or nil.
+
+Most strings are text and a few of them are paths, and what tells the two
+apart is the call the string is written in: what is written in an
+\(io/resource ...) is a name on the classpath, and what is written in a
+\(str ...) is a message somebody is writing.  So what travels is the call
+point is writing an argument of and which argument of it this is, and the
+process works out the rest.
+
+It is the process that can: the call is written under whatever alias that
+namespace was given, and reading an alias means holding the namespace it
+is a mapping of.  Which is what the namespace travels for.
+
+Both are absent where point is in no form at all, which a string at the
+top of a file is.  What is asked there is what the string names, since
+that is a question worth asking of any of them.
+
+Nil outside a string, and nil in a buffer that is not read as Clojure."
+  (let ((state (syntax-ppss)))
+    (when (and (nth 3 state) (treesit-parser-list nil 'treejure))
+      (let ((enclosing (replique-name--enclosing)))
+        (append (list :position :string)
+                (when-let* ((ns (replique-name-namespace))) (list :ns ns))
+                (when-let* ((call (plist-get enclosing :call))) (list :call call))
+                (when enclosing (list :argument (plist-get enclosing :argument))))))))
 
 (defun replique-name-context ()
   "Return what point is writing, or nil when point is writing no name.
 
-The slot of a dependency form point is in, and where point is in none of
-those, the name it is writing in ordinary code.  Which of the two it is
-is settled before either of them is asked, because the two mean different
-things by having no answer: inside a require, what follows an :as is a
-name being given and nothing is offered for it, where the same nil
-outside one would be a point in ordinary code."
+The slot of a dependency form point is in; the string point is in, where
+it is in one; and otherwise the name it is writing in ordinary code.
+
+The dependency form is asked first, and asked whether point is in one
+before it is asked what point is writing there, because it is the one of
+the three that means something else by having no answer: inside a
+require, what follows an :as is a name being given and nothing is offered
+for it, where the same nil outside one would be a point in ordinary code.
+A string and ordinary code settle between themselves - each of them is
+read where point is where the other is not."
   (if (replique-deps-form-at-p (point))
       (replique-deps-context-at (point))
-    (replique-name--code-context)))
+    (or (replique-name--string-context)
+        (replique-name--code-context))))
 
 (defun replique-name-message (op context text)
   "Return the request that asks OP about TEXT in CONTEXT.
 
-CONTEXT is what was read at point - the slot of a dependency form, or the
-name being written in ordinary code - and what it holds is already what
-the op asks for: a position, and the prefix or the namespace or the
-locals that position needs.  The namespace a load is written in is the
-one thing it cannot hold, since it is not written in the load.
+CONTEXT is what was read at point - the slot of a dependency form, the
+string point is in, or the name being written in ordinary code - and what
+it holds is already what the op asks for: a position, and the prefix or
+the namespace or the locals or the call that position needs.  The
+namespace a load is written in is the one thing it cannot hold, since it
+is not written in the load.
 
 OP is which of the two questions is being asked.  They take the same
 request, so the only difference between them is the word."
@@ -363,15 +438,6 @@ the name means where it is written is what it was last bound to."
                                                       (replique-name-namespace)))))))
     (copy-marker bound)))
 
-(defun replique-name--call-node ()
-  "Return the innermost list or function literal point is inside, or nil."
-  (when-let* ((node (treesit-node-at (point))))
-    (treesit-parent-until node
-                          (lambda (found)
-                            (or (replique-clojure--list-node-p found)
-                                (replique-clojure--anon-fn-node-p found)))
-                          t)))
-
 (defun replique-name-call-at-point ()
   "Return the call point is inside, or nil when point is inside none.
 
@@ -385,24 +451,24 @@ the arguments of a call - after a space, between two forms, at the end of
 a line - and what is worth being told there is what the call takes and
 how far along it they are.
 
-Which argument that is, is how many of them end before point.  A name
-point is still inside has not ended, so point is at that one; a name
-point sits at the end of is the one being written, and not the next.
+Which argument that is, and what the call is, is what
+`replique-name--enclosing\=' reads - the same reading a completion asks
+with, since what point is writing an argument of is one question however
+many things want the answer.
 
 Nil while point is still on the head, where nothing has been written to
-be an argument of yet.  Nil in a string or a comment, and nil where the
-head is not a name - what ((f x) y) calls is not something to ask about."
+be an argument of yet.  Nil in a comment, and nil where the head is not a
+name - what ((f x) y) calls is not something to ask about.
+
+Answered inside a string, where a completion has an answer of its own:
+what a call takes is worth saying while any of its arguments is being
+written, and a path is an argument like the rest of them."
   (let ((state (syntax-ppss)))
-    (unless (or (nth 3 state) (nth 4 state) (null (treesit-parser-list nil 'treejure)))
-      (when-let* ((call (replique-name--call-node))
-                  (children (treesit-node-children call t))
-                  (head (replique-clojure--unwrap-meta (car children)))
-                  ((replique-clojure--symbol-node-p head))
-                  (argument (seq-count (lambda (node)
-                                         (< (treesit-node-end node) (point)))
-                                       children))
-                  ((> argument 0))
-                  (text (treesit-node-text head t)))
+    (unless (or (nth 4 state) (null (treesit-parser-list nil 'treejure)))
+      (when-let* ((enclosing (replique-name--enclosing))
+                  (text (plist-get enclosing :call))
+                  (argument (plist-get enclosing :argument))
+                  ((> argument 0)))
         ;; the namespace outside the when-let, since a buffer that names
         ;; none is a buffer this still answers in - what it is read against
         ;; then is what the process reads an absent one as
@@ -415,7 +481,8 @@ head is not a name - what ((f x) y) calls is not something to ask about."
               ;; name being written and not for the one around it
                 :context (replique-name--asking
                           ns
-                          (when (string-prefix-p "." text) (nth 1 children))
+                          (when (string-prefix-p "." text)
+                            (plist-get enclosing :on))
                           (replique-forms-for (replique-name-process) ns))))))))
 
 (provide 'replique-name)

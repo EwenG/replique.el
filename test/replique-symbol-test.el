@@ -132,10 +132,15 @@ own."
   (should (equal '("f" . 1) (replique-symbol-test--at "(f [1 |2])"
                               (replique-symbol-test--call)))))
 
-(ert-deftest replique-symbol-test-a-call-in-a-string-or-a-comment-is-not-one ()
-  "What is written there is not a name being written."
-  (should-not (replique-symbol-test--at "(f \"a |b\")" (replique-symbol-test--call)))
+(ert-deftest replique-symbol-test-a-call-in-a-comment-is-not-one ()
+  "What is written there is not a call being written."
   (should-not (replique-symbol-test--at "(f ; a |b\n)" (replique-symbol-test--call))))
+
+(ert-deftest replique-symbol-test-a-call-is-answered-inside-a-string ()
+  "What a call takes is worth saying while any of its arguments is being
+written, and a string is an argument like the rest of them."
+  (should (equal '("f" . 1) (replique-symbol-test--at "(f \"a |b\")"
+                              (replique-symbol-test--call)))))
 
 (ert-deftest replique-symbol-test-a-head-that-is-not-a-name-is-nothing-to-ask ()
   "What ((f x) y) calls is not something to ask the process about."
@@ -319,6 +324,40 @@ one and \\[xref-go-back] the way back."
                          (goto-char marker)
                          (buffer-substring-no-properties (point)
                                                          (line-end-position))))))
+          (kill-buffer buffer))))))
+
+(ert-deftest replique-symbol-test-a-string-is-where-what-it-names-is ()
+  "A string is a path as often as it is text, and where the thing it names
+is is worth asking of any of them - so no call is read here, where a
+completion reads one to know what could be written."
+  (replique-test-process)
+  (let ((found (replique-symbol-test--at "(str \"clojure/version.prope|rties\")"
+                 (replique-symbol--ask (replique-name-context)
+                                       (replique-symbol-test--name)))))
+    (should (equal "path" (plist-get found :type)))
+    (should (equal "clojure/version.properties" (plist-get found :name)))
+    (should (string-suffix-p ".jar" (plist-get found :file)))
+    (should (equal "clojure/version.properties" (plist-get found :entry))))
+  ;; and a string that names nothing is a string that is text, which most of
+  ;; them are
+  (should-not (replique-symbol-test--at "(str \"a message somebody is writ|ing\")"
+                (replique-symbol--ask (replique-name-context)
+                                      (replique-symbol-test--name)))))
+
+(ert-deftest replique-symbol-test-xref-opens-what-a-string-names ()
+  "Which is \\[xref-find-definitions] on a path, and the entry is read out of
+the jar into a buffer of its own the way any definition inside one is."
+  (replique-test-process)
+  (replique-symbol-test--at "(str \"clojure/version.prope|rties\")"
+    (let ((found (xref-backend-definitions
+                  'replique (xref-backend-identifier-at-point 'replique))))
+      (should (equal 1 (length found)))
+      (let ((buffer (marker-buffer
+                     (xref-location-marker (xref-item-location (car found))))))
+        (unwind-protect
+            (with-current-buffer buffer
+              (should (string-match-p "clojure/version.properties"
+                                      (buffer-file-name))))
           (kill-buffer buffer))))))
 
 (ert-deftest replique-symbol-test-a-local-is-where-it-is-bound ()

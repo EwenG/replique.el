@@ -460,14 +460,32 @@ which names could be written there, and that is one name."
   "The namespace as well as the locals: what a name means is read against
 the namespace it is written in, and only the buffer says which that is."
   (should (equal '(:op :completions :text "in" :position :code :ns "a.b"
-                       :locals ((:name "x")))
+                       :locals ((:name "x")) :argument 0)
                  (replique-completion-test--at "(ns a.b)\n(defn f [x] (in|))"
                    (replique-name-message
                     :completions (replique-name--code-context) "in")))))
 
+(ert-deftest replique-completion-test-which-argument-of-the-form-travels ()
+  "A special form is written at the head of a form and nowhere else, so
+which argument of the form point is at is what says whether one could be
+written there.  Nought at the head, one at the first argument."
+  (cl-flet ((argument (text)
+              (replique-completion-test--at text
+                (plist-get (replique-name--code-context) :argument))))
+    (should (equal 0 (argument "(de|)")))
+    (should (equal 0 (argument "(ns a.b)\n(de|)")))
+    (should (equal 1 (argument "(map de|)")))
+    (should (equal 2 (argument "(map inc de|)")))
+    ;; a form point is writing inside a vector of is still the form
+    (should (equal 2 (argument "(let [x 1] de|)")))
+    ;; and absent where point is in no form at all - which is a client that
+    ;; read none, not one saying point is at an argument of something
+    (should-not (argument "de|"))))
+
 (ert-deftest replique-completion-test-nothing-is-asked-where-no-name-goes ()
-  "Inside a string and inside a comment, where what is written is not a
-name being written; and at a name being given, which nothing knows yet."
+  "Inside a comment, where what is written is not a name being written; at a
+name being given, which nothing knows yet; and inside a string, where what
+is written is a path or is text - see `replique-name--string-context'."
   (should-not (replique-completion-test--at "(inc \"a str|\")"
                 (replique-name--code-context)))
   (should-not (replique-completion-test--at "(inc 1) ; a comme|nt"
@@ -530,7 +548,7 @@ process reads it."
   (should (equal "::str/jo"
                  (replique-completion-test--at "(f ::str/jo|)"
                    (replique-completion-test--text))))
-  (should (equal '(:op :completions :text "::na" :position :code)
+  (should (equal '(:op :completions :text "::na" :position :code :argument 1)
                  (replique-completion-test--at "(f ::na|)"
                    (replique-name-message
                     :completions (replique-name--code-context) "::na")))))
@@ -602,6 +620,59 @@ not, in full - which is what the dot in the text says is being written."
     (completion-at-point)
     (should (equal "(defn f [] (map-indexed))"
                    (buffer-substring-no-properties (point-min) (point-max))))))
+
+;;; A path written in a string
+
+(ert-deftest replique-completion-test-what-is-asked-in-a-string ()
+  "Most strings are text and a few of them are paths, and what tells the two
+apart is the call the string is written in.  So the call travels, with which
+argument of it this is - and the namespace it is resolved against, since the
+call is written under whatever alias that namespace gave it."
+  (should (equal '(:op :completions :text "co" :position :string :ns "a.b"
+                       :call "io/resource" :argument 1)
+                 (replique-completion-test--at "(ns a.b)\n(io/resource \"co|\")"
+                   (replique-name-message
+                    :completions (replique-name-context) "co"))))
+  ;; a string at the top of a file is written in no form at all, and neither
+  ;; key is read there
+  (should (equal '(:position :string)
+                 (replique-completion-test--at "\"at the to|p\""
+                   (replique-name-context))))
+  ;; and a comment is still a comment
+  (should-not (replique-completion-test--at "(f 1) ;; \"a pa|th\""
+                (replique-name-context))))
+
+(ert-deftest replique-completion-test-a-load-is-a-path-before-it-is-a-string ()
+  "The slot of a dependency form is read first, and a load is one: what is
+written in it is a path of the classpath, which is a narrower question than
+what a string written anywhere is."
+  (should (equal :load-path
+                 (replique-completion-test--at "(ns a.b)\n(load \"co|\")"
+                   (plist-get (replique-name-context) :position)))))
+
+(ert-deftest replique-completion-test-a-resource-is-offered-in-a-string ()
+  "Where the call it is written in reads one, which is what
+`clojure.java.io/resource' does and what nothing else here does."
+  (replique-test-process)
+  (should (member "clojure/version.properties"
+                  (replique-completion-test--at
+                      "(clojure.java.io/resource \"clojure/version.prop|\")"
+                    (replique-completion-test--offered))))
+  (should-not (replique-completion-test--at
+                  "(str \"clojure/version.prop|\")"
+                (replique-completion-test--offered))))
+
+(ert-deftest replique-completion-test-in-a-string-this-stands-aside ()
+  "A string this answers nothing for is a string this had no business
+speaking for, so whoever else completes in the buffer gets their turn at it.
+Everywhere else an empty answer is an answer: the process was asked what
+could be written and said nothing could."
+  (replique-test-process)
+  (cl-flet ((exclusive (text)
+              (replique-completion-test--at text
+                (plist-get (nthcdr 3 (replique-completion-at-point)) :exclusive))))
+    (should (eq 'no (exclusive "(str \"a pa|th\")")))
+    (should-not (exclusive "(str ma|)"))))
 
 (ert-deftest replique-completion-test-a-repl-completes-code-at-its-prompt ()
   (replique-test-grammar)

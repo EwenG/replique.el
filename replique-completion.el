@@ -245,20 +245,29 @@ that way."))
   "Return what could be written at point, for `completion-at-point-functions'.
 
 What point is writing is `replique-name-context\=' to read - the slot of
-a dependency form, or the name being written in ordinary code - and the
-region a candidate replaces is `replique-name-bounds\='.
+a dependency form, the string point is in, or the name being written in
+ordinary code - and the region a candidate replaces is
+`replique-name-bounds\='.
 
 Nil where nothing here has an answer: with no process to ask, in a
 buffer that is not read as Clojure, and where point is somewhere no name
-goes at all - in a comment, in a string that is not a path, or at a name
-being given rather than used."
+goes at all - in a comment, or at a name being given rather than used.
+
+In a string this stands aside when it has nothing.  Most strings are text
+and a few of them are paths, and which of the two this one is, is the
+process's to say - so a string it answers nothing for is a string this
+had no business speaking for, and whoever else completes in this buffer
+gets their turn at it.  Everywhere else an empty answer is an answer: the
+process was asked what could be written and said nothing could."
   (when (replique-name-process)
     (when-let* ((context (replique-name-context)))
       (let ((bounds (replique-name-bounds)))
-        (list (car bounds)
-              (cdr bounds)
-              (replique-completion--table context)
-              :annotation-function #'replique-completion-annotation)))))
+        (append (list (car bounds)
+                      (cdr bounds)
+                      (replique-completion--table context)
+                      :annotation-function #'replique-completion-annotation)
+                (when (eq (plist-get context :position) :string)
+                  (list :exclusive 'no)))))))
 
 ;;;###autoload
 (defun replique-completion-install ()
