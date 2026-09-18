@@ -133,8 +133,16 @@ the target of `#_' is the form after it whatever is written in between.")
 ;;;; The shape of a node
 
 (defsubst replique-parse-type (node)
-  "The kind of form NODE is, as a symbol."
-  (aref node 0))
+  "The kind of form NODE is, as a symbol, or nil where NODE is nil.
+
+Nil because nil is a node here: `replique-parse-target' answers with one
+for a reader macro written in front of nothing, and so does
+`replique-parse-unwrap-meta' for a `^\' at the end of the buffer, which
+is what a buffer looks like while somebody is typing one.  What kind of
+form nothing is, is no kind, and that is an answer every reader of this
+wants - where asking where nothing is written is a mistake, which is why
+the rest of these say so."
+  (and node (aref node 0)))
 
 (defsubst replique-parse-start (node)
   "Where NODE starts, as a position in the buffer it was read from."
