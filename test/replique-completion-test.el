@@ -16,6 +16,7 @@
 (require 'cl-lib)
 (require 'replique-test)
 (require 'replique-completion)
+(require 'replique-name)
 
 (defmacro replique-completion-test--at (text &rest body)
   "Run BODY in a Clojure buffer holding TEXT, with point where its | was."
@@ -35,7 +36,7 @@
 
 (defun replique-completion-test--text ()
   "Return what the completion at point would replace."
-  (let ((bounds (replique-completion--bounds)))
+  (let ((bounds (replique-name-bounds)))
     (buffer-substring-no-properties (car bounds) (cdr bounds))))
 
 (defun replique-completion-test--all ()
@@ -143,21 +144,21 @@ nothing typed is every name."
 `clojure.core/load' resolves a relative path against."
   (should (equal '(:op :completions :text "co" :position :load-path :ns "a.b")
                  (replique-completion-test--at "(ns a.b)\n(load \"co|\")"
-                   (replique-completion--message
-                    (replique-deps-context-at (point)) "co")))))
+                   (replique-name-message
+                    :completions (replique-deps-context-at (point)) "co")))))
 
 (ert-deftest replique-completion-test-what-the-slot-needs-rides-along ()
   "A namespace is written under a prefix and a var is referred from a
 namespace, and the slot is what says which."
   (should (equal '(:op :completions :text "st" :position :namespace :prefix "clojure")
                  (replique-completion-test--at "(ns a (:require [clojure [st|]]))"
-                   (replique-completion--message
-                    (replique-deps-context-at (point)) "st"))))
+                   (replique-name-message
+                    :completions (replique-deps-context-at (point)) "st"))))
   (should (equal '(:op :completions :text "jo"
                        :position :var :namespace "clojure.string")
                  (replique-completion-test--at "(ns a (:require [clojure.string :refer [jo|]]))"
-                   (replique-completion--message
-                    (replique-deps-context-at (point)) "jo")))))
+                   (replique-name-message
+                    :completions (replique-deps-context-at (point)) "jo")))))
 
 ;;; The style
 
@@ -445,7 +446,7 @@ namespace is loaded from one."
 seen, and it is the process that puts them in one order with the vars."
   (should (equal '((:name "y") (:name "x"))
                  (replique-completion-test--at "(defn f [x] (let [y 1] (inc |)))"
-                   (plist-get (replique-completion--code-context) :locals)))))
+                   (plist-get (replique-name--code-context) :locals)))))
 
 (ert-deftest replique-completion-test-a-name-bound-twice-travels-once ()
   "`replique-locals-at' answers with it twice, nearest first, since nothing
@@ -453,7 +454,7 @@ else could tell that a binding was shadowed.  What is being asked is
 which names could be written there, and that is one name."
   (should (equal '((:name "x"))
                  (replique-completion-test--at "(let [x 1] (let [x 2] (inc |)))"
-                   (plist-get (replique-completion--code-context) :locals)))))
+                   (plist-get (replique-name--code-context) :locals)))))
 
 (ert-deftest replique-completion-test-what-is-asked-in-code ()
   "The namespace as well as the locals: what a name means is read against
@@ -461,18 +462,18 @@ the namespace it is written in, and only the buffer says which that is."
   (should (equal '(:op :completions :text "in" :position :code :ns "a.b"
                        :locals ((:name "x")))
                  (replique-completion-test--at "(ns a.b)\n(defn f [x] (in|))"
-                   (replique-completion--message
-                    (replique-completion--code-context) "in")))))
+                   (replique-name-message
+                    :completions (replique-name--code-context) "in")))))
 
 (ert-deftest replique-completion-test-nothing-is-asked-where-no-name-goes ()
   "Inside a string and inside a comment, where what is written is not a
 name being written; and at a name being given, which nothing knows yet."
   (should-not (replique-completion-test--at "(inc \"a str|\")"
-                (replique-completion--code-context)))
+                (replique-name--code-context)))
   (should-not (replique-completion-test--at "(inc 1) ; a comme|nt"
-                (replique-completion--code-context)))
+                (replique-name--code-context)))
   (should-not (replique-completion-test--at "(let [x| 1] x)"
-                (replique-completion--code-context))))
+                (replique-name--code-context))))
 
 (ert-deftest replique-completion-test-code-is-answered-where-clojure-is-read ()
   "The parse is what says a name written here is a Clojure name, which is
@@ -482,7 +483,7 @@ value of the hook included."
   (with-temp-buffer
     (insert "(inc x)")
     (goto-char (1- (point-max)))
-    (should-not (replique-completion--code-context))))
+    (should-not (replique-name--code-context))))
 
 (ert-deftest replique-completion-test-a-quoted-require-completes ()
   "Which is how a namespace is loaded from a repl, and the quote is written
@@ -497,7 +498,8 @@ on the name itself rather than on a vector around it."
 ^String declares, and the target itself where it is not a local."
   (cl-flet ((on (text)
               (replique-completion-test--at text
-                (replique-completion--written-on replique-locals-default-forms))))
+                (replique-name--written-on (replique-name--member-target)
+                                           replique-locals-default-forms))))
     (should (equal '(:tag "String") (on "(defn f [^String s] (.leng| s))")))
     (should (equal '(:tag "String") (on "(defn f [] (.leng| ^String (g)))")))
     (should (equal '(:target "some-var") (on "(defn f [] (.leng| some-var))")))
@@ -530,8 +532,8 @@ process reads it."
                    (replique-completion-test--text))))
   (should (equal '(:op :completions :text "::na" :position :code)
                  (replique-completion-test--at "(f ::na|)"
-                   (replique-completion--message
-                    (replique-completion--code-context) "::na")))))
+                   (replique-name-message
+                    :completions (replique-name--code-context) "::na")))))
 
 (ert-deftest replique-completion-test-a-keyword-is-offered-in-code ()
   "One the process has interned, which is the only place there is to read

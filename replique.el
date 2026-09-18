@@ -30,9 +30,10 @@
 ;;
 ;; This is the editor client of the replique protocol, plus the mode it reads
 ;; Clojure with.  Completion is answered wherever a name is written, in the
-;; dependency forms and in ordinary code - see `replique-completion'.
-;; Documentation and finding a definition are the tooling ops the process
-;; does not answer yet.
+;; dependency forms and in ordinary code - see `replique-completion'.  What
+;; one name is - eldoc while a call is being written, and a definition to go
+;; to when somebody asks where it came from - is `replique-symbol'.  Both ask
+;; about what `replique-name' reads out of the buffer.
 ;;
 ;; `replique-clojure-mode' is what .clj, .cljs, .cljc and .edn open in, and
 ;; what the eval commands read a buffer with - see `replique-eval'.  Where a
@@ -56,7 +57,9 @@
 (require 'replique-repl)
 (require 'replique-eval)
 (require 'replique-pprint)
+(require 'replique-name)
 (require 'replique-completion)
+(require 'replique-symbol)
 
 (defvar replique-mode-map
   (let ((map (make-sparse-keymap)))
@@ -88,14 +91,17 @@ that needs one says so when it is used.
   ;; ask.  Turning the mode off takes it back out, which is what makes it
   ;; the way to stop replique answering completion in a buffer
   (if replique-mode
-      (replique-completion-install)
-    (replique-completion-uninstall)))
+      (progn (replique-completion-install)
+             (replique-symbol-install))
+    (replique-completion-uninstall)
+    (replique-symbol-uninstall)))
 
 ;; A repl reads Clojure at its prompt, requires included, and it is parsed
 ;; the way a Clojure buffer is - see `replique-repl--clojure'.  Added from
 ;; here rather than by the repl mode itself, which would make the file that
 ;; defines a repl depend on the one that completes in it
 (add-hook 'replique-repl-mode-hook #'replique-completion-install)
+(add-hook 'replique-repl-mode-hook #'replique-symbol-install)
 
 ;; From the autoloads rather than from this file: opening a Clojure file
 ;; loads the major mode and nothing else, and a keymap that arrived only

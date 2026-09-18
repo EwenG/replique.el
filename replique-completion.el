@@ -45,12 +45,9 @@
 ;;
 ;; In ordinary code every kind of name goes at once - a local, a var the
 ;; namespace maps, a class it imported, an alias, a namespace, a special
-;; form - and the locals are the half of that only this side knows: a name
-;; bound by the form being written is a name the process has never seen.  So
-;; they travel with the request, and the process answers all of them in one
-;; list.  That is also what makes a local shadow: a `let' that binds `map'
-;; is answered as that local rather than as the var, and the two lists meet
-;; nowhere else.
+;; form - and the locals are the half of that only this side knows.  What is
+;; read out of the buffer to ask any of that is `replique-name', which is
+;; the half `replique-symbol' asks with too.
 ;;
 ;; The wait is what a capf leaves no way around.  It is called for what it
 ;; returns, so the answer has to be there by then; what makes that safe to do
@@ -61,26 +58,8 @@
 
 (require 'seq)
 (require 'subr-x)
-(require 'treesit)
-(require 'replique-clojure-mode)
-(require 'replique-conn)
-(require 'replique-deps)
-(require 'replique-eval)
-(require 'replique-forms)
-(require 'replique-locals)
+(require 'replique-name)
 (require 'replique-process)
-(require 'replique-repl)
-
-(defcustom replique-completion-timeout 2.0
-  "How long to wait for the candidates, in seconds.
-
-A control connection answers its requests in order, so a completion asked
-while the process is resolving a library waits for the library.  What
-this is for is the process that will not answer at all: \\[keyboard-quit]
-is what stops a wait somebody is tired of, and this is what stops one
-nobody is watching."
-  :type 'number
-  :group 'replique)
 
 (defconst replique-completion--annotations
   '(("namespace" . "n")
@@ -104,229 +83,6 @@ list somebody is reading down: what it is worth saying there is that
 these three are functions and that one is a macro, and a reader who wants
 the word rather than the letter is a reader who has stopped scanning.")
 
-;;; What is being asked, and of whom
-
-(defun replique-completion--process ()
-  "Return the process to ask, or nil when there is none.
-
-The process of the repl the commands act on, which is the process the
-code being written would be evaluated in - a name that is offered where
-another process would have to be asked to load it is a name offered in
-the wrong buffer.  A repl buffer answers for itself.  Without a repl
-anywhere it is the current process, since a classpath is a thing a
-process has whether or not anybody has opened a repl on it."
-  (let ((repl (replique-repl-current)))
-    (if repl
-        (replique-repl-process repl)
-      (replique-process-current))))
-
-(defun replique-completion--namespace ()
-  "Return the namespace point is writing in, or nil when nothing names one.
-
-What `clojure.core/load' resolves a relative path against, and the one
-thing a load needs that is not written in the load itself.
-
-A repl buffer is written in the namespace its prompt gave rather than in
-whatever the buffer names: a transcript holds every namespace the repl
-has been in, and the one it is in now was never written there at all."
-  (if replique--buffer-repl
-      (replique-repl--ns replique--buffer-repl)
-    (replique-eval--ns-at (point))))
-
-(defun replique-completion--name-start (start end)
-  "Return where the name written between START and END begins.
-
-Emacs reads a symbol as starting at the reader macro in front of it: the
-whole of a quoted name is one symbol to `bounds-of-thing-at-point\=', and
-so are a var quote and a discarded form.  What a candidate replaces is
-the name, and the macro in front of it stays where it is - a require
-written as (require \='clojure.st) is completing a namespace, and writing
-the candidate over the quote as well would unquote it.
-
-An underscore is skipped only behind a hash, since a name may begin with
-one: _x is a symbol somebody wrote and #_x is a symbol somebody wrote
-behind a discard."
-  (let ((start start))
-    (while (and (< start end) (memq (char-after start) '(?# ?\')))
-      (setq start (1+ start))
-      (when (and (< start end)
-                 (eq ?_ (char-after start))
-                 (eq ?# (char-after (1- start))))
-        (setq start (1+ start))))
-    start))
-
-(defun replique-completion--bounds ()
-  "Return the region point is completing in, as a cons of two positions.
-
-Inside a string it starts after the quote, because what is written there
-is a path: a slash is not part of a symbol, and the whole of what was
-typed is what a candidate replaces.  Outside one it is the symbol point
-is in, less whatever reader macro is written in front of it - see
-`replique-completion--name-start\='.  A keyword is a symbol here, and its
-colon is part of it: a candidate for one carries its colon for that
-reason.
-
-It ends at point rather than at the end of what point is in.  What
-follows point is what somebody has already written and did not ask about,
-and completing over it would answer a question nobody asked.
-
-Never nil.  Point sitting where no symbol is - after a bracket, which is
-where a spec is about to be written - is nothing typed rather than
-nothing to offer, and nothing typed is every name."
-  (let* ((state (syntax-ppss))
-         (string (and (nth 3 state) (nth 8 state)))
-         (symbol (bounds-of-thing-at-point 'symbol)))
-    (cond
-     (string (cons (1+ string) (point)))
-     (symbol (cons (replique-completion--name-start (car symbol) (point)) (point)))
-     (t (cons (point) (point))))))
-
-(defun replique-completion--locals (forms)
-  "Return the locals in scope at point, as the request carries them.
-
-FORMS says what each written form binds - see `replique-locals-forms'.
-
-Each of them is a map holding its name, which is a shape with room in
-it: what else this side knows about a local - the type a ^String on it
-declares, which is what says what can be called on it - has somewhere to
-go the day the process reads it.
-
-A name bound twice is answered twice by `replique-locals-at', nearest
-first, since nothing else could tell that a binding was shadowed.  What
-travels is each name once: what is being asked is which names could be
-written, and a name bound twice is one name to write."
-  (let ((seen nil)
-        (found nil))
-    (dolist (local (replique-locals-at (point) forms))
-      (unless (member (car local) seen)
-        (push (car local) seen)
-        (push (list :name (car local)) found)))
-    (nreverse found)))
-
-(defconst replique-completion--literals
-  '("string" "keyword" "number" "character" "boolean" "regex")
-  "The nodes that are their own class.
-
-What is written as one of these needs nothing resolved to be known: a
-string is a String wherever it is written, and nothing has to be
-evaluated to find that out.")
-
-(defconst replique-completion--threading
-  '("->" "->>" "some->" "some->>" "doto")
-  "The forms that write what they thread into each step of themselves.
-
-A member written as a step of one is written on what is threaded:
-\(-> s .length) calls .length on s.  Only the first step, since every step
-after it is written on what the one before it returned, and what an
-expression returns is not knowable without running it.
-
-Read plainly or qualified with clojure.core, which is how
-`replique-deps\=' reads the forms it knows.")
-
-(defun replique-completion--threading-p (node)
-  "Return non-nil if NODE is the head of a threading form."
-  (when (and node (replique-clojure--symbol-node-p node))
-    (let ((qualifier (treesit-node-child-by-field-name node "namespace")))
-      (and (or (null qualifier)
-               (equal "clojure.core" (treesit-node-text qualifier t)))
-           (member (replique-clojure--named-node-text node)
-                   replique-completion--threading)
-           t))))
-
-(defun replique-completion--member-target ()
-  "Return the node a member written at point would be written on, or nil.
-
-Which is what the list holds next where point is writing its head - the s
-of (.length s) - and what a threading form threads where point is writing
-its first step.  A .name written anywhere else is not a call on anything,
-so nothing is written on."
-  (when-let* ((node (treesit-node-at (car (replique-completion--bounds)))))
-    (while (and (treesit-node-parent node)
-                (not (replique-clojure--list-node-p (treesit-node-parent node))))
-      (setq node (treesit-node-parent node)))
-    (when-let* ((list (treesit-node-parent node))
-                ((replique-clojure--list-node-p list))
-                (children (treesit-node-children list t))
-                (index (treesit-node-index node t)))
-      (when (or (= index 0)
-                (and (= index 2) (replique-completion--threading-p (car children))))
-        (nth 1 children)))))
-
-(defun replique-completion--written-on (forms)
-  "Return what a member written at point would be written on.
-
-Which is what the list holds after the name being written, or what a
-threading form threads - see `replique-completion--member-target\='.  What
-travels is what this side can say about it without
-running anything - the type a ^String declares, on the local or at the
-call site, and the target itself where it is not a local, which the
-process reads as a var that declares its type or as a literal that is
-its own.
-
-FORMS says what each written form binds - see `replique-locals-forms\='.
-
-Sent whether or not a member is what is being written, because that is
-not known here: the table this hands back is asked again for every
-keystroke, and what point is written on does not change between them."
-  (when-let* ((written (replique-completion--member-target))
-              (target (replique-clojure--unwrap-meta written))
-              (text (treesit-node-text target t))
-              (tag (or (replique-locals-tag-at (treesit-node-start target)) :none)))
-    (let ((type (treesit-node-type target))
-          (tag (and (stringp tag) tag)))
-      (cond
-       ((equal "symbol" type)
-        (if-let* ((local (assoc text (replique-locals-at (point) forms))))
-            (when-let* ((tag (or tag (replique-locals-tag-at (cdr local)))))
-              (list :tag tag))
-          (append (list :target text) (when tag (list :tag tag)))))
-       ((member type replique-completion--literals) (list :target text))
-       (tag (list :tag tag))))))
-
-(defun replique-completion--code-context ()
-  "Return what point is asking for in ordinary code, or nil.
-
-Which is every kind of name at once, where a dependency form asks for
-one kind and no other.  The process is the half that has most of them -
-the vars of the namespace, the classes it imported, what is on the
-classpath - and the locals are the half only this side has, so they
-travel with the request.  It is the process that then puts them in one
-order and drops the var a local shadows, which is work that can only
-happen where the two lists meet.
-
-Nil inside a string or a comment, where what is written is not a name
-being written.  Nil too where the name at point is one being given
-rather than used, which is a name nothing knows yet - see
-`replique-locals-at-binding-position-p'.
-
-Nil as well in a buffer that is not read as Clojure.  The parse is what
-says a name written here is a Clojure name, which is what makes this
-safe to turn on wherever somebody wants it - the default value of the
-hook included."
-  (let ((state (syntax-ppss)))
-    (unless (or (nth 3 state) (nth 4 state) (null (treesit-parser-list nil 'treejure)))
-      (let* ((ns (replique-completion--namespace))
-             (forms (replique-forms-for (replique-completion--process) ns)))
-        (unless (replique-locals-at-binding-position-p (point) forms)
-          (append (list :position :code)
-                  (when ns (list :ns ns))
-                  (when-let* ((locals (replique-completion--locals forms)))
-                    (list :locals locals))
-                  (replique-completion--written-on forms)))))))
-
-(defun replique-completion--message (context text)
-  "Return the request that asks for the candidates of TEXT in CONTEXT.
-
-CONTEXT is what was read at point - the slot of a dependency form, or the
-name being written in ordinary code - and what it holds is already what
-the op asks for: a position, and the prefix or the namespace or the
-locals that position needs.  The namespace a load is written in is the
-one thing it cannot hold, since it is not written in the load."
-  (let ((msg (append (list :op :completions :text text) context)))
-    (if (eq (plist-get context :position) :load-path)
-        (append msg (list :ns (replique-completion--namespace)))
-      msg)))
-
 ;;; Asking
 
 (defun replique-completion--candidate (candidate)
@@ -343,12 +99,12 @@ is for the list it is shown in."
 
 (defun replique-completion--ask (context text)
   "Return the candidates for TEXT in CONTEXT, by asking the process."
-  (let* ((process (replique-completion--process))
+  (let* ((process (replique-name-process))
          (frame (and process
                      (replique-process-request-sync
                       process
-                      (replique-completion--message context text)
-                      replique-completion-timeout))))
+                      (replique-name-message :completions context text)
+                      replique-name-timeout))))
     (cond
      ;; C-g, which is somebody saying they are no longer waiting.  Nothing
      ;; to say about it: they know
@@ -488,22 +244,17 @@ that way."))
 (defun replique-completion-at-point ()
   "Return what could be written at point, for `completion-at-point-functions'.
 
-The slot of a dependency form point is in, and where point is in none of
-those, the name it is writing in ordinary code.  Which of the two it is
-is settled before either of them is asked, because the two mean
-different things by having no answer: inside a require, what follows an
-:as is a name being given and nothing is offered for it, where the same
-nil outside one would be a point in ordinary code.
+What point is writing is `replique-name-context\=' to read - the slot of
+a dependency form, or the name being written in ordinary code - and the
+region a candidate replaces is `replique-name-bounds\='.
 
 Nil where nothing here has an answer: with no process to ask, in a
 buffer that is not read as Clojure, and where point is somewhere no name
 goes at all - in a comment, in a string that is not a path, or at a name
 being given rather than used."
-  (when (replique-completion--process)
-    (when-let* ((context (if (replique-deps-form-at-p (point))
-                             (replique-deps-context-at (point))
-                           (replique-completion--code-context))))
-      (let ((bounds (replique-completion--bounds)))
+  (when (replique-name-process)
+    (when-let* ((context (replique-name-context)))
+      (let ((bounds (replique-name-bounds)))
         (list (car bounds)
               (cdr bounds)
               (replique-completion--table context)
@@ -534,7 +285,7 @@ The answer nobody is waiting for either, so this does not wait for it: a
 classpath of any size takes long enough that holding the editor for it
 would be felt."
   (interactive)
-  (let ((process (or (replique-completion--process) (replique-process-ensure))))
+  (let ((process (or (replique-name-process) (replique-process-ensure))))
     (setq replique-completion--last nil)
     (replique-process-request
      process (list :op :update-classpath)
