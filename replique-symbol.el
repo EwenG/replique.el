@@ -416,29 +416,72 @@ the abstract - see `replique-completion-at-point'."
 
 ;;; Taking a definition away
 
-;; Which is the other thing to do with the name written here, and the reason
-;; this file is the one that does it: unmapping a var means naming the var,
-;; and turning what is at point into the name of the var it came from is the
-;; question this file already asks.
+;; A definition put into a process stays there.  Rename one and evaluate the
+;; file again and the process holds both, the old name resolving to the old
+;; code - which is the long repl's oldest disease: the repl agrees with itself
+;; all afternoon and the build is the first thing to disagree.
 ;;
-;; It has to be asked, rather than read off the buffer.  A name written in
-;; code means whatever the namespace around it maps, so the name at point is
-;; as likely to be a var of clojure.core as one of the file being edited - and
-;; the process must not be handed "the definition I am pointing at" as though
-;; that were a name.  What goes out is the name the var has where it lives,
-;; which is what came back from asking what the name at point is.
+;; So the var to remove is nearly never the one at point.  It is the old name,
+;; and by the time somebody wants it gone it is written nowhere in the buffer:
+;; they renamed it.  What is offered is therefore the namespace's own vars,
+;; which only the process has - it is the process that holds the definition
+;; that is no longer written anywhere.
+;;
+;; The name at point is the default rather than the answer.  Pressing return
+;; removes what point is on, which is the other half of what this is for, and
+;; anything else is chosen from the list.
 
-(defconst replique-symbol--vars '("function" "macro" "var")
-  "What a name has to be for there to be a var behind it to unmap.")
+(defconst replique-symbol-vars-timeout 5
+  "How long to wait for the process to say what a namespace holds, in seconds.")
 
-(defun replique-symbol--own-p (found)
-  "Whether FOUND is a var of the namespace this buffer is in.
+(defun replique-symbol--vars (process ns)
+  "Return the vars NS holds, as PROCESS wrote them, or nil.
 
-Which is what makes removing it unsurprising: a definition of the file
-being edited, taken away from the process the file was loaded into.
-Anything else is somebody else's, and is asked about first."
-  (when-let* ((ns (replique-name-namespace)))
-    (equal ns (plist-get found :ns))))
+Waited for rather than answered later: these are the choices of a prompt
+about to be shown, and there is no showing a prompt before there is
+anything to put in it.  Bounded, so that a process which stopped
+answering is a command that fails rather than an Emacs that hangs.
+
+The order is the process's, which is the order they were written in the
+file - so the list reads like the file, and the definition somebody just
+renamed is where they would look for it."
+  (let ((frame (replique-process-request-sync
+                process (list :op :vars :ns ns) replique-symbol-vars-timeout)))
+    (cond
+     ;; C-g, which is somebody saying they are no longer waiting
+     ((null frame) nil)
+     ((equal "error" (plist-get frame :tag))
+      (user-error "%s" (plist-get frame :message)))
+     (t (plist-get frame :vars)))))
+
+(defun replique-symbol--var-names (vars)
+  "Return the names in VARS, a private one annotated as private.
+
+The annotation and not a separate list: what is being chosen from is the
+whole of what the namespace holds, and which of them are private is worth
+seeing rather than worth filtering by."
+  (mapcar (lambda (var)
+            (let ((name (plist-get var :name)))
+              (if (plist-get var :private)
+                  (propertize name 'replique-annotation " private")
+                name)))
+          vars))
+
+(defun replique-symbol--annotate (name)
+  "Return what to show beside NAME in the list, or nil."
+  (get-text-property 0 'replique-annotation name))
+
+(defun replique-symbol--at-point (names)
+  "Return the name at point, when it is one of NAMES written plainly.
+
+Plainly, because a qualified name at point is a var of somewhere else: it
+is str/join that is written str/join, and join is not what this buffer
+holds.  The list is of what this namespace holds, so the default has to
+be one of them."
+  (when-let* ((bounds (replique-name-at-point))
+              (text (buffer-substring-no-properties (car bounds) (cdr bounds)))
+              ((member text names)))
+    text))
 
 (defun replique-symbol--elsewhere (unmapped home)
   "Return the namespaces UNMAPPED names other than HOME, sorted.
@@ -467,46 +510,52 @@ somebody edits them."
       (message "replique: removed %s" removed))))
 
 ;;;###autoload
-(defun replique-remove-var ()
-  "Unmap the var the name at point is, everywhere the process maps it.
+(defun replique-remove-var (var)
+  "Unmap VAR from everywhere the process maps it.
 
-Not `ns-unmap', which would leave it where it was referred.  A var that
+Not `ns-unmap\=', which would leave it where it was referred.  A var that
 was referred is in every namespace that referred it, under whatever name
 that namespace referred it as, so taking it away from where it was
-defined leaves every caller still calling it - and a repl that goes on
-resolving a name nothing defines any more is a repl that agrees with
-itself all afternoon while the build disagrees.
+defined leaves every caller still calling it.
 
-The var is named where it lives rather than where it is written, which is
-what the process is asked first: `map' means clojure.core\='s var in most
-namespaces, and removing the definition point is on must not be a way to
-unmap clojure.core from the process.  A name that is not a var - a class,
-a local, a keyword - is refused here rather than sent.
+What is offered is what the namespace this buffer is in holds, which is
+where a renamed definition is to be found: by the time the old name is
+worth removing it has been renamed in the buffer and is written nowhere
+in it.  The name at point is the default, so removing the definition
+point is on is a return.
 
-A var of some other namespace is asked about before it goes, because that
-is the one somebody may not have meant.  One of the namespace this buffer
-is in goes without asking: it is the definition being edited, and taking
-it out of the process is what was asked for.
+A name typed rather than chosen is sent as it was typed, the way
+`replique-in-ns\=' sends a namespace: a bare one is a var of this
+namespace, and a qualified one is a var of somewhere else and is asked
+about first - `map\=' means clojure.core\\='s var in most namespaces, and
+unmapping clojure.core from the process is not something to do by
+pressing return.
 
 There is no undoing it short of evaluating the definition again."
-  (interactive)
-  (let* ((bounds (or (replique-name-at-point) (user-error "No name at point")))
-         (text (buffer-substring-no-properties (car bounds) (cdr bounds)))
-         (context (or (replique-name-context)
-                      (user-error "Nothing here says what %s would mean" text)))
-         (found (or (replique-symbol--ask context text)
-                    (user-error "%s means nothing here" text)))
-         (name (replique-symbol-full-name found)))
-    (unless (member (plist-get found :type) replique-symbol--vars)
-      (user-error "%s is a %s, and only a var can be unmapped"
-                  name (plist-get found :type)))
-    (when (or (replique-symbol--own-p found)
+  (interactive
+   (let* ((process (or (replique-name-process)
+                       (user-error "No process - M-x replique-start")))
+          (ns (or (replique-name-namespace)
+                  (user-error "Nothing here says which namespace to look in")))
+          (names (replique-symbol--var-names (replique-symbol--vars process ns))))
+     (unless names
+       (user-error "The process holds nothing in %s" ns))
+     (let ((default (replique-symbol--at-point names))
+           (completion-extra-properties
+            (list :annotation-function #'replique-symbol--annotate)))
+       (list (completing-read (format-prompt "Remove var" default)
+                              names nil nil nil nil default)))))
+  (let* ((written (string-trim (substring-no-properties var)))
+         (name (if (string-match-p "/" written)
+                   written
+                 (format "%s/%s" (replique-name-namespace) written))))
+    (when (string-empty-p written)
+      (user-error "No var"))
+    (when (or (not (string-match-p "/" written))
               (yes-or-no-p (format "Remove %s from the process? " name)))
-      (let* ((process (replique-name-process))
-             (frame (and process
-                         (replique-process-request-sync
-                          process (list :op :remove-var :var name)
-                          replique-name-timeout))))
+      (let ((frame (replique-process-request-sync
+                    (replique-name-process) (list :op :remove-var :var name)
+                    replique-name-timeout)))
         (cond
          ;; C-g, which is somebody saying they are no longer waiting
          ((null frame) nil)

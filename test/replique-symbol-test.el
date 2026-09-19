@@ -442,95 +442,169 @@ the name is the thing the method is called on."
 
 ;;; Taking a definition away
 
-(ert-deftest replique-symbol-test-a-var-is-named-where-it-lives ()
-  "The name at point means whatever the namespace around it maps, so what
-goes out is the name the var has where it lives, not the name it was written
-as.  Which is the whole reason the process is asked first."
-  (let ((asked nil))
-    (cl-letf (((symbol-function 'replique-symbol--ask)
-               (lambda (&rest _) '(:type "function" :name "map" :ns "clojure.core")))
-              ((symbol-function 'replique-name-process) (lambda () 'a-process))
-              ((symbol-function 'replique-name-context) (lambda () '(:position :code :ns "my.app")))
-              ((symbol-function 'yes-or-no-p) (lambda (&rest _) t))
-              ((symbol-function 'replique-process-request-sync)
-               (lambda (_process msg &rest _)
-                 (setq asked msg)
-                 '(:tag "reply" :removed "clojure.core/map"
-                        :unmapped (:clojure.core ["map"])))))
-      (replique-symbol-test--at "(ns my.app)\n(ma|p inc [1])"
-        (replique-remove-var))
-      (should (equal '(:op :remove-var :var "clojure.core/map") asked)))))
+(defmacro replique-symbol-test--choosing (vars chosen &rest body)
+  "Run BODY with the process holding VARS and CHOSEN picked from them.
 
-(ert-deftest replique-symbol-test-a-var-of-another-namespace-is-asked-about ()
-  "It is the one somebody may not have meant: removing what point is on must
-not be a quiet way to unmap clojure.core from the process.  Declining leaves
-it alone."
-  (let ((asked nil)
-        (sent nil))
-    (cl-letf (((symbol-function 'replique-symbol--ask)
-               (lambda (&rest _) '(:type "function" :name "map" :ns "clojure.core")))
-              ((symbol-function 'replique-name-process) (lambda () 'a-process))
-              ((symbol-function 'replique-name-context) (lambda () '(:position :code :ns "my.app")))
-              ((symbol-function 'yes-or-no-p)
-               (lambda (prompt) (setq asked prompt) nil))
-              ((symbol-function 'replique-process-request-sync)
-               (lambda (&rest _) (setq sent t) nil)))
-      (replique-symbol-test--at "(ns my.app)\n(ma|p inc [1])"
-        (replique-remove-var))
-      (should (string-match-p "clojure.core/map" asked))
-      (should-not sent))))
+The call to `completing-read' is captured rather than answered, so that
+what was offered and what was offered as the default are what a test can
+look at."
+  (declare (indent 2))
+  `(let ((offered nil)
+         (offered-default nil)
+         (asked nil)
+         (sent nil))
+     ;; Every test binds all four and each looks at some of them
+     (ignore offered offered-default asked sent)
+     (cl-letf (((symbol-function 'replique-name-process) (lambda () 'a-process))
+               ((symbol-function 'replique-symbol--vars) (lambda (&rest _) ,vars))
+               ((symbol-function 'completing-read)
+                (lambda (_prompt collection &rest args)
+                  (setq offered collection)
+                  (setq offered-default (nth 4 args))
+                  ,chosen))
+               ((symbol-function 'yes-or-no-p)
+                (lambda (prompt) (setq asked prompt) t))
+               ((symbol-function 'replique-process-request-sync)
+                (lambda (_process msg &rest _)
+                  (setq sent msg)
+                  (list :tag "reply" :removed (plist-get msg :var)
+                        :unmapped nil))))
+       ,@body)))
+
+(ert-deftest replique-symbol-test-what-the-namespace-holds-is-what-is-offered ()
+  "The var to remove is nearly never the one at point: by the time the old
+name is worth removing it has been renamed in the buffer and is written
+nowhere in it.  What the process holds is where it is still to be found."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function")
+        (:name "helper" :type "function" :private t)
+        (:name "answer" :type "var"))
+      "helper"
+    (replique-symbol-test--at "(ns my.app)\n(defn parse| [s] s)"
+      (call-interactively #'replique-remove-var))
+    (should (equal '("parse" "helper" "answer") (mapcar #'substring-no-properties offered)))
+    (should (equal '(:op :remove-var :var "my.app/helper") sent))))
+
+(ert-deftest replique-symbol-test-a-private-var-is-offered-and-said-to-be-one ()
+  "A defn- renamed is a defn- left behind like any other, so it is in the
+list - and which of them are private is worth seeing rather than worth
+filtering by."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function")
+        (:name "helper" :type "function" :private t))
+      "parse"
+    (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+      (call-interactively #'replique-remove-var))
+    (should (equal " private" (replique-symbol--annotate (nth 1 offered))))
+    (should-not (replique-symbol--annotate (nth 0 offered)))))
+
+(ert-deftest replique-symbol-test-the-name-at-point-is-the-default ()
+  "So removing the definition point is on is a return, which is the other
+half of what this is for."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function") (:name "answer" :type "var"))
+      "parse"
+    (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+      (call-interactively #'replique-remove-var))
+    (should (equal "parse" offered-default))))
+
+(ert-deftest replique-symbol-test-a-name-of-somewhere-else-is-no-default ()
+  "It is str/join that is written str/join, and join is not what this buffer
+holds - the list is of what this namespace holds, so the default has to be one
+of them."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function"))
+      "parse"
+    (replique-symbol-test--at "(ns my.app)\n(str/joi|n \",\" xs)"
+      (call-interactively #'replique-remove-var))
+    (should-not offered-default))
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function"))
+      "parse"
+    ;; and neither is a name the namespace does not hold
+    (replique-symbol-test--at "(ns my.app)\n(in|c 1)"
+      (call-interactively #'replique-remove-var))
+    (should-not offered-default)))
 
 (ert-deftest replique-symbol-test-a-var-of-this-namespace-goes-without-asking ()
   "A definition of the file being edited, taken out of the process the file
 was loaded into, is what was asked for and holds no surprise."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function"))
+      "parse"
+    (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+      (call-interactively #'replique-remove-var))
+    (should-not asked)
+    (should (equal '(:op :remove-var :var "my.app/parse") sent))))
+
+(ert-deftest replique-symbol-test-a-var-of-somewhere-else-is-asked-about ()
+  "A name typed rather than chosen is sent as it was typed.  A qualified one
+is a var of somewhere else, and unmapping clojure.core from the process is not
+something to do by pressing return."
+  (replique-symbol-test--choosing
+      '((:name "parse" :type "function"))
+      "clojure.core/map"
+    (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+      (call-interactively #'replique-remove-var))
+    (should (string-match-p "clojure.core/map" asked))
+    (should (equal '(:op :remove-var :var "clojure.core/map") sent))))
+
+(ert-deftest replique-symbol-test-declining-leaves-it-alone ()
   (let ((sent nil))
-    (cl-letf (((symbol-function 'replique-symbol--ask)
-               (lambda (&rest _) '(:type "function" :name "parse" :ns "my.app")))
-              ((symbol-function 'replique-name-process) (lambda () 'a-process))
-              ((symbol-function 'replique-name-context) (lambda () '(:position :code :ns "my.app")))
-              ((symbol-function 'yes-or-no-p)
-               (lambda (&rest _) (error "Nothing should be asked")))
+    (cl-letf (((symbol-function 'replique-name-process) (lambda () 'a-process))
+              ((symbol-function 'replique-symbol--vars)
+               (lambda (&rest _) '((:name "parse" :type "function"))))
+              ((symbol-function 'completing-read) (lambda (&rest _) "clojure.core/map"))
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
               ((symbol-function 'replique-process-request-sync)
-               (lambda (_process msg &rest _)
-                 (setq sent msg)
-                 '(:tag "reply" :removed "my.app/parse" :unmapped (:my.app ["parse"])))))
-      (replique-symbol-test--at "(ns my.app)\n(pars|e \"x\")"
-        (replique-remove-var))
-      (should (equal '(:op :remove-var :var "my.app/parse") sent)))))
+               (lambda (&rest _) (setq sent t) nil)))
+      (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+        (call-interactively #'replique-remove-var))
+      (should-not sent))))
 
-(ert-deftest replique-symbol-test-only-a-var-can-be-unmapped ()
-  "A class, a local, a keyword: there is no var behind any of them, and
-refusing here says so better than the process could."
-  (dolist (type '("class" "local" "keyword" "namespace"))
-    (cl-letf (((symbol-function 'replique-symbol--ask)
-               (lambda (&rest _) (list :type type :name "thing" :ns "my.app")))
-              ((symbol-function 'replique-name-context)
-               (lambda () '(:position :code :ns "my.app"))))
-      (replique-symbol-test--at "(ns my.app)\n(thin|g)"
-        ;; The message and not only the failure: without a process there is
-        ;; always a user-error to be had further down, and a test that took
-        ;; any of them would pass with this check gone
-        (let ((err (should-error (replique-remove-var) :type 'user-error)))
-          (should (string-match-p "only a var can be unmapped" (cadr err)))
-          (should (string-match-p type (cadr err))))))))
-
-(ert-deftest replique-symbol-test-a-name-that-means-nothing-is-not-removed ()
-  (cl-letf (((symbol-function 'replique-symbol--ask) (lambda (&rest _) nil))
-            ((symbol-function 'replique-name-context)
-             (lambda () '(:position :code :ns "my.app"))))
-    (replique-symbol-test--at "(ns my.app)\n(no-such-nam|e)"
-      (should-error (replique-remove-var) :type 'user-error))))
+(ert-deftest replique-symbol-test-a-namespace-that-holds-nothing ()
+  "There is nothing there to remove, and a prompt with nothing in it is not
+a prompt worth showing."
+  (cl-letf (((symbol-function 'replique-name-process) (lambda () 'a-process))
+            ((symbol-function 'replique-symbol--vars) (lambda (&rest _) nil))
+            ((symbol-function 'completing-read)
+             (lambda (&rest _) (error "Nothing should be offered"))))
+    (replique-symbol-test--at "(ns my.app)\n(defn pars|e [s] s)"
+      (let ((err (should-error (call-interactively #'replique-remove-var)
+                               :type 'user-error)))
+        (should (string-match-p "my.app" (cadr err)))))))
 
 (ert-deftest replique-symbol-test-what-was-unmapped-elsewhere-is-said ()
   "The namespace it lived in is already in what is being said.  The rest are
 the namespaces that referred it, which are the ones whose code will not
-compile until somebody edits them - so those are what is worth naming, by the
+compile until somebody edits them - so those are what is worth naming, the
 names they wrote it as being beside the point."
   (should (equal '("my.app.cli" "my.app.web")
                  (replique-symbol--elsewhere
                   '(:my.app.web ["read-it"] :my.app ["parse"] :my.app.cli ["parse"])
                   "my.app")))
   (should-not (replique-symbol--elsewhere '(:my.app ["parse"]) "my.app")))
+
+(ert-deftest replique-symbol-test-the-namespace-is-read-from-the-process ()
+  "Against a real process: the vars of a namespace come back in the order
+they were written, which is what makes the list read like the file."
+  (replique-test-with-repl repl
+    (replique-test-eval repl "(clojure.core/ns replique.test-listed)")
+    (replique-test-eval repl "(defn alpha [] 1)")
+    (replique-test-eval repl "(defn- beta [] 2)")
+    (replique-test-eval repl "(clojure.core/in-ns 'user)")
+    (let* ((vars (replique-symbol--vars (replique-test-process) "replique.test-listed"))
+           (names (mapcar (lambda (v) (plist-get v :name)) vars)))
+      (should (member "alpha" names))
+      (should (member "beta" names))
+      (should (equal "function" (plist-get (car vars) :type)))
+      ;; and a private one is said to be one
+      (should (seq-find (lambda (v) (and (equal "beta" (plist-get v :name))
+                                         (plist-get v :private)))
+                        vars)))
+    ;; a namespace the process does not have holds nothing, which is not an
+    ;; error: every file is one until it has been loaded
+    (should-not (replique-symbol--vars (replique-test-process) "no.such.namespace"))))
 
 (ert-deftest replique-symbol-test-a-var-is-taken-away-from-everywhere ()
   "Against a real process: a var referred elsewhere is gone from there too,
@@ -543,13 +617,18 @@ leave every caller still calling it."
      repl (concat "(clojure.core/ns replique.test-refers "
                   "(:require [replique.test-removable :refer [gone]]))"))
     (replique-test-eval repl "(clojure.core/in-ns 'user)")
-    ;; it is there, and there under both names
     (should (replique-symbol-test--at "(ns replique.test-removable)\n(gon|e)"
               (replique-symbol--ask (replique-name-context) "gone")))
     (should (replique-symbol-test--at "(ns replique.test-refers)\n(gon|e)"
               (replique-symbol--ask (replique-name-context) "gone")))
-    (replique-symbol-test--at "(ns replique.test-removable)\n(gon|e)"
-      (replique-remove-var))
+    ;; Nothing is asked about a bare name, and saying so rather than leaving
+    ;; it to whatever a prompt would do: `yes-or-no-p' in batch reads a
+    ;; terminal that is not there, so a regression here would wedge the run
+    ;; instead of failing it
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "Nothing should be asked"))))
+      (replique-symbol-test--at "(ns replique.test-removable)\n(gon|e)"
+        (replique-remove-var "gone")))
     (should-not (replique-symbol-test--at "(ns replique.test-removable)\n(gon|e)"
                   (replique-symbol--ask (replique-name-context) "gone")))
     (should-not (replique-symbol-test--at "(ns replique.test-refers)\n(gon|e)"

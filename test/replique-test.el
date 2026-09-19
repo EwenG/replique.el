@@ -1187,7 +1187,7 @@ by hand: the mode replique opens one in is what turns them on."
   (replique-test-with-clojure "(def a 1)\n"
     (should replique-mode)
     (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))
-    (should (eq #'replique-load-file (key-binding (kbd "C-c C-k"))))
+    (should (eq #'replique-load-file (key-binding (kbd "C-c C-l"))))
     (should (eq #'replique-remove-var (key-binding (kbd "C-c C-u"))))))
 
 (ert-deftest replique-test-a-buffer-that-is-not-ours-is-not-evaluated ()
