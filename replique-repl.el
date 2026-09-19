@@ -407,11 +407,7 @@ is not Clojure: what a form printed parses as whatever it happens to look
 like.  That is the cost of one parse of one buffer, and it is paid in the
 part nobody edits.  It also means a repl that has printed a great deal is
 a large buffer being reparsed, which is worth knowing when one is slow."
-  (replique-clojure--ensure-grammars)
-  (when (treesit-ready-p 'treejure)
-    (treesit-parser-create 'treejure)
-    (replique-clojure--mode-variables)
-    (treesit-major-mode-setup)))
+  (replique-clojure-setup))
 
 (defun replique-repl--mode-line ()
   "Return the mode line description of the repl of the current buffer."

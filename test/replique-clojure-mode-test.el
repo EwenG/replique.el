@@ -49,9 +49,9 @@ be saying it needs one."
 
 (defun replique-clojure-test--reindent (text)
   "TEXT with the indentation taken off every line and put back by the rules."
-  (replique-test-grammar)
   (with-temp-buffer
-    (replique-clojure-mode)
+    (let ((replique-clojure-ensure-grammars nil))
+      (replique-clojure-mode))
     (insert text)
     (goto-char (point-min))
     (while (re-search-forward "^[ \t]+" nil t) (replace-match ""))
@@ -64,10 +64,10 @@ be saying it needs one."
 
 (defun replique-clojure-test--left-alone (text)
   "Say whether TEXT is left as it is by indenting the whole of it."
-  (replique-test-grammar)
   (equal text
          (with-temp-buffer
-           (replique-clojure-mode)
+           (let ((replique-clojure-ensure-grammars nil))
+             (replique-clojure-mode))
            (insert text)
            (indent-region (point-min) (point-max))
            (buffer-string))))
@@ -349,7 +349,14 @@ be saying it needs one."
   (should (replique-clojure-test--reindents-to-itself
            "(-> x\n    inc\n    dec)\n"))
   (should (replique-clojure-test--reindents-to-itself
-           "(->> xs\n     (map inc)\n     (filter odd?))\n")))
+           "(->> xs\n     (map inc)\n     (filter odd?))\n"))
+  ;; Under the step before it rather than under the first of them, which
+  ;; is the same column until two steps are written on one line
+  (should (equal "(-> x\n    (foo) (baz)\n          (bar))\n"
+                 (replique-clojure-test--reindent "(-> x\n(foo) (baz)\n(bar))\n")))
+  ;; and a threading macro is whatever ends like one
+  (should (replique-clojure-test--reindents-to-itself
+           "(some->> xs\n         (map inc))\n")))
 
 (ert-deftest replique-clojure-mode-test-an-ns-form-is-indented ()
   (should (replique-clojure-test--reindents-to-itself
@@ -389,6 +396,120 @@ be saying it needs one."
            "(def s \"one\ntwo\n  three\")\n"))
   (should (replique-clojure-test--left-alone
            "(defn f\n  \"A docstring\n  over two lines.\"\n  []\n  1)\n")))
+
+(ert-deftest replique-clojure-mode-test-a-body-is-two-in-from-its-form ()
+  ;; Not from the line the form is written on.  A form nested inside
+  ;; another is indented from where it begins, wherever that is
+  (should (equal "(when a\n  (when b\n    (c)))\n"
+                 (replique-clojure-test--reindent
+                  "(when a\n(when b\n(c)))\n"))))
+
+(ert-deftest replique-clojure-mode-test-a-rule-reaches-what-is-written-inside ()
+  ;; :inner - a method of a protocol is a body without anybody having
+  ;; written a rule for the name of the method
+  (should (replique-clojure-test--reindents-to-itself
+           "(defprotocol P\n  (m [this]\n    (a)))\n"))
+  ;; two out, at the first argument: the functions letfn binds
+  (should (replique-clojure-test--reindents-to-itself
+           "(letfn [(f [x]\n          (inc x))]\n  (f 1))\n"))
+  ;; and a form with no rule anywhere above it lines its arguments up
+  (should (replique-clojure-test--reindents-to-itself
+           "(foo bar\n     baz)\n")))
+
+(ert-deftest replique-clojure-mode-test-a-rule-counts-the-arguments-it-takes ()
+  ;; :block 1 - the first argument is not body, everything after it is
+  (should (replique-clojure-test--reindents-to-itself
+           "(when-let [x 1]\n  (a)\n  (b))\n"))
+  ;; :block 2
+  (should (replique-clojure-test--reindents-to-itself
+           "(condp = x\n  1 :one\n  2 :two)\n"))
+  ;; and the argument the count reaches is not body: the condition of an
+  ;; `if' written on a line of its own goes one in, and the two branches
+  ;; after it go two
+  (should (equal "(if\n a\n  b\n  c)\n"
+                 (replique-clojure-test--reindent "(if\na\nb\nc)\n"))))
+
+(ert-deftest replique-clojure-mode-test-what-is-discarded-is-not-an-argument ()
+  ;; `#_' is read and thrown away, so what follows it is the argument it
+  ;; would have been without it
+  ;; `y' is the condition and goes where a condition goes, rather than
+  ;; being the first branch because something unread came before it
+  (should (equal "(if\n #_ x\n y\n  z)\n"
+                 (replique-clojure-test--reindent "(if\n#_ x\ny\nz)\n"))))
+
+(ert-deftest replique-clojure-mode-test-a-comment-is-not-lined-up-under ()
+  ;; A comment at the end of a line is not a step of the threading form it
+  ;; is written in, so what comes after it lines up with the step before
+  (should (replique-clojure-test--reindents-to-itself
+           "(->> xs\n     (map inc) ; why\n     (filter odd?))\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(foo bar ; why\n     baz)\n")))
+
+(ert-deftest replique-clojure-mode-test-metadata-does-not-make-two-forms ()
+  ;; `^:private x' is one form written over two lines, and the second half
+  ;; is not something written inside the first
+  (should (replique-clojure-test--reindents-to-itself
+           "(def ^{:doc \"a\"}\n  x 1)\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(let [x ^long\n      (foo)]\n  x)\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(foo bar\n     ^:a\n     baz)\n")))
+
+(ert-deftest replique-clojure-mode-test-a-collection-opens-as-wide-as-it-is ()
+  (should (replique-clojure-test--reindents-to-itself "[a\n b]\n"))
+  (should (replique-clojure-test--reindents-to-itself "{:a 1\n :b 2}\n"))
+  (should (replique-clojure-test--reindents-to-itself "#{a\n  b}\n"))
+  (should (replique-clojure-test--reindents-to-itself "#(inc\n  %)\n"))
+  ;; a value written on a line of its own belongs to the map, not to its key
+  (should (replique-clojure-test--reindents-to-itself "{:a\n 1}\n")))
+
+(ert-deftest replique-clojure-mode-test-a-quoted-form-is-still-in-its-form ()
+  ;; The quote is stepped over, so what it quotes is placed by whatever the
+  ;; whole of it is written in
+  (should (replique-clojure-test--reindents-to-itself
+           "(eval\n '(do\n    (a)\n    (b)))\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(run-tests\n 'a\n 'b)\n")))
+
+(ert-deftest replique-clojure-mode-test-a-rule-of-somebody-own-is-read ()
+  (let ((replique-clojure-semantic-indent-rules '(("my-when" . ((:block 1))))))
+    (should (equal "(my-when a\n  (b))\n"
+                   (replique-clojure-test--reindent "(my-when a\n(b))\n")))))
+
+(ert-deftest replique-clojure-mode-test-a-macro-under-an-alias-is-the-same-macro ()
+  ;; A rule names a macro, and a macro reached through an alias is it
+  (should (replique-clojure-test--reindents-to-itself
+           "(c/when a\n  (b))\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(clojure.core/when a\n  (b))\n")))
+
+(ert-deftest replique-clojure-mode-test-indenting-a-region-and-a-line-agree ()
+  ;; The region is indented by following one reading of each form rather
+  ;; than reading it again a line at a time, so the two have to agree
+  (dolist (text '("(defn f [x]\n(let [y 1]\n(+ x y\n(foo bar\nbaz))))\n"
+                  "(ns a.b\n(:require [c :as d]\n[e :as f]))\n"
+                  "(-> x\n(foo)\n(bar 1\n2))\n"
+                  "(deftype T [a]\nP\n(m [this]\n(a)))\n"
+                  "#?(:clj 1\n:cljs 2)\n"))
+    (should (equal (replique-clojure-test--reindent text)
+                   (with-temp-buffer
+                     (let ((replique-clojure-ensure-grammars nil))
+                       (replique-clojure-mode))
+                     (insert text)
+                     (goto-char (point-min))
+                     (while (re-search-forward "^[ \t]+" nil t) (replace-match ""))
+                     (goto-char (point-min))
+                     (while (< (point) (point-max))
+                       (replique-clojure-indent-line)
+                       (forward-line 1))
+                     (buffer-string))))))
+
+(ert-deftest replique-clojure-mode-test-indenting-asks-for-no-grammar ()
+  (with-temp-buffer
+    (insert "(when a\n(b))\n")
+    (should (= 2 (progn (goto-char (point-min))
+                        (forward-line 1)
+                        (replique-clojure-indent-column (point)))))))
 
 (ert-deftest replique-clojure-mode-test-indenting-settles ()
   ;; whatever it does, doing it twice does it once

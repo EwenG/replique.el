@@ -12,7 +12,8 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
 
 # replique-clojure-mode.el is left out: it is master's file, carried over as
 # it was, and its checkdoc warnings are not this tree's to answer
-LINT = replique-common.el replique-parse.el replique-edn.el replique-conn.el \
+LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
+       replique-edn.el replique-conn.el \
        replique-exception.el \
        replique-process.el replique-repl.el replique-locals.el replique-deps.el \
        replique-eval.el replique-pprint.el replique-forms.el replique-name.el \

@@ -20,22 +20,25 @@
 ;;; Commentary:
 
 ;; `replique-clojure-mode' is the syntax layer for Clojure and ClojureScript.
-;; It owns font-lock and indentation, and it owns them out of two different
-;; readings of the buffer:
+;; It owns painting and indentation, and reads both out of `replique-parse'
+;; - the reader, rather than a grammar:
 ;;
-;;   * font-lock, out of `replique-parse' - what each token is, and then what
-;;     the form it is written in says it is.  One walk, no grammar, and no
-;;     precedence between rules; the section below says why that is the whole
-;;     of the design.
-;;   * cljfmt indentation (`treesit-simple-indent') over the `treejure'
-;;     grammar - the `:block'/`:inner' rule model, with a `no-indent' seam so
-;;     multi-line string interiors are left untouched.  This is the last
-;;     thing here that asks for a grammar.
+;;   * painting - what each token is, and then what the form it is written
+;;     in says it is.  One walk down each form, and no precedence between
+;;     rules, which is the whole of the design; the section below says why.
+;;   * cljfmt indentation - the `:block'/`:inner' rule model, asked of the
+;;     form a line is written in rather than of a rule table walked in
+;;     order.  Read once per form and then followed, so that indenting a
+;;     file reads it once.
+;;
+;; Both work in a buffer with no grammar and no parser in it.  What is still
+;; asked of `treesit' is moving over forms - `forward-sexp',
+;; `beginning-of-defun', matching a bracket, folding - and nothing else.
 ;;
 ;; Semantic faces (`:local', `:macro-invocation', `:special-form',
-;; `:unresolved', unused greyout), diagnostics and navigation are not here and
-;; are not part of replique: they are computed by a C module that is layered
-;; over these faces as an overlay, and this file is pure, in-core treesit.
+;; `:unresolved', unused greyout) and diagnostics are not here and are not
+;; part of replique: they are computed by a C module that is layered over
+;; these faces as an overlay.
 ;;
 ;; What replique needs of it is neither of those.  A form is sent to a repl
 ;; with the line it was written on, so replique has to agree with the reader
@@ -60,9 +63,7 @@
 (eval-when-compile (require 'subr-x))   ; thread-first / thread-last / when-let*
 
 (declare-function treesit-parser-create "treesit.c")
-(declare-function treesit-node-eq "treesit.c")
 (declare-function treesit-node-type "treesit.c")
-(declare-function treesit-node-parent "treesit.c")
 (declare-function treesit-node-child "treesit.c")
 (declare-function treesit-node-child-by-field-name "treesit.c")
 
@@ -897,7 +898,387 @@ The defaults live in `replique-clojure--semantic-indent-rules-defaults'."
   :set #'replique-clojure--set-semantic-indent-rules)
 
 
-;;;; Indentation — node predicates
+;;;; Indentation — where a line goes
+;;
+;; Indenting a line is one question: what form is still open at the start of
+;; it, and how far in does that form put what it holds.  Everything else -
+;; the cljfmt body rules, threading alignment, lining arguments up under one
+;; another - is a refinement of that one number.
+;;
+;; So it is asked that way.  The path from the top level form down to the
+;; start of the line is walked from the inside out, and the first node on it
+;; that begins before the line does is the one that governs: a node that
+;; begins at the start of the line is the thing being indented and has no
+;; say in where it goes.  That single test is what the whole of the
+;; "logical context resolution" this replaced was for.
+;;
+;; `treesit-simple-indent' hands a rule the node beginning at the start of
+;; the line and that node's parent, which is the wrong handle twice over.
+;; The node is nil for a blank line, so every rule carries a branch for
+;; having been given nothing.  And the parent is whatever the grammar
+;; happens to nest - a map entry, a metadata wrapper, a quote - rather than
+;; the form that governs, so eighty lines existed to walk back out of the
+;; answer and find the collection that was wanted.  Asking for the governing
+;; node directly makes both of those go away: there is always one, it is
+;; always a form that holds other forms, and the blank line and the written
+;; line are the same case.
+;;
+;; What is left is a table of widths and three refinements, each a plain
+;; predicate over the forms of one list.  A line inside a collection goes to
+;; the collection's own column plus the width of what opens it - one for a
+;; `(', two for a `#{', three for a `#?@(' - and that is the answer unless
+;; the form the line is in says otherwise:
+;;
+;;   a body     two in from the form, where a cljfmt rule says the rest of
+;;              the form is body rather than arguments
+;;   a step     under the step before it, in a `->' or `->>'
+;;   an argument under the first argument, where the head reads like a call
+;;
+;; A reader macro is stepped over rather than asked: `^:private' and what it
+;; is written on are one form, so a line break between them does not make
+;; the second half something written inside the first.
+
+(defconst replique-clojure--indent-widths
+  '((list . 1) (vector . 1) (map . 1) (tagged . 1) (namespaced-map . 1)
+    (set . 2) (fn . 2) (reader-conditional . 2)
+    (reader-conditional-splicing . 3))
+  "How far in from a form's own column what it holds is written.
+Which is the width of the text that opens it.")
+
+(defconst replique-clojure--indent-transparent
+  '(pair quote syntax-quote unquote unquote-splicing deref var-quote
+         discard eval meta)
+  "What is stepped over on the way out to the form that governs a line.
+
+A reader macro and what it is written on are one form, so a line inside
+one is placed by whatever the whole of it is written in: `^:private x'
+written over two lines is still the second thing in its `def', and is
+indented as that rather than as something inside the `^'.
+
+A map entry is here for the same reason from the other side - it is a
+grouping the reader makes and not something anybody wrote, so a value on
+a line of its own belongs to the map and is placed by it.")
+
+(defvar replique-clojure--indent-shifts nil
+  "How far the region being indented has moved so far, or nil for none.
+
+A list of conses of a position and how far everything from there on has
+moved since, newest first - so descending, because a region is indented
+downwards and each line is moved after the ones above it.
+
+Indenting a line moves it sideways.  It does not add a line, take one
+away, or change what the form is made of, so a form read before any of it
+was indented stays true throughout: a node is where it was, plus how far
+the lines above it have moved.  That is what lets a whole form be read
+once rather than once a line.")
+
+(defun replique-clojure--translate (position)
+  "Where POSITION, read before the region was indented, is written now."
+  (let ((shifts replique-clojure--indent-shifts))
+    (while (and shifts (< position (caar shifts)))
+      (setq shifts (cdr shifts)))
+    (if shifts (+ position (cdar shifts)) position)))
+
+(defsubst replique-clojure--column (position)
+  "The column POSITION is written at."
+  (save-excursion (goto-char (replique-clojure--translate position))
+                  (current-column)))
+
+(defsubst replique-clojure--line (position)
+  "Which line POSITION is written on."
+  (line-number-at-pos (replique-clojure--translate position)))
+
+(defun replique-clojure--bare-name (node)
+  "The name NODE is written under, with any namespace taken off, or nil.
+
+Under rather than the whole of it, because a rule names a macro and a
+macro reached through an alias is the same macro: `(c/when x y)' is
+indented the way `(when x y)' is.
+
+Read from where NODE is written now rather than from where it was read:
+a form that is being indented has had the lines above this one moved
+under it, and the text at the positions it was read at is not its own any
+more."
+  (when (memq (replique-parse-type node) '(symbol keyword))
+    (cdr (replique-parse-name-parts
+          (buffer-substring-no-properties
+           (replique-clojure--translate (replique-parse-start node))
+           (replique-clojure--translate (replique-parse-end node)))))))
+
+(defun replique-clojure--head (forms)
+  "What FORMS is headed by, with any metadata on it taken off, or nil."
+  (replique-parse-unwrap-meta (car forms)))
+
+(defun replique-clojure--forms-before (node position)
+  "How many of the forms NODE holds are written before POSITION.
+
+Which is the place a form beginning at POSITION has among them, and the
+place the one somebody is about to write there would have.  That those
+are the same number is what makes a blank line and a written line one
+case here rather than two."
+  (let ((count 0))
+    (dolist (child (replique-parse-children node) count)
+      (when (and (< (replique-parse-start child) position)
+                 (not (replique-parse-gap-p child)))
+        (setq count (1+ count))))))
+
+(defun replique-clojure--governing (path position)
+  "What governs a line beginning at POSITION, and what of it is being indented.
+
+PATH is the nodes written over POSITION, innermost first.  Returns a cons
+of the governing node - the innermost one that begins before POSITION -
+and the rest of PATH outside it, or nil where nothing does.
+
+What `replique-clojure--indent-transparent' names is stepped over, so
+what governs is always a form that holds other forms."
+  (while (and path
+              (or (>= (replique-parse-start (car path)) position)
+                  (memq (replique-parse-type (car path))
+                        replique-clojure--indent-transparent)))
+    (setq path (cdr path)))
+  (when path (cons (car path) (cdr path))))
+
+(defun replique-clojure-indent-column (position)
+  "The column a line beginning at POSITION is to be indented to.
+
+Nil where it is not to be indented at all, which is a line written inside
+a string: what is between the quotes is the value, and moving it would be
+changing what the program says."
+  (let ((root (replique-parse-form-at position)))
+    (if root
+        (replique-clojure--indent-column root position)
+      ;; Written between forms rather than in one
+      0)))
+
+(defun replique-clojure--indent-column (root position)
+  "The column a line beginning at POSITION goes to, ROOT being the form it is in."
+  (let ((found (replique-clojure--governing
+                (nreverse (replique-parse-path root position))
+                position)))
+    (if (null found)
+        ;; Written inside nothing, which is where a top level form goes
+        0
+      (let ((node (car found))
+            (around (cdr found)))
+        (pcase (replique-parse-type node)
+          ((or 'string 'regex) nil)
+          ((or 'list 'fn)
+           (replique-clojure--indent-in-list node around position))
+          (_ (+ (replique-clojure--column (replique-parse-start node))
+                (or (alist-get (replique-parse-type node)
+                               replique-clojure--indent-widths)
+                    0))))))))
+
+
+;;;; Indentation — what the form says
+
+(defun replique-clojure--indent-in-list (node around position)
+  "The column a line beginning at POSITION goes to, inside the form NODE.
+
+AROUND is what NODE is written inside, innermost first, which is wanted
+because a cljfmt rule may be written on a form some way out from this one."
+  (let* ((forms (replique-parse-forms node))
+         (place (replique-clojure--forms-before node position))
+         (column (replique-clojure--column (replique-parse-start node)))
+         (rule (replique-clojure--semantic-rule node place around)))
+    (cond
+     ((and rule (replique-clojure--body-p forms rule place position))
+      (+ column 2))
+     ((replique-clojure--threading-p forms)
+      ;; Under the step before it.  Where the line holds the first step
+      ;; there is none, and it goes where anything else in a list goes
+      (let ((previous (and (> place 0) (nth (1- place) forms))))
+        (if previous
+            (replique-clojure--column (replique-parse-start previous))
+          (+ column 1))))
+     ((replique-clojure--call-arg-p forms place around)
+      (replique-clojure--column (replique-parse-start (nth 1 forms))))
+     (t (+ column (if (eq 'fn (replique-parse-type node)) 2 1))))))
+
+(defun replique-clojure--rules-of (node)
+  "The cljfmt rules written for whatever heads NODE, or nil for none."
+  (when (memq (replique-parse-type node) '(list fn))
+    (let ((name (replique-clojure--bare-name
+                 (replique-clojure--head (replique-parse-forms node)))))
+      (when name
+        (alist-get name (or replique-clojure--semantic-indent-rules-cache
+                            replique-clojure--semantic-indent-rules-defaults)
+                   nil nil #'equal)))))
+
+(defun replique-clojure--inner-rule-p (rule depth place)
+  "Return non-nil when RULE is an :inner rule reaching DEPTH and PLACE.
+
+PLACE is where in the form it holds the thing being indented is written,
+counting the head as nought; a rule counts from the first argument, so
+the two are one apart."
+  (pcase rule
+    (`(:inner ,rule-depth) (= rule-depth depth))
+    (`(:inner ,rule-depth ,at) (and (= rule-depth depth) (= at (1- place))))))
+
+(defun replique-clojure--semantic-rule (node place around)
+  "The cljfmt rule governing what is written at PLACE inside NODE.
+
+AROUND is what NODE is written inside, innermost first.  A form with
+rules of its own is answered from them and no further; one with none
+looks outward, because a rule written on a form reaches the forms written
+inside it - which is how the methods of a `defprotocol' are indented as
+bodies without anybody having written a rule for each of them."
+  (let ((rules (replique-clojure--rules-of node)))
+    (if rules
+        ;; Only the first is looked at here.  A form that says both :block
+        ;; and :inner says the :block of itself and the :inner of what is
+        ;; written inside it, and this is itself
+        (let ((rule (car rules)))
+          (if (eq :block (car rule))
+              rule
+            (and (replique-clojure--inner-rule-p rule 0 place) rule)))
+      (replique-clojure--outward-rule node around 1))))
+
+(defun replique-clojure--outward-rule (node around depth)
+  "An :inner rule DEPTH forms out from NODE that reaches it.
+
+AROUND is what NODE is written inside, innermost first.  Three out is as
+far as this looks: cljfmt writes none deeper, and a rule that reached any
+distance would be a rule nobody could see the effect of."
+  (when (and (< depth 4) around)
+    (let* ((outer (car around))
+           (rules (replique-clojure--rules-of outer))
+           (place (replique-clojure--forms-before
+                   outer (replique-parse-start node))))
+      (or (seq-find (lambda (rule)
+                      (replique-clojure--inner-rule-p rule depth place))
+                    rules)
+          (unless rules
+            (replique-clojure--outward-rule outer (cdr around) (1+ depth)))))))
+
+(defun replique-clojure--body-p (forms rule place position)
+  "Return non-nil when what is at PLACE among FORMS is body, as RULE reads it.
+
+POSITION is where the line begins, which is wanted for a form that has no
+body written in it yet."
+  (pcase rule
+    ;; Everything after the head, but only where the head is alone on its
+    ;; line.  A form written as `(do a' has said where the rest of it goes
+    ;; by putting something there, and what follows lines up with that
+    (`(:block 0)
+     (let ((head (car forms))
+           (next (nth 1 forms)))
+       (and head
+            (< (replique-clojure--line (replique-parse-start head))
+               (replique-clojure--line (if next
+                                           (replique-parse-start next)
+                                         position))))))
+    (`(:block ,n) (> place n))
+    (_ t)))
+
+(defconst replique-clojure--threading-regexp "->>?\\'"
+  "What the name of a threading macro ends with.
+Ends with rather than is, so that `some->' and a threading macro of
+somebody's own are read as the threading macros they are.")
+
+(defun replique-clojure--threading-p (forms)
+  "Return non-nil when FORMS is headed by a threading macro."
+  (let ((name (replique-clojure--bare-name (replique-clojure--head forms))))
+    (and name (string-match-p replique-clojure--threading-regexp name))))
+
+(defun replique-clojure--call-arg-p (forms place around)
+  "Return non-nil when what is at PLACE among FORMS is an argument of a call.
+
+AROUND is what the form is written inside, innermost first.  An argument
+is lined up under the first argument, which is what makes the arguments
+of a call read as a column rather than as a body."
+  (let ((head (replique-clojure--head forms)))
+    (and (> place 1)
+         (nth 1 forms)
+         (memq (replique-parse-type head) '(symbol keyword var-quote))
+         ;; The list a reader conditional holds is not a call.  What is
+         ;; written in one is platforms and what each of them stands for,
+         ;; and a platform is not the head of anything - so what is in one
+         ;; lines up with itself rather than under the first of them
+         (not (memq (replique-parse-type (car around))
+                    '(reader-conditional reader-conditional-splicing))))))
+
+
+;;;; Indentation — the line and the region
+
+(defun replique-clojure-indent-line ()
+  "Indent the current line."
+  (let ((column (replique-clojure-indent-column (line-beginning-position))))
+    (when column
+      (indent-line-to column))))
+
+(defun replique-clojure--top-level-spans (from to)
+  "Each top level form between FROM and TO, as read before anything moved.
+
+A list of [BEGINNING END TREE WHERE], in the order they are written, where
+BEGINNING and END are markers and WHERE is the position TREE was read at.
+Markers, because indenting one form moves every form after it, and asking
+the buffer where the next one is after each line is what makes indenting a
+file cost the length of the file once per line of it."
+  (let ((start (or (car (replique-parse-top-level-bounds from)) from)))
+    (mapcar (lambda (form)
+              (vector (copy-marker (replique-parse-start form))
+                      (copy-marker (replique-parse-end form))
+                      form
+                      (replique-parse-start form)))
+            (replique-parse-forms-in start to))))
+
+(defun replique-clojure--indent-span (span limit)
+  "Indent the lines of the top level form SPAN, as far as LIMIT.
+
+Point is left where the form ends, or at LIMIT.  The form was read before
+any of the region was indented and is followed rather than read again,
+which is what `replique-clojure--indent-shifts' is for - including at the
+start of it, where the forms before this one have already moved it."
+  (let* ((tree (aref span 2))
+         (moved (- (marker-position (aref span 0)) (aref span 3)))
+         (replique-clojure--indent-shifts
+          (unless (zerop moved) (list (cons (aref span 3) moved)))))
+    (while (and (< (point) (aref span 1)) (< (point) limit))
+      (unless (looking-at-p "[ \t]*$")
+        (let* ((was (point))
+               (column (replique-clojure--indent-column tree (- was moved))))
+          (when column
+            (let ((delta (- column (current-indentation))))
+              (unless (zerop delta)
+                (indent-line-to column)
+                (setq moved (+ moved delta))
+                (push (cons (- was (- moved delta)) moved)
+                      replique-clojure--indent-shifts))))))
+      (forward-line 1))))
+
+(defun replique-clojure-indent-region (from to)
+  "Indent every line between FROM and TO.
+
+Line by line and downwards, because a line is placed by where the lines
+above it ended up: the arguments of a call line up under the first of
+them, and where that one is is not known until it has been put there.
+
+One top level form at a time, each read once.  Where they are is taken
+before anything has moved and held as markers, so that indenting one does
+not lose the next."
+  (save-excursion
+    (let ((limit (copy-marker to))
+          (spans (replique-clojure--top-level-spans from to)))
+      (goto-char from)
+      (beginning-of-line)
+      (dolist (span spans)
+        ;; What is written between two forms is written in nothing
+        (while (and (< (point) limit) (< (point) (aref span 0)))
+          (unless (looking-at-p "[ \t]*$") (indent-line-to 0))
+          (forward-line 1))
+        (when (< (point) limit)
+          (replique-clojure--indent-span span limit)))
+      (while (< (point) limit)
+        (unless (looking-at-p "[ \t]*$") (indent-line-to 0))
+        (forward-line 1))
+      (set-marker limit nil)
+      (dolist (span spans)
+        (set-marker (aref span 0) nil)
+        (set-marker (aref span 1) nil)))))
+
+
+;;;; Navigation — node predicates
 
 (defun replique-clojure--list-node-p (node)
   "Return non-nil if NODE is a Clojure list."
@@ -907,25 +1288,9 @@ The defaults live in `replique-clojure--semantic-indent-rules-defaults'."
   "Return non-nil if NODE is a function literal."
   (string-equal "fn_literal" (treesit-node-type node)))
 
-(defun replique-clojure--opening-paren-node-p (node)
-  "Return non-nil if NODE is an opening paren."
-  (string-equal "(" (treesit-node-text node)))
-
 (defun replique-clojure--symbol-node-p (node)
   "Return non-nil if NODE is a symbol."
   (string-equal "symbol" (treesit-node-type node)))
-
-(defun replique-clojure--string-node-p (node)
-  "Return non-nil if NODE is a string literal."
-  (string-equal "string" (treesit-node-type node)))
-
-(defun replique-clojure--keyword-node-p (node)
-  "Return non-nil if NODE is a keyword."
-  (string-equal "keyword" (treesit-node-type node)))
-
-(defun replique-clojure--var-node-p (node)
-  "Return non-nil if NODE is a var quote (e.g. #\\'foo)."
-  (string-equal "var_quote" (treesit-node-type node)))
 
 (defun replique-clojure--unwrap-meta (node)
   "Recursively unwrap NODE from its `with_metadata' wrappers."
@@ -941,11 +1306,6 @@ The defaults live in `replique-clojure--semantic-indent-rules-defaults'."
 (defun replique-clojure--named-node-text (node)
   "Return the name of symbol/keyword NODE (without its namespace)."
   (treesit-node-text (treesit-node-child-by-field-name node "name")))
-
-(defun replique-clojure--symbol-matches-p (symbol-regexp node)
-  "Return non-nil if NODE is a symbol whose name matches SYMBOL-REGEXP."
-  (and (replique-clojure--symbol-node-p node)
-       (string-match-p symbol-regexp (replique-clojure--named-node-text node))))
 
 (defun replique-clojure--list-node-sym-text (node &optional include-anon-fn-lit)
   "Return the head-symbol name of list NODE, or nil.
@@ -964,7 +1324,7 @@ With INCLUDE-ANON-FN-LIT, also handle function literals."
     (string-match-p regex sym-text)))
 
 
-;;;; Indentation — thing settings, defun support
+;;;; Navigation — thing settings, defun support
 
 (defconst replique-clojure--sexp-nodes
   '("with_metadata"
@@ -1013,255 +1373,6 @@ With INCLUDE-ANON-FN-LIT, also handle function literals."
      (text ,(regexp-opt '("comment")))
      (defun ,#'replique-clojure--defun-node-p)))
   "Value for `treesit-thing-settings'.")
-
-
-;;;; Indentation — semantic rule lookup
-
-(defun replique-clojure--find-semantic-rules-for-node (node)
-  "Return the list of semantic rules for NODE's head symbol."
-  (when-let* ((first-child (treesit-node-child node 0 t))
-              (symbol-name (replique-clojure--named-node-text first-child)))
-    (alist-get symbol-name
-               replique-clojure--semantic-indent-rules-cache
-               nil nil #'equal)))
-
-(defun replique-clojure--find-semantic-rule (node parent current-depth)
-  "Return a suitable indentation rule for NODE within PARENT at CURRENT-DEPTH."
-  (let ((idx (if node (- (treesit-node-index node) 2) 999))) ; 999 ⇒ treat nil as body
-    (if-let* ((rule-set (replique-clojure--find-semantic-rules-for-node parent)))
-        (if (zerop current-depth)
-            (let ((rule (car rule-set)))
-              (if (equal (car rule) :block)
-                  rule
-                (pcase-let ((`(,_ ,rule-depth ,rule-idx) rule))
-                  (when (and (equal rule-depth current-depth)
-                             (or (null rule-idx) (equal rule-idx idx)))
-                    rule))))
-          (thread-last rule-set
-                       (seq-filter (lambda (rule)
-                                     (pcase-let ((`(,rule-type ,rule-depth ,rule-idx) rule))
-                                       (and (equal rule-type :inner)
-                                            (equal rule-depth current-depth)
-                                            (or (null rule-idx) (equal rule-idx idx))))))
-                       (seq-first)))
-      (when-let* (((< current-depth 3))
-                  (new-parent (treesit-node-parent parent)))
-        (replique-clojure--find-semantic-rule parent new-parent (1+ current-depth))))))
-
-
-;;;; Indentation — logical-context resolution
-
-(defconst replique-clojure--collection-node-types
-  '("list_literal" "vector_literal" "map_literal" "set_literal"
-    "namespaced_map_literal" "fn_literal")
-  "Node types representing collection literals.")
-
-(defun replique-clojure--resolve-indentation-context (node parent)
-  "Resolve the logical collection and direct child for NODE / PARENT.
-Returns (COLLECTION . DIRECT-CHILD) or nil.  When NODE is nil (indenting a
-blank line) PARENT is the collection.  Wrappers like quote/pair/with_metadata
-are traversed so the collection that actually governs indentation is found."
-  (cond
-   ;; NODE is itself a collection: anchor to its logical parent collection.
-   ((and node (member (treesit-node-type node) replique-clojure--collection-node-types))
-    (if (string-equal "pair" (treesit-node-type parent))
-        (when-let* ((coll (treesit-parent-until
-                           parent
-                           (lambda (n) (member (treesit-node-type n)
-                                               replique-clojure--collection-node-types)))))
-          (cons coll parent))
-      (when-let* ((p (treesit-node-parent node)))
-        (cons p node))))
-   ;; Blank line whose parent is the collection: do NOT escalate.
-   ((and (null node) (member (treesit-node-type parent) replique-clojure--collection-node-types))
-    (cons parent nil))
-   ;; Normal element / whitespace / wrapped node: walk up to the collection.
-   (t
-    (let ((start-node (or node parent)))
-      (when-let* ((coll (treesit-parent-until
-                         start-node
-                         (lambda (n) (member (treesit-node-type n)
-                                             replique-clojure--collection-node-types)))))
-        (let ((direct-child start-node))
-          (while (and direct-child
-                      (not (treesit-node-eq (treesit-node-parent direct-child) coll)))
-            (setq direct-child (treesit-node-parent direct-child)))
-          (when direct-child
-            (cons coll direct-child))))))))
-
-(defun replique-clojure--anchor-parent-opening-paren (_node parent _bol)
-  "Return the position of PARENT's first opening paren (skipping metadata)."
-  (thread-first parent
-                (treesit-search-subtree #'replique-clojure--opening-paren-node-p nil t 1)
-                (treesit-node-start)))
-
-(defun replique-clojure--anchor-logical-parent-opening-paren (node parent bol)
-  "Anchor to the start of the logical parent collection."
-  (if-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-      (treesit-node-start (car res))
-    (replique-clojure--anchor-parent-opening-paren node parent bol)))
-
-(defun replique-clojure--anchor-logical-prev-sibling (node parent _bol)
-  "Anchor to the previous sibling of the direct child in the logical parent."
-  (if-let* ((res (replique-clojure--resolve-indentation-context node parent))
-            (direct-child (cdr res)))
-      (treesit-node-start (treesit-node-prev-sibling direct-child))
-    (treesit-node-start (treesit-node-prev-sibling (or node parent)))))
-
-(defun replique-clojure--anchor-logical-nth-sibling (n)
-  "Return an anchor function for the Nth child of the logical parent."
-  (lambda (node parent &rest _)
-    (if-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-        (treesit-node-start (treesit-node-child (car res) n t))
-      (treesit-node-start (treesit-node-child (or node parent) n t)))))
-
-(defun replique-clojure--match-wrapped-in-non-list-collection (node parent _bol)
-  "Match if NODE sits inside a vector/map/set (not a list/fn)."
-  (when-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-    (member (treesit-node-type (car res))
-            '("vector_literal" "map_literal" "set_literal" "namespaced_map_literal"))))
-
-(defun replique-clojure--anchor-wrapped-in-non-list-collection (node parent _bol)
-  "Anchor to the start of the non-list collection plus its delimiter width."
-  (when-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-    (let ((coll (car res)))
-      (+ (treesit-node-start coll)
-         (if (string-equal "set_literal" (treesit-node-type coll)) 2 1)))))
-
-(defun replique-clojure--match-marker-splicing (_node parent _bol)
-  "Match a splicing reader conditional (#?@)."
-  (string-equal "marker_splicing"
-                (treesit-node-type
-                 (treesit-node-child-by-field-name parent "marker"))))
-
-(defun replique-clojure--match-with-metadata (node &optional _parent _bol)
-  "Match NODE when it is wrapped in metadata."
-  (string-equal "with_metadata" (treesit-node-type (treesit-node-parent node))))
-
-
-;;;; Indentation — block / threading / call-arg matchers
-
-(defun replique-clojure--match-block-0-body (bol first-child)
-  "Match if the body is not on the same line as FIRST-CHILD.
-With no body, check that BOL is not on FIRST-CHILD's line."
-  (let ((body-pos (if-let* ((body (treesit-node-next-sibling first-child)))
-                      (treesit-node-start body)
-                    bol)))
-    (< (line-number-at-pos (treesit-node-start first-child))
-       (line-number-at-pos body-pos))))
-
-(defun replique-clojure--node-pos-match-block (node parent bol block)
-  "Return non-nil if NODE's index in PARENT is past BLOCK arguments.
-When NODE is nil, use the first child after BOL."
-  (if node
-      (> (treesit-node-index node) (1+ block))
-    (when-let* ((node-after-bol (treesit-node-first-child-for-pos parent bol)))
-      (> (treesit-node-index node-after-bol) (1+ block)))))
-
-(defun replique-clojure--match-form-body (node parent bol)
-  "Match the body of a form governed by a semantic rule.
-See https://guide.clojure.style/#body-indentation"
-  (when-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-    (let ((logical-parent (car res))
-          (direct-child (cdr res)))
-      (and (or (replique-clojure--list-node-p logical-parent)
-               (replique-clojure--anon-fn-node-p logical-parent))
-           (let ((first-child (replique-clojure--first-value-child logical-parent)))
-             (when-let* ((rule (replique-clojure--find-semantic-rule
-                                (or direct-child first-child) logical-parent 0)))
-               (let ((rule-type (car rule))
-                     (rule-value (cadr rule)))
-                 (if (equal rule-type :block)
-                     (if (zerop rule-value)
-                         (replique-clojure--match-block-0-body bol first-child)
-                       (replique-clojure--node-pos-match-block
-                        direct-child logical-parent bol rule-value))
-                   t))))))))
-
-(defvar replique-clojure--threading-macro
-  (rx (and "->" (? ">") line-end))
-  "A regexp matching a threading macro.")
-
-(defun replique-clojure--match-threading-macro-arg (node parent _bol)
-  "Match an argument of a threading macro.
-See https://guide.clojure.style/#threading-macros-alignment"
-  (when-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-    (let ((logical-parent (car res)))
-      (and (or (replique-clojure--list-node-p logical-parent)
-               (replique-clojure--anon-fn-node-p logical-parent))
-           (replique-clojure--symbol-matches-p
-            replique-clojure--threading-macro
-            (replique-clojure--first-value-child logical-parent))))))
-
-(defun replique-clojure--match-function-call-arg (node parent _bol)
-  "Match an argument of a plain function call (to align under the first arg).
-See https://guide.clojure.style/#vertically-align-fn-args"
-  (when-let* ((res (replique-clojure--resolve-indentation-context node parent)))
-    (let ((logical-parent (car res))
-          (direct-child (cdr res)))
-      (and (or (replique-clojure--list-node-p logical-parent)
-               (replique-clojure--anon-fn-node-p logical-parent))
-           ;; The list a reader conditional holds is not a call.  What is
-           ;; written in one is platforms and what each of them stands for,
-           ;; and a platform is not the head of anything - so its elements
-           ;; line up with one another rather than under the first of them
-           (not (equal "reader_conditional"
-                       (treesit-node-type (treesit-node-parent logical-parent))))
-           (let ((first-child (replique-clojure--first-value-child logical-parent))
-                 (second-child (treesit-node-child logical-parent 1 t)))
-             (and first-child
-                  second-child
-                  (or (null direct-child)
-                      (not (treesit-node-eq second-child direct-child)))
-                  (or (replique-clojure--symbol-node-p first-child)
-                      (replique-clojure--keyword-node-p first-child)
-                      (replique-clojure--var-node-p first-child))))))))
-
-(defun replique-clojure--match-docstring (_node parent _bol)
-  "Match PARENT when it is a docstring (so its interior is left untouched)."
-  (when (replique-clojure--string-node-p parent)
-    (equal (replique-clojure-docstring-bounds (treesit-node-start parent))
-           (cons (treesit-node-start parent) (treesit-node-end parent)))))
-
-(defun replique-clojure--match-string-interior (_node _parent bol)
-  "Match when BOL falls inside (not at the start of) a string.
-A continuation line of a multi-line string/docstring has no node starting at
-BOL, so treesit would otherwise indent it as if it were a body form.  Leaving
-it untouched preserves the author's whitespace inside string literals."
-  (nth 3 (syntax-ppss bol)))
-
-(defun replique-clojure--indent-rules ()
-  "Return the `treesit-simple-indent-rules' for treejure."
-  `((treejure
-     ((parent-is "^source$") parent-bol 0)
-     ;; Never reindent the interior of a multi-line string / docstring.
-     (replique-clojure--match-string-interior no-indent 0)
-     ;; Literal collections.
-     ((parent-is "^vector_literal$") parent 1)
-     ((parent-is "^map_literal$") parent 1)
-     ((parent-is "^set_literal$") parent 2)
-     ((and (parent-is "^reader_conditional$")
-           replique-clojure--match-marker-splicing)
-      parent 3)
-     ((parent-is "^reader_conditional$") parent 2)
-     ((parent-is "^tagged_literal$") parent 1)
-     ((parent-is "^namespaced_map_literal$") parent 1)
-     ;; Semantic body indentation (cljfmt :block / :inner).
-     (replique-clojure--match-form-body
-      replique-clojure--anchor-logical-parent-opening-paren 2)
-     ;; Threading macro arguments.
-     (replique-clojure--match-threading-macro-arg
-      replique-clojure--anchor-logical-prev-sibling 0)
-     ;; Function-call argument alignment.
-     (replique-clojure--match-function-call-arg
-      ,(replique-clojure--anchor-logical-nth-sibling 1) 0)
-     ;; One-space indent for the rest of a list / fn literal.
-     ((parent-is "^list_literal$") parent 1)
-     ((parent-is "^fn_literal$") parent 2)
-     (replique-clojure--match-with-metadata parent 0)
-     ;; Catch-all for wrapped elements inside vectors/maps/sets.
-     (replique-clojure--match-wrapped-in-non-list-collection
-      replique-clojure--anchor-wrapped-in-non-list-collection 0))))
 
 
 ;;;; Docstring filling
@@ -1324,8 +1435,10 @@ If JUSTIFY is non-nil, justify as well as fill."
     (modify-syntax-entry ?\\ "\\" table)
     table)
   "Syntax table for `replique-clojure-mode'.
-Drives sexp navigation, electric pairs and string/comment detection;
-highlighting itself comes from treesit, not this table.")
+Drives electric pairs, and what the rest of Emacs takes for a string or a
+comment.  Neither painting nor indentation reads it: both read the buffer
+with `replique-parse', which has a table of its own because what splits
+one Clojure token from the next is not what a syntax table is for.")
 
 
 ;;;; Grammar installation
@@ -1360,30 +1473,56 @@ highlighting itself comes from treesit, not this table.")
 
 ;;;; Mode setup
 
-(defun replique-clojure--mode-variables ()
-  "Set up the buffer-local treesit variables for `replique-clojure-mode'."
-  (setq-local indent-tabs-mode nil)
+(defun replique-clojure--navigation-variables ()
+  "Set up what `treesit' is still asked for, which is navigation.
+
+Moving over a form, finding the top of the one point is in, matching a
+bracket and folding.  Painting and indentation are read out of
+`replique-parse' and are set up whether or not a grammar is there."
+  (setq-local treesit-defun-prefer-top-level t)
+  (setq-local treesit-defun-tactic 'top-level)
+  (setq-local treesit-defun-name-function #'replique-clojure--defun-name-function)
+  (when (boundp 'treesit-thing-settings)   ; Emacs 30+
+    (setq-local treesit-thing-settings replique-clojure--thing-settings)))
+
+(defun replique-clojure-setup ()
+  "Read the current buffer as Clojure.
+
+Painting, indentation and filling, which are read out of `replique-parse'
+and are set up whether or not a grammar is there to be had; and then, when
+there is one, moving over forms.  What a missing grammar costs is the
+last of those.
+
+Called by `replique-clojure-mode', and by the repl, whose buffer is not
+in that mode and holds Clojure all the same."
   (setq-local comment-start ";")
   (setq-local comment-end "")
   (setq-local comment-add 1)
   (setq-local comment-start-skip ";+ *")
-
+  (setq-local font-lock-defaults
+              '(nil nil nil nil
+                    (font-lock-fontify-region-function
+                     . replique-clojure-font-lock-region)))
+  (setq-local indent-tabs-mode nil)
+  (setq-local indent-line-function #'replique-clojure-indent-line)
+  (setq-local indent-region-function #'replique-clojure-indent-region)
+  (setq-local fill-paragraph-function #'replique-clojure--fill-paragraph)
   (setq-local replique-clojure--extra-definers
               (replique-clojure--compute-extra-definers
                replique-clojure-extra-def-forms))
-
-  (setq-local treesit-defun-prefer-top-level t)
-  (setq-local treesit-defun-tactic 'top-level)
-  (setq-local treesit-defun-name-function #'replique-clojure--defun-name-function)
-
   (setq-local replique-clojure--semantic-indent-rules-cache
               (replique-clojure--compute-semantic-indent-cache
                replique-clojure-semantic-indent-rules))
-  (setq-local treesit-simple-indent-rules (replique-clojure--indent-rules))
-  (setq-local fill-paragraph-function #'replique-clojure--fill-paragraph)
-
-  (when (boundp 'treesit-thing-settings)   ; Emacs 30+
-    (setq-local treesit-thing-settings replique-clojure--thing-settings)))
+  (add-hook 'change-major-mode-hook #'replique-parse-forget nil t)
+  (replique-clojure--ensure-grammars)
+  ;; Quietly: a grammar that is not there costs moving over forms and
+  ;; nothing else now, and warning about it in a buffer that is painted and
+  ;; indented would be saying something the buffer contradicts.  The local
+  ;; map is wanted because `treesit-major-mode-setup' remaps keys into one
+  (when (and (current-local-map) (treesit-ready-p 'treejure t))
+    (treesit-parser-create 'treejure)
+    (replique-clojure--navigation-variables)
+    (treesit-major-mode-setup)))
 
 (defun replique-clojure--hack-local-variables ()
   "Recompute buffer-local caches after `.dir-locals.el' has been applied."
@@ -1399,25 +1538,15 @@ highlighting itself comes from treesit, not this table.")
 (define-derived-mode replique-clojure-mode prog-mode "Replique[clj]"
   "Major mode for editing Clojure code.
 
-Highlighting is read out of `replique-parse', which reads Clojure the way
-the Clojure reader does.  Indentation is Emacs' built-in `treesit'.
-Semantic faces, diagnostics and navigation come from a C module that is
-not part of replique."
+Highlighting and indentation are read out of `replique-parse', which
+reads Clojure the way the Clojure reader does, and work whether or not a
+grammar is installed.  Moving over forms is Emacs' built-in `treesit'.
+Semantic faces and diagnostics come from a C module that is not part of
+replique."
   :syntax-table replique-clojure-mode-syntax-table
-  ;; Painting asks nothing of a grammar, so it is set up whether or not one
-  ;; is there to be had.  What a missing grammar costs is indentation
-  (setq-local font-lock-defaults
-              '(nil nil nil nil
-                    (font-lock-fontify-region-function
-                     . replique-clojure-font-lock-region)))
-  (add-hook 'change-major-mode-hook #'replique-parse-forget nil t)
-  (replique-clojure--ensure-grammars)
-  (when (treesit-ready-p 'treejure)
-    (treesit-parser-create 'treejure)
-    (replique-clojure--mode-variables)
-    (treesit-major-mode-setup)
-    (add-hook 'hack-local-variables-hook
-              #'replique-clojure--hack-local-variables 0 t)))
+  (replique-clojure-setup)
+  (add-hook 'hack-local-variables-hook
+            #'replique-clojure--hack-local-variables 0 t))
 
 ;;;###autoload
 (define-derived-mode replique-clojure-clojurescript-mode replique-clojure-mode
