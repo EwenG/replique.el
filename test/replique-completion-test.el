@@ -491,9 +491,9 @@ is written is a path or is text - see `replique-name--string-context'."
                 (replique-name--code-context))))
 
 (ert-deftest replique-completion-test-code-is-answered-where-clojure-is-read ()
-  "The parse is what says a name written here is a Clojure name, which is
-what makes this safe to turn on wherever somebody wants it - the default
-value of the hook included."
+  "What set the reading up is what says a name written here is a Clojure
+name, which is what makes this safe to turn on wherever somebody wants it -
+the default value of the hook included."
   (with-temp-buffer
     (insert "(inc x)")
     (goto-char (1- (point-max)))

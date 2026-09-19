@@ -54,6 +54,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'xref)
+(require 'replique-common)
 (require 'replique-name)
 (require 'replique-process)
 
@@ -286,6 +287,12 @@ used the way cider uses it."
         (with-current-buffer (generate-new-buffer (file-name-nondirectory entry))
           (archive-zip-extract file entry)
           (set-visited-file-name name t)
+          ;; What the buffer holds, said in the two halves the protocol writes
+          ;; a file inside a jar in: the name above is not a path, and a
+          ;; command asked to load what is in here has to be able to say what
+          ;; it is - see `replique-buffer-file'
+          (setq-local replique-archive-file file)
+          (setq-local replique-archive-entry entry)
           (setq-local default-directory (file-name-directory file))
           (setq buffer-read-only t)
           (set-buffer-modified-p nil)
@@ -406,6 +413,106 @@ What could be written where point is, is a completion, and it is answered
 where somebody is writing rather than at a prompt asking for a name in
 the abstract - see `replique-completion-at-point'."
   nil)
+
+;;; Taking a definition away
+
+;; Which is the other thing to do with the name written here, and the reason
+;; this file is the one that does it: unmapping a var means naming the var,
+;; and turning what is at point into the name of the var it came from is the
+;; question this file already asks.
+;;
+;; It has to be asked, rather than read off the buffer.  A name written in
+;; code means whatever the namespace around it maps, so the name at point is
+;; as likely to be a var of clojure.core as one of the file being edited - and
+;; the process must not be handed "the definition I am pointing at" as though
+;; that were a name.  What goes out is the name the var has where it lives,
+;; which is what came back from asking what the name at point is.
+
+(defconst replique-symbol--vars '("function" "macro" "var")
+  "What a name has to be for there to be a var behind it to unmap.")
+
+(defun replique-symbol--own-p (found)
+  "Whether FOUND is a var of the namespace this buffer is in.
+
+Which is what makes removing it unsurprising: a definition of the file
+being edited, taken away from the process the file was loaded into.
+Anything else is somebody else's, and is asked about first."
+  (when-let* ((ns (replique-name-namespace)))
+    (equal ns (plist-get found :ns))))
+
+(defun replique-symbol--elsewhere (unmapped home)
+  "Return the namespaces UNMAPPED names other than HOME, sorted.
+
+UNMAPPED is what the process said, which is a namespace to the names it
+wrote the var as.  HOME is where the var lived, and is left out because
+it is already in what is being said: the interesting half is the rest,
+the namespaces that referred it and whose code will not compile until
+somebody edits them."
+  (let ((names nil))
+    (while unmapped
+      (let ((ns (substring (symbol-name (car unmapped)) 1)))
+        (unless (equal ns home) (push ns names)))
+      (setq unmapped (cddr unmapped)))
+    (sort names #'string<)))
+
+(defun replique-symbol--removed (frame)
+  "Say what FRAME says was taken away."
+  (let* ((removed (plist-get frame :removed))
+         (home (when (string-match "\\`\\(.*\\)/" removed)
+                 (match-string 1 removed)))
+         (elsewhere (replique-symbol--elsewhere (plist-get frame :unmapped) home)))
+    (if elsewhere
+        (message "replique: removed %s, and unmapped it from %s"
+                 removed (string-join elsewhere ", "))
+      (message "replique: removed %s" removed))))
+
+;;;###autoload
+(defun replique-remove-var ()
+  "Unmap the var the name at point is, everywhere the process maps it.
+
+Not `ns-unmap', which would leave it where it was referred.  A var that
+was referred is in every namespace that referred it, under whatever name
+that namespace referred it as, so taking it away from where it was
+defined leaves every caller still calling it - and a repl that goes on
+resolving a name nothing defines any more is a repl that agrees with
+itself all afternoon while the build disagrees.
+
+The var is named where it lives rather than where it is written, which is
+what the process is asked first: `map' means clojure.core\='s var in most
+namespaces, and removing the definition point is on must not be a way to
+unmap clojure.core from the process.  A name that is not a var - a class,
+a local, a keyword - is refused here rather than sent.
+
+A var of some other namespace is asked about before it goes, because that
+is the one somebody may not have meant.  One of the namespace this buffer
+is in goes without asking: it is the definition being edited, and taking
+it out of the process is what was asked for.
+
+There is no undoing it short of evaluating the definition again."
+  (interactive)
+  (let* ((bounds (or (replique-name-at-point) (user-error "No name at point")))
+         (text (buffer-substring-no-properties (car bounds) (cdr bounds)))
+         (context (or (replique-name-context)
+                      (user-error "Nothing here says what %s would mean" text)))
+         (found (or (replique-symbol--ask context text)
+                    (user-error "%s means nothing here" text)))
+         (name (replique-symbol-full-name found)))
+    (unless (member (plist-get found :type) replique-symbol--vars)
+      (user-error "%s is a %s, and only a var can be unmapped"
+                  name (plist-get found :type)))
+    (when (or (replique-symbol--own-p found)
+              (yes-or-no-p (format "Remove %s from the process? " name)))
+      (let* ((process (replique-name-process))
+             (frame (and process
+                         (replique-process-request-sync
+                          process (list :op :remove-var :var name)
+                          replique-name-timeout))))
+        (cond
+         ;; C-g, which is somebody saying they are no longer waiting
+         ((null frame) nil)
+         ((equal "error" (plist-get frame :tag))
+          (user-error "%s" (plist-get frame :message)))
+         (t (replique-symbol--removed frame)))))))
 
 ;;; Turning it on
 

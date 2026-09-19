@@ -1186,7 +1186,9 @@ belongs: the repl is in user, and nothing evaluated here moves it there."
 by hand: the mode replique opens one in is what turns them on."
   (replique-test-with-clojure "(def a 1)\n"
     (should replique-mode)
-    (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))))
+    (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))
+    (should (eq #'replique-load-file (key-binding (kbd "C-c C-k"))))
+    (should (eq #'replique-remove-var (key-binding (kbd "C-c C-u"))))))
 
 (ert-deftest replique-test-a-buffer-that-is-not-ours-is-not-evaluated ()
   "Evaluating reads the buffer with the grammar it is highlighted with, so
@@ -1459,6 +1461,169 @@ lost something cannot pass by echoing the question back."
     (let ((added (replique-test-eval
                   repl "(str (.toUpperCase \"café\") (apply str (repeat 2 \"🎉\")))")))
       (should (string-match-p "\"CAFÉ🎉🎉\"" added)))))
+
+
+;;; Loading a file
+
+(ert-deftest replique-test-a-buffer-of-a-file-is-that-file ()
+  "What goes out about a buffer is the file it holds."
+  (let ((file (expand-file-name "replique-test-what.clj" temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "(ns replique.test-what)\n"))
+          (let ((buffer (find-file-noselect file)))
+            (unwind-protect
+                (with-current-buffer buffer
+                  (should (equal (list :file file) (replique-buffer-file))))
+              (kill-buffer buffer))))
+      (delete-file file))))
+
+(ert-deftest replique-test-a-buffer-of-an-archive-is-a-file-and-an-entry ()
+  "There is no path to a file inside an archive, so the name such a buffer
+visits is not one - it is the two halves written together, and nothing but
+the buffer that made it knows how to take it apart.  So the halves are kept
+on the buffer, and it is those that go out."
+  (with-temp-buffer
+    (setq-local replique-archive-file "/home/me/.m2/clojure-1.12.5.jar")
+    (setq-local replique-archive-entry "clojure/string.clj")
+    (should (equal (list :file "/home/me/.m2/clojure-1.12.5.jar"
+                         :entry "clojure/string.clj")
+                   (replique-buffer-file)))
+    ;; and through the mode the buffer is given, which is given to it after it
+    ;; has been filled - turning a mode on kills the local variables of a
+    ;; buffer, and what these say is not about the mode
+    (replique-clojure-mode)
+    (should (equal (list :file "/home/me/.m2/clojure-1.12.5.jar"
+                         :entry "clojure/string.clj")
+                   (replique-buffer-file)))))
+
+(ert-deftest replique-test-a-buffer-of-no-file-is-nothing-to-point-at ()
+  (with-temp-buffer
+    (should-not (replique-buffer-file))))
+
+(ert-deftest replique-test-the-load-directive-names-what-to-load ()
+  "A file, and the entry beside it where that file is an archive - which is
+how a file inside a jar is written throughout the protocol, so what came back
+from asking where a definition was written is what goes out to load it."
+  (should (equal "#replique/load {:file \"/a/b.clj\"}"
+                 (replique-load-directive '(:file "/a/b.clj"))))
+  (should (equal "#replique/load {:file \"/a/b.jar\" :entry \"c/d.clj\"}"
+                 (replique-load-directive '(:file "/a/b.jar" :entry "c/d.clj")))))
+
+(ert-deftest replique-test-loading-a-file-reads-it-as-one-unit ()
+  "Which is not the same as evaluating its forms: the ns form runs first, so
+what the file defines lands in the namespace the file names, without the
+client having said anything about which namespace that is."
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique_test_loaded.clj" temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "(ns replique.test-loaded)\n"
+                      "(println \"loading\")\n"
+                      "(defn answer [] :loaded)\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (setq replique-current-repl repl)
+                    (replique-load-file))
+                (kill-buffer buffer)))
+            (should (replique-test-wait-for
+                     (lambda () (string-match-p "loading" (replique-test-text repl)))))
+            ;; the repl never moved: it is still in user, and the definition is
+            ;; in the namespace the file named
+            (should (equal "user" (replique-repl--ns repl)))
+            (should (string-match-p
+                     "^:loaded$"
+                     (replique-test-eval repl "(replique.test-loaded/answer)"))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-what-was-asked-for-is-shown-in-the-repl ()
+  "A source directive is protocol and is kept out of the transcript, because
+the form written under it is what there is to show.  A load directive is the
+whole of what was asked for, and the output and the result about to arrive
+would otherwise stand under nothing."
+  (replique-test-with-repl repl
+    (let ((file (expand-file-name "replique_test_shown.clj" temporary-file-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "(ns replique.test-shown)\n"))
+            (let ((buffer (find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buffer
+                    (setq replique-current-repl repl)
+                    (replique-load-file))
+                (kill-buffer buffer)))
+            (should (replique-test-wait-for
+                     (lambda () (string-match-p (regexp-quote "#replique/load")
+                                                (replique-test-text repl)))))
+            (should (string-match-p (regexp-quote file) (replique-test-text repl))))
+        (delete-file file)))))
+
+(ert-deftest replique-test-a-buffer-is-saved-before-it-is-loaded ()
+  "The process reads the file off the disk, so what a buffer with unsaved
+changes would load is not what is on the screen."
+  (let ((file (expand-file-name "replique-test-unsaved.clj" temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "(ns replique.test-unsaved)\n"))
+          (let ((buffer (find-file-noselect file)))
+            (unwind-protect
+                (with-current-buffer buffer
+                  (goto-char (point-max))
+                  (insert "(def a 1)\n")
+                  (should (buffer-modified-p))
+                  (let ((replique-save-before-load t))
+                    (replique-eval--save-before-load))
+                  (should-not (buffer-modified-p))
+                  (should (string-match-p "(def a 1)" (with-temp-buffer
+                                                        (insert-file-contents file)
+                                                        (buffer-string)))))
+              (kill-buffer buffer))))
+      (delete-file file))))
+
+(ert-deftest replique-test-a-buffer-may-be-loaded-as-it-is-on-the-disk ()
+  "Which is a real thing to want: reverting an experiment by loading what was
+last saved.  Nothing is asked and nothing is saved."
+  (let ((file (expand-file-name "replique-test-ondisk.clj" temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "(ns replique.test-ondisk)\n"))
+          (let ((buffer (find-file-noselect file)))
+            (unwind-protect
+                (with-current-buffer buffer
+                  (goto-char (point-max))
+                  (insert "(def a 1)\n")
+                  (cl-letf (((symbol-function 'y-or-n-p)
+                             (lambda (&rest _) (error "Nothing should be asked"))))
+                    (let ((replique-save-before-load nil))
+                      (replique-eval--save-before-load)))
+                  (should (buffer-modified-p)))
+              (set-buffer-modified-p nil)
+              (kill-buffer buffer))))
+      (delete-file file))))
+
+(ert-deftest replique-test-a-buffer-holding-no-file-is-not-loaded ()
+  "Said as what it is.  A buffer that holds no file and a file that is not
+there are two different things to be told, and a command that only has to
+fail somehow passes for either."
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert "(def a 1)\n")
+    (let ((err (should-error (replique-load-file) :type 'user-error)))
+      (should (string-match-p "holds no file to load" (cadr err))))))
+
+(ert-deftest replique-test-a-file-that-is-not-there-is-not-loaded ()
+  "The process reads the file off the disk, so a buffer visiting a name
+nobody has written yet fails here, where the name is, rather than there."
+  (let ((file (expand-file-name "replique-test-absent.clj" temporary-file-directory)))
+    (when (file-exists-p file) (delete-file file))
+    (let ((buffer (find-file-noselect file)))
+      (unwind-protect
+          (with-current-buffer buffer
+            (let ((err (should-error (replique-load-file) :type 'user-error)))
+              (should (string-match-p (regexp-quote file) (cadr err)))))
+        (kill-buffer buffer)))))
 
 ;;; Interrupting
 

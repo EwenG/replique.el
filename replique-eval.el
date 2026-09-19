@@ -73,6 +73,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'replique-parse)
+(require 'replique-common)
 (require 'replique-edn)
 (require 'replique-process)
 (require 'replique-repl)
@@ -287,6 +288,46 @@ have yet is created, with `clojure.core' referred into it - see
 `enter-ns!' in replique.repl."
   (format "#replique/ns %s" ns))
 
+(defcustom replique-save-before-load 'ask
+  "What to do about unsaved changes when the buffer is loaded.
+
+The process reads the file off the disk, so what a buffer with unsaved
+changes loads is not what is on the screen.  `ask\=' offers to save it
+first, t saves without asking, and nil loads what is on the disk and says
+nothing - which is a real thing to want, since reverting by loading is
+how somebody undoes an experiment."
+  :type '(choice (const :tag "Ask" ask)
+                 (const :tag "Save" t)
+                 (const :tag "Load what is on the disk" nil))
+  :group 'replique)
+
+(defun replique-load-directive (what)
+  "Return the directive asking for WHAT to be loaded.
+
+WHAT is a file, and the entry beside it where that file is an archive -
+see `replique-buffer-file\='.
+
+Loading a file is not evaluating the forms it holds one at a time.  It is
+read as one unit, its ns form first and its definitions in the order they
+are written, which is how the compiler will see it and how the
+application will see it.
+
+Sent to the repl rather than asked of the process on the side, because
+what loading a file produces - a reflection warning, a \"WARNING: foo
+already refers to\" - is the answer to what was just asked for, and
+belongs in the repl it was asked from rather than among what the
+application happens to print."
+  (format "#replique/load %s" (replique-edn-map what)))
+
+(defun replique-eval--save-before-load ()
+  "Save the buffer before loading it, where that is what was asked for."
+  (when (and (buffer-modified-p) (buffer-file-name))
+    (cond
+     ((eq replique-save-before-load t) (save-buffer))
+     ((null replique-save-before-load) nil)
+     ((y-or-n-p (format "Save %s before loading it? " (buffer-name)))
+      (save-buffer)))))
+
 (defun replique-eval--send (nodes)
   "Evaluate NODES, forms of the current buffer, in the current repl.
 
@@ -454,6 +495,35 @@ A form that starts inside the region is evaluated whole, even where it
 runs past END: half a form is a read error, not an evaluation."
   (interactive "r")
   (replique-eval--send (replique-eval--nodes start end)))
+
+;;;###autoload
+(defun replique-load-file ()
+  "Load the file this buffer holds, in the current repl.
+
+Which is not the same as evaluating its forms: a file is loaded as one
+unit, its ns form first and its definitions in the order they are
+written - see `replique-load-directive\='.
+
+What is loaded is the file on the disk, so a buffer with unsaved changes
+is offered to be saved first - see `replique-save-before-load\='.
+
+A buffer read out of a jar is loaded as the entry it came from.  There is
+no path to a file inside an archive, so what goes out is the archive and
+the entry, which is how the process answered where the definition in here
+was written in the first place."
+  (interactive)
+  (replique-eval--save-before-load)
+  (let ((what (or (replique-buffer-file)
+                  (user-error "This buffer holds no file to load"))))
+    (unless (file-exists-p (plist-get what :file))
+      (user-error "There is no %s to load" (plist-get what :file)))
+    (replique-repl-send-code
+     (replique-repl-ensure)
+     ;; Shown in the repl buffer, where a source directive is not.  That one
+     ;; describes a form written underneath it and the form is what there is
+     ;; to show; this one is the whole of what was asked for, and the output
+     ;; and the result about to arrive would otherwise stand under nothing
+     (replique-load-directive what))))
 
 (provide 'replique-eval)
 

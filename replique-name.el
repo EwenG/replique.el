@@ -166,12 +166,16 @@ written, and a name bound twice is one name to write."
 (defun replique-name--clojure-p ()
   "Return non-nil when this buffer is one replique reads as Clojure.
 
-The mode says so, where it used to be the parse that did: the text is
-read where a name is asked about, so every buffer can be read and being
-readable no longer tells a Clojure buffer from a prose one.  What this
-keeps is why the question was asked - these are safe to turn on wherever
-somebody wants them, the default value of the hook included."
-  (and (derived-mode-p 'replique-clojure-mode) t))
+What set the reading up says so, where it used to be the parse that did:
+the text is read where a name is asked about, so every buffer can be read
+and being readable no longer tells a Clojure buffer from a prose one.
+What this keeps is why the question was asked - these are safe to turn on
+wherever somebody wants them, the default value of the hook included.
+
+`replique-clojure-read-p\=' rather than the mode, because the repl is
+not in that mode and is Clojure: `replique-clojure-setup\=' is what
+makes a buffer one, and the repl calls it too."
+  (and replique-clojure-read-p t))
 
 (defconst replique-name--literals
   '(string keyword number character boolean regex)
@@ -383,7 +387,12 @@ require, what follows an :as is a name being given and nothing is offered
 for it, where the same nil outside one would be a point in ordinary code.
 A string and ordinary code settle between themselves - each of them is
 read where point is where the other is not."
-  (if (replique-deps-form-at-p (point))
+  ;; The dependency form is asked whether this is a Clojure buffer too, and
+  ;; not only the other two.  `replique-parse\=' reads any buffer at all -
+  ;; it is text that it reads - so a require form written in a prose buffer
+  ;; parses as one, and answering about it would be replique speaking for a
+  ;; buffer it has no business speaking for.
+  (if (and (replique-name--clojure-p) (replique-deps-form-at-p (point)))
       (replique-deps-context-at (point))
     (or (replique-name--string-context)
         (replique-name--code-context))))

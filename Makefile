@@ -10,8 +10,6 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
       replique-pprint.el replique-forms.el replique-name.el \
       replique-completion.el replique-symbol.el replique.el
 
-# replique-clojure-mode.el is left out: it is master's file, carried over as
-# it was, and its checkdoc warnings are not this tree's to answer
 LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-edn.el replique-conn.el \
        replique-exception.el \
@@ -52,7 +50,12 @@ native: compile
 	  --eval "(mapc (lambda (f) (native-compile f)) \
 	                (list $(patsubst %,\"%\",$(SRC))))"
 
-test:
+# Compiled first, because that is what is then loaded.  `load-prefer-newer'
+# is nil by default, so emacs loads the .elc whether or not the .el beside it
+# is newer - which makes a suite run after an edit a suite run against the
+# code as it was before the edit.  The first defeat test written against this
+# tree found it by coming back inert thirteen times in a row.
+test: compile
 	REPLIQUE_PROJECT=$(REPLIQUE_PROJECT) $(EMACS) -Q -batch -L . -L test \
 	  -l replique-test -l replique-locals-test -l replique-deps-test \
 	  -l replique-parse-test -l replique-clojure-mode-test \

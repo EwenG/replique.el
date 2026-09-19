@@ -1426,6 +1426,19 @@ one Clojure token from the next is not what a syntax table is for.")
 
 ;;;; Mode setup
 
+(defvar-local replique-clojure-read-p nil
+  "Whether replique reads this buffer as Clojure.
+
+Set by `replique-clojure-setup\=', which is what makes a buffer one -
+the mode calls it, and so does the repl, whose buffer is not in that mode
+and holds Clojure all the same.  So this is true of exactly the buffers
+where the reading was set up, which `derived-mode-p\=' is not: it is
+false in a repl, and a repl is the buffer somebody is likeliest to be
+writing Clojure in.
+
+Not a permanent local.  Turning another mode on takes the reading away,
+and this goes with it.")
+
 (defun replique-clojure-setup ()
   "Read the current buffer as Clojure.
 
@@ -1456,6 +1469,8 @@ that mode and holds Clojure all the same."
   (setq-local beginning-of-defun-function #'replique-clojure-beginning-of-defun)
   (setq-local end-of-defun-function #'replique-clojure-end-of-defun)
   (setq-local add-log-current-defun-function #'replique-clojure-current-defun)
+  ;; Last, so that it is true of a buffer where all of the above is done
+  (setq-local replique-clojure-read-p t)
   (add-hook 'change-major-mode-hook #'replique-parse-forget nil t))
 
 (defun replique-clojure--hack-local-variables ()

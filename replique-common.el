@@ -196,6 +196,49 @@ left where the reader put it."
         (dolist (w windows) (set-window-point w (point-max)))))
     (replique-note-unread buffer)))
 
+;;; Code read out of an archive
+
+;; A definition inside a jar has no file for Emacs to visit - there is no path
+;; to a file inside an archive - so the entry is read out into a buffer of its
+;; own, and that buffer is given a name made of the two of them: see
+;; `replique-symbol--visit-entry\='.
+;;
+;; That name is not a path, and nothing but the buffer that made it knows how
+;; to take it apart again.  So the two halves are kept on the buffer instead,
+;; because a command asked to do something with what is in one has to be able
+;; to say to the process what it is.
+
+(defvar-local replique-archive-file nil
+  "The archive this buffer was read out of, or nil where it holds a file.")
+
+(defvar-local replique-archive-entry nil
+  "Which entry of `replique-archive-file\=' this buffer holds.")
+
+;; Kept through a change of major mode, which is otherwise where they would
+;; go: turning a mode on kills the local variables of the buffer, and the
+;; buffer is given its mode after it has been filled - `set-auto-mode\=' reads
+;; the name it was given and the text that was put in it.  What these say is
+;; not about the mode anyway.  It is what the buffer holds, which is the same
+;; whichever mode is reading it.
+(put 'replique-archive-file 'permanent-local t)
+(put 'replique-archive-entry 'permanent-local t)
+
+(defun replique-buffer-file ()
+  "Return what to tell the process this buffer is, or nil for nothing to tell.
+
+A property list holding the :file, and the :entry beside it where that
+file is an archive - which is how a file inside a jar is written
+throughout the protocol, and how the process answers where a definition
+was written.  So what comes back from asking about a name is the same
+shape as what goes out to act on it.
+
+Nil where the buffer is neither, which is a buffer holding nothing the
+process could be pointed at: a scratch buffer, or a repl."
+  (cond
+   ((and replique-archive-file replique-archive-entry)
+    (list :file replique-archive-file :entry replique-archive-entry))
+   ((buffer-file-name) (list :file (buffer-file-name)))))
+
 (provide 'replique-common)
 
 ;;; replique-common.el ends here
