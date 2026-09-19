@@ -787,6 +787,44 @@ FORMS is what that one takes, and means the same thing here."
                              start (replique-locals--naming-by (pop nodes) forms))))
               found))))))
 
+(defun replique-locals-at-definition-name-p (pos &optional forms)
+  "Say whether POS is at the name a definition is giving.
+
+The point in (defn f|oo [] 1) and in (deftype P|oint [x]), and not the
+point in (defn foo [b|ar] 1) or in (let [b|ar 1] bar).  All four are
+places where a name is being given - see
+`replique-locals-at-binding-position-p' - and these two are the ones
+where the name being given is not a local: the name of a `defn' is a var
+and the name of a `deftype' is a class, which is what
+`replique-locals--naming-by' says about why nothing binds either of them.
+
+Which makes them names the process can be asked about, once the file has
+been loaded, where a local is a name the process has never seen.  Asking
+what a name is and asking where it is used are both worth asking with
+point on the definition - that is where somebody is looking when they
+wonder who calls this - and neither of them is a completion, which is the
+question a binding position has no answer to.
+
+The name of an (fn name [x] ...) is not one of these.  It is a local, and
+it is how that function calls itself.
+
+FORMS is what `replique-locals-at-binding-position-p' takes, and means
+the same thing here."
+  (save-restriction
+    (widen)
+    (let ((forms (or forms replique-locals-default-forms)))
+      (when-let* ((node (replique-locals--name-node pos))
+                  (start (replique-parse-start node)))
+        (let ((nodes (replique-locals--enclosing pos))
+              (found nil))
+          (while (and nodes (not found))
+            (let ((enclosing (pop nodes)))
+              (when (memq (replique-locals--kind enclosing forms)
+                          '(defn-like deftype-like))
+                (setq found (replique-locals--at-name-p
+                             start (replique-locals--named enclosing))))))
+          found)))))
+
 (provide 'replique-locals)
 
 ;;; replique-locals.el ends here

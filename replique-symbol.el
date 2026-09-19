@@ -55,31 +55,43 @@
 (require 'subr-x)
 (require 'xref)
 (require 'replique-common)
+(require 'replique-locals)
 (require 'replique-name)
 (require 'replique-process)
 
 ;;; Asking
 
-(defun replique-symbol--ask (context text)
-  "Return what TEXT is in CONTEXT, or nil, by asking the process and waiting.
+(defun replique-symbol--asked (op context text)
+  "Return the reply to asking OP about TEXT in CONTEXT, or nil.
 
 For the commands somebody presses a key for.  What is asked while they
 read rather than while they wait does not wait - see
-`replique-symbol-eldoc'."
-  (let* ((process (replique-name-process))
-         (frame (and process
-                     (replique-process-request-sync
-                      process
-                      (replique-name-message :symbol context text)
-                      replique-name-timeout))))
-    (cond
-     ;; C-g, which is somebody saying they are no longer waiting.  Nothing
-     ;; to say about it: they know
-     ((null frame) nil)
-     ((equal "error" (plist-get frame :tag))
-      (message "replique: %s" (plist-get frame :message))
-      nil)
-     (t (plist-get frame :symbol)))))
+`replique-symbol-eldoc'.
+
+The whole frame, an error frame included, because what an error means
+depends on what was asked.  A name the process could not look up is an
+ordinary answer where somebody is reading, and something worth stopping
+for where they asked for every use of it - see `xref-backend-references'.
+
+Nil where the wait was quit, which is somebody saying they are no longer
+waiting.  There is nothing to say about that: they know."
+  (let ((process (replique-name-process)))
+    (and process
+         (replique-process-request-sync
+          process
+          (replique-name-message op context text)
+          replique-name-timeout))))
+
+(defun replique-symbol--ask (context text)
+  "Return what TEXT is in CONTEXT, or nil, by asking the process and waiting.
+
+What could not be answered is said once and answered with nothing, which
+is what the commands that read a name want: they are asked about whatever
+point happens to be on."
+  (when-let* ((frame (replique-symbol--asked :symbol context text)))
+    (if (equal "error" (plist-get frame :tag))
+        (progn (message "replique: %s" (plist-get frame :message)) nil)
+      (plist-get frame :symbol))))
 
 ;;; What a name is called
 
@@ -336,13 +348,27 @@ Emacs can visit, and there would be nothing to make an
         (when-let* ((line (plist-get found :line)))
           (forward-line (1- line))
           (when-let* ((column (plist-get found :column)))
-            (move-to-column (1- column))))
+            ;; Characters rather than `move-to-column', which counts what a
+            ;; tab takes up on screen.  A column the process sends is a count
+            ;; of characters - it is what the reader counted while it read the
+            ;; file - so a line with a tab in it would land somewhere else
+            ;; entirely.  Held to the end of the line, since a column past the
+            ;; end of one is a file edited since the process read it
+            (forward-char (min (1- column) (- (line-end-position) (point))))))
         (point-marker)))))
 
 (cl-defmethod xref-location-group ((location replique-symbol--location))
   "Return what LOCATION is shown under, which is the file it is in."
   (let ((found (replique-symbol--location-found location)))
     (or (plist-get found :entry) (plist-get found :file) "")))
+
+(cl-defmethod xref-location-line ((location replique-symbol--location))
+  "Return the line LOCATION is on, which is what is shown beside it.
+
+It also tells xref that the summary of an item at this location is the
+text of that line, so that two names used on one line are shown on one
+line - see `replique-symbol--references'."
+  (plist-get (replique-symbol--location-found location) :line))
 
 ;;;###autoload
 (defun replique-symbol-xref-backend ()
@@ -356,6 +382,28 @@ own keys for it would be a package whose history is not the history the
 rest of the editor keeps."
   (and (replique-name-process) 'replique))
 
+(defun replique-symbol--asked-about ()
+  "Return what point is asking about, or nil where it asks about nothing.
+
+`replique-name-context' and, where that answers nothing, the name of a
+definition.  It answers nothing there on purpose: a name being given is a
+name a completion has nothing to offer for, since nothing knows it yet.
+
+But the name of a `defn' or a `deftype' is a var or a class all the same -
+see `replique-locals-at-definition-name-p' - and it is exactly the name to
+ask about with point on it.  Who calls this is asked where the definition
+is written, not at one of the call sites; and what this is, is asked there
+by anything that reads a buffer looking for a definition to describe.
+
+A parameter, a `let' binding and the name of an (fn name [x] ...) are not
+these.  Each of them is a local, and a local is a name the process has
+never seen."
+  (or (replique-name-context)
+      (when (replique-locals-at-definition-name-p (point))
+        (append (list :position :code)
+                (when-let* ((ns (replique-name-namespace)))
+                  (list :ns ns))))))
+
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql replique)))
   "Return the name point is in, carrying what it was read in.
 
@@ -364,7 +412,7 @@ hands back: what a name means depends on the namespace it is written in
 and the slot of the form it is written at, and by the time the backend is
 asked for the definition, point may be somewhere else entirely."
   (when-let* ((bounds (replique-name-at-point))
-              (context (replique-name-context)))
+              (context (replique-symbol--asked-about)))
     (let ((text (buffer-substring-no-properties (car bounds) (cdr bounds))))
       (apply #'propertize text 'replique-context context
              ;; and where it is bound, when it is bound here.  A local is
@@ -394,17 +442,191 @@ it in."
                                                   (marker-position bound))))
     (replique-symbol--definitions identifier)))
 
+(defun replique-symbol--context (identifier)
+  "Return what IDENTIFIER was read in, as the request carries it.
+
+Whatever rode along on the string where it came out of a buffer, and
+otherwise what point is in now - which is what a name somebody typed at a
+prompt is read against."
+  (or (get-text-property 0 'replique-context identifier)
+      (replique-name-context)
+      (append (list :position :code)
+              (when-let* ((ns (replique-name-namespace)))
+                (list :ns ns)))))
+
 (defun replique-symbol--definitions (identifier)
   "Return where IDENTIFIER was written, by asking the process."
-  (when-let* ((context (or (get-text-property 0 'replique-context identifier)
-                           (replique-name-context)
-                           (append (list :position :code)
-                                   (when-let* ((ns (replique-name-namespace)))
-                                     (list :ns ns)))))
+  (when-let* ((context (replique-symbol--context identifier))
               (found (replique-symbol--ask context (substring-no-properties identifier)))
               ((plist-get found :file)))
     (list (xref-make (or (replique-symbol--said found nil) identifier)
                      (replique-symbol--make-location found)))))
+
+;;; Finding every use
+
+;; Which is a different question from finding a definition, and a harder one.
+;; A definition is one place and the process knows it because the var
+;; remembers it; a use is every place a name was written, and the name is not
+;; the same name in each of them.  `clojure.core/let' is written let where
+;; core is referred, c/let where it is aliased, something else again where a
+;; :rename gave it another name - and a macro writes it in code nobody typed.
+;; Searching the text finds the ones spelled the way point is spelled, misses
+;; the rest, and hits every let in every string and comment on the way.
+;;
+;; So it is the process that answers, out of what its compiler resolved while
+;; it read the files - see the :usages op.  Not every process can: it takes a
+;; compiler that writes that down, which is a fork of clojure rather than
+;; clojure, and one that does not says so when asked rather than answering
+;; that the name is used nowhere.
+
+(defun replique-symbol--source (found opened)
+  "Return a buffer holding what FOUND was written in, or nil.
+
+OPENED remembers what has already been read, so that a file holding a
+hundred uses is read once - and says which of them are this command's to
+kill afterwards.  A file is read into a buffer of its own, with none of
+what visiting one does; an entry of an archive is read into the buffer
+`replique-symbol--visit-entry' keeps, which is the one somebody lands in
+when they jump there, so it is left alone."
+  (let* ((file (plist-get found :file))
+         (entry (plist-get found :entry))
+         (key (cons file entry))
+         (known (gethash key opened 'missing)))
+    (car (if (eq 'missing known)
+             (puthash key
+                      (if entry
+                          (cons (replique-symbol--visit found) nil)
+                        (cons (when (and file (file-readable-p file))
+                                (let ((buffer (generate-new-buffer " *replique-source*" t)))
+                                  (with-current-buffer buffer
+                                    (insert-file-contents file))
+                                  buffer))
+                              t))
+                      opened)
+           known))))
+
+(defun replique-symbol--line-of (buffer line)
+  "Return the text of LINE of BUFFER, or nil when there is no such line."
+  (when (and buffer line)
+    (with-current-buffer buffer
+      (save-excursion
+        (goto-char (point-min))
+        (when (zerop (forward-line (1- line)))
+          (buffer-substring-no-properties (point) (line-end-position)))))))
+
+(defun replique-symbol--same-line-p (a b)
+  "Whether the usages A and B are on the same line of the same file."
+  (and (equal (plist-get a :file) (plist-get b :file))
+       (equal (plist-get a :entry) (plist-get b :entry))
+       (equal (plist-get a :line) (plist-get b :line))))
+
+(defun replique-symbol--width (usage)
+  "Return how many characters USAGE covers, or nil when it does not say.
+
+Which is the name as it is written there rather than the name of the var:
+seven where it is written c/thing and five where it is written thing.
+Nothing for one that does not end on the line it starts on, which a name
+cannot do - but the process is answering out of what it recorded, and a
+recording with no end in it is not one to make a replacement out of."
+  (let ((line (plist-get usage :line))
+        (column (plist-get usage :column))
+        (end-line (plist-get usage :end-line))
+        (end-column (plist-get usage :end-column)))
+    (when (and column end-column (equal line end-line) (> end-column column))
+      (- end-column column))))
+
+(defun replique-symbol--reference (usage previous next opened)
+  "Return the xref item for USAGE, or nil when its file cannot be read.
+
+PREVIOUS and NEXT are the usages either side of it, where those are on
+the same line, and between them they say what piece of that line the
+summary is.  OPENED is where the files already read are remembered - see
+`replique-symbol--source'.
+
+Xref shows the items of one line of one file as one line, by writing
+their summaries one after another - so the first of them holds
+the line up to the second, the second the line up to the third, and the
+last one the rest of it.  Written whole, each of them, the line would be
+shown once for every name in it.
+
+That is also what makes \\[xref-query-replace-in-results] work on the
+answer: it asks whether the text at each item is still the text its
+summary says, reading from the start of the line for the first of them
+and from the item itself for the rest - which is what these pieces are -
+and replaces the many characters `replique-symbol--width' says.  So
+renaming a var across a project is `xref-find-references' and then one
+command, and neither of them is replique's."
+  (when-let* ((column (plist-get usage :column))
+              (buffer (replique-symbol--source usage opened))
+              (line (replique-symbol--line-of buffer (plist-get usage :line)))
+              (from (if previous (1- column) 0))
+              (to (if next (1- (plist-get next :column)) (length line)))
+              ((<= 0 from to (length line))))
+    (let ((summary (substring line from to))
+          (location (replique-symbol--make-location usage))
+          (width (replique-symbol--width usage)))
+      (if width (xref-make-match summary location width) (xref-make summary location)))))
+
+(defun replique-symbol--references (usages)
+  "Return the xref items for USAGES, as the process answered with them.
+
+In the order they came, which is by file and down each file: what an
+answer is used for is walking through it, and one that came back in a
+different order each time is one nothing can be walked through.  It is
+also the order the summaries are cut up in - see
+`replique-symbol--reference'."
+  (let ((opened (make-hash-table :test #'equal))
+        (previous nil)
+        (found nil))
+    (unwind-protect
+        (progn
+          (while usages
+            (let* ((usage (car usages))
+                   (rest (cdr usages))
+                   (before (and previous
+                                (replique-symbol--same-line-p previous usage)
+                                previous))
+                   (next (and rest
+                              (replique-symbol--same-line-p usage (car rest))
+                              (car rest))))
+              (when-let* ((item (replique-symbol--reference usage before next opened)))
+                (push item found))
+              (setq previous usage)
+              (setq usages rest)))
+          (nreverse found))
+      ;; The buffers this read a file into, and not the ones it was handed:
+      ;; an entry of an archive is read into the buffer somebody lands in
+      ;; when they jump there, which was there before this and stays after it
+      (maphash (lambda (_key value)
+                 (when (and (cdr value) (buffer-live-p (car value)))
+                   (kill-buffer (car value))))
+               opened))))
+
+(cl-defmethod xref-backend-references ((_backend (eql replique)) identifier)
+  "Return every place IDENTIFIER is used, as a list of xref items.
+
+For \\[xref-find-references], and through it for
+\\[xref-query-replace-in-results] - which is what renaming a var across a
+project is, and it is xref's command rather than one of replique's.
+
+A var, a keyword and a class are all answered, since all three are things
+somebody renames and none of the three can be found by reading the text.
+
+A local is not: it is bound by a form in this buffer, the process has
+never seen it, and a process that answered about one would be answering
+about somebody else's.  Said rather than answered with nothing, which
+xref would show as the name being used nowhere."
+  (when (get-text-property 0 'replique-bound identifier)
+    (user-error "Replique: %s is bound here, so the process has never seen it"
+                (substring-no-properties identifier)))
+  (let* ((context (or (replique-symbol--context identifier)
+                      (user-error "Replique: nothing here to ask about")))
+         (frame (replique-symbol--asked :usages context
+                                        (substring-no-properties identifier))))
+    (when frame
+      (when (equal "error" (plist-get frame :tag))
+        (user-error "Replique: %s" (plist-get frame :message)))
+      (replique-symbol--references (plist-get frame :usages)))))
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql replique)))
   "Return nothing to complete an identifier with.

@@ -650,6 +650,167 @@ work: the two halves the process answered are the two halves that go back."
                                       (replique-load-directive what)))))
         (kill-buffer buffer)))))
 
+;;; Finding every use
+
+;; What comes back from the process is a place and a width, and what xref
+;; shows is a line of text with an item on it.  Turning the first into the
+;; second is where the rules are - a line holding two uses is shown once,
+;; with each of them holding its piece of it, and a replacement has to land
+;; on the characters the process measured and not on a tab stop - so it is
+;; tested here, on usages written out by hand.  Where they came from is the
+;; process's half, and is tested on that side.
+
+(defmacro replique-symbol-test--in-a-file (text &rest body)
+  "Run BODY with PATH bound to a file holding TEXT, and delete it after."
+  (declare (indent 1))
+  `(let ((path (make-temp-file "replique-symbol-test" nil ".clj" ,text)))
+     (unwind-protect (progn ,@body)
+       (delete-file path))))
+
+(defun replique-symbol-test--use (path line column width)
+  "Return the usage the process would send for WIDTH characters there.
+PATH is the file, LINE and COLUMN where the name starts, counting from one."
+  (list :file path :line line :column column
+        :end-line line :end-column (+ column width)))
+
+(defun replique-symbol-test--written (item)
+  "Return the text ITEM covers, read out of the file it is in."
+  (let* ((marker (xref-location-marker (xref-item-location item)))
+         (buffer (marker-buffer marker)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (buffer-substring-no-properties marker (+ marker (xref-match-length item))))
+      (kill-buffer buffer))))
+
+(ert-deftest replique-symbol-test-a-use-is-shown-as-the-line-it-is-on ()
+  "Which is what xref shows for a search result, and what
+\\[xref-query-replace-in-results] reads to check the file has not moved on
+since."
+  (replique-symbol-test--in-a-file "(ns probe.core)\n(defn run [] (u/twice 1))\n"
+    (let ((found (replique-symbol--references
+                  (list (replique-symbol-test--use path 2 15 7)))))
+      (should (equal 1 (length found)))
+      (should (equal "(defn run [] (u/twice 1))" (xref-item-summary (car found))))
+      (should (equal 7 (xref-match-length (car found))))
+      (should (equal "u/twice" (replique-symbol-test--written (car found)))))))
+
+(ert-deftest replique-symbol-test-two-uses-on-one-line-are-cut-up ()
+  "Xref writes the summaries of the items of one line one after another, so
+each of them is its piece of that line - written whole, the line would be
+shown once for every name in it."
+  (replique-symbol-test--in-a-file "(+ (u/twice 1) (u/twice 2))\n"
+    (let ((found (replique-symbol--references
+                  (list (replique-symbol-test--use path 1 5 7)
+                        (replique-symbol-test--use path 1 17 7)))))
+      (should (equal 2 (length found)))
+      ;; the second piece starts where the second use does, which is what
+      ;; xref reads back to check the line still says what it said
+      (should (equal '("(+ (u/twice 1) (" "u/twice 2))")
+                     (mapcar #'xref-item-summary found)))
+      (should (equal "(+ (u/twice 1) (u/twice 2))"
+                     (apply #'concat (mapcar #'xref-item-summary found))))
+      (should (equal '("u/twice" "u/twice")
+                     (mapcar #'replique-symbol-test--written found))))))
+
+(ert-deftest replique-symbol-test-a-column-is-characters-and-not-a-tab-stop ()
+  "The column a process sends is what its reader counted while it read the
+file, which counts a tab once.  `move-to-column' counts what a tab takes up
+on screen, so a line with one in it would land somewhere else entirely."
+  (replique-symbol-test--in-a-file "(let [x 1]\n\t(u/twice x))\n"
+    (let ((found (replique-symbol--references
+                  (list (replique-symbol-test--use path 2 3 7)))))
+      (should (equal "u/twice" (replique-symbol-test--written (car found)))))))
+
+(ert-deftest replique-symbol-test-a-use-with-no-width-is-not-replaced ()
+  "A name cannot end on another line than it starts on, but what is being
+read is a recording - and one that does not say where a use ends is one to
+walk to and not one to replace, which is an item rather than a match."
+  (replique-symbol-test--in-a-file "(u/twice 1)\n"
+    (let ((found (replique-symbol--references
+                  (list (list :file path :line 1 :column 2)))))
+      (should (equal 1 (length found)))
+      (should-not (xref-match-length (car found)))
+      (should (equal "(u/twice 1)" (xref-item-summary (car found)))))))
+
+(ert-deftest replique-symbol-test-a-file-that-is-gone-is-left-out ()
+  "A use is written down when a file is read and read back long afterwards,
+and by then the file may have been deleted or moved off the classpath."
+  (should (equal nil (replique-symbol--references
+                      (list (replique-symbol-test--use "/no/such/file.clj" 1 1 3))))))
+
+(ert-deftest replique-symbol-test-a-local-is-not-something-the-process-has-seen ()
+  "It is bound by a form in this buffer, so a process that answered about one
+would be answering about somebody else's.  Said rather than answered with
+nothing, which xref would show as the name being used nowhere."
+  (replique-symbol-test--at "(let [thing 1] (inc thin|g))"
+    (let ((identifier (xref-backend-identifier-at-point 'replique)))
+      (should (get-text-property 0 'replique-bound identifier))
+      ;; what it says, and not only that it said something: a process that
+      ;; records nothing refuses every one of these, so a test that asked for
+      ;; any error at all would pass with this check taken out
+      (let ((refusal (should-error (xref-backend-references 'replique identifier)
+                                   :type 'user-error)))
+        (should (string-match-p "bound here" (error-message-string refusal)))))))
+
+(ert-deftest replique-symbol-test-a-process-that-records-nothing-says-so ()
+  "Rather than answering that the name is used nowhere, which is what an
+empty list would be read as.  Stock clojure is such a process: what records
+where a name is used is a fork of its compiler."
+  (replique-test-process)
+  (replique-symbol-test--at "(clojure.string/joi|n)"
+    (let* ((identifier (xref-backend-identifier-at-point 'replique))
+           (frame (replique-symbol--asked :usages (replique-name-context)
+                                          "clojure.string/join")))
+      (if (equal "error" (plist-get frame :tag))
+          (progn
+            (should (string-match-p "does not record" (plist-get frame :message)))
+            ;; and the backend hands that on rather than turning it into an
+            ;; empty answer, which xref shows as the name being used nowhere
+            (should-error (xref-backend-references 'replique identifier)
+                          :type 'user-error))
+        ;; the other half: a process whose compiler does record them answers,
+        ;; with a list that may well be empty
+        (should (plist-member frame :usages))))))
+
+(ert-deftest replique-symbol-test-a-definition-name-is-a-name-to-ask-about ()
+  "Who calls this is asked where the definition is written, not at one of
+the call sites - so the name in (defn f|oo [] 1) has to be a name xref will
+take.  `replique-name-context' answers nothing there, because a name being
+given is a name a completion has nothing to offer for."
+  (dolist (probe '(("(ns my.app)\n(defn parse [s] s)" . "(defn pars")
+                   ("(ns my.app)\n(defn- parse [s] s)" . "(defn- pars")
+                   ("(ns my.app)\n(defmacro twice [x] x)" . "(defmacro twi")
+                   ("(ns my.app)\n(deftype Point [x])" . "(deftype Poi")))
+    (with-temp-buffer
+      (replique-clojure-mode)
+      (insert (car probe))
+      (goto-char (point-min))
+      (search-forward (cdr probe))
+      (should-not (replique-name-context))
+      (let ((identifier (xref-backend-identifier-at-point 'replique)))
+        (should identifier)
+        (should (equal :code (plist-get (get-text-property 0 'replique-context identifier)
+                                        :position)))
+        (should (equal "my.app" (plist-get (get-text-property 0 'replique-context identifier)
+                                           :ns)))
+        (should-not (get-text-property 0 'replique-bound identifier))))))
+
+(ert-deftest replique-symbol-test-a-name-being-bound-is-still-not-one ()
+  "A parameter, a `let' binding and the name of an (fn name [x] ...) are
+names the process has never seen, and asking it about one would be asking
+about somebody else's var of that name."
+  (dolist (probe '(("(ns my.app)\n(defn parse [thing] thing)" . "[thin")
+                   ("(ns my.app)\n(defn f [] (let [thing 1] thing))" . "[thin")
+                   ("(ns my.app)\n(def g (fn thing [] (thing)))" . "(fn thin")
+                   ("(ns my.app)\n(defn parse [] (let [parse 1] parse))" . "[pars")))
+    (with-temp-buffer
+      (replique-clojure-mode)
+      (insert (car probe))
+      (goto-char (point-min))
+      (search-forward (cdr probe))
+      (should-not (replique-locals-at-definition-name-p (point)))
+      (should-not (xref-backend-identifier-at-point 'replique)))))
+
 ;;; Turning it on
 
 (ert-deftest replique-symbol-test-it-is-on-in-a-clojure-buffer ()

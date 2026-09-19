@@ -407,8 +407,9 @@ the namespace or the locals or the call that position needs.  The
 namespace a load is written in is the one thing it cannot hold, since it
 is not written in the load.
 
-OP is which of the two questions is being asked.  They take the same
-request, so the only difference between them is the word."
+OP is which of the questions is being asked - what the name is, what
+could be written there, where it is used.  They take the same request, so
+the only difference between them is the word."
   (let ((msg (append (list :op op :text text) context)))
     (if (eq (plist-get context :position) :load-path)
         (append msg (list :ns (replique-name-namespace)))
