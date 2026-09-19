@@ -1560,9 +1560,32 @@ would otherwise stand under nothing."
             (should (string-match-p (regexp-quote file) (replique-test-text repl))))
         (delete-file file)))))
 
+(defmacro replique-test--loading (&rest body)
+  "Run BODY with the repl stubbed, binding `asked' and `sent'.
+
+What is being checked is what happens to the buffer before the directive
+goes out, so the repl is not needed and the directive is captured rather
+than written."
+  (declare (indent 0))
+  `(let ((asked nil) (sent nil))
+     (ignore asked sent)
+     (cl-letf (((symbol-function 'y-or-n-p)
+                (lambda (prompt) (setq asked prompt) replique-test--answer))
+               ((symbol-function 'replique-repl-ensure) (lambda () 'a-repl))
+               ((symbol-function 'replique-repl-send-code)
+                (lambda (_repl code &rest _) (setq sent code))))
+       ,@body)))
+
+(defvar replique-test--answer t
+  "What the stubbed `y-or-n-p' says while a load is being tested.")
+
 (ert-deftest replique-test-a-buffer-is-saved-before-it-is-loaded ()
   "The process reads the file off the disk, so what a buffer with unsaved
-changes would load is not what is on the screen."
+changes would load is not what is on the screen.
+
+Asked with `comint-check-source', which is the question Emacs already has
+for this: the modes that run a language in a buffer have been asking it
+since long before Clojure."
   (let ((file (expand-file-name "replique-test-unsaved.clj" temporary-file-directory)))
     (unwind-protect
         (progn
@@ -1573,18 +1596,24 @@ changes would load is not what is on the screen."
                   (goto-char (point-max))
                   (insert "(def a 1)\n")
                   (should (buffer-modified-p))
-                  (let ((replique-save-before-load t))
-                    (replique-eval--save-before-load))
-                  (should-not (buffer-modified-p))
-                  (should (string-match-p "(def a 1)" (with-temp-buffer
-                                                        (insert-file-contents file)
-                                                        (buffer-string)))))
+                  (let ((replique-test--answer t))
+                    (replique-test--loading
+                      (replique-load-file)
+                      (should asked)
+                      (should-not (buffer-modified-p))
+                      (should (string-match-p
+                               "(def a 1)"
+                               (with-temp-buffer (insert-file-contents file)
+                                                 (buffer-string))))
+                      (should (string-match-p (regexp-quote file) sent)))))
+              (set-buffer-modified-p nil)
               (kill-buffer buffer))))
       (delete-file file))))
 
-(ert-deftest replique-test-a-buffer-may-be-loaded-as-it-is-on-the-disk ()
-  "Which is a real thing to want: reverting an experiment by loading what was
-last saved.  Nothing is asked and nothing is saved."
+(ert-deftest replique-test-declining-loads-what-was-last-saved ()
+  "Which is a real thing to want: reverting an experiment is loading what was
+last saved.  Declining leaves the buffer as it is and loads all the same -
+saying no to the question is not saying no to the command."
   (let ((file (expand-file-name "replique-test-ondisk.clj" temporary-file-directory)))
     (unwind-protect
         (progn
@@ -1594,14 +1623,40 @@ last saved.  Nothing is asked and nothing is saved."
                 (with-current-buffer buffer
                   (goto-char (point-max))
                   (insert "(def a 1)\n")
-                  (cl-letf (((symbol-function 'y-or-n-p)
-                             (lambda (&rest _) (error "Nothing should be asked"))))
-                    (let ((replique-save-before-load nil))
-                      (replique-eval--save-before-load)))
-                  (should (buffer-modified-p)))
+                  (let ((replique-test--answer nil))
+                    (replique-test--loading
+                      (replique-load-file)
+                      (should asked)
+                      (should (buffer-modified-p))
+                      (should-not (string-match-p
+                                   "(def a 1)"
+                                   (with-temp-buffer (insert-file-contents file)
+                                                     (buffer-string))))
+                      (should (string-match-p (regexp-quote file) sent)))))
               (set-buffer-modified-p nil)
               (kill-buffer buffer))))
       (delete-file file))))
+
+(ert-deftest replique-test-a-file-not-written-yet-is-saved-and-then-loaded ()
+  "Saving is what puts the file there, so the offer comes before the file is
+looked for: a buffer of a name nobody has written yet is a file as soon as it
+is saved, and refusing it first would refuse the one case the offer fixes."
+  (let ((file (expand-file-name "replique-test-brandnew.clj" temporary-file-directory)))
+    (when (file-exists-p file) (delete-file file))
+    (unwind-protect
+        (let ((buffer (find-file-noselect file)))
+          (unwind-protect
+              (with-current-buffer buffer
+                (insert "(ns replique.test-brandnew)\n")
+                (should-not (file-exists-p file))
+                (let ((replique-test--answer t))
+                  (replique-test--loading
+                    (replique-load-file)
+                    (should (file-exists-p file))
+                    (should (string-match-p (regexp-quote file) sent)))))
+            (set-buffer-modified-p nil)
+            (kill-buffer buffer)))
+      (when (file-exists-p file) (delete-file file)))))
 
 (ert-deftest replique-test-a-buffer-holding-no-file-is-not-loaded ()
   "Said as what it is.  A buffer that holds no file and a file that is not

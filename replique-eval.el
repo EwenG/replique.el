@@ -70,6 +70,7 @@
 
 ;;; Code:
 
+(require 'comint)
 (require 'seq)
 (require 'subr-x)
 (require 'replique-parse)
@@ -288,19 +289,6 @@ have yet is created, with `clojure.core' referred into it - see
 `enter-ns!' in replique.repl."
   (format "#replique/ns %s" ns))
 
-(defcustom replique-save-before-load 'ask
-  "What to do about unsaved changes when the buffer is loaded.
-
-The process reads the file off the disk, so what a buffer with unsaved
-changes loads is not what is on the screen.  `ask\=' offers to save it
-first, t saves without asking, and nil loads what is on the disk and says
-nothing - which is a real thing to want, since reverting by loading is
-how somebody undoes an experiment."
-  :type '(choice (const :tag "Ask" ask)
-                 (const :tag "Save" t)
-                 (const :tag "Load what is on the disk" nil))
-  :group 'replique)
-
 (defun replique-load-directive (what)
   "Return the directive asking for WHAT to be loaded.
 
@@ -318,15 +306,6 @@ already refers to\" - is the answer to what was just asked for, and
 belongs in the repl it was asked from rather than among what the
 application happens to print."
   (format "#replique/load %s" (replique-edn-map what)))
-
-(defun replique-eval--save-before-load ()
-  "Save the buffer before loading it, where that is what was asked for."
-  (when (and (buffer-modified-p) (buffer-file-name))
-    (cond
-     ((eq replique-save-before-load t) (save-buffer))
-     ((null replique-save-before-load) nil)
-     ((y-or-n-p (format "Save %s before loading it? " (buffer-name)))
-      (save-buffer)))))
 
 (defun replique-eval--send (nodes)
   "Evaluate NODES, forms of the current buffer, in the current repl.
@@ -505,14 +484,23 @@ unit, its ns form first and its definitions in the order they are
 written - see `replique-load-directive\='.
 
 What is loaded is the file on the disk, so a buffer with unsaved changes
-is offered to be saved first - see `replique-save-before-load\='.
+is offered to be saved first.  Which is `comint-check-source\=', the one
+Emacs already has for exactly this - the modes that run a language in a
+buffer have asked this question since long before Clojure, and answering
+it the way they do means answering it in the words somebody has already
+read a hundred times.  Declining loads what was last saved, which is how
+an experiment is reverted.
 
 A buffer read out of a jar is loaded as the entry it came from.  There is
 no path to a file inside an archive, so what goes out is the archive and
 the entry, which is how the process answered where the definition in here
 was written in the first place."
   (interactive)
-  (replique-eval--save-before-load)
+  ;; Before the file is looked for, because saving is what puts it there: a
+  ;; buffer of a name nobody has written yet is a file as soon as it is
+  ;; saved, and refusing it first would refuse the one case the offer fixes
+  (when-let* ((file (buffer-file-name)))
+    (comint-check-source file))
   (let ((what (or (replique-buffer-file)
                   (user-error "This buffer holds no file to load"))))
     (unless (file-exists-p (plist-get what :file))
