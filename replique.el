@@ -62,6 +62,7 @@
 (require 'replique-name)
 (require 'replique-completion)
 (require 'replique-symbol)
+(require 'replique-stale)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.
@@ -82,6 +83,7 @@ happened to be current, which is a buffer of somebody else's.")
     (define-key map (kbd "C-c C-r") #'replique-eval-region)
     (define-key map (kbd "C-c C-l") #'replique-load-file)
     (define-key map (kbd "C-c M-l") #'replique-reload-all)
+    (define-key map (kbd "C-c M-s") #'replique-stale)
     (define-key map (kbd "C-c C-u") #'replique-remove-var)
     (define-key map (kbd "C-c C-c") #'replique-interrupt)
     (define-key map (kbd "C-c M-n") #'replique-in-ns)

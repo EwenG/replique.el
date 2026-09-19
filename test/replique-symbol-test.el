@@ -288,7 +288,7 @@ the entry is read out of the archive into a buffer of its own."
                  (replique-symbol--ask (replique-name-context) "map"))))
     (should (string-suffix-p ".jar" (plist-get found :file)))
     (should (equal "clojure/core.clj" (plist-get found :entry)))
-    (let ((buffer (replique-symbol--visit found)))
+    (let ((buffer (replique-symbol-visit found)))
       (unwind-protect
           (with-current-buffer buffer
             (should buffer-read-only)
@@ -640,7 +640,7 @@ work: the two halves the process answered are the two halves that go back."
   (replique-test-process)
   (let ((found (replique-symbol-test--at "(map| inc)"
                  (replique-symbol--ask (replique-name-context) "map"))))
-    (let ((buffer (replique-symbol--visit found)))
+    (let ((buffer (replique-symbol-visit found)))
       (unwind-protect
           (with-current-buffer buffer
             (let ((what (replique-buffer-file)))

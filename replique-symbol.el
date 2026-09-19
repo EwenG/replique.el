@@ -311,11 +311,15 @@ used the way cider uses it."
           (set-auto-mode)
           (current-buffer)))))
 
-(defun replique-symbol--visit (found)
+(defun replique-symbol-visit (found)
   "Return a buffer holding the file FOUND was written in, or nil.
 
 An entry is what says the file is an archive and the definition is inside
-it.  Without one the file is a file and is opened as one."
+it.  Without one the file is a file and is opened as one.
+
+Public because a definition is not the only thing the process answers with
+a file: what has to be loaded again is a list of them, and opening one is
+the same two halves resolved the same way - see `replique-stale\='."
   (when-let* ((file (plist-get found :file))
               ((file-exists-p file)))
     (if-let* ((entry (plist-get found :entry)))
@@ -336,7 +340,7 @@ Emacs can visit, and there would be nothing to make an
 (cl-defmethod xref-location-marker ((location replique-symbol--location))
   "Return where LOCATION is, opening the file it was written in."
   (let* ((found (replique-symbol--location-found location))
-         (buffer (or (replique-symbol--visit found)
+         (buffer (or (replique-symbol-visit found)
                      (user-error "Replique: %s is not there to be opened"
                                  (plist-get found :file)))))
     (with-current-buffer buffer
@@ -495,7 +499,7 @@ when they jump there, so it is left alone."
     (car (if (eq 'missing known)
              (puthash key
                       (if entry
-                          (cons (replique-symbol--visit found) nil)
+                          (cons (replique-symbol-visit found) nil)
                         (cons (when (and file (file-readable-p file))
                                 (let ((buffer (generate-new-buffer " *replique-source*" t)))
                                   (with-current-buffer buffer
