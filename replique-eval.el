@@ -307,6 +307,20 @@ belongs in the repl it was asked from rather than among what the
 application happens to print."
   (format "#replique/load %s" (replique-edn-map what)))
 
+(defun replique-reload-directive ()
+  "Return the directive asking for everything that changed to be loaded.
+
+Which files those are is the process's question to answer, not the
+client's: it knows what it read and when, and nothing in a buffer does.
+
+The map is empty and is written all the same.  A tagged literal reads the
+form after it whatever that form is, and what is asked for here has
+somewhere to go the day there is something to ask for.
+
+Sent to the repl rather than asked of the process on the side, for
+everything a load is - see `replique-load-directive'."
+  "#replique/reload {}")
+
 (defun replique-eval--send (nodes)
   "Evaluate NODES, forms of the current buffer, in the current repl.
 
@@ -512,6 +526,46 @@ was written in the first place."
      ;; to show; this one is the whole of what was asked for, and the output
      ;; and the result about to arrive would otherwise stand under nothing
      (replique-load-directive what))))
+
+;;;###autoload
+(defun replique-reload-all ()
+  "Load every file that changed since the process read it.
+
+Nobody names the files, which is the whole point of the command: not
+knowing which they are is why it is asked for.  A file is known to the
+process because something loaded it - a file loaded from here, and
+everything that load required on the way - and what changed is the
+difference between the time it read each one and what the disk says now.
+
+What the process loaded before anything was asked from here - the
+application starting up - was compiled by nothing that was watching, and
+stays outside this until it is loaded from here once.  A `require' of a
+namespace that is already loaded compiles nothing, so loading a file that
+requires it does not bring it in either.
+
+A file that expands a macro of a file that changed is loaded too, and
+after it.  A macro is expanded where it is used, so editing one leaves
+every file that expands it holding the old expansion - and not one of
+those files changed.  Which only the process can know, since what
+expanded what is written in neither file.
+
+What it answers with is the files it loaded, in the order it loaded
+them, in the echo area and in the repl.  A file that will not compile
+stops it there, and asking again carries on from where it stopped.
+
+The process reads the disk, so a buffer with unsaved changes holds
+nothing this can see - the modified Clojure buffers are offered to be
+saved first, and only those: what is being loaded is Clojure, and a note
+in some other buffer has nothing to do with it.
+
+Only a process whose compiler wrote down what it compiled can answer
+this.  One that cannot says so, in the repl, and says what to start it
+on instead."
+  (interactive)
+  (save-some-buffers nil (lambda ()
+                           (and buffer-file-name
+                                (derived-mode-p 'replique-clojure-mode))))
+  (replique-repl-send-code (replique-repl-ensure) (replique-reload-directive) nil t))
 
 (provide 'replique-eval)
 

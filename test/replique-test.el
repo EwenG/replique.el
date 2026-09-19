@@ -1725,6 +1725,74 @@ is saved, and refusing it first would refuse the one case the offer fixes."
             (kill-buffer buffer)))
       (when (file-exists-p file) (delete-file file)))))
 
+(ert-deftest replique-test-the-reload-directive-asks-for-everything-that-changed ()
+  "The client names no file: which ones changed is the process's own
+question to answer.  The map is empty and is written all the same, because
+a tagged literal reads the form after it whatever that form is."
+  (should (equal "#replique/reload {}" (replique-reload-directive))))
+
+(ert-deftest replique-test-only-modified-clojure-buffers-are-offered-before-a-reload ()
+  "The process reads the disk, so a buffer with unsaved changes holds
+nothing a reload can see - and only the Clojure ones are offered: what is
+being loaded is Clojure, and a note in some other buffer has nothing to do
+with it.  A buffer holding no file is no file to reload either."
+  (let ((offered nil)
+        (clj (expand-file-name "replique-test-offered.clj" temporary-file-directory))
+        (txt (expand-file-name "replique-test-offered.txt" temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file clj (insert "(ns replique.test-offered)\n"))
+          (with-temp-file txt (insert "a note\n"))
+          (let ((clj-buffer (find-file-noselect clj))
+                (txt-buffer (find-file-noselect txt)))
+            (unwind-protect
+                (progn
+                  (cl-letf (((symbol-function 'save-some-buffers)
+                             (lambda (_arg pred) (setq offered pred)))
+                            ((symbol-function 'replique-repl-ensure) (lambda () 'a-repl))
+                            ((symbol-function 'replique-repl-send-code)
+                             (lambda (&rest _) nil)))
+                    (replique-reload-all))
+                  (should (functionp offered))
+                  (should (with-current-buffer clj-buffer (funcall offered)))
+                  (should-not (with-current-buffer txt-buffer (funcall offered)))
+                  (should-not (with-temp-buffer (replique-clojure-mode)
+                                                (funcall offered))))
+              (kill-buffer clj-buffer)
+              (kill-buffer txt-buffer))))
+      (delete-file clj)
+      (delete-file txt))))
+
+(ert-deftest replique-test-reloading-asks-the-process-what-changed ()
+  "And the process answers, whichever it is.  One whose compiler wrote down
+what it compiled answers with the files it loaded; one that did not cannot
+know what changed, and says what to start it on instead of answering that
+nothing did.
+
+Either way the answer reaches the buffer that asked: the command is run
+from a source buffer, and what it did is news there rather than in a repl
+buffer nobody is looking at.
+
+The buffers are not saved here - that is its own test, and asking in batch
+would be asking nobody."
+  (replique-test-with-repl repl
+    (let ((echoed (replique-test-message
+                    (with-temp-buffer
+                      (replique-clojure-mode)
+                      (setq-local replique-current-repl repl)
+                      (cl-letf (((symbol-function 'save-some-buffers)
+                                 (lambda (&rest _) nil)))
+                        (replique-reload-all)))
+                    (replique-test-wait-for
+                     (lambda () (replique-repl--at-prompt repl))))))
+      (should (string-match-p (regexp-quote "#replique/reload")
+                              (replique-test-text repl)))
+      (should echoed)
+      (if (string-match-p "keep track of what it compiled" echoed)
+          (should (string-match-p "clojure.analysis" echoed))
+        (should (string-match-p "\\[.*\\]\\'" (string-trim echoed)))))
+    (should (string-match-p "^2$" (replique-test-eval repl "(+ 1 1)")))))
+
 (ert-deftest replique-test-a-buffer-holding-no-file-is-not-loaded ()
   "Said as what it is.  A buffer that holds no file and a file that is not
 there are two different things to be told, and a command that only has to
