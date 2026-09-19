@@ -41,9 +41,9 @@
 ;; what the eval commands read a buffer with - see `replique-eval'.  Where a
 ;; form begins is a question sexp motion answers wrongly for #_ and for
 ;; metadata, and a wrong answer there evaluates what somebody commented out.
-;; The mode answers it from a tree-sitter parse, and asking the mode rather
-;; than parsing again is what keeps the answer the editor indents by and the
-;; answer the repl is sent the same one.
+;; The mode answers it from `replique-parse', and asking the mode rather than
+;; parsing again is what keeps the answer the editor indents by and the answer
+;; the repl is sent the same one.
 ;;
 ;; That mode turns `replique-mode' on, so the commands below are bound in a
 ;; Clojure file without anything having to be turned on by hand.

@@ -22,7 +22,6 @@
   "Run BODY in a Clojure buffer holding TEXT, with point where its | was."
   (declare (indent 1))
   `(progn
-     (replique-test-grammar)
      (with-temp-buffer
        (replique-clojure-mode)
        (insert ,text)
@@ -416,7 +415,6 @@ a time: what was typed is not the beginning of what is written."
   "A Clojure buffer, which `replique-mode' is on in, and a prompt, which
 reads Clojure without being one.  Turning the mode off takes it back out,
 which is how somebody says they would rather complete another way."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (should (memq #'replique-completion-at-point completion-at-point-functions))
@@ -430,7 +428,6 @@ which is how somebody says they would rather complete another way."
 (ert-deftest replique-completion-test-a-repl-completes-at-its-prompt ()
   "A repl reads Clojure at its prompt, requires included - which is how a
 namespace is loaded from one."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (with-current-buffer (replique-repl--buffer repl)
       (replique-test-hide (current-buffer))
@@ -497,7 +494,6 @@ is written is a path or is text - see `replique-name--string-context'."
   "The parse is what says a name written here is a Clojure name, which is
 what makes this safe to turn on wherever somebody wants it - the default
 value of the hook included."
-  (replique-test-grammar)
   (with-temp-buffer
     (insert "(inc x)")
     (goto-char (1- (point-max)))
@@ -675,7 +671,6 @@ could be written and said nothing could."
     (should-not (exclusive "(str ma|)"))))
 
 (ert-deftest replique-completion-test-a-repl-completes-code-at-its-prompt ()
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (with-current-buffer (replique-repl--buffer repl)
       (replique-test-hide (current-buffer))

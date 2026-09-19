@@ -18,12 +18,10 @@
 
 (defun replique-pprint-test--pp (text &optional width)
   "Return TEXT laid out to fit WIDTH columns, or skip without the grammar."
-  (replique-test-grammar)
   (replique-pprint-string text width))
 
 (defun replique-pprint-test--command (text width)
   "Return TEXT after `replique-pprint' ran at | in it, to fit WIDTH."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert text)
@@ -209,7 +207,6 @@
   (should-error (replique-pprint-test--command ";; a note\n|" 8) :type 'user-error))
 
 (ert-deftest replique-pprint-test-the-command-puts-it-back-in-one-undo ()
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert "{:aa 1 :bb 2}")
@@ -222,7 +219,6 @@
     (should (equal "{:aa 1 :bb 2}" (buffer-string)))))
 
 (ert-deftest replique-pprint-test-the-command-changes-nothing-it-need-not ()
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert "{:aa 1 :bb 2}")

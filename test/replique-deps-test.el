@@ -17,7 +17,6 @@
 
 (defun replique-deps-test--context (text)
   "Return what the dependency form in TEXT is asking for where | is."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert text)
@@ -30,7 +29,6 @@
 
 (defun replique-deps-test--context-narrowed (text)
   "Return what TEXT asks for where | is, with the buffer narrowed to its line."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert text)

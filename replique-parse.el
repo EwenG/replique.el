@@ -906,6 +906,20 @@ somebody next asks something rather than while somebody is typing.")
           (setq high (1- middle)))))
     found))
 
+(defun replique-parse--entry-after (pos)
+  "The entry of the first of this buffer's forms starting at or after POS."
+  (let* ((forms (replique-parse--index))
+         (low 0)
+         (high (1- (length forms)))
+         (found nil))
+    (while (<= low high)
+      (let* ((middle (/ (+ low high) 2))
+             (entry (aref forms middle)))
+        (if (>= (aref entry 0) pos)
+            (setq found entry high (1- middle))
+          (setq low (1+ middle)))))
+    found))
+
 (defun replique-parse--entry-tree (entry)
   "What the form ENTRY holds was read as, reading it if nobody has."
   (or (aref entry 2)
@@ -951,6 +965,23 @@ neither."
   "The last top level form ending at or before POS, or nil where none does."
   (let ((entry (replique-parse--entry-before pos)))
     (when entry (replique-parse--entry-tree entry))))
+
+(defun replique-parse-bounds-before (pos)
+  "Where the last top level form ending at or before POS starts and ends.
+
+A cons, or nil where no form ends before POS.  What is read is where the
+form is and not what it says, which is the whole of what moving about a
+buffer needs: a repl of ten thousand forms answers this without any of
+them having been read."
+  (let ((entry (replique-parse--entry-before pos)))
+    (when entry (cons (aref entry 0) (aref entry 1)))))
+
+(defun replique-parse-bounds-after (pos)
+  "Where the first top level form starting at or after POS starts and ends.
+
+A cons, or nil where no form starts there or later."
+  (let ((entry (replique-parse--entry-after pos)))
+    (when entry (cons (aref entry 0) (aref entry 1)))))
 
 
 ;;;; Reading a name

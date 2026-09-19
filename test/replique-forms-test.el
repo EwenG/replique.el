@@ -30,7 +30,6 @@ made is a repl the next test starts in."
 
 (defun replique-forms-test--locals (text forms)
   "Return the names of the locals where | is in TEXT, reading it with FORMS."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (insert text)

@@ -20,8 +20,8 @@
 ;;; Commentary:
 
 ;; `replique-clojure-mode' is the syntax layer for Clojure and ClojureScript.
-;; It owns painting and indentation, and reads both out of `replique-parse'
-;; - the reader, rather than a grammar:
+;; It owns painting, indentation and moving about, and reads all three out
+;; of `replique-parse' - the reader, rather than a grammar:
 ;;
 ;;   * painting - what each token is, and then what the form it is written
 ;;     in says it is.  One walk down each form, and no precedence between
@@ -30,10 +30,13 @@
 ;;     form a line is written in rather than of a rule table walked in
 ;;     order.  Read once per form and then followed, so that indenting a
 ;;     file reads it once.
+;;   * a defun is a top level form, any of them, so that moving to the top
+;;     of the form point is in moves to the top of the form point is in.
+;;     Moving over an expression is left to the syntax table, which already
+;;     knows the reader macros.
 ;;
-;; Both work in a buffer with no grammar and no parser in it.  What is still
-;; asked of `treesit' is moving over forms - `forward-sexp',
-;; `beginning-of-defun', matching a bracket, folding - and nothing else.
+;; There is no grammar, no parser and no `treesit' here: a buffer needs
+;; nothing installed in it to be read as Clojure.
 ;;
 ;; Semantic faces (`:local', `:macro-invocation', `:special-form',
 ;; `:unresolved', unused greyout) and diagnostics are not here and are not
@@ -47,7 +50,6 @@
 ;;
 ;; Customization (M-x customize-group RET replique-clojure RET):
 ;;   `replique-clojure-font-lock-level'           how much is painted, 1 to 4
-;;   `replique-clojure-ensure-grammars'           install/update the grammar
 ;;   `replique-clojure-extra-def-forms'           macros highlighted like defn
 ;;   `replique-clojure-semantic-indent-rules'     per-symbol indent overrides
 ;;   `replique-clojure-docstring-fill-column'     fill-column for docstrings
@@ -57,28 +59,17 @@
 
 ;;; Code:
 
-(require 'treesit)
 (require 'seq)
 (require 'replique-parse)
 (eval-when-compile (require 'subr-x))   ; thread-first / thread-last / when-let*
-
-(declare-function treesit-parser-create "treesit.c")
-(declare-function treesit-node-type "treesit.c")
-(declare-function treesit-node-child "treesit.c")
-(declare-function treesit-node-child-by-field-name "treesit.c")
 
 
 ;;;; Customization
 
 (defgroup replique-clojure nil
-  "Tree-sitter syntax layer for Clojure (treejure grammar)."
+  "Reading Clojure in a buffer: what it is painted, how it is indented."
   :prefix "replique-clojure-"
   :group 'languages)
-
-(defcustom replique-clojure-ensure-grammars t
-  "When non-nil, ensure the required Tree-sitter grammars are installed."
-  :safe #'booleanp
-  :type 'boolean)
 
 (defcustom replique-clojure-docstring-fill-column fill-column
   "Value of `fill-column' to use when filling a docstring."
@@ -91,10 +82,6 @@ The default value follows the de-facto Clojure convention, aligning
 continuation lines with the opening double quote on the third column."
   :type 'integer
   :safe #'integerp)
-
-(defconst replique-clojure-grammar-recipes
-  '((treejure "https://github.com/EwenG/tree-sitter-treejure.git" "main"))
-  "Tree-sitter grammar recipes used by `treesit-install-language-grammar'.")
 
 
 ;;;; Faces
@@ -1278,101 +1265,97 @@ not lose the next."
         (set-marker (aref span 1) nil)))))
 
 
-;;;; Navigation — node predicates
+;;;; Navigation
+;;
+;; Moving over forms, which is the last thing here that asked for a grammar
+;; and the one it was doing worst.
+;;
+;; A defun is a top level form.  Any of them - not only the ones that begin
+;; with `def', which is what `treesit-thing-settings' was saying and what
+;; made `C-M-a' inside a `(comment ...)' walk past it into the definition
+;; before it, and `C-M-a' inside a `(println ...)' walk back into a `#_'
+;; that the reader had thrown away.  What somebody means by the top of the
+;; form they are in is the top of the form they are in.
+;;
+;; Moving over an expression is left to the syntax table, which already
+;; knows the reader macros: `#' and `?' and `\'' carry the prefix flag and
+;; the rest are of the prefix class, so `#{1 2}' and `#?(:clj 1)' and
+;; `~@foo' each move as one.  Walking twenty four shapes with `forward-sexp'
+;; said the table and the grammar answer the same thing in twenty three of
+;; them, so what a grammar was buying here was `#:ns{...}', and both of them
+;; read `#_ x' and `^:private x' as two expressions where the reader reads
+;; one.  That is worth fixing on its own account and is not worth a grammar.
+;;
+;; `show-paren-mode' and `transpose-sexps' are left alone for the same
+;; reason: they are built on the syntax table and it answers them.
 
-(defun replique-clojure--list-node-p (node)
-  "Return non-nil if NODE is a Clojure list."
-  (string-equal "list_literal" (treesit-node-type node)))
+(defun replique-clojure--defun-before (position)
+  "Where the top level form to move back to from POSITION is, or nil.
 
-(defun replique-clojure--anon-fn-node-p (node)
-  "Return non-nil if NODE is a function literal."
-  (string-equal "fn_literal" (treesit-node-type node)))
+The form POSITION is written in, unless POSITION is where it begins - in
+which case there is nowhere to move back to inside it, and what is wanted
+is the form before it."
+  (let ((here (replique-parse-top-level-bounds position)))
+    (if (and here (> position (car here)))
+        here
+      (replique-parse-bounds-before position))))
 
-(defun replique-clojure--symbol-node-p (node)
-  "Return non-nil if NODE is a symbol."
-  (string-equal "symbol" (treesit-node-type node)))
+(defun replique-clojure-beginning-of-defun (&optional arg)
+  "Move to the beginning of a top level form, ARG of them.
 
-(defun replique-clojure--unwrap-meta (node)
-  "Recursively unwrap NODE from its `with_metadata' wrappers."
-  (if (string-equal "with_metadata" (treesit-node-type node))
-      (replique-clojure--unwrap-meta
-       (treesit-node-child-by-field-name node "target"))
-    node))
+Backwards for a positive ARG and forwards for a negative one, which is
+what `beginning-of-defun-function' is asked for.  Answers nil where there
+were fewer than ARG of them to move over, having moved as far as it could."
+  (setq arg (or arg 1))
+  (let ((moved t))
+    (while (and moved (> arg 0))
+      (let ((bounds (replique-clojure--defun-before (point))))
+        (if bounds
+            (goto-char (car bounds))
+          (goto-char (point-min))
+          (setq moved nil)))
+      (setq arg (1- arg)))
+    (while (and moved (< arg 0))
+      (let ((bounds (replique-parse-bounds-after (1+ (point)))))
+        (if bounds
+            (goto-char (car bounds))
+          (goto-char (point-max))
+          (setq moved nil)))
+      (setq arg (1+ arg)))
+    moved))
 
-(defun replique-clojure--first-value-child (node)
-  "Return NODE's first named, metadata-unwrapped child."
-  (replique-clojure--unwrap-meta (car (treesit-node-children node t))))
+(defun replique-clojure-end-of-defun (&optional _arg)
+  "Move to the end of the top level form point is written in or before.
 
-(defun replique-clojure--named-node-text (node)
-  "Return the name of symbol/keyword NODE (without its namespace)."
-  (treesit-node-text (treesit-node-child-by-field-name node "name")))
+`end-of-defun' puts point at the beginning of one before asking, so what
+is wanted is nearly always the form point is at the beginning of; the one
+after it is for a point written between forms, where there is no form to
+be at the end of but there is one to move to."
+  (let ((bounds (or (replique-parse-top-level-bounds (point))
+                    (replique-parse-bounds-after (point)))))
+    (if bounds
+        (progn (goto-char (cdr bounds)) t)
+      (goto-char (point-max))
+      nil)))
 
-(defun replique-clojure--list-node-sym-text (node &optional include-anon-fn-lit)
-  "Return the head-symbol name of list NODE, or nil.
-With INCLUDE-ANON-FN-LIT, also handle function literals."
-  (let ((node (replique-clojure--unwrap-meta node)))
-    (when (or (replique-clojure--list-node-p node)
-              (and include-anon-fn-lit (replique-clojure--anon-fn-node-p node)))
-      (when-let* ((first-child (replique-clojure--first-value-child node))
-                  ((replique-clojure--symbol-node-p first-child)))
-        (replique-clojure--named-node-text first-child)))))
+(defun replique-clojure-current-defun ()
+  "The name of the top level form point is written in, or nil for none.
 
-(defun replique-clojure--list-node-sym-match-p (node regex &optional include-anon-fn-lit)
-  "Return non-nil if NODE is a list whose head symbol matches REGEX.
-With INCLUDE-ANON-FN-LIT, also handle function literals."
-  (when-let* ((sym-text (replique-clojure--list-node-sym-text node include-anon-fn-lit)))
-    (string-match-p regex sym-text)))
-
-
-;;;; Navigation — thing settings, defun support
-
-(defconst replique-clojure--sexp-nodes
-  '("with_metadata"
-    "nil" "boolean" "symbolic_value" "erroneous_symbolic_value"
-    "number" "string" "regex" "character"
-    "symbol" "keyword"
-    "list_literal" "vector_literal" "map_literal" "set_literal" "namespaced_map_literal"
-    "fn_literal" "reader_conditional"
-    "var_quote" "eval_literal"
-    "tagged_literal"
-    "deref" "quote" "syntax_quote"
-    "unquote_splicing" "unquote"
-    "discard"
-    "invalid_character" "invalid_number")
-  "Node types treated as s-expressions.")
-
-(defconst replique-clojure--list-nodes
-  '("list_literal" "fn_literal" "reader_conditional"
-    "map_literal" "namespaced_map_literal" "vector_literal" "set_literal")
-  "Node types treated as lists.")
-
-(defconst replique-clojure--defun-symbols-regex
-  (rx bol
-      (or "def" "defn" "defn-" "definline" "defrecord" "defmacro" "defmulti"
-          "defonce" "defprotocol" "deftest" "deftest-" "ns" "definterface"
-          "deftype" "defstruct")
-      eol)
-  "A regexp matching top-level defining forms.")
-
-(defun replique-clojure--defun-node-p (node)
-  "Return non-nil if NODE is a function or var definition."
-  (replique-clojure--list-node-sym-match-p node replique-clojure--defun-symbols-regex))
-
-(defun replique-clojure--defun-name-function (node)
-  "Return the name of the defun NODE."
-  (let ((node (replique-clojure--unwrap-meta node)))
-    (when (replique-clojure--defun-node-p node)
-      (when-let* ((name-node (treesit-node-child node 1 t))
-                  (unwrapped (replique-clojure--unwrap-meta name-node)))
-        (treesit-node-text unwrapped t)))))
-
-(defconst replique-clojure--thing-settings
-  `((treejure
-     (sexp ,(regexp-opt replique-clojure--sexp-nodes))
-     (list ,(regexp-opt replique-clojure--list-nodes))
-     (text ,(regexp-opt '("comment")))
-     (defun ,#'replique-clojure--defun-node-p)))
-  "Value for `treesit-thing-settings'.")
+What `add-log-current-defun' and `which-function-mode' show.  Read from
+the same table the head of a form is painted from, so that what the
+screen calls a definition and what a commit message calls one are the
+same thing - and so that a form the reader throws away, which is a `#_'
+or a `(comment ...)', is called nothing at all."
+  (when-let* ((form (replique-parse-unwrap-meta
+                     (replique-parse-form-at (point)))))
+    (let* ((forms (replique-parse-forms form))
+           (name (replique-clojure--head-name (replique-clojure--head forms)))
+           (definer (and name (replique-clojure--definer name)))
+           (named (replique-parse-unwrap-meta (nth 1 forms))))
+      (when (and definer
+                 (plist-get definer :name)
+                 (eq 'symbol (replique-parse-type named)))
+        (replique-parse-text named)))))
 
 
 ;;;; Docstring filling
@@ -1441,60 +1424,17 @@ with `replique-parse', which has a table of its own because what splits
 one Clojure token from the next is not what a syntax table is for.")
 
 
-;;;; Grammar installation
-
-(defun replique-clojure--query-valid-p (query)
-  "Return non-nil if QUERY compiles against the treejure grammar."
-  (ignore-errors
-    (treesit-query-compile 'treejure query t)
-    t))
-
-(defun replique-clojure--grammar-outdated-p ()
-  "Return non-nil if the installed treejure grammar is too old."
-  (not (replique-clojure--query-valid-p '((_visible_form)))))
-
-(defvar replique-clojure--grammar-checked nil
-  "Internal flag to check/install the grammar at most once per session.")
-
-(defun replique-clojure--ensure-grammars ()
-  "Install or update the treejure grammar when needed."
-  (when (and replique-clojure-ensure-grammars
-             (not replique-clojure--grammar-checked))
-    (dolist (recipe replique-clojure-grammar-recipes)
-      (let ((grammar (car recipe)))
-        (when (or (not (treesit-language-available-p grammar nil))
-                  (and (eq grammar 'treejure)
-                       (replique-clojure--grammar-outdated-p)))
-          (message "Replique: Installing/Updating %s grammar..." grammar)
-          (let ((treesit-language-source-alist replique-clojure-grammar-recipes))
-            (treesit-install-language-grammar grammar)))))
-    (setq replique-clojure--grammar-checked t)))
-
-
 ;;;; Mode setup
-
-(defun replique-clojure--navigation-variables ()
-  "Set up what `treesit' is still asked for, which is navigation.
-
-Moving over a form, finding the top of the one point is in, matching a
-bracket and folding.  Painting and indentation are read out of
-`replique-parse' and are set up whether or not a grammar is there."
-  (setq-local treesit-defun-prefer-top-level t)
-  (setq-local treesit-defun-tactic 'top-level)
-  (setq-local treesit-defun-name-function #'replique-clojure--defun-name-function)
-  (when (boundp 'treesit-thing-settings)   ; Emacs 30+
-    (setq-local treesit-thing-settings replique-clojure--thing-settings)))
 
 (defun replique-clojure-setup ()
   "Read the current buffer as Clojure.
 
-Painting, indentation and filling, which are read out of `replique-parse'
-and are set up whether or not a grammar is there to be had; and then, when
-there is one, moving over forms.  What a missing grammar costs is the
-last of those.
+Painting, indentation, filling and moving over forms - all of them out of
+`replique-parse' or out of the syntax table, and none of them out of a
+grammar.
 
-Called by `replique-clojure-mode', and by the repl, whose buffer is not
-in that mode and holds Clojure all the same."
+Called by `replique-clojure-mode', and by the repl, whose buffer is not in
+that mode and holds Clojure all the same."
   (setq-local comment-start ";")
   (setq-local comment-end "")
   (setq-local comment-add 1)
@@ -1513,16 +1453,10 @@ in that mode and holds Clojure all the same."
   (setq-local replique-clojure--semantic-indent-rules-cache
               (replique-clojure--compute-semantic-indent-cache
                replique-clojure-semantic-indent-rules))
-  (add-hook 'change-major-mode-hook #'replique-parse-forget nil t)
-  (replique-clojure--ensure-grammars)
-  ;; Quietly: a grammar that is not there costs moving over forms and
-  ;; nothing else now, and warning about it in a buffer that is painted and
-  ;; indented would be saying something the buffer contradicts.  The local
-  ;; map is wanted because `treesit-major-mode-setup' remaps keys into one
-  (when (and (current-local-map) (treesit-ready-p 'treejure t))
-    (treesit-parser-create 'treejure)
-    (replique-clojure--navigation-variables)
-    (treesit-major-mode-setup)))
+  (setq-local beginning-of-defun-function #'replique-clojure-beginning-of-defun)
+  (setq-local end-of-defun-function #'replique-clojure-end-of-defun)
+  (setq-local add-log-current-defun-function #'replique-clojure-current-defun)
+  (add-hook 'change-major-mode-hook #'replique-parse-forget nil t))
 
 (defun replique-clojure--hack-local-variables ()
   "Recompute buffer-local caches after `.dir-locals.el' has been applied."
@@ -1538,9 +1472,8 @@ in that mode and holds Clojure all the same."
 (define-derived-mode replique-clojure-mode prog-mode "Replique[clj]"
   "Major mode for editing Clojure code.
 
-Highlighting and indentation are read out of `replique-parse', which
-reads Clojure the way the Clojure reader does, and work whether or not a
-grammar is installed.  Moving over forms is Emacs' built-in `treesit'.
+Highlighting, indentation and moving over forms are read out of
+`replique-parse', which reads Clojure the way the Clojure reader does.
 Semantic faces and diagnostics come from a C module that is not part of
 replique."
   :syntax-table replique-clojure-mode-syntax-table
@@ -1563,16 +1496,14 @@ replique."
 \\{replique-clojure-clojurec-mode-map}")
 
 ;;;###autoload
-(if (treesit-available-p)
-    (progn
-      ;; Clojure + EDN
-      (add-to-list 'auto-mode-alist
-                   '("\\.\\(clj\\|edn\\)\\'" . replique-clojure-mode))
-      (add-to-list 'auto-mode-alist '("\\.cljs\\'" . replique-clojure-clojurescript-mode))
-      (add-to-list 'auto-mode-alist '("\\.cljc\\'" . replique-clojure-clojurec-mode))
-      ;; babashka scripts are Clojure source files.
-      (add-to-list 'interpreter-mode-alist '("bb" . replique-clojure-mode)))
-  (message "Replique: Clojure mode not activated — Tree-sitter support is missing."))
+(progn
+  ;; Clojure + EDN
+  (add-to-list 'auto-mode-alist
+               '("\\.\\(clj\\|edn\\)\\'" . replique-clojure-mode))
+  (add-to-list 'auto-mode-alist '("\\.cljs\\'" . replique-clojure-clojurescript-mode))
+  (add-to-list 'auto-mode-alist '("\\.cljc\\'" . replique-clojure-clojurec-mode))
+  ;; babashka scripts are Clojure source files.
+  (add-to-list 'interpreter-mode-alist '("bb" . replique-clojure-mode)))
 
 (provide 'replique-clojure-mode)
 

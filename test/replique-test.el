@@ -25,11 +25,6 @@
 (require 'find-func)
 (require 'replique)
 
-;; A test run never installs a grammar: it fetches a repository and runs a
-;; compiler, which is not a thing to do behind somebody running the tests.
-;; What needs one is skipped instead - see `replique-test-grammar'.
-(setq replique-clojure-ensure-grammars nil)
-
 (defvar replique-test-process nil
   "The process shared by the tests.")
 
@@ -46,14 +41,6 @@ open on it."
     (when (or (null project) (string-empty-p (string-trim project)))
       (ert-skip "REPLIQUE_PROJECT is not set"))
     (file-name-as-directory (expand-file-name project))))
-
-(defun replique-test-grammar ()
-  "Skip the test unless the grammar replique reads Clojure with is there."
-  (let ((grammar (caar replique-clojure-grammar-recipes)))
-    (unless (and (fboundp 'treesit-available-p)
-                 (treesit-available-p)
-                 (treesit-language-available-p grammar))
-      (ert-skip (format "the %s grammar is not installed" grammar)))))
 
 (defmacro replique-test-with-clojure (text &rest body)
   "Run BODY in a Clojure buffer holding TEXT, with point at its beginning."
@@ -908,7 +895,6 @@ which is a lie about what happened."
 (ert-deftest replique-test-the-compiler-is-told-where-the-code-came-from ()
   "A repl reads from a socket, so the file and the line numbers it records
 mean nothing unless the client says where the form was taken from."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-source.clj" temporary-file-directory)))
       (unwind-protect
@@ -936,7 +922,6 @@ mean nothing unless the client says where the form was taken from."
   "The directive applies to the next form only, so a region holding
 several forms needs one before each: they would otherwise all be recorded
 at the line of the first."
-  (replique-test-grammar)
   (replique-test-with-clojure "(def a 1)\n\n(def b 2)\n"
     (let ((nodes (replique-eval--nodes (point-min) (point-max))))
       (should (equal '("(def a 1)" "(def b 2)") (replique-test-node-texts nodes)))
@@ -955,7 +940,6 @@ at the line of the first."
 (ert-deftest replique-test-a-form-is-written-in-the-namespace-above-it ()
   "Which is what the code has to be read and evaluated in: a repl left in
 another namespace would compile the definitions of one file into another."
-  (replique-test-grammar)
   (should (equal "foo.bar"
                  (replique-test-ns-at "(ns foo.bar)\n(def a 1)\n" "(def a")))
   (should (equal "foo.bar"
@@ -970,7 +954,6 @@ another namespace would compile the definitions of one file into another."
 it, which is how a scratch file reaches into one namespace and then
 another.  Written the way it is written where clojure.core is not
 referred, too."
-  (replique-test-grammar)
   (should (equal "one"
                  (replique-test-ns-at "(ns foo.bar)\n(in-ns 'one)\n(def a 1)\n" "(def a")))
   (should (equal "foo.bar"
@@ -985,7 +968,6 @@ referred, too."
   "The (comment ...) case: a namespace entered inside a form is entered
 for what is inside that form, and what follows the form is under whatever
 was above it.  A level deeper than another overrides it, and only there."
-  (replique-test-grammar)
   (let ((text (concat "(ns foo.bar)\n"
                       "(comment\n"
                       "  (in-ns 'scratch)\n"
@@ -1000,7 +982,6 @@ namespace named inside a string or behind a semicolon is a namespace
 nobody asked to be in.  An argument that is computed rather than written
 out names nothing that can be read either, and a qualified symbol is not
 the name of a namespace at all."
-  (replique-test-grammar)
   (should (null (replique-test-ns-at "\"(in-ns 'evil)\"\n(def a 1)\n" "(def a")))
   (should (null (replique-test-ns-at ";; (in-ns 'evil)\n(def a 1)\n" "(def a")))
   (should (null (replique-test-ns-at "(in-ns (symbol \"evil\"))\n(def a 1)\n" "(def a")))
@@ -1015,7 +996,6 @@ evaluated something lands at a prompt of the namespace being worked in.
 
 The definition is looked for in that namespace and not in the one the
 repl was left in, which is the thing that would silently go wrong."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (replique-test-with-clojure "(ns replique.test-target)\n(defn from-a-buffer [] :yes)\n"
       (setq replique-current-repl repl)
@@ -1035,7 +1015,6 @@ repl was left in, which is the thing that would silently go wrong."
 (ert-deftest replique-test-the-namespace-is-not-shown-as-something-somebody-wrote ()
   "The directive is protocol, like the source one: a transcript showing it
 is a transcript of the wire."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (replique-test-with-clojure "(ns replique.test-quiet)\n(def a 1)\n"
       (setq replique-current-repl repl)
@@ -1101,7 +1080,6 @@ repl buffer there is no such namespace and nothing is offered.
 Asked of the whole buffer rather than of what a narrowing left of it: a
 parse of what is reachable does not hold an ns form that is not, and a
 buffer narrowed to one function is still a buffer of that namespace."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (setq replique-current-repl repl)
     (let ((asked nil))
@@ -1163,7 +1141,6 @@ per form would be sending what the code already says.
 The region starts under the ns form rather than at it, which is what
 makes the directive the only thing that can put the first def where it
 belongs: the repl is in user, and nothing evaluated here moves it there."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (setq replique-test-sent nil)
     (should (equal "user" (replique-repl--ns repl)))
@@ -1207,7 +1184,6 @@ belongs: the repl is in user, and nothing evaluated here moves it there."
 (ert-deftest replique-test-a-clojure-buffer-has-the-commands-in-it ()
   "The keys are bound in a Clojure file without anything being turned on
 by hand: the mode replique opens one in is what turns them on."
-  (replique-test-grammar)
   (replique-test-with-clojure "(def a 1)\n"
     (should replique-mode)
     (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))))
@@ -1223,7 +1199,6 @@ guess at."
                   :type 'user-error)))
 
 (ert-deftest replique-test-a-comment-between-two-forms-is-not-a-form ()
-  (replique-test-grammar)
   (should (equal '("(def a 1)")
                  (replique-test-forms ";; a comment\n(def a 1)\n;; another\n"))))
 
@@ -1234,7 +1209,6 @@ The directive replique writes applies to the next form, and a comment is
 not one: the reader answers it with a prompt and the directive stays
 pending, so what is read next - a form typed at the prompt - is recorded
 in a file it was never in."
-  (replique-test-grammar)
   ;; What is signalled and not only that something is: there is no repl
   ;; here, so a comment that got as far as being sent would fail too - and
   ;; it would fail saying there is nowhere to send it
@@ -1258,7 +1232,6 @@ in a file it was never in."
 (ert-deftest replique-test-a-comment-is-skipped-to-the-form-behind-it ()
   "Which is what `eval-last-sexp' does in Emacs Lisp, and what makes
 C-x C-e work at the end of a file whose last line is a note."
-  (replique-test-grammar)
   (replique-test-with-clojure "(def a 1)\n;; a note\n;; and another\n"
     (goto-char (point-max))
     (should (equal "(def a 1)"
@@ -1269,7 +1242,6 @@ C-x C-e work at the end of a file whose last line is a note."
 
 A directive written between the two is what the discard eats, and the
 form that was commented out is then the one evaluated."
-  (replique-test-grammar)
   (should (equal '("(def a 1)" "#_(def b 2)")
                  (replique-test-forms "(def a 1)\n#_(def b 2)\n")))
   (should (equal '("#_#_(x)(y)" "(z)")
@@ -1300,7 +1272,6 @@ so where the form was looked for."
 (ert-deftest replique-test-metadata-is-part-of-the-form-it-is-on ()
   "A directive between the metadata and the definition is what the
 metadata ends up on, and the definition is left without it."
-  (replique-test-grammar)
   (should (equal '("^{:m 1}\n(def c 3)")
                  (replique-test-forms "^{:m 1}\n(def c 3)\n")))
   (should (equal '("^:private (def c 3)")
@@ -1309,7 +1280,6 @@ metadata ends up on, and the definition is left without it."
 (ert-deftest replique-test-a-reader-macro-is-not-a-form-of-its-own ()
   "The ones sexp motion reads as two, and the ones it gets right, in one
 list: what is being pinned is that every one of them is a single form."
-  (replique-test-grammar)
   (let ((forms '("#{1 2}" "#(inc %)" "#?(:clj 1)" "#?@(:clj [1])" "#\"re\""
                  "~@(a)" "'(1)" "`(1)" "#=(+ 1 1)" "#^String x" "#'foo" "@(f)")))
     (should (equal forms (replique-test-forms (string-join forms "\n"))))))
@@ -1317,7 +1287,6 @@ list: what is being pinned is that every one of them is a single form."
 (ert-deftest replique-test-what-cannot-be-read-is-sent-as-it-is ()
   "The reader says what is wrong with an unfinished form better than
 anything here could, so it is what gets to say it."
-  (replique-test-grammar)
   (should (equal '("(def a 1)" "(def b\n")
                  (replique-test-forms "(def a 1)\n(def b\n"))))
 
@@ -1325,7 +1294,6 @@ anything here could, so it is what gets to say it."
   "Selecting expressions in the body of a function evaluates those
 expressions.  Nothing at the top level starts in that region, and
 answering with the whole function would be answering another question."
-  (replique-test-grammar)
   (replique-test-with-clojure "(defn f []\n  (a 1)\n  (b 2)\n  (c 3))\n"
     (let* ((start (progn (search-forward "(a 1)") (match-beginning 0)))
            (after-a (point))
@@ -1338,7 +1306,6 @@ answering with the whole function would be answering another question."
 
 (ert-deftest replique-test-a-form-half-selected-is-evaluated-whole ()
   "Half a form is a read error, not an evaluation."
-  (replique-test-grammar)
   (should (equal '("(def a 1)")
                  (replique-test-forms "(def a 1)\n(def b 2)\n" 1 5))))
 
@@ -1346,7 +1313,6 @@ answering with the whole function would be answering another question."
   "What a point command acts on: the whole of the top level form, its
 metadata included, and point just after a form counts as being on it -
 which is where typing one leaves point."
-  (replique-test-grammar)
   (replique-test-with-clojure "(def a 1)\n^{:m 1}\n(def c 3)\n"
     (search-forward "def c")
     (should (equal "^{:m 1}\n(def c 3)"
@@ -1359,7 +1325,6 @@ which is where typing one leaves point."
 (ert-deftest replique-test-the-form-before-point ()
   "The largest form ending there: point after the last paren of (a (b))
 is at the end of both, and the one just finished is the outer one."
-  (replique-test-grammar)
   (replique-test-with-clojure "(a (b))"
     (should (equal "(a (b))"
                    (replique-parse-text (replique-eval--ending-at (point-max))))))
@@ -1372,7 +1337,6 @@ is at the end of both, and the one just finished is the outer one."
 asking for it means the form, not the discarding of it.  A region does
 not descend that way - what was commented out in a region was selected as
 commented out."
-  (replique-test-grammar)
   (replique-test-with-clojure "#_(def b 2)\n"
     (search-forward "def b")
     (should (equal "(def b 2)"
@@ -1387,7 +1351,6 @@ commented out."
 (ert-deftest replique-test-the-transcript-does-not-show-the-source-directive ()
   "The directive is protocol.  Nobody wrote it, so a transcript that shows
 it is a transcript of the wire rather than of the session."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-directive.clj" temporary-file-directory)))
       (unwind-protect
@@ -1416,7 +1379,6 @@ that sends one leaves the directive pending, and the form read after it
 is recorded in the file and at the line of the comment.  What is asserted
 is the form typed at the prompt afterwards, which is where the damage
 would show."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-comment.clj" temporary-file-directory)))
       (unwind-protect
@@ -1444,7 +1406,6 @@ would show."
 Quieter than the comment: a comment is answered with a prompt, and this
 is answered with nothing at all - the repl goes on waiting, and what says
 something happened is the line the next form is recorded at."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-discard-alone.clj"
                                   temporary-file-directory)))
@@ -1470,7 +1431,6 @@ something happened is the line the next form is recorded at."
   "The whole of it, against a real reader: a directive written between #_
 and the form it discards is the form the discard eats, and the one that
 was commented out is then read and evaluated."
-  (replique-test-grammar)
   (replique-test-with-repl repl
     (let ((file (expand-file-name "replique-test-discard.clj" temporary-file-directory)))
       (unwind-protect

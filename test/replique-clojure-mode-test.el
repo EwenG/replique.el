@@ -34,8 +34,7 @@ No grammar is asked for.  Painting reads the buffer with `replique-parse'
 and nothing else, and a test that installs a grammar to check a face would
 be saying it needs one."
   (with-temp-buffer
-    (let ((replique-clojure-ensure-grammars nil))
-      (replique-clojure-mode))
+    (replique-clojure-mode)
     (when level (setq-local replique-clojure-font-lock-level level))
     (insert text)
     (goto-char (point-min))
@@ -50,8 +49,7 @@ be saying it needs one."
 (defun replique-clojure-test--reindent (text)
   "TEXT with the indentation taken off every line and put back by the rules."
   (with-temp-buffer
-    (let ((replique-clojure-ensure-grammars nil))
-      (replique-clojure-mode))
+    (replique-clojure-mode)
     (insert text)
     (goto-char (point-min))
     (while (re-search-forward "^[ \t]+" nil t) (replace-match ""))
@@ -66,8 +64,7 @@ be saying it needs one."
   "Say whether TEXT is left as it is by indenting the whole of it."
   (equal text
          (with-temp-buffer
-           (let ((replique-clojure-ensure-grammars nil))
-             (replique-clojure-mode))
+           (replique-clojure-mode)
            (insert text)
            (indent-region (point-min) (point-max))
            (buffer-string))))
@@ -311,6 +308,133 @@ be saying it needs one."
     (should (eq 'font-lock-doc-face (get-text-property 12 'face)))))
 
 
+;;; How it moves about
+
+(defconst replique-clojure-test--buffer
+  (concat "(ns a.b)\n\n"
+          "(defn f [x]\n  (inc x))\n\n"
+          "(comment\n  (f 1))\n\n"
+          "^:private\n(def g 1)\n\n"
+          "#_(defn dead [] 1)\n\n"
+          "(println \"top\")\n")
+  "A buffer holding one of each thing a top level form can be.")
+
+(defun replique-clojure-test--at (mark body)
+  "Call BODY with point written where MARK is in the sample buffer."
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert replique-clojure-test--buffer)
+    (goto-char (point-min))
+    (search-forward mark)
+    (goto-char (match-beginning 0))
+    (funcall body)))
+
+(defun replique-clojure-test--top-of (mark)
+  "What the top of the form written at MARK looks like."
+  (replique-clojure-test--at
+   mark (lambda ()
+          (beginning-of-defun)
+          (buffer-substring-no-properties
+           (point) (min (point-max) (+ (point) 9))))))
+
+(ert-deftest replique-clojure-mode-test-a-defun-is-any-top-level-form ()
+  ;; Not only the ones beginning with `def'.  What somebody means by the top
+  ;; of the form they are in is the top of the form they are in, and a
+  ;; grammar that only counted definitions walked past these into the one
+  ;; before them
+  (should (equal "(comment\n" (replique-clojure-test--top-of "(f 1)")))
+  (should (equal "(println " (replique-clojure-test--top-of "\"top\"")))
+  (should (equal "#_(defn d" (replique-clojure-test--top-of "dead")))
+  (should (equal "(defn f [" (replique-clojure-test--top-of "(inc x)")))
+  ;; and metadata is part of the form it is written on
+  (should (equal "^:private" (replique-clojure-test--top-of "(def g 1)"))))
+
+(ert-deftest replique-clojure-mode-test-a-definition-is-named-after-itself ()
+  (should (equal "f" (replique-clojure-test--at
+                      "(inc x)" #'add-log-current-defun)))
+  (should (equal "g" (replique-clojure-test--at
+                      "(def g 1)" #'add-log-current-defun)))
+  ;; what the reader throws away defines nothing, however it is written
+  (should-not (replique-clojure-test--at "dead" #'add-log-current-defun))
+  (should-not (replique-clojure-test--at "(f 1)" #'add-log-current-defun))
+  (should-not (replique-clojure-test--at "\"top\"" #'add-log-current-defun))
+  ;; and neither does a call, however much what follows it looks like a
+  ;; name being given to something
+  (should-not (with-temp-buffer
+                (replique-clojure-mode)
+                (insert "(swap! counter inc)")
+                (goto-char 10)
+                (add-log-current-defun))))
+
+(ert-deftest replique-clojure-mode-test-moving-over-defuns-counts-them ()
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert replique-clojure-test--buffer)
+    ;; backwards, one at a time, and then stopping at the top
+    (goto-char (point-max))
+    (should (equal '(14 12 9 6 3 1 1)
+                   (let (lines)
+                     (dotimes (_ 7)
+                       (beginning-of-defun)
+                       (push (line-number-at-pos) lines))
+                     (nreverse lines))))
+    ;; several at once is the same as one at a time
+    (goto-char (point-max))
+    (beginning-of-defun 3)
+    (should (= 9 (line-number-at-pos)))
+    ;; and forwards, which is what a negative count asks for
+    (goto-char (point-min))
+    (should (replique-clojure-beginning-of-defun -2))
+    (should (= 6 (line-number-at-pos)))
+    ;; asking for more than there are moves as far as there are and says
+    ;; that it could not, which is what `beginning-of-defun' is promised
+    (goto-char (point-min))
+    (should-not (replique-clojure-beginning-of-defun 1))
+    (goto-char (point-max))
+    (should-not (replique-clojure-beginning-of-defun 99))
+    (should (= (point) (point-min)))
+    (should-not (replique-clojure-beginning-of-defun -99))
+    (should (= (point) (point-max)))))
+
+(ert-deftest replique-clojure-mode-test-moving-to-the-end-of-a-defun ()
+  (with-temp-buffer
+    (replique-clojure-mode)
+    (insert replique-clojure-test--buffer)
+    (goto-char (point-min))
+    (should (equal '(2 5 8 11 13 15 15)
+                   (let (lines)
+                     (dotimes (_ 7)
+                       (end-of-defun)
+                       (push (line-number-at-pos) lines))
+                     (nreverse lines))))
+    ;; asked from inside a form it is the end of that form, and not of the
+    ;; one after it: `end-of-defun' puts point at a beginning before asking
+    ;; but nothing says everybody else has to
+    (goto-char (point-min))
+    (search-forward "(inc x)")
+    (replique-clojure-end-of-defun)
+    (should (= 4 (line-number-at-pos)))))
+
+(ert-deftest replique-clojure-mode-test-moving-over-a-form-knows-the-reader ()
+  ;; The syntax table, which carries the reader macros as prefixes, so that
+  ;; each of these is one expression rather than a `#' and something else
+  (dolist (probe '(("#{1 2} x" . 7)
+                   ("#(inc %) x" . 9)
+                   ("#?(:clj 1) x" . 11)
+                   ("#?@(:clj [1]) x" . 14)
+                   ("~@foo x" . 6)
+                   ("#'foo x" . 6)
+                   ("`(a ~b) x" . 8)
+                   ("#\"re\" x" . 6)
+                   ("\\( x" . 3)))
+    (with-temp-buffer
+      (replique-clojure-mode)
+      (insert (car probe))
+      (goto-char (point-min))
+      (forward-sexp 1)
+      (should (= (cdr probe) (point))))))
+
+
 ;;; How it indents
 
 (ert-deftest replique-clojure-mode-test-a-body-is-indented-two ()
@@ -493,8 +617,7 @@ be saying it needs one."
                   "#?(:clj 1\n:cljs 2)\n"))
     (should (equal (replique-clojure-test--reindent text)
                    (with-temp-buffer
-                     (let ((replique-clojure-ensure-grammars nil))
-                       (replique-clojure-mode))
+                     (replique-clojure-mode)
                      (insert text)
                      (goto-char (point-min))
                      (while (re-search-forward "^[ \t]+" nil t) (replace-match ""))

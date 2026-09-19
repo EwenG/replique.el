@@ -24,7 +24,6 @@
   "Run BODY in a Clojure buffer holding TEXT, with point where its | was."
   (declare (indent 1))
   `(progn
-     (replique-test-grammar)
      (with-temp-buffer
        (replique-clojure-mode)
        (insert ,text)
@@ -446,7 +445,6 @@ the name is the thing the method is called on."
 (ert-deftest replique-symbol-test-it-is-on-in-a-clojure-buffer ()
   "Turning `replique-mode' off takes it back out, which is how somebody says
 they would rather be told by something else."
-  (replique-test-grammar)
   (with-temp-buffer
     (replique-clojure-mode)
     (should (memq #'replique-symbol-eldoc eldoc-documentation-functions))

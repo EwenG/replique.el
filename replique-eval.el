@@ -32,13 +32,13 @@
 ;; form that was commented out gets evaluated, and metadata lands on the
 ;; directive instead of on the definition it was written for.
 ;;
-;; So the forms are read from a tree-sitter parse, where a discard and what it
+;; So the forms are read from `replique-parse', where a discard and what it
 ;; discards are one node and metadata is part of the form it is on.  There is
-;; no list of reader macros here to keep in step with the reader: the grammar
+;; no list of reader macros here to keep in step with the reader: the reader
 ;; is the list.
 ;;
 ;; That parse is the one `replique-clojure-mode' already made, which is why
-;; these commands ask for that mode rather than for a grammar of their own.
+;; these commands ask for that mode rather than reading the buffer again.
 ;; Where a form begins is a question the mode answers too - it is what it
 ;; indents and highlights by - and a buffer that answered it one way for the
 ;; editor and another for the repl would be a buffer where what you see is not

@@ -516,7 +516,6 @@ it puts to the process together is a quarter of what is left."
 
 (ert-deftest replique-name-fuzz-nothing-in-a-buffer-breaks-the-reading ()
   "Read a few thousand positions of a few hundred buffers."
-  (replique-test-grammar)
   (dolist (seed '(1 2 3 4 5 6 7 8))
     (should (null (replique-name-fuzz--failing seed 100)))))
 
@@ -531,7 +530,6 @@ answer made up here reaches the kinds a buffer hardly ever leads to."
 (ert-deftest replique-name-fuzz-nothing-in-a-buffer-breaks-the-answer ()
   "A few hundred positions, each of them asked of a real process, and what
 comes back said and opened."
-  (replique-test-grammar)
   (replique-test-process)
   (let ((before (buffer-list)))
     (unwind-protect
