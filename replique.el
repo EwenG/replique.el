@@ -116,7 +116,15 @@ that needs one says so when it is used.
 ;; the way a Clojure buffer is - see `replique-repl--clojure'.  Added from
 ;; here rather than by the repl mode itself, which would make the file that
 ;; defines a repl depend on the one that completes in it
+;;
+;; From the autoloads, for the same reason as the hook below: `replique-repl'
+;; and `replique-start' are autoloaded out of other files, so a repl can be
+;; opened without this one ever being loaded - and a repl opened that way
+;; completed filenames, the way a comint buffer does, and answered nothing to
+;; eldoc or to xref
+;;;###autoload
 (add-hook 'replique-repl-mode-hook #'replique-completion-install)
+;;;###autoload
 (add-hook 'replique-repl-mode-hook #'replique-symbol-install)
 
 ;; From the autoloads rather than from this file: opening a Clojure file

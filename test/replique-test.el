@@ -23,6 +23,7 @@
 ;; for the test that reads the package headers of replique.el
 (require 'package)
 (require 'find-func)
+(require 'loaddefs-gen)
 (require 'replique)
 
 (defvar replique-test-process nil
@@ -1189,6 +1190,72 @@ by hand: the mode replique opens one in is what turns them on."
     (should (eq #'replique-eval-defun (key-binding (kbd "C-M-x"))))
     (should (eq #'replique-load-file (key-binding (kbd "C-c C-l"))))
     (should (eq #'replique-remove-var (key-binding (kbd "C-c C-u"))))))
+
+(defmacro replique-test--in-repl-mode (&rest body)
+  "Run BODY in a buffer in `replique-repl-mode', with no repl behind it.
+Which is enough to ask what a key is bound to there, and asks it of the
+mode rather than of a process."
+  (declare (indent 0))
+  `(with-temp-buffer
+     (replique-repl-mode)
+     ,@body))
+
+(ert-deftest replique-test-a-repl-buffer-shows-the-process-output ()
+  "`C-c C-o' is the same command at a prompt as in a file.  comint has
+`comint-delete-output' there, which writes \"*** output flushed ***\" into
+the transcript."
+  (replique-test--in-repl-mode
+    (should (eq #'replique-show-process-output (key-binding (kbd "C-c C-o"))))))
+
+(ert-deftest replique-test-a-repl-buffer-does-not-signal-a-subjob ()
+  "There is no subjob: the process of a repl buffer is a socket.  Stopping
+one would stop Emacs reading it - a repl that looks hung - and quitting one
+asks for a signal a connection cannot carry.  So the keys say they are
+undefined rather than falling through to comint."
+  (replique-test--in-repl-mode
+    (should (eq #'undefined (key-binding (kbd "C-c C-z"))))
+    (should (eq #'undefined (key-binding (kbd "C-c C-\\"))))))
+
+(ert-deftest replique-test-a-repl-buffer-still-interrupts-and-quits ()
+  "What those keys are reached for is on the keys that do it here."
+  (replique-test--in-repl-mode
+    (should (eq #'replique-interrupt (key-binding (kbd "C-c C-c"))))
+    (should (eq #'replique-quit-repl (key-binding (kbd "C-c C-q"))))))
+
+(ert-deftest replique-test-a-repl-buffer-completes-and-answers ()
+  "Completion, eldoc and xref are turned on by the mode, so a repl opened
+from an autoload - without `replique.el' having been loaded by anything -
+is one they answer in.  Without this a repl completed filenames, which is
+what a comint buffer does when nobody else offers."
+  (replique-test--in-repl-mode
+    (should (memq #'replique-completion-at-point completion-at-point-functions))
+    (should (memq #'replique-symbol-eldoc eldoc-documentation-functions))
+    (should (memq #'replique-symbol-xref-backend xref-backend-functions))))
+
+(ert-deftest replique-test-the-repl-hooks-are-autoloaded ()
+  "A repl opened by `replique-start\=' - autoloaded out of another file - is
+set up although nothing has loaded `replique.el\='.  What tells package.el
+to do that is the autoloads it generates, so they are generated here and
+asked, rather than the source being read for a cookie."
+  (let* ((source (file-name-directory (locate-library "replique")))
+         ;; Into a directory of its own: `loaddefs-generate\=' writes the file
+         ;; itself, and leaves one that is already there alone
+         (dir (make-temp-file "replique-autoloads" t))
+         (out (expand-file-name "replique-autoloads.el" dir)))
+    (unwind-protect
+        (let ((inhibit-message t))
+          (loaddefs-generate source out)
+          (with-temp-buffer
+            (insert-file-contents out)
+            (goto-char (point-min))
+            (should (search-forward
+                     "(add-hook 'replique-repl-mode-hook #'replique-completion-install)"
+                     nil t))
+            (goto-char (point-min))
+            (should (search-forward
+                     "(add-hook 'replique-repl-mode-hook #'replique-symbol-install)"
+                     nil t))))
+      (delete-directory dir t))))
 
 (ert-deftest replique-test-a-buffer-that-is-not-ours-is-not-evaluated ()
   "Evaluating reads the buffer with the grammar it is highlighted with, so

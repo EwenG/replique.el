@@ -371,7 +371,24 @@ it better than anything here could."
     ;; and eldoc and xref already answer about it here - see `replique.el'.
     ;; There is no load-file, because a repl buffer holds no file
     (define-key map (kbd "C-c C-u") #'replique-remove-var)
+    ;; The same key as in a Clojure buffer, and the same command.  What comint
+    ;; has here is `comint-delete-output', which takes the last answer out of
+    ;; the transcript and writes "*** output flushed ***" where it was - a
+    ;; terminal habit, and not what this key means anywhere else in replique
+    (define-key map (kbd "C-c C-o") #'replique-show-process-output)
     (define-key map (kbd "RET") #'replique-repl-return)
+    ;; What comint keeps on these two is meant for a subprocess of a terminal,
+    ;; and what this buffer holds is a socket.  `comint-stop-subjob' sends no
+    ;; signal down one: it stops Emacs reading what arrives, so the repl falls
+    ;; silent and looks hung with nothing anywhere to say why - the worst of
+    ;; the two, because it is the one that looks like a crash.
+    ;; `comint-quit-subjob' asks for a signal that a connection cannot carry.
+    ;; Masked rather than left to fall through, so the key says it is
+    ;; undefined instead of quietly doing something else: interrupting is
+    ;; `C-c C-c' and quitting is `C-c C-q', which are what these are reached
+    ;; for
+    (define-key map (kbd "C-c C-z") #'undefined)
+    (define-key map (kbd "C-c C-\\") #'undefined)
     map)
   "Keymap of a repl buffer.")
 
