@@ -139,8 +139,13 @@ the global value being the one that is read comes to: see
 
 INFO is the description the process gives of itself - the same map it
 writes to its port file.  PROC is the operating system process when Emacs
-started it, nil when Emacs only connected to it."
-  id host port directory info proc control repls output-buffer)
+started it, nil when Emacs only connected to it.
+
+DIRECTORY is where it runs, named the way the editor names it, which is
+not always the way the process does - see \"The name a path comes back
+under\" below.  RENAMING is how to write one of its paths the other way,
+and what says the two names are different at all."
+  id host port directory renaming info proc control repls output-buffer)
 
 (defvar replique-process-started-hook nil
   "Functions called with a process once it is connected.")
@@ -178,12 +183,19 @@ over by another process since the port file was written."
 
 Only what this Emacs is connected to.  A process started in a terminal is
 not known here, and nothing short of connecting to it would say whether
-the port file it left names something that is still running."
+the port file it left names something that is still running.
+
+One directory reached two ways is one directory.  A project opened through
+a symlink and the same project opened as what that link resolves to are
+one place with two names, and a process there is one process however it
+was named: what would come of starting a second is the port file of the
+first one refusing it, from somewhere the message does not point at."
   (let ((directory (file-name-as-directory (expand-file-name directory))))
     (seq-find (lambda (process)
                 (when-let* ((dir (replique-process--directory process)))
-                  (equal directory
-                         (file-name-as-directory (expand-file-name dir)))))
+                  (let ((dir (file-name-as-directory (expand-file-name dir))))
+                    (or (equal directory dir)
+                        (file-equal-p directory dir)))))
               (replique-processes-live))))
 
 (defun replique-process--register (process)
@@ -239,6 +251,107 @@ paint over them."
   (replique-process--insert process
                             (concat (apply #'format format args) "\n")
                             'replique-note))
+
+;;; The name a path comes back under
+
+;; A process resolves the directory it runs in and the editor does not.  The
+;; kernel resolves every link on the way to a working directory and `user.dir'
+;; is what that resolving left, while the editor holds the name somebody
+;; opened.  Where a project is reached through a symlink those are two names
+;; for one directory, and every path the process hands back is written its way:
+;; a definition in ~/clojure/repl/src/app.clj is answered as
+;; ~/clojure/worktree-a/src/app.clj, and opening it takes the buffer out of the
+;; link.
+;;
+;; Which matters because the link is what says what is being edited.  Pointing
+;; one at another worktree is how a branch is switched under a running process,
+;; and a buffer on the far side of it says nothing about which branch its file
+;; is being edited for - version control answers for the resolved tree, and
+;; replique itself would key a process to it.
+;;
+;; So a path is renamed as it comes in, once, for every answer alike: an editor
+;; that asked about ~/clojure/repl is told about ~/clojure/repl.  Only the
+;; prefix moves.  What the process says about a file is otherwise what it says,
+;; and a path outside the directory it runs in - a jar under ~/.m2, a source
+;; beside it - is named the one way both of them have for it.
+;;
+;; Neither of the two names is itself renamed.  The process's own is kept in
+;; its INFO, which is where the rename is read out of, and is what
+;; `replique-describe-process' reports beside the other: the resolved path is
+;; the one that says which worktree a link is pointing at, and a process is
+;; entitled to say where it is.
+;;
+;; What is renamed is every reply, which is every answer there is: a path comes
+;; back as the `:file' of a definition, of a use of a name, and of a file that
+;; has to be loaded again, and each of those is a reply to something asked.  No
+;; frame a process pushes carries one - what arrives unasked for is output, an
+;; exception in a thread, and a count of what was dropped - so
+;; `replique-process--frame' renames nothing, and is where to rename it if one
+;; ever does.  Neither does a repl connection carry a path: what comes back
+;; there is a prompt, output, a value, and an exception written out.
+
+(defun replique-process--renaming-between (editor process)
+  "Return how to write a path of PROCESS the way EDITOR writes it, or nil.
+
+EDITOR and PROCESS are two names for the directory a process runs in: the
+one the editor was given, and the one the process resolved.  The rule is
+the two of them as prefixes, to swap one for the other.
+
+Nil where there is nothing to swap - the same name twice - and nil where
+they are not one directory at all, which is a process running somewhere
+else and nothing to rename the paths of."
+  (when (and editor process)
+    (let ((editor (file-name-as-directory (expand-file-name editor)))
+          (process (file-name-as-directory (expand-file-name process))))
+      (when (and (not (equal editor process))
+                 (file-equal-p editor process))
+        (cons process editor)))))
+
+(defun replique-process--renamed-path (path renaming)
+  "Return PATH written the way RENAMING says, or PATH where it says nothing.
+
+Only a path under the directory the rule is about is renamed, and only its
+prefix: everything below is what the process said."
+  (if (and renaming (stringp path) (string-prefix-p (car renaming) path))
+      (concat (cdr renaming) (substring path (length (car renaming))))
+    path))
+
+(defun replique-process--renamed (value renaming)
+  "Return VALUE with every file in it written the way RENAMING says.
+
+VALUE is a frame, or anything inside one: a property list, a list of them,
+or something that is neither and comes back as it is.
+
+A path is the value of a `:file', wherever one is, which is what a file is
+called throughout the protocol.  Nothing else is touched.  An `:entry'
+beside a `:file' names something inside an archive rather than a place on
+a disk, and a `:directory' is a process saying where it is - the thing the
+renaming is made of."
+  (cond
+   ((not (consp value)) value)
+   ((keywordp (car value))
+    (let ((renamed nil))
+      (while value
+        (let ((key (car value))
+              (each (cadr value)))
+          (push key renamed)
+          (push (if (eq key :file)
+                    (replique-process--renamed-path each renaming)
+                  (replique-process--renamed each renaming))
+                renamed)
+          (setq value (cddr value))))
+      (nreverse renamed)))
+   (t (mapcar (lambda (each) (replique-process--renamed each renaming)) value))))
+
+(defun replique-process--renamed-frame (process frame)
+  "Return FRAME with every file in it named the way PROCESS is named here.
+
+Which is FRAME itself where the editor and the process have one name for
+the directory, and that is nearly always."
+  (let ((renaming (replique-process--renaming process)))
+    (if renaming
+        (replique-process--renamed frame renaming)
+      frame)))
 
 ;;; Events
 
@@ -375,8 +488,14 @@ a slower question, and `replique-connect' is where it is asked."
                  (not (replique-process--listening-p host port)))
         (replique-process--reap (car description) info 'unreachable)))))
 
-(defun replique-process--connect (info os-proc on-ready &optional on-failure)
+(defun replique-process--connect (info directory os-proc on-ready &optional on-failure)
   "Open the control connection of the process described by INFO.
+
+DIRECTORY is the name the editor has for where the process runs - what was
+given to `replique-start' or `replique-connect' - and nil where there is
+none.  It is what the process is known by here, and what every path it
+hands back is renamed under, where the process resolved that name into
+another one: see \"The name a path comes back under\".
 
 OS-PROC is the operating system process when Emacs started it.  ON-READY
 is called with the replique process once the handshake is in.  Returns the
@@ -395,11 +514,18 @@ returns, since the connection is made before `replique-conn-open'
 returns, while a refused handshake is an answer that comes later."
   (let* ((host (plist-get info :host))
          (port (plist-get info :port))
+         (renaming (replique-process--renaming-between
+                    directory (plist-get info :directory)))
          (process (replique-process--make
                    :id (plist-get info :process-id)
                    :host host
                    :port port
-                   :directory (plist-get info :directory)
+                   ;; The editor's name for it exactly where that is a name
+                   ;; for the same directory, which is what having a rule
+                   ;; says.  Without one there is nothing to choose between
+                   ;; and the process's own name stands
+                   :directory (if renaming (cdr renaming) (plist-get info :directory))
+                   :renaming renaming
                    :info info
                    :proc os-proc
                    :repls nil))
@@ -677,7 +803,7 @@ and the process stops on the write that fills it."
      ((equal "started" (plist-get info :tag))
       (process-put proc 'replique-state 'started)
       (let ((process (replique-process--connect
-                      info proc
+                      info (process-get proc 'replique-directory) proc
                       (lambda (process)
                         (process-put proc 'replique-state 'connected)
                         (message "replique: %s listening on %s:%s"
@@ -832,7 +958,7 @@ where there is one."
               (message "replique: already connected to %s"
                        (replique-process--id connected)))
           (replique-process--connect
-           info nil
+           info directory nil
            (lambda (process)
              (replique-process-buffer process)
              (message "replique: connected to %s" (replique-process--id process))
@@ -847,11 +973,18 @@ where there is one."
 ;;; Ops
 
 (defun replique-process-request (process msg &optional callback)
-  "Send MSG on the control connection of PROCESS."
+  "Send MSG on the control connection of PROCESS.
+
+CALLBACK is called with the reply, every file in it named the way this
+process is named here - see \"The name a path comes back under\"."
   (let ((conn (replique-process--control process)))
     (unless (replique-conn-live-p conn)
       (user-error "The process is not connected"))
-    (replique-conn-request conn msg callback)))
+    (replique-conn-request
+     conn msg
+     (when callback
+       (lambda (frame)
+         (funcall callback (replique-process--renamed-frame process frame)))))))
 
 (defun replique-process-request-sync (process msg &optional timeout)
   "Send MSG on the control connection of PROCESS and wait for the reply.
@@ -863,7 +996,9 @@ Where `replique-process-request' signals that there is no connection,
 this answers with the frame that says so.  What waits for a reply is a
 keystroke: a command that raises in the middle of one stops the editor
 where offering nothing would have let the typing go on."
-  (replique-conn-request-sync (replique-process--control process) msg timeout))
+  (replique-process--renamed-frame
+   process
+   (replique-conn-request-sync (replique-process--control process) msg timeout)))
 
 (defun replique-describe-process ()
   "Say what the current process is."
@@ -876,7 +1011,15 @@ where offering nothing would have let the typing go on."
            (message "replique: %s" (plist-get frame :message))
          (message "replique: %s in %s - clojure %s, java %s, up %ss"
                   (plist-get frame :process-id)
-                  (plist-get frame :directory)
+                  ;; Both names where there are two: this is the one command
+                  ;; that is asking what the process is, and where a link is
+                  ;; what the editor reached it through, what it resolved to
+                  ;; is what says which worktree is under the link now
+                  (if (replique-process--renaming process)
+                      (format "%s -> %s"
+                              (replique-process--directory process)
+                              (plist-get frame :directory))
+                    (plist-get frame :directory))
                   (plist-get frame :clojure-version)
                   (plist-get frame :java-version)
                   (/ (or (plist-get frame :uptime) 0) 1000)))))))

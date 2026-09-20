@@ -101,6 +101,20 @@ that went from one that was never there."
           (error "The process did not start"))
         (car (seq-difference replique-processes known))))))
 
+(defun replique-test-started-in (directory)
+  "Start a process in DIRECTORY and return it once it has connected.
+
+For a test that needs a project of its own - one written for the test, or
+one reached by a name of the test's choosing.  The shared process is
+`replique-test-process', and is what a test that only needs a process
+should ask for."
+  (let ((known replique-processes))
+    (replique-start directory)
+    (unless (replique-test-wait-for
+             (lambda () (seq-difference replique-processes known)) 120)
+      (error "The process did not start"))
+    (car (seq-difference replique-processes known))))
+
 (defun replique-test-cleanup ()
   "Stop every process the tests are still connected to.
 
@@ -638,6 +652,194 @@ before it spawned anything."
     (should file)
     (replique-process--reap-directory (replique-process--directory process))
     (should (file-exists-p file))))
+
+;;; The name a path comes back under
+
+(ert-deftest replique-test-two-names-for-one-directory-are-a-renaming ()
+  "A process resolves the directory it runs in and an editor does not, so a
+project opened through a symlink has two names.  What says so is that they
+are different names for one place - a different name for a different place
+is another process, and nothing to rename anything of."
+  (replique-test-with-project dir
+    (replique-test-with-project elsewhere
+      (let ((link (concat (directory-file-name dir) "-link")))
+        (unwind-protect
+            (progn
+              (make-symbolic-link (directory-file-name dir) link)
+              (should-not (replique-process--renaming-between dir dir))
+              (should-not (replique-process--renaming-between link elsewhere))
+              (should-not (replique-process--renaming-between nil dir))
+              (should-not (replique-process--renaming-between link nil))
+              (let ((renaming (replique-process--renaming-between link dir)))
+                (should renaming)
+                (should (equal (file-name-as-directory dir) (car renaming)))
+                (should (equal (file-name-as-directory link) (cdr renaming)))))
+          (delete-file link))))))
+
+(ert-deftest replique-test-only-what-is-under-the-directory-is-renamed ()
+  "The prefix and nothing else.  A file the process names from somewhere
+else - a jar under ~/.m2, a source beside the project - is named the one
+way both of them have for it, and a directory whose name merely starts the
+same is not under it at all."
+  (let ((renaming (cons "/p/worktree/" "/p/repl/")))
+    (should (equal "/p/repl/src/app.clj"
+                   (replique-process--renamed-path "/p/worktree/src/app.clj" renaming)))
+    (should (equal "/p/worktree-two/src/app.clj"
+                   (replique-process--renamed-path "/p/worktree-two/src/app.clj" renaming)))
+    (should (equal "/home/me/.m2/lib.jar"
+                   (replique-process--renamed-path "/home/me/.m2/lib.jar" renaming)))
+    (should (equal "/p/worktree/src/app.clj"
+                   (replique-process--renamed-path "/p/worktree/src/app.clj" nil)))))
+
+(ert-deftest replique-test-every-file-in-an-answer-is-renamed ()
+  "Wherever one is.  An answer carries a file on its own, a file inside
+what a name resolved to, and a list of them - and the next question is
+asked with what came back, so one left behind would be asked about under a
+name the editor never used."
+  (let ((frame (replique-process--renamed
+                '(:tag "reply" :op "usages"
+                        :symbol (:name "thing" :ns "probe.core"
+                                       :file "/p/worktree/src/probe/core.clj" :line 2)
+                        :usages ((:file "/p/worktree/src/probe/core.clj" :line 3 :column 14)
+                                 (:file "/p/elsewhere/src/probe/use.clj" :line 5)))
+                (cons "/p/worktree/" "/p/repl/"))))
+    (should (equal "/p/repl/src/probe/core.clj"
+                   (plist-get (plist-get frame :symbol) :file)))
+    (should (equal '("/p/repl/src/probe/core.clj" "/p/elsewhere/src/probe/use.clj")
+                   (mapcar (lambda (use) (plist-get use :file))
+                           (plist-get frame :usages))))
+    ;; and the answer is otherwise the answer
+    (should (equal "probe.core" (plist-get (plist-get frame :symbol) :ns)))
+    (should (equal 14 (plist-get (car (plist-get frame :usages)) :column)))))
+
+(ert-deftest replique-test-what-is-not-a-file-is-left-alone ()
+  "What is renamed is settled by the key and never by the look of the text
+under it.  A file is a `:file', which is what one is called throughout the
+protocol, and plenty of text that is not one reads like a path all the
+same: a docstring saying which file something reads, an arglist, an entry
+naming a place inside an archive, the directory a process says it runs in.
+Rewriting any of those would be rewriting what the process said."
+  (let ((frame (replique-process--renamed
+                '(:tag "reply" :directory "/p/worktree"
+                        :symbol (:name "config"
+                                       :file "/p/worktree/src/app.clj"
+                                       :entry "clojure/string.clj"
+                                       :doc "/p/worktree/etc/config.edn"
+                                       :arglists ("[coll]" "/p/worktree/etc")))
+                (cons "/p/worktree/" "/p/repl/"))))
+    (should (equal "/p/worktree" (plist-get frame :directory)))
+    (let ((found (plist-get frame :symbol)))
+      (should (equal "/p/repl/src/app.clj" (plist-get found :file)))
+      (should (equal "clojure/string.clj" (plist-get found :entry)))
+      (should (equal "/p/worktree/etc/config.edn" (plist-get found :doc)))
+      (should (equal '("[coll]" "/p/worktree/etc") (plist-get found :arglists))))))
+
+(ert-deftest replique-test-a-process-the-editor-names-as-it-does-renames-nothing ()
+  "Which is nearly every process there is, so it costs nothing: the frame
+that arrived is the frame that is handed on, not a copy of it."
+  (let ((process (replique-process--make :directory "/p/worktree" :renaming nil))
+        (frame '(:tag "reply" :file "/p/worktree/src/app.clj")))
+    (should (eq frame (replique-process--renamed-frame process frame)))))
+
+(ert-deftest replique-test-a-process-is-found-under-either-name-of-its-directory ()
+  "Which is what keeps a second one from being started where one is already
+running: the guard is what the editor is asked for by name, and the name it
+is asked about is whichever of the two somebody typed."
+  (replique-test-with-project dir
+    (let ((link (concat (directory-file-name dir) "-link")))
+      (unwind-protect
+          (progn
+            (make-symbolic-link (directory-file-name dir) link)
+            (replique-test-with-process-in link
+              (should (replique-process-in link))
+              (should (replique-process-in dir)))
+            (replique-test-with-process-in dir
+              (should (replique-process-in link))
+              (should (replique-process-in dir))))
+        (delete-file link)))))
+
+(ert-deftest replique-test-every-way-of-asking-renames-what-comes-back ()
+  "Both of them.  A command that waits for its answer and one that is told
+later ask the same ops, and an answer renamed in one of them only would
+send a name back under the other."
+  (let ((process (replique-process--make
+                  :directory "/p/repl"
+                  :renaming (cons "/p/worktree/" "/p/repl/")))
+        (answer '(:tag "reply" :file "/p/worktree/src/app.clj"))
+        (heard nil))
+    (cl-letf (((symbol-function 'replique-conn-live-p) (lambda (_conn) t))
+              ((symbol-function 'replique-conn-request)
+               (lambda (_conn _msg callback) (funcall callback answer) 1))
+              ((symbol-function 'replique-conn-request-sync)
+               (lambda (_conn _msg _timeout) answer)))
+      (replique-process-request process '(:op :symbol)
+                                (lambda (frame) (setq heard frame)))
+      (should (equal "/p/repl/src/app.clj" (plist-get heard :file)))
+      (should (equal "/p/repl/src/app.clj"
+                     (plist-get (replique-process-request-sync process '(:op :symbol) 1)
+                                :file))))))
+
+(ert-deftest replique-test-a-process-reached-through-a-link-answers-under-the-link ()
+  "The whole of it, against a real process - the only thing that resolves
+the directory it was started in.  A project is reached through a symlink,
+a file of it is loaded, and where the process says its definition is has to
+be the file the editor opened: a jump that landed on the other side of the
+link would take the buffer out of the worktree the link is pointing at."
+  (let ((project (replique-test-project)))
+    (replique-test-with-project dir
+      (let* ((link (file-name-as-directory (concat (directory-file-name dir) "-link")))
+             (source (expand-file-name "src/probe/core.clj" link))
+             (process nil))
+        (unwind-protect
+            (progn
+              (make-symbolic-link (directory-file-name dir) (directory-file-name link))
+              (make-directory (expand-file-name "src/probe" dir) t)
+              (with-temp-file (expand-file-name "deps.edn" dir)
+                (insert "{:paths [\"src\"]}"))
+              (with-temp-file (expand-file-name "src/probe/core.clj" dir)
+                (insert "(ns probe.core)\n(defn thing [] 1)\n(defn one [] (thing))\n"))
+              (let ((replique-coordinates (format "{:local/root %S}" project)))
+                (setq process (replique-test-started-in link)))
+              ;; The two names are really two, or the rest stands over nothing
+              (should (replique-process--renaming process))
+              (should (equal link (file-name-as-directory
+                                   (replique-process--directory process))))
+              (let ((repl (replique-repl process))
+                    (asked (list :op :symbol :position :code
+                                 :ns "probe.core" :text "thing")))
+                (replique-test-hide (replique-repl--buffer repl))
+                ;; Required rather than loaded from a buffer: a file loaded by
+                ;; its path is answered under the path that was sent, and what
+                ;; this is about is the process naming a file its own way -
+                ;; which is what a require leaves behind, and what every file
+                ;; a session has been running on is named by
+                (replique-test-eval repl "(require (quote probe.core))")
+                ;; The process really does answer something else, or the rest
+                ;; of this would hold however the answer was handled
+                (let ((raw (replique-conn-request-sync
+                            (replique-process--control process) asked 10)))
+                  (should (plist-get raw :symbol))
+                  (should-not (equal source (plist-get (plist-get raw :symbol) :file))))
+                (let ((buffer (find-file-noselect source)))
+                  (unwind-protect
+                      ;; Bound rather than set: it is where the commands of a
+                      ;; Clojure buffer look for the repl to act on, and a test
+                      ;; that left one behind would answer for the next test
+                      (let ((replique-current-repl repl))
+                        (with-current-buffer buffer
+                          ;; Asked at a use of it, which is where a name is a
+                          ;; name being used rather than one being given
+                          (goto-char (point-min))
+                          (search-forward "(thing)")
+                          (forward-char -2)
+                          (let ((found (replique-symbol--ask (replique-name-context)
+                                                             "thing")))
+                            (should found)
+                            (should (equal source (plist-get found :file))))))
+                    (kill-buffer buffer)))))
+          (when process (replique-kill-process process))
+          (when (file-symlink-p (directory-file-name link))
+            (delete-file (directory-file-name link))))))))
 
 ;;; A repl
 

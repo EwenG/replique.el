@@ -243,15 +243,6 @@ that time against the one the process recorded when it read it."
   (with-temp-file file (insert text))
   (set-file-times file (time-add (current-time) 10)))
 
-(defun replique-fresh-test--started (directory)
-  "Start a process in DIRECTORY and return it once it has connected."
-  (let ((known replique-processes))
-    (replique-start directory)
-    (unless (replique-test-wait-for
-             (lambda () (seq-difference replique-processes known)) 120)
-      (error "The process did not start"))
-    (car (seq-difference replique-processes known))))
-
 (defun replique-fresh-test--uses ()
   "Return the uses of the var point is in, as xref would show them."
   (save-excursion
@@ -282,7 +273,7 @@ renames everything and one that leaves a caller behind."
          source
          "(ns probe.core)\n(defn thing [] 1)\n(defn one [] (thing))\n")
         (let* ((replique-coordinates (format "{:local/root %S}" (replique-test-project)))
-               (process (replique-fresh-test--started dir)))
+               (process (replique-test-started-in dir)))
           (unwind-protect
               (let ((repl (replique-repl process)))
                 (replique-test-hide (replique-repl--buffer repl))
