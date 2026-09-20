@@ -307,6 +307,15 @@ belongs in the repl it was asked from rather than among what the
 application happens to print."
   (format "#replique/load %s" (replique-edn-map what)))
 
+(defun replique-eval-clojure-file-p ()
+  "Whether the current buffer is a Clojure file that could be loaded.
+
+What `save-some-buffers\\=' is given before a load, so that what is offered
+to be saved is what the load would read.  A note in some other buffer has
+nothing to do with it, and being asked about one is being asked a question
+that is not about what was asked for."
+  (and buffer-file-name (derived-mode-p 'replique-clojure-mode)))
+
 (defun replique-reload-directive ()
   "Return the directive asking for everything that changed to be loaded.
 
@@ -528,7 +537,7 @@ was written in the first place."
      (replique-load-directive what))))
 
 ;;;###autoload
-(defun replique-reload-all ()
+(defun replique-reload-all (&optional waiting)
   "Load every file that changed since the process read it.
 
 Nobody names the files, which is the whole point of the command: not
@@ -560,12 +569,22 @@ in some other buffer has nothing to do with it.
 
 Only a process whose compiler wrote down what it compiled can answer
 this.  One that cannot says so, in the repl, and says what to start it
-on instead."
+on instead.
+
+WAITING holds the editor until the loading has ended and returns the
+frame that ended it - a value, an exception, or the error a repl answers
+what it could not read with.  For a command that loads
+in order to ask the process something afterwards, where the answer would
+otherwise be about the files as the process last read them: see
+`replique-fresh-ensure\\='.  Nobody pressing the key wants that, so the
+command itself never passes it."
   (interactive)
-  (save-some-buffers nil (lambda ()
-                           (and buffer-file-name
-                                (derived-mode-p 'replique-clojure-mode))))
-  (replique-repl-send-code (replique-repl-ensure) (replique-reload-directive) nil t))
+  (save-some-buffers nil #'replique-eval-clojure-file-p)
+  (let ((repl (replique-repl-ensure))
+        (directive (replique-reload-directive)))
+    (if waiting
+        (replique-repl-send-code-sync repl directive)
+      (replique-repl-send-code repl directive nil t))))
 
 (provide 'replique-eval)
 

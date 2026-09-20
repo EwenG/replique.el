@@ -118,8 +118,12 @@ the two of them are the evaluation the echo area is about to report.
 QUEUED holds the code that was sent while the repl was
 still busy with what came before it, waiting for a prompt to be written
 after.  LAST-EXCEPTION is the whole exception frame rather than the
-exception it carries: showing one takes the message and the phase too."
-  process conn buffer ns params at-prompt to-echo echoed queued last-exception)
+exception it carries: showing one takes the message and the phase too.
+ON-END is what to call when the evaluation now running ends, for the one
+caller that cannot carry on until it has - see
+`replique-repl-send-code-sync\\='."
+  process conn buffer ns params at-prompt to-echo echoed queued last-exception
+  on-end)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -205,6 +209,22 @@ the protocol draws rather than one a client guesses at."
                       (concat (string-trim-right printed "\n+") "\n" string)
                     string)))))))
 
+(defun replique-repl--ended (repl frame)
+  "Tell whoever is waiting for the evaluation of REPL that FRAME ended it.
+
+Three frames end one: a value, an exception, and the error a repl answers
+what it could not even read with.  Nothing tells them apart at the point
+of waiting - what is waited for is the repl being done - and which of them
+it was is the caller\\='s to read.  The third is why they are three: a wait
+that only ever ended on the first two would wait for ever on something the
+repl never got as far as evaluating.
+
+After the buffer has been written rather than before, so that whatever
+runs next finds the transcript as somebody reading it would."
+  (when-let* ((on-end (replique-repl--on-end repl)))
+    (setf (replique-repl--on-end repl) nil)
+    (funcall on-end frame)))
+
 (defun replique-repl--truncation (exception)
   "Return what EXCEPTION left out, or nil.
 
@@ -234,7 +254,8 @@ be shown as cut rather than as a whole one."
      (replique-repl--unattended repl)
      (let ((value (plist-get frame :value)))
        (replique-repl--insert repl (concat value "\n"))
-       (replique-repl--echo repl value)))
+       (replique-repl--echo repl value))
+     (replique-repl--ended repl frame))
     ("exception"
      (replique-repl--unattended repl)
      (let* ((message (plist-get frame :message))
@@ -249,7 +270,8 @@ be shown as cut rather than as a whole one."
         (replique-exception-button (concat message (or truncated "") "\n")
                                    exception message phase "at the repl")
         'replique-exception)
-       (replique-repl--echo repl message)))
+       (replique-repl--echo repl message))
+     (replique-repl--ended repl frame))
     ("prompt"
      (let ((moved (not (equal (replique-repl--ns repl) (plist-get frame :ns)))))
        (setf (replique-repl--ns repl) (plist-get frame :ns))
@@ -281,7 +303,8 @@ be shown as cut rather than as a whole one."
                             (format "%s: %s\n"
                                     (plist-get frame :error)
                                     (plist-get frame :message))
-                            'replique-exception))
+                            'replique-exception)
+     (replique-repl--ended repl frame))
     (_ nil)))
 
 ;;; Whether what is typed is a form yet
@@ -628,6 +651,63 @@ in the echo area too."
     (when echo
       (setf (replique-repl--to-echo repl) (1+ (or (replique-repl--to-echo repl) 0))))
     (replique-conn-send-code conn code)))
+
+(defun replique-repl-send-code-sync (repl code &optional display)
+  "Evaluate CODE in REPL, wait for it to end, and return the frame that ended it.
+
+The \"ret\" frame carrying what it printed and returned, the \"exception\"
+frame carrying what it threw, or the \"error\" frame saying the repl could
+not read it - the caller reads which.
+DISPLAY is what the repl buffer is shown instead of CODE, as in
+`replique-repl-send-code\\='.
+
+For a command that has to ask the process something once the code has run
+and cannot say what it wants until then - loading what changed before
+asking what uses a name, where the answer would otherwise be about the
+files as the process last read them.  Everything else sends and carries
+on: a repl is where somebody watches things happen, and holding the
+editor still while they do is the opposite of that.
+
+Only when the repl is at a prompt, so that the evaluation this waits for
+is this one.  Frames carry no request id - a repl is a stream of what it
+read and printed, not a set of answers to match up - so the evaluation
+that ends next is whichever one was running, and the only way to know it
+is ours is that nothing else was in flight.  Nothing else can be sent
+while this waits, either: Emacs is inside it.
+
+\\[keyboard-quit] is heard, and abandons the wait rather than the
+evaluation - the code was sent and the process is running it, and the
+repl buffer is where it goes on being watched.  `inhibit-quit\\=' around
+the loop and `with-local-quit\\=' inside it are what make that a quit
+between two reads rather than one out of the middle of one; the same
+shape as `replique-conn-request-sync\\='."
+  (let ((conn (replique-repl--conn repl)))
+    (unless (replique-conn-live-p conn)
+      (user-error "The repl is closed"))
+    (unless (replique-repl--at-prompt repl)
+      (user-error "The repl is busy with something else"))
+    (let ((ended nil)
+          (proc (replique-conn--proc conn)))
+      (unwind-protect
+          (progn
+            (setf (replique-repl--on-end repl) (lambda (frame) (setq ended frame)))
+            (replique-repl-send-code repl code display t)
+            (let ((inhibit-quit t))
+              (while (and (null ended)
+                          (null quit-flag)
+                          (replique-conn-live-p conn))
+                (with-local-quit
+                  ;; Only this process, for the reason
+                  ;; `replique-conn-request-sync\=' gives: what another one
+                  ;; wrote is not what this wait is about
+                  (accept-process-output proc 0.1 nil t)))
+              (cond
+               ;; Before the frame, so that a C-g pressed as the evaluation
+               ;; ended is a C-g: what it was for is no longer wanted either
+               (quit-flag (setq quit-flag nil) (signal 'quit nil))
+               (ended ended)
+               (t (user-error "The repl closed while it was evaluating")))))
+        (setf (replique-repl--on-end repl) nil)))))
 
 (defun replique-repl-send-directive (repl directive)
   "Write DIRECTIVE on REPL, showing nothing in its buffer.

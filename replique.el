@@ -60,6 +60,7 @@
 (require 'replique-eval)
 (require 'replique-pprint)
 (require 'replique-name)
+(require 'replique-fresh)
 (require 'replique-completion)
 (require 'replique-symbol)
 (require 'replique-stale)

@@ -55,6 +55,7 @@
 (require 'subr-x)
 (require 'xref)
 (require 'replique-common)
+(require 'replique-fresh)
 (require 'replique-locals)
 (require 'replique-name)
 (require 'replique-process)
@@ -619,18 +620,31 @@ somebody renames and none of the three can be found by reading the text.
 A local is not: it is bound by a form in this buffer, the process has
 never seen it, and a process that answered about one would be answering
 about somebody else's.  Said rather than answered with nothing, which
-xref would show as the name being used nowhere."
+xref would show as the name being used nowhere.
+
+What changed on disk is offered to be loaded first - see
+`replique-fresh-ensure\\='.  This is answered out of what the compiler
+recorded while it compiled the files, so a file edited since is one the
+answer is quietly wrong about: a use that was deleted is still in it and
+one that was written is not.  Which matters most here of anywhere, since
+what this is for is renaming a var everywhere it is written, and
+everywhere has to be all of them."
   (when (get-text-property 0 'replique-bound identifier)
     (user-error "Replique: %s is bound here, so the process has never seen it"
                 (substring-no-properties identifier)))
-  (let* ((context (or (replique-symbol--context identifier)
-                      (user-error "Replique: nothing here to ask about")))
-         (frame (replique-symbol--asked :usages context
-                                        (substring-no-properties identifier))))
-    (when frame
-      (when (equal "error" (plist-get frame :tag))
-        (user-error "Replique: %s" (plist-get frame :message)))
-      (replique-symbol--references (plist-get frame :usages)))))
+  ;; What point is on is read before anything is offered: point is on
+  ;; nothing to ask about as often as not, and being offered a load first
+  ;; would be being offered one for a question that was never going to be
+  ;; asked
+  (let ((context (or (replique-symbol--context identifier)
+                     (user-error "Replique: nothing here to ask about"))))
+    (replique-fresh-ensure "finding every use of a name")
+    (let ((frame (replique-symbol--asked :usages context
+                                         (substring-no-properties identifier))))
+      (when frame
+        (when (equal "error" (plist-get frame :tag))
+          (user-error "Replique: %s" (plist-get frame :message)))
+        (replique-symbol--references (plist-get frame :usages))))))
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql replique)))
   "Return nothing to complete an identifier with.

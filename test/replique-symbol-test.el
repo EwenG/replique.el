@@ -752,6 +752,28 @@ nothing, which xref would show as the name being used nowhere."
                                    :type 'user-error)))
         (should (string-match-p "bound here" (error-message-string refusal)))))))
 
+(ert-deftest replique-symbol-test-finding-every-use-loads-what-changed-first ()
+  "The answer is out of what the compiler recorded while it compiled the
+files, so a file edited since is one it is quietly wrong about - and this
+is the command where that matters most, since what it is for is renaming a
+var everywhere it is written.  What the offer is and when it is made is
+`replique-fresh-ensure\\=', and is tested there; what is here is that it is
+made at all, before the question rather than after it."
+  (replique-symbol-test--at "(clojure.string/joi|n)"
+    (let ((offered nil)
+          (asked nil))
+      (cl-letf (((symbol-function 'replique-fresh-ensure)
+                 (lambda (what) (setq offered what) nil))
+                ((symbol-function 'replique-symbol--asked)
+                 (lambda (_op _context _text)
+                   (setq asked offered)
+                   '(:tag "ret" :usages nil))))
+        (xref-backend-references 'replique (xref-backend-identifier-at-point 'replique))
+        (should (equal "finding every use of a name" offered))
+        ;; and before, which is the whole of it: an offer made after the
+        ;; answer came back is an offer to load for the next question
+        (should (equal offered asked))))))
+
 (ert-deftest replique-symbol-test-a-process-that-records-nothing-says-so ()
   "Rather than answering that the name is used nowhere, which is what an
 empty list would be read as.  Stock clojure is such a process: what records
