@@ -432,10 +432,13 @@ the only thing that says whether anything is there, and
 A port file is deleted on evidence and on nothing else.  `mismatch' is an
 answer from a process that is not the one the file names, which says the
 file is wrong wherever that process runs.  `unreachable' is nothing
-answering at all, which says the same thing only when the file names this
-machine: a host that is somewhere else can be unreachable for reasons of
-its own, and a process that is alive must not lose the file that makes it
-findable.
+answering at all, and `unanswered' is a port that took the connection and
+said nothing - something else listening there, or the jvm the file names
+no longer answering, which the kernel takes a connection for all the
+same.  Those two say the same thing only when the file names this
+machine: a host that is somewhere else can be unreachable, or slow, for
+reasons of its own, and a process that is alive must not lose the file
+that makes it findable.
 
 Read again before deleting: a process that died and started again between
 the read and the connect wrote a file of its own, and that one is about a
@@ -503,15 +506,18 @@ process, or nil when there was nothing to connect to.
 
 ON-FAILURE is called with why the connection was not made and a sentence
 saying it: `unreachable' when nothing answered on that port, `mismatch'
-when what answered is not the process INFO describes.  Both are what a
-port file produces once it is old enough - the process it names has
-exited, or has exited and left its port to somebody else - and a caller
-that read INFO from one has a file to do something about.  Said in the
-echo area when there is no ON-FAILURE.
+when what answered is not the process INFO describes, and `unanswered'
+when what is on that port took the connection and never spoke - it
+dropped it, or it sat there until `replique-conn-handshake-timeout' ran
+out.  All three are what a port file produces once it is old enough - the
+process it names has exited, or has exited and left its port to somebody
+else - and a caller that read INFO from one has a file to do something
+about.  Said in the echo area when there is no ON-FAILURE.
 
-The two arrive differently: nothing to connect to is known before this
+They arrive differently: nothing to connect to is known before this
 returns, since the connection is made before `replique-conn-open'
-returns, while a refused handshake is an answer that comes later."
+returns, while a handshake that is refused, dropped or never answered is
+an answer that comes later."
   (let* ((host (plist-get info :host))
          (port (plist-get info :port))
          (renaming (replique-process--renaming-between
@@ -547,10 +553,29 @@ returns, while a refused handshake is an answer that comes later."
                                   (replique-process--note process "The process is gone"))
                                 (replique-process--forget process))
                     :on-error (lambda (frame)
-                                (funcall fail 'mismatch
-                                         (format "%s:%s is not %s any more - %s"
-                                                 host port (plist-get info :process-id)
-                                                 (plist-get frame :message))))
+                                (let ((kind (plist-get frame :error))
+                                      (id (plist-get info :process-id)))
+                                  (cond
+                                   ;; Said as what it says about the file
+                                   ;; rather than as what happened on the
+                                   ;; socket: the two of these are the port
+                                   ;; file being wrong in a way that only
+                                   ;; connecting could find out
+                                   ((equal kind replique-conn-closed-error)
+                                    (funcall fail 'unanswered
+                                             (format "%s:%s dropped the connection - %s is not there"
+                                                     host port id)))
+                                   ((equal kind replique-conn-unanswered-error)
+                                    (funcall fail 'unanswered
+                                             (format (concat "%s:%s took the connection and did not"
+                                                             " answer in %ss - %s is not there")
+                                                     host port
+                                                     replique-conn-handshake-timeout id)))
+                                   (t
+                                    (funcall fail 'mismatch
+                                             (format "%s:%s is not %s any more - %s"
+                                                     host port id
+                                                     (plist-get frame :message)))))))
                     :on-ready (lambda (_conn)
                                 (replique-process--register process)
                                 (when on-ready (funcall on-ready process))))

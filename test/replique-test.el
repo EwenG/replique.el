@@ -2529,6 +2529,20 @@ file goes on saying where it is, so it can be connected to again."
     (delete-process server)
     port))
 
+(defun replique-test-listener (kind)
+  "Return a server on this machine that accepts a connection and says nothing.
+
+KIND is `silent\=' for one that leaves the connection open and `rude\=' for
+one that closes it at once.  Either is what a port file can end up naming:
+the process that wrote it is gone, the port has been handed out again, and
+what holds it now does not speak replique.  A port that accepts is a port
+that does not look dead, whatever is behind it."
+  (make-network-process
+   :name "replique-test-listener" :server t :host "127.0.0.1" :service t
+   :noquery t :filter #'ignore
+   :log (lambda (_server client _message)
+          (when (eq kind 'rude) (delete-process client)))))
+
 (defun replique-test-write-port-file (directory info)
   "Write INFO in DIRECTORY the way a process writes its port file.
 
@@ -2563,6 +2577,11 @@ wrong wherever that process runs."
                            :pid 1 :started-at 1))))
       (replique-process--reap file (replique-process--description file) 'unreachable)
       (should (file-exists-p file))
+      ;; A port somewhere else that takes the connection and then says
+      ;; nothing says no more than an unreachable one does: a host of its
+      ;; own can be slow, or behind something that accepts for it
+      (replique-process--reap file (replique-process--description file) 'unanswered)
+      (should (file-exists-p file))
       (replique-process--reap file (replique-process--description file) 'mismatch)
       (should-not (file-exists-p file)))))
 
@@ -2592,6 +2611,48 @@ is busy."
         (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
         ;; and the process that refused it is untouched
         (should (replique-process-live-p process))))))
+
+(ert-deftest replique-test-a-port-that-answers-nothing-is-a-port-file-that-is-wrong ()
+  "A port that was taken over by something that is not replique refuses
+nothing: the handshake goes out and no answer ever comes back.  Without a
+deadline the connect waits for it for the rest of the session - saying
+nothing, connecting to nothing, and leaving the file that sent it there to
+be offered again.  The file is what has to go."
+  (let ((listener (replique-test-listener 'silent))
+        (replique-conn-handshake-timeout 1))
+    (unwind-protect
+        (replique-test-with-project dir
+          (let ((file (replique-test-write-port-file
+                       dir (list :process-id "silent" :host "127.0.0.1"
+                                 :port (process-contact listener :service)
+                                 :directory (directory-file-name dir)
+                                 :pid 1 :started-at 1))))
+            (replique-connect dir)
+            (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
+            ;; and nothing was connected to: a port that says nothing is
+            ;; not a process, however long the socket stayed open
+            (should-not (replique-process-in dir))))
+      (delete-process listener))))
+
+(ert-deftest replique-test-a-port-that-drops-the-connection-is-a-port-file-that-is-wrong ()
+  "The other way a port that is not replique answers: it takes the
+connection and closes it.  Nothing was ever connected to, so this is not a
+process going away - it is the file being wrong, and saying so is the only
+thing that makes the directory usable again."
+  (let ((listener (replique-test-listener 'rude)))
+    (unwind-protect
+        (replique-test-with-project dir
+          (let ((file (replique-test-write-port-file
+                       dir (list :process-id "rude" :host "127.0.0.1"
+                                 :port (process-contact listener :service)
+                                 :directory (directory-file-name dir)
+                                 :pid 1 :started-at 1))))
+            (replique-connect dir)
+            (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
+            ;; and nothing was connected to: a port that says nothing is
+            ;; not a process, however long the socket stayed open
+            (should-not (replique-process-in dir))))
+      (delete-process listener))))
 
 ;;; Stopping a process
 

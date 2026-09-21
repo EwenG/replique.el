@@ -56,6 +56,35 @@ behalf when there will be no answer.  A caller that only ever hears back
 when a request succeeds is a command that silently does nothing when the
 process is gone.")
 
+(defconst replique-conn-unanswered-error "unanswered"
+  "The `:error' of the frame a handshake gets when nothing answers it.
+
+Like `replique-conn-closed-error\=', not something a process sends: it is
+what replique answers on its own behalf when a port took the connection
+and then said nothing.  What it says about the port file it was read from
+is what a refusal says - the process that file names is not there - and
+it is the only thing that can say it, because a port that accepts a
+connection is a port that does not look dead.")
+
+(defcustom replique-conn-handshake-timeout 10
+  "How long to wait, in seconds, for the reply to a handshake.
+
+A port that accepts a connection is not a process that speaks replique.
+The port file of a process that was killed goes on naming a port, and by
+the time it is read that port can be held by something else - or by the
+same jvm, no longer answering, which the kernel takes a connection for
+anyway, out of the backlog of a socket nothing is reading.  Either way
+the reply never comes, and with no deadline the command that went looking
+waits for it for the rest of the session, saying nothing and leaving the
+file that sent it there in place.
+
+Generous rather than tight: the process is already running and the reply
+is the first thing it writes, so what is being waited out is a jvm busy
+with something else - and a wait that gave up early would throw away the
+port file of a process that is there."
+  :type 'number
+  :group 'replique)
+
 (defun replique-conn-open (host port kind &rest keys)
   "Open a connection to the process at HOST and PORT and shake hands.
 
@@ -68,8 +97,9 @@ KIND is `control' or `repl'.  KEYS may hold:
   :on-frame    called with every frame that is not a reply to a request
                made here
   :on-close    called with the connection when the process closes it
-  :on-error    called with the error frame when the handshake is refused,
-               instead of saying it in the echo area
+  :on-error    called with the error frame when the handshake does not
+               succeed, instead of saying it in the echo area.  Which
+               frame says which is in the handshake below
   :buffer      the buffer of the network process, for the repl role"
   (let* ((process-id (plist-get keys :process-id))
          (on-ready (plist-get keys :on-ready))
@@ -88,29 +118,71 @@ KIND is `control' or `repl'.  KEYS may hold:
                 :on-frame (plist-get keys :on-frame)
                 :on-close (plist-get keys :on-close))))
     (process-put proc 'replique-conn conn)
-    (replique-conn-request
-     conn
-     (append (list :op :hello :role (intern (format ":%s" kind)))
-             (when process-id (list :process-id process-id)))
-     (lambda (frame)
-       (cond
-        ;; A connection that died is not a process that refused: there is
-        ;; nothing here to report or to act on, and `:on-close' is where
-        ;; going away is handled
-        ((equal replique-conn-closed-error (plist-get frame :error)) nil)
-        ((equal "error" (plist-get frame :tag))
-         ;; The connection is closed after an unsuccessful handshake, so
-         ;; there is nothing to recover - say what happened and let go.
-         ;; What a refusal means is the caller's to know: a port file
-         ;; naming a process that is not there is a refusal it can act on
-         (if on-error
-             (funcall on-error frame)
-           (message "replique: the handshake was refused: %s (%s)"
-                    (plist-get frame :message) (plist-get frame :error))))
-        (t
-         (setf (replique-conn--id conn) (plist-get frame :connection))
-         (setf (replique-conn--info conn) frame)
-         (when on-ready (funcall on-ready conn))))))
+    (let* ((timer nil)
+           (refused
+            (lambda (frame said)
+              ;; The connection is closed after an unsuccessful handshake,
+              ;; so there is nothing to recover - say what happened and let
+              ;; go.  What it means is the caller's to know: a port file
+              ;; naming a process that is not there is something it can act
+              ;; on, and the frame is what tells the three apart
+              (if on-error
+                  (funcall on-error frame)
+                (message "replique: %s" said))))
+           (id (replique-conn-request
+                conn
+                (append (list :op :hello :role (intern (format ":%s" kind)))
+                        (when process-id (list :process-id process-id)))
+                (lambda (frame)
+                  (when timer (cancel-timer timer) (setq timer nil))
+                  (cond
+                   ;; A connection that closed before it answered is a
+                   ;; refusal of its own, and reported as one.  Passing over
+                   ;; it leaves the caller nothing: it read this port from a
+                   ;; file, and a port that takes a connection and drops it
+                   ;; is the file saying something that is no longer true.
+                   ;; `:on-close' handles a process going away, which is what
+                   ;; this is not - nothing was ever connected to
+                   ((equal replique-conn-closed-error (plist-get frame :error))
+                    (funcall refused frame
+                             (format "%s:%s closed the connection before answering"
+                                     host port)))
+                   ((equal "error" (plist-get frame :tag))
+                    (funcall refused frame
+                             (format "the handshake was refused: %s (%s)"
+                                     (plist-get frame :message)
+                                     (plist-get frame :error))))
+                   (t
+                    (setf (replique-conn--id conn) (plist-get frame :connection))
+                    (setf (replique-conn--info conn) frame)
+                    (when on-ready (funcall on-ready conn))))))))
+      ;; After the request and only while it is still waiting: a reply read
+      ;; on the way out of `replique-conn-request' has been handled already,
+      ;; and a timer armed behind it would be one nothing cancels
+      (when (assoc id (replique-conn--pending conn))
+        (setq timer
+              (run-at-time
+               replique-conn-handshake-timeout nil
+               (lambda ()
+                 (setq timer nil)
+                 ;; Taken off the list before anything is said, so that a
+                 ;; reply arriving late is a reply to nobody rather than a
+                 ;; second answer to a question already answered
+                 (when-let* ((cell (assoc id (replique-conn--pending conn))))
+                   (setf (replique-conn--pending conn)
+                         (delq cell (replique-conn--pending conn)))
+                   (funcall refused
+                            (list :tag "error"
+                                  :error replique-conn-unanswered-error
+                                  :message (format "No reply in %ss"
+                                                   replique-conn-handshake-timeout)
+                                  :id id)
+                            (format "%s:%s took the connection and did not answer in %ss"
+                                    host port replique-conn-handshake-timeout))
+                   ;; Nothing is going to come of it, and a socket left open
+                   ;; on a port that answers nothing is a connection the
+                   ;; commands would go on finding
+                   (replique-conn-close conn)))))))
     conn))
 
 (defun replique-conn-live-p (conn)
