@@ -79,6 +79,125 @@ START and END are where in it to look, the whole of it by default."
   (let ((limit (+ (float-time) (or seconds 0.6))))
     (while (< (float-time) limit) (accept-process-output nil 0.05))))
 
+;;; What a run that is killed leaves behind
+
+(defconst replique-test-leftovers
+  (expand-file-name "replique-test-leftovers" temporary-file-directory)
+  "Where a run writes down what it has made, as it makes it.
+
+A run that ends takes its processes and its temporary projects with it -
+`replique-test-cleanup' does, on `kill-emacs-hook'.  A run that is killed
+never runs that hook, and what it leaves is not idle: a process is started
+under nohup so that it lives through the editor leaving, so it goes on
+running and goes on holding its port file - which is what makes the next
+process started in that project refuse to start.  A suite that hangs is
+stopped with C-c, so this is the way a run ends often enough to matter.
+
+What a dying Emacs cannot undo is left for the next run: every process and
+every temporary project is written here the moment it exists, and
+`replique-test-reap' reads the file before the suite starts.  Two suites
+running at once would reap one another, which is the price of a name the
+next run can find without being told it.")
+
+(defun replique-test--note (entry)
+  "Append ENTRY to `replique-test-leftovers'.
+
+Written as it happens rather than at the end of the run: the run this is
+for is the one whose end never comes."
+  (with-temp-buffer
+    (prin1 entry (current-buffer))
+    (insert "\n")
+    (write-region (point-min) (point-max) replique-test-leftovers t 'silent)))
+
+(defun replique-test--noted ()
+  "Return the entries `replique-test-leftovers' holds.
+
+Read up to the first line that will not read: the file was written by a
+run that was killed, and a last line cut off in the middle is what that
+looks like.  What came before it still has to be undone."
+  (when (file-exists-p replique-test-leftovers)
+    (with-temp-buffer
+      (insert-file-contents replique-test-leftovers)
+      (goto-char (point-min))
+      (let ((entries nil))
+        (ignore-errors (while t (push (read (current-buffer)) entries)))
+        (nreverse entries)))))
+
+(defun replique-test--note-process (process)
+  "Write down the operating system process PROCESS runs as, and return PROCESS."
+  (when-let* ((pid (plist-get (replique-process--info process) :pid)))
+    (replique-test--note (cons 'pid pid)))
+  process)
+
+(defun replique-test--note-running-in (directory)
+  "Write down the processes DIRECTORY says are running in it.
+
+For a start that was waited for and never arrived: the jvm may be coming
+up all the same, and under nohup it would outlive the run that asked for
+it - with nothing in the registry naming it, because it never connected.
+Its port file is then the only thing that names it, and it is read here,
+while it is about the start that just failed, rather than later, when it
+may be about something else."
+  (dolist (description (replique-process-descriptions directory))
+    (when-let* ((pid (plist-get (cdr description) :pid)))
+      (replique-test--note (cons 'pid pid)))))
+
+(defun replique-test--ours-p (pid)
+  "Return non-nil when PID is a replique process, and so one to signal.
+
+A pid written down by a run that was killed can name anything by the time
+the next run reads it - pids are handed out again - so nothing is
+signalled on the strength of a number.  The command line has to say
+replique.main, which is what the harness starts and what nothing else
+here is.  Nil for a pid that is gone, which is also what makes this the
+test for whether a process that was asked to stop has stopped."
+  (when-let* ((args (cdr (assq 'args (process-attributes pid)))))
+    (string-match-p "replique\\.main" args)))
+
+(defun replique-test--kill-pid (pid)
+  "Stop PID and wait for it to go.
+
+Asked with TERM first, so that the process runs the shutdown hook that
+deletes its port file - a port file left behind is most of what makes a
+leftover process a problem - and KILLed when that goes unanswered."
+  (when (replique-test--ours-p pid)
+    (signal-process pid 'TERM)
+    (let ((limit (+ (float-time) 10)))
+      (while (and (replique-test--ours-p pid) (< (float-time) limit))
+        (sleep-for 0.1)))
+    (when (replique-test--ours-p pid)
+      (signal-process pid 'KILL))))
+
+(defun replique-test--temporary-p (directory)
+  "Return non-nil when DIRECTORY is one of the projects the tests make.
+
+A directory is deleted whole, so what is deleted has to be one the tests
+wrote: the name `replique-test-with-project' asks for, under the
+directory it asks for it in, and nothing else however it was noted."
+  (string-prefix-p (expand-file-name "replique-test-project" temporary-file-directory)
+                   (expand-file-name directory)))
+
+(defun replique-test-reap ()
+  "Stop and delete what a run that was killed left behind.
+
+Run before the suite rather than after it: the run with something to undo
+is not this one, and a leftover process holds the port file that would
+stop this run starting anything in that project."
+  (let ((entries (replique-test--noted)))
+    ;; Processes before directories: a directory deleted under what is
+    ;; still running in it takes the port file with it and leaves the
+    ;; process, which is the half of the leak that matters
+    (dolist (entry entries)
+      (when (eq 'pid (car entry))
+        (replique-test--kill-pid (cdr entry))))
+    (dolist (entry entries)
+      (when (and (eq 'dir (car entry)) (replique-test--temporary-p (cdr entry)))
+        (ignore-errors (delete-directory (cdr entry) t)))))
+  (when (file-exists-p replique-test-leftovers)
+    (ignore-errors (delete-file replique-test-leftovers))))
+
+;;; Starting a process
+
 (defun replique-test-start (&optional options)
   "Start a process in the test project and wait for it.
 
@@ -91,15 +210,26 @@ that went from one that was never there."
          (default-directory project)
          (known replique-processes))
     (if options
-        (make-process :name "replique-test" :buffer nil
-                      :command (list replique-clojure-program "-M" "-m" "replique.main" options)
-                      :coding 'utf-8-unix :noquery t)
+        ;; The launcher execs the jvm, so this is the jvm - and it is not
+        ;; under nohup, which is what makes it Emacs's to lose and Emacs's
+        ;; to take with it.  Noted all the same: what a run that is killed
+        ;; leaves behind is not sorted by how it was started
+        (let ((proc (make-process
+                     :name "replique-test" :buffer nil
+                     :command (list replique-clojure-program "-M" "-m" "replique.main" options)
+                     :coding 'utf-8-unix :noquery t)))
+          (replique-test--note (cons 'pid (process-id proc)))
+          proc)
       (progn
         (replique-start project)
         (unless (replique-test-wait-for
                  (lambda () (seq-difference replique-processes known)) 120)
+          ;; The jvm may be coming up all the same, and nothing in the
+          ;; registry would name it
+          (replique-test--note-running-in project)
           (error "The process did not start"))
-        (car (seq-difference replique-processes known))))))
+        (replique-test--note-process
+         (car (seq-difference replique-processes known)))))))
 
 (defun replique-test-started-in (directory)
   "Start a process in DIRECTORY and return it once it has connected.
@@ -112,8 +242,10 @@ should ask for."
     (replique-start directory)
     (unless (replique-test-wait-for
              (lambda () (seq-difference replique-processes known)) 120)
+      (replique-test--note-running-in directory)
       (error "The process did not start"))
-    (car (seq-difference replique-processes known))))
+    (replique-test--note-process
+     (car (seq-difference replique-processes known)))))
 
 (defun replique-test-cleanup ()
   "Stop every process the tests are still connected to.
@@ -122,11 +254,23 @@ Emacs no longer takes them with it: a process is started under nohup so
 that it lives through the editor leaving, which a run of the tests has to
 undo itself.  A process that survives holds the pipe it was started with,
 and whatever reads that pipe waits for it - a test run piped into anything
-would never end."
+would never end.
+
+What Emacs is connected to is stopped through the command that stops one.
+What is left after that is reaped by pid: a process whose control
+connection dropped, and one that came up after a start had given up
+waiting for it, are both gone from the registry and neither is gone from
+the machine."
   (dolist (process (replique-processes-live))
-    (replique-kill-process process)))
+    (replique-kill-process process))
+  (replique-test-reap))
 
 (add-hook 'kill-emacs-hook #'replique-test-cleanup)
+
+;; Before anything is started rather than only after everything has been:
+;; what is undone here belongs to a run that was killed, and the port files
+;; it left are what would stop this run starting a process at all
+(replique-test-reap)
 
 (defun replique-test-process ()
   "Return the process the tests share, started on first use."
@@ -478,6 +622,7 @@ read where the project is - not where the command was called from."
   "Run BODY with NAME bound to an empty project directory."
   (declare (indent 1))
   `(let ((,name (file-name-as-directory (make-temp-file "replique-test-project" t))))
+     (replique-test--note (cons 'dir ,name))
      (unwind-protect (progn ,@body)
        (delete-directory ,name t))))
 
