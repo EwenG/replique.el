@@ -686,7 +686,9 @@ The order is the process's, which is the order they were written in the
 file - so the list reads like the file, and the definition somebody just
 renamed is where they would look for it."
   (let ((frame (replique-process-request-sync
-                process (list :op :vars :ns ns) replique-symbol-vars-timeout)))
+                process (append (list :op :vars :ns ns)
+                                (replique-dialect-keys))
+                replique-symbol-vars-timeout)))
     (cond
      ;; C-g, which is somebody saying they are no longer waiting
      ((null frame) nil)
@@ -794,7 +796,9 @@ There is no undoing it short of evaluating the definition again."
     (when (or (not (string-match-p "/" written))
               (yes-or-no-p (format "Remove %s from the process? " name)))
       (let ((frame (replique-process-request-sync
-                    (replique-name-process) (list :op :remove-var :var name)
+                    (replique-name-process)
+                    (append (list :op :remove-var :var name)
+                            (replique-dialect-keys))
                     replique-name-timeout)))
         (cond
          ;; C-g, which is somebody saying they are no longer waiting

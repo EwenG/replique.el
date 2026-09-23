@@ -429,8 +429,10 @@ own.  The process says that too, and about that one it can.")
 (defconst replique-namespaces-timeout 5
   "How long to wait for the process to say what namespaces it has, in seconds.")
 
-(defun replique-namespaces (process)
+(defun replique-namespaces (process &optional keys)
   "Return the namespaces PROCESS has, sorted, or nil when it does not say.
+
+KEYS says which world to ask about - see `replique-dialect-keys'.
 
 Waited for rather than answered later: these are the choices of a prompt
 about to be shown, and there is no showing a prompt before there is
@@ -443,7 +445,7 @@ evaluated in yet."
   (let ((answer nil)
         (done nil))
     (replique-process-request
-     process (list :op :namespaces)
+     process (append (list :op :namespaces) keys)
      (lambda (frame)
        (setq done t)
        (unless (equal "error" (plist-get frame :tag))
@@ -469,7 +471,12 @@ What is refused is text that is not the name of a namespace at all - see
 `replique-ns-name-regexp' for why that cannot be left to the process."
   (interactive
    (let* ((repl (replique-repl-ensure))
-          (namespaces (replique-namespaces (replique-repl-process repl)))
+          ;; The repl's world and not the buffer's: what is being moved is
+          ;; the repl, so what it can be moved into is what IT has - and a
+          ;; ClojureScript repl is as often driven from a .clj buffer as from
+          ;; anywhere else
+          (namespaces (replique-namespaces (replique-repl-process repl)
+                                           (replique-repl-dialect-keys repl)))
           (default (and (derived-mode-p 'replique-clojure-mode)
                         ;; Widened, the way `replique-eval--send' is: the ns
                         ;; form of a buffer can be outside what a narrowing

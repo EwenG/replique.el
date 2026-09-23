@@ -30,6 +30,7 @@ compile:
 	  test/replique-pprint-test.el test/replique-completion-test.el \
 	  test/replique-forms-test.el test/replique-symbol-test.el \
 	  test/replique-fresh-test.el test/replique-stale-test.el \
+	  test/replique-dialect-test.el \
 	  test/replique-name-fuzz-test.el
 
 # Natively compiled, into the eln cache this Emacs reads.
@@ -65,6 +66,7 @@ test: compile
 	  -l replique-pprint-test -l replique-completion-test \
 	  -l replique-forms-test -l replique-symbol-test \
 	  -l replique-fresh-test -l replique-stale-test \
+	  -l replique-dialect-test \
 	  -l replique-name-fuzz-test \
 	  -f ert-run-tests-batch-and-exit
 

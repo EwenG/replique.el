@@ -410,7 +410,11 @@ is not written in the load.
 OP is which of the questions is being asked - what the name is, what
 could be written there, where it is used.  They take the same request, so
 the only difference between them is the word."
-  (let ((msg (append (list :op op :text text) context)))
+  (let ((msg (append (list :op op :text text) context
+                     ;; Which world the name is to be read against, which is
+                     ;; the buffer's to say and the same for all three
+                     ;; questions - see `replique-dialect-keys'
+                     (replique-dialect-keys))))
     (if (eq (plist-get context :position) :load-path)
         (append msg (list :ns (replique-name-namespace)))
       msg)))

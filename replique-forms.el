@@ -49,6 +49,7 @@
 
 (require 'replique-locals)
 (require 'replique-process)
+(require 'replique-repl)
 
 (defconst replique-forms-timeout 1.0
   "How long to wait for the process to say, in seconds.
@@ -89,7 +90,10 @@ whichever of them is being asked about."
                 process
                 (append (list :op :spellings
                               :vars (apply #'append (mapcar #'cdr replique-locals-vars)))
-                        (when ns (list :ns ns)))
+                        (when ns (list :ns ns))
+                        ;; How a form binds is a question about a var, and
+                        ;; the two worlds hold two sets of them
+                        (replique-dialect-keys))
                 replique-forms-timeout)))
     (cond
      ;; C-g, which is somebody who is no longer waiting for what this was on

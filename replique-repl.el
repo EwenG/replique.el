@@ -521,10 +521,62 @@ read rather than continued."
   "Return a name for a repl buffer of PROCESS."
   (generate-new-buffer-name (format "*replique: %s*" (replique-process--id process))))
 
+(defconst replique-repl-dialects '("clj" "cljs")
+  "The languages a repl can be a repl of.
+
+The same two the process takes, spelled the same way - see the
+`:dialect' of its handshake.  Written out here rather than asked of the
+process because they are what the protocol says, not what a particular
+process happens to have: a process without the ClojureScript compiler
+refuses a cljs repl with a sentence about its classpath, which is a
+better answer than never offering the choice.")
+
+(defconst replique-repl-targets '("browser" "node")
+  "The runtimes a ClojureScript repl can run in.
+
+Two, and they are not interchangeable: a browser and node resolve npm
+packages differently, so they are two different compilations of the same
+sources and the process keeps one of each.")
+
+(defun replique-repl--read ()
+  "Read the arguments of a repl about to be opened.
+
+Nothing is asked without a prefix argument, and nothing is then sent:
+a repl is a Clojure repl unless somebody says otherwise, which is the
+rule the process follows too - an absent `:dialect' is Clojure there.
+So the common case stays one command with no questions, and the keys are
+absent from the handshake of every Clojure repl rather than written on
+every one of them.
+
+The target is asked only for a ClojureScript repl, being the one thing
+that has no meaning for the other."
+  (if (not current-prefix-arg)
+      (list nil nil nil)
+    (let ((dialect (intern (concat ":" (completing-read
+                                        (format-prompt "Dialect" "clj")
+                                        replique-repl-dialects nil t
+                                        nil nil "clj")))))
+      (list nil dialect
+            (when (eq dialect :cljs)
+              (intern (concat ":" (completing-read
+                                   (format-prompt "Target" "browser")
+                                   replique-repl-targets nil t
+                                   nil nil "browser"))))))))
+
 ;;;###autoload
-(defun replique-repl (&optional process)
-  "Open a REPL on PROCESS, the current process by default."
-  (interactive)
+(defun replique-repl (&optional process dialect target)
+  "Open a REPL on PROCESS, the current process by default.
+
+DIALECT is `:clj' or `:cljs', Clojure when it is nil.  TARGET is
+`:browser' or `:node' and is only about a ClojureScript repl, the
+process\\='s own default when it is nil.  With a prefix argument they are
+asked for - see `replique-repl--read'.
+
+A ClojureScript repl on the browser answers the handshake with the page
+to open, which is the whole of what such a repl needs of whoever started
+it: nothing runs, and so nothing is evaluated, until a browser is on that
+page.  It is written into the buffer before the first prompt."
+  (interactive (replique-repl--read))
   (let* ((process (or process (replique-process-ensure)))
          (buffer (get-buffer-create (replique-repl--buffer-name process)))
          (repl (replique-repl--make :process process :buffer buffer :to-echo 0)))
@@ -543,10 +595,27 @@ read rather than continued."
           'repl
           :buffer buffer
           :process-id (replique-process--id process)
+          :hello (append (when dialect (list :dialect dialect))
+                         (when target (list :target target)))
           :on-ready (lambda (conn)
-                      (let ((proc (replique-conn--proc conn)))
+                      (let ((proc (replique-conn--proc conn))
+                            (url (plist-get (replique-conn--info conn) :url)))
                         (process-put proc 'replique-repl repl)
                         (with-current-buffer buffer
+                          (goto-char (point-max))
+                          ;; Before the process mark is set, so that the
+                          ;; mark - and the prompt the process writes at
+                          ;; it - comes after the note rather than before
+                          ;; it.  `replique-repl--insert' is what would
+                          ;; write this anywhere else, and it cannot be
+                          ;; used here: it reads the connection off the
+                          ;; repl, which is being opened and is not on it
+                          ;; yet
+                          (when url
+                            (let ((inhibit-read-only t))
+                              (insert (propertize
+                                       (format "Open %s\n" url)
+                                       'face 'replique-note))))
                           (goto-char (point-max))
                           (set-marker (process-mark proc) (point))
                           (run-hooks 'comint-exec-hook))))
@@ -623,6 +692,99 @@ currently pointed at."
   "Return the repl the commands act on, or signal that there is none."
   (or (replique-repl-current)
       (user-error "No repl - M-x replique-repl")))
+
+;;; Which world a question is about
+;;
+;; A name is read against one of two worlds, and which one is the client's to
+;; say: the file has an extension and the process has only what the message
+;; says.  So every op that can be asked either way carries a `:dialect', and a
+;; ClojureScript one carries the `:target' as well - a browser build and a node
+;; build are two different compilations of the same sources, holding different
+;; code.
+;;
+;; ABSENT MEANS CLOJURE, which is the process's rule and not an accident of
+;; this side: a message about Clojure carries no dialect at all rather than
+;; carrying one that says the default.  So these return nil rather than
+;; `(:dialect :clj)', and a Clojure session sends exactly what it sent before
+;; there was a second answer.
+;;
+;; Which world a BUFFER asks about is the extension's, and replique 1 settled
+;; the three cases: .clj is Clojure, .cljs is ClojureScript, and .cljc is
+;; whichever repl the commands are pointed at, because a .cljc namespace really
+;; is a namespace of both worlds and nothing in the file chooses.  A repl
+;; buffer falls in with .cljc for the same reason read the other way: it is not
+;; a file, and the repl it is the buffer of is exactly what it is about.
+
+(defun replique-repl-dialect (repl)
+  "Return the dialect REPL is a repl of: `:cljs' or `:clj'.
+
+Read off the handshake reply rather than remembered from what was asked
+for: what a repl turned out to be is the process's answer, and a repl
+that asked for nothing is a Clojure repl without having said so."
+  (if (equal "cljs" (plist-get (replique-conn--info (replique-repl--conn repl))
+                               :dialect))
+      :cljs
+    :clj))
+
+(defun replique-repl-target (repl)
+  "Return the runtime REPL runs in - `:browser' or `:node' - or nil.
+
+Nil for a Clojure repl, which runs in the process and not in a runtime of
+its own.  The process names it in the handshake reply whether or not the
+repl asked for one, so this is the target in force rather than the target
+requested."
+  (when-let* ((target (plist-get (replique-conn--info (replique-repl--conn repl))
+                                 :target)))
+    (intern (concat ":" target))))
+
+(defun replique-repl-dialect-keys (repl)
+  "Return the dialect keys of a question about REPL itself.
+
+What the repl is, rather than what the buffer asking is: moving a repl
+into a namespace is about the namespaces that repl has, and a Clojure
+buffer is as good a place to ask it from as any other."
+  (when (and repl (eq :cljs (replique-repl-dialect repl)))
+    (append (list :dialect :cljs)
+            (when-let* ((target (replique-repl-target repl)))
+              (list :target target)))))
+
+(defun replique-dialect ()
+  "Return the dialect the current buffer\\='s questions are about.
+
+`:cljs' or `:clj' - see the commentary above for the three cases and for
+why a repl buffer is one of them."
+  (cond
+   ((derived-mode-p 'replique-clojure-clojurescript-mode) :cljs)
+   ((derived-mode-p 'replique-clojure-clojurec-mode)
+    (replique-dialect--of-current-repl))
+   ((derived-mode-p 'replique-clojure-mode) :clj)
+   (t (replique-dialect--of-current-repl))))
+
+(defun replique-dialect--of-current-repl ()
+  "Return the dialect of the repl the commands act on, `:clj' for none.
+
+Clojure where there is no repl, so that a buffer nothing is pointed at
+asks what it asked before there was a second world to ask about."
+  (if-let* ((repl (replique-repl-current)))
+      (replique-repl-dialect repl)
+    :clj))
+
+(defun replique-dialect-keys ()
+  "Return the dialect keys of a question about the current buffer.
+
+Appended to a request by everything that asks the process about a name.
+Nil for Clojure - see the commentary above.
+
+The target is the current repl\\='s: a .cljs buffer read while a node repl
+is open is a question about the program that repl is running.  With no
+repl, or a Clojure one - which carries no target, see
+`replique-repl-target' - the key is absent and the process answers about
+its own default, which is what it does for anything that does not say."
+  (when (eq :cljs (replique-dialect))
+    (append (list :dialect :cljs)
+            (when-let* ((repl (replique-repl-current))
+                        (target (replique-repl-target repl)))
+              (list :target target)))))
 
 ;;; Sending code
 

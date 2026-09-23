@@ -100,7 +100,12 @@ KIND is `control' or `repl'.  KEYS may hold:
   :on-error    called with the error frame when the handshake does not
                succeed, instead of saying it in the echo area.  Which
                frame says which is in the handshake below
-  :buffer      the buffer of the network process, for the repl role"
+  :buffer      the buffer of the network process, for the repl role
+  :hello       extra keys for the handshake message.  What the role itself
+               takes rather than what every connection takes - the
+               `:dialect' and `:target' of a repl - so that this knows the
+               shape of a handshake without knowing what each role makes of
+               one"
   (let* ((process-id (plist-get keys :process-id))
          (on-ready (plist-get keys :on-ready))
          (on-error (plist-get keys :on-error))
@@ -132,7 +137,8 @@ KIND is `control' or `repl'.  KEYS may hold:
            (id (replique-conn-request
                 conn
                 (append (list :op :hello :role (intern (format ":%s" kind)))
-                        (when process-id (list :process-id process-id)))
+                        (when process-id (list :process-id process-id))
+                        (plist-get keys :hello))
                 (lambda (frame)
                   (when timer (cancel-timer timer) (setq timer nil))
                   (cond
