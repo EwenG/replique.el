@@ -401,17 +401,34 @@ every token still is: what is written out is written somewhere else."
 
 ;;;; Finding what to lay out
 
+(defun replique-pprint--prompt-p (node)
+  "Return non-nil when NODE is a repl prompt rather than something written.
+
+A repl buffer is read as Clojure, transcript and all, so `user=>\\=' is a
+symbol there and a symbol is a form.  It is also the form immediately
+before point everywhere point usually is in a repl buffer, which is
+exactly where the value that was just printed is what somebody means -
+see `replique-prompt-text\\=' for why the prompt says so in a property of
+its own rather than being recognised by how it looks."
+  (and node (replique-prompt-at-p (replique-parse-start node))))
+
 (defun replique-pprint--before (pos)
   "Return the top level form ending before POS, or nil.
 
-The comments behind POS are skipped, which is what `replique-eval-last-sexp'
+The comments behind POS are skipped, which is what `replique-eval-last-sexp\\='
 does with them: a comment is not a form, and what was asked for is the form
 before it.  Behind point only - a comment POS is in is one point was put on,
-and that one is refused rather than read past."
+and that one is refused rather than read past.
+
+The prompts are skipped for a reason one step further along: a comment is
+something somebody wrote and a prompt is not written by anybody.  Skipped
+one after another, because a directive moves the repl without evaluating
+anything and leaves two prompts standing together."
   (let ((node (replique-parse-form-before pos))
         (done nil))
     (while (and node (not done))
-      (if (eq 'comment (replique-parse-type node))
+      (if (or (eq 'comment (replique-parse-type node))
+              (replique-pprint--prompt-p node))
           ;; strictly back each time, so this ends at the top of the buffer
           ;; on a buffer that is nothing but comments
           (setq node (replique-parse-form-before (replique-parse-start node)))
@@ -423,9 +440,16 @@ and that one is refused rather than read past."
 
 The one POS is in, or - where POS is in none - the one before it.  The
 second is what makes the command work at the end of a repl buffer, where
-point is after the value that was printed rather than in it."
-  (or (replique-parse-form-at pos)
-      (replique-pprint--before pos)))
+point is after the value that was printed rather than in it.
+
+POS IN THE PROMPT IS POS IN NOTHING.  Point on the prompt is point where
+the repl is waiting, and what somebody means there is the value above it -
+the same thing they mean from the end of the line, which is the same
+place."
+  (let ((node (replique-parse-form-at pos)))
+    (if (and node (not (replique-pprint--prompt-p node)))
+        node
+      (replique-pprint--before pos))))
 
 
 ;;;; Commands
@@ -458,7 +482,13 @@ same tokens in another arrangement, as one change, so one \\[undo] puts
 it back.
 
 Data, not code: see the commentary.  A form that did not parse and one
-with a comment in it are both refused rather than guessed at."
+with a comment in it are both refused rather than guessed at, and so is a
+token: there is nowhere in one to break a line, so laying it out is
+writing it back exactly as it stands.  Saying so is the point.  A command
+that answers by doing nothing is a command that cannot be told from one
+that did not run - which is how the prompt stood in front of every value
+a repl printed without anybody noticing, since laying out `user=>\\=' put
+`user=>\\=' back."
   (interactive)
   (save-restriction
     ;; The forms are the whole buffer's, so the one found can reach past what
@@ -468,6 +498,9 @@ with a comment in it are both refused rather than guessed at."
     (let* ((node (or (replique-pprint--form-at (point))
                      (user-error "Nothing to lay out here"))))
       (replique-pprint--check node)
+      (unless (replique-parse-children node)
+        (user-error "A %s is one token - there is nothing to lay out"
+                    (replique-parse-type node)))
       (let* ((start (replique-parse-start node))
              (end (replique-parse-end node))
              (column (save-excursion (goto-char start) (current-column)))

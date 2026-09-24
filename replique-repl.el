@@ -291,8 +291,12 @@ be shown as cut rather than as a whole one."
          ;; replacing
          (when (replique-repl--at-prompt repl)
            (replique-repl--insert repl "\n"))
-         (replique-repl--insert repl (format "%s=> " (plist-get frame :ns))
-                                'replique-prompt)
+         ;; Written as a prompt rather than merely painted like one: a repl
+         ;; buffer is read as Clojure, and `user=>' reads as a symbol - so
+         ;; without this the prompt is a form, and the form before point
+         ;; everywhere point usually is.  See `replique-prompt-text'
+         (replique-repl--insert
+          repl (replique-prompt-text (format "%s=> " (plist-get frame :ns))))
          (setf (replique-repl--at-prompt repl) t)))
      ;; What was sent while the repl was busy is written now: the transcript
      ;; reads in the order the repl answered, not the order the editor asked

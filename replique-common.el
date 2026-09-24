@@ -65,6 +65,38 @@
   "Face for what a form threw."
   :group 'replique)
 
+;;; Which text in a repl buffer is the repl talking
+;;
+;; A repl buffer is read as Clojure - what is typed at the prompt is Clojure,
+;; and the parse that reads it covers the transcript with it.  Which is mostly
+;; harmless, because what a form printed parses as whatever it happens to look
+;; like and nothing asks it anything.  The prompt is where it stops being
+;; harmless: `user=>' reads as a symbol, so it is a form, so it is the form
+;; before point everywhere point usually is - the end of the buffer, just after
+;; the last one.  A command looking for the value that was printed found the
+;; prompt instead.
+;;
+;; So the prompt says it is a prompt, in a property of its own.  Not the face,
+;; which somebody may set to anything; not the read only property, which is
+;; `replique-prompt-read-only' and may be off; and not comint's own
+;; `comint-last-prompt', which knows about one of them.  The one place that
+;; knows a prompt is a prompt is the code that writes one.
+
+(defconst replique-prompt-property 'replique-prompt
+  "The text property that marks a repl prompt as being one.")
+
+(defun replique-prompt-text (string)
+  "Return STRING written the way a repl prompt is written.
+
+Its face and the property that says what it is, together, because the two
+are one decision: text that looks like a prompt and does not say so is
+what this exists to stop."
+  (propertize string 'face 'replique-prompt replique-prompt-property t))
+
+(defun replique-prompt-at-p (pos)
+  "Return non-nil when POS holds prompt text."
+  (get-text-property pos replique-prompt-property))
+
 ;;; Output nothing has seen
 
 (defcustom replique-track-unread t

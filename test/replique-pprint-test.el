@@ -319,6 +319,98 @@ to cut short, and lays out what actually came back."
           (should (string-match-p "\n" laid-out))
           (should (string-match-p "\\.\\.\\." laid-out)))))))
 
+
+;;; In a repl buffer, where the prompt is not a form
+
+(defun replique-pprint-test--transcript (text width)
+  "Return TEXT after `replique-pprint' ran at | in it, to fit WIDTH.
+
+TEXT is a repl transcript, and every `ns=> ' in it is written the way a
+repl writes a prompt - see `replique-prompt-text'.  Written here rather
+than printed by a repl so that these need no process; that a real prompt
+is written that way is `replique-pprint-test-a-real-prompt-says-it-is-one'."
+  (with-temp-buffer
+    (replique-repl-mode)
+    (insert text)
+    (goto-char (point-min))
+    (while (re-search-forward "^[^ \n]*=> " nil t)
+      (put-text-property (match-beginning 0) (match-end 0)
+                         replique-prompt-property t))
+    (goto-char (point-min))
+    (unless (search-forward "|" nil t)
+      (error "The text says nowhere to run: %s" text))
+    (delete-region (match-beginning 0) (match-end 0))
+    (goto-char (match-beginning 0))
+    (let ((replique-pprint-width width))
+      (replique-pprint))
+    (buffer-substring-no-properties (point-min) (point-max))))
+
+(ert-deftest replique-pprint-test-at-the-prompt-the-value-above-is-laid-out ()
+  "Which is where point is the moment a value is printed, so it is the only
+place the command is ever reached for in a repl buffer.  `user=>' reads as
+a symbol, so it was the form before point - and laying out a symbol writes
+the symbol back, so the command did nothing and said nothing."
+  (should (equal (concat "user=> (f)\n"
+                         "{:aaa 1\n"
+                         " :bbb 2}\n"
+                         "user=> ")
+                 (replique-pprint-test--transcript
+                  "user=> (f)\n{:aaa 1 :bbb 2}\nuser=> |" 10))))
+
+(ert-deftest replique-pprint-test-on-the-prompt-is-the-same-place ()
+  "Point on the prompt is point where the repl is waiting, and what somebody
+means there is the value above it."
+  (should (equal (concat "user=> (f)\n"
+                         "{:aaa 1\n"
+                         " :bbb 2}\n"
+                         "user=> ")
+                 (replique-pprint-test--transcript
+                  "user=> (f)\n{:aaa 1 :bbb 2}\nus|er=> " 10))))
+
+(ert-deftest replique-pprint-test-prompts-standing-together-are-walked-past ()
+  "A directive moves the repl without evaluating anything, so nothing
+consumes the prompt that was standing and a second one is written under
+it.  One skip would stop on the first of them."
+  (should (equal (concat "user=> (f)\n"
+                         "{:aaa 1\n"
+                         " :bbb 2}\n"
+                         "user=> \n"
+                         "other=> ")
+                 (replique-pprint-test--transcript
+                  "user=> (f)\n{:aaa 1 :bbb 2}\nuser=> \nother=> |" 10))))
+
+(ert-deftest replique-pprint-test-a-prompt-with-nothing-above-it-is-refused ()
+  "A repl that has printed nothing has nothing to lay out, and the prompt is
+not it."
+  (should-error (replique-pprint-test--transcript "user=> |" 10) :type 'user-error)
+  ;; And what a value of one token is, is said rather than done silently:
+  ;; doing nothing is what could not be told from not running
+  (let ((err (should-error (replique-pprint-test--transcript
+                            "user=> (+ 1 2)\n3\nuser=> |" 10)
+                           :type 'user-error)))
+    (should (string-match-p "one token" (cadr err)))))
+
+(ert-deftest replique-pprint-test-what-was-typed-at-the-prompt-is-still-laid-out ()
+  "The prompt is skipped, not the line it is on.  A form written at the
+prompt is written by somebody, and laying it out is what the command is
+for everywhere else."
+  (should (equal "user=> {:aaa 1\n        :bbb 2}"
+                 (replique-pprint-test--transcript "user=> {:aaa 1 :bbb 2}|" 10))))
+
+(ert-deftest replique-pprint-test-a-real-prompt-says-it-is-one ()
+  "The transcripts above are written by hand, and a property applied by hand
+in every test is a property that can quietly stop being applied for real."
+  (replique-test-with-repl repl
+    (replique-test-eval repl "(zipmap [:aaaa :bbbb :cccc] (repeat :x))")
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      (should (replique-prompt-at-p (1- (point-max))))
+      (let ((replique-pprint-width 20))
+        (replique-pprint))
+      ;; Laid out the value above, and left point where it was
+      (should (= (point) (point-max)))
+      (should (string-match-p "\n :bbbb" (buffer-string))))))
+
 (provide 'replique-pprint-test)
 
 ;;; replique-pprint-test.el ends here
