@@ -263,6 +263,62 @@
     (should (stringp once))
     (should (equal once (replique-pprint-string once 10)))))
 
+(ert-deftest replique-pprint-test-a-value-the-printer-cut-short-is-laid-out ()
+  "Which is the value that most needs it.  The repl prints under
+`*print-length*' and `*print-level*' - it says so in the `print-length'
+and `print-level' of every prompt - so a value big enough to be worth
+laying out is a value with `...' or `#' written into it, and neither of
+those reads as Clojure."
+  (should (equal (concat "{:e \"e\"\n"
+                         " :f \"ffffff\"\n"
+                         " :ggggg {:e 33}\n"
+                         " ...}")
+                 (replique-pprint-test--pp "{:e \"e\" :f \"ffffff\" :ggggg {:e 33} ...}" 20)))
+  (should (equal (concat "#com.stuartsierra.component.SystemMap{:e \"e\"\n"
+                         "                                      :f \"ffffff\"\n"
+                         "                                      ...}")
+                 (replique-pprint-test--pp
+                  "#com.stuartsierra.component.SystemMap{:e \"e\" :f \"ffffff\" ...}" 50)))
+  (should (equal "{:a #\n :b 2}" (replique-pprint-test--pp "{:a #, :b 2}" 8)))
+  (should (equal "[# #]" (replique-pprint-test--pp "[# #]" 20)))
+  (should (equal "{:a {:b #}\n ...}" (replique-pprint-test--pp "{:a {:b #} ...}" 10))))
+
+(ert-deftest replique-pprint-test-a-map-that-is-not-data-is-still-refused ()
+  "The elisions are read because the printer writes them, not because a map
+with a key and no value has become data.  `...' in the middle of one is a
+map somebody wrote wrong, and so is a key with nothing after it."
+  (should-error (replique-pprint-test--pp "{:a 1 :b}" 20) :type 'user-error)
+  (should-error (replique-pprint-test--pp "{:a 1 ... :b 2}" 20) :type 'user-error)
+  (should-error (replique-pprint-test--pp "{:a 1" 20) :type 'user-error))
+
+(ert-deftest replique-pprint-test-what-a-real-repl-printed-is-laid-out ()
+  "End to end: the printer writes the elisions, the reader reads them and
+the layout writes them back.  What an elision looks like is the printer's
+to decide, and a test that writes one by hand goes on passing after the
+printer stops writing that one - so this asks a repl for a value it has
+to cut short, and lays out what actually came back."
+  (replique-test-with-repl repl
+    (replique-test-eval repl "(set! *print-length* 3)")
+    (replique-test-eval repl "(set! *print-level* 2)")
+    (let ((printed (replique-test-eval
+                    repl "(zipmap [:aaaa :bbbb :cccc :dddd] (repeat {:x {:y 1}}))")))
+      ;; The value really was cut short both ways, which is what the rest of
+      ;; this is about
+      (should (string-match-p "\\.\\.\\." printed))
+      (should (string-match-p "#" printed)))
+    (with-current-buffer (replique-repl--buffer repl)
+      (goto-char (point-max))
+      ;; The nearest `{' going back is the one the value opens with: the
+      ;; prompt under it holds none, and the form that was typed is further
+      ;; back than the value it printed
+      (should (search-backward "{" nil t))
+      (let ((start (point))
+            (replique-pprint-width 20))
+        (replique-pprint)
+        (let ((laid-out (buffer-substring-no-properties start (point-max))))
+          (should (string-match-p "\n" laid-out))
+          (should (string-match-p "\\.\\.\\." laid-out)))))))
+
 (provide 'replique-pprint-test)
 
 ;;; replique-pprint-test.el ends here

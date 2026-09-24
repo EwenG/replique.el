@@ -129,6 +129,71 @@
   (should (eq 'odd (replique-parse-error (replique-parse-test--one "{:a 1 :b}")))))
 
 
+;;;; What a printer wrote, which is not always what a reader reads
+;;
+;; The repl prints under `*print-length*' and `*print-level*' and says so in
+;; the `print-length' and `print-level' of every prompt, so what it prints
+;; carries `...' and `#' where it stopped.  Neither can appear in anything
+;; that reads, so reading them takes nothing away.
+
+(ert-deftest replique-parse-test-a-level-that-was-not-descended-is-a-form ()
+  "`#\\=' with whitespace or a closing bracket after it is where
+`*print-level*\\=' stopped.  Read as a tagged literal it ate the two forms
+after it, so a map the repl printed with two entries in it read as a map
+with one - and nothing anywhere said so."
+  (should (equal '((map (pair keyword elision) (pair keyword number)))
+                 (replique-parse-test--shape-of "{:a #, :b 2}")))
+  (should (equal '((map (pair keyword elision) (pair keyword number)))
+                 (replique-parse-test--shape-of "{:a # :b 2}")))
+  (should (equal '((vector elision elision))
+                 (replique-parse-test--shape-of "[# #]")))
+  (should (equal '((map (pair keyword (map (pair keyword elision)))))
+                 (replique-parse-test--shape-of "{:a {:b #}}")))
+  (should (equal '((list elision)) (replique-parse-test--shape-of "(#)")))
+  (should-not (replique-parse-error (replique-parse-test--one "{:a #, :b 2}"))))
+
+(ert-deftest replique-parse-test-a-dispatch-that-dispatches-is-untouched ()
+  "The rule reaches only what Clojure\\='s own reader refuses.  A `#\\=' with a
+dispatch character after it is every one of these, and not one of them
+moves."
+  (should (equal '((set number)) (replique-parse-test--shape-of "#{1}")))
+  (should (equal '((fn symbol symbol)) (replique-parse-test--shape-of "#(inc %)")))
+  (should (equal '(regex) (replique-parse-test--shape-of "#\"re\"")))
+  (should (equal '((var-quote symbol)) (replique-parse-test--shape-of "#'foo")))
+  (should (equal '((discard number)) (replique-parse-test--shape-of "#_1")))
+  (should (equal '((namespaced-map keyword (map (pair keyword number))))
+                 (replique-parse-test--shape-of "#:foo{:a 1}")))
+  (should (equal '((tagged symbol string))
+                 (replique-parse-test--shape-of "#inst \"2024\"")))
+  (should (equal '(symbolic) (replique-parse-test--shape-of "##Inf")))
+  ;; And a `#' with nothing after it at all is still a reader macro somebody
+  ;; is in the middle of typing, which is what it is nine times out of ten
+  (should (eq 'eof (replique-parse-error (replique-parse-test--one "#")))))
+
+(ert-deftest replique-parse-test-a-length-that-was-not-printed-is-not-a-key ()
+  "`...\\=' is where `*print-length*\\=' stopped, and the printer writes it last.
+In a map that is the position of a key with no value, so a map that was
+printed read as a map that is not data - which is every map big enough to
+have been cut short."
+  (should (equal '((map (pair keyword number) elision))
+                 (replique-parse-test--shape-of "{:a 1 ...}")))
+  (should-not (replique-parse-error (replique-parse-test--one "{:a 1 ...}")))
+  ;; Only where the printer puts one.  Written anywhere else it is the
+  ;; symbol it has always been, and a map around it is a map somebody wrote
+  ;; wrong - saying so is still the right answer
+  (should (eq 'odd (replique-parse-error (replique-parse-test--one "{:a 1 ... :b 2}"))))
+  (should (equal '((vector number symbol))
+                 (replique-parse-test--shape-of "[1 ...]")))
+  (should (equal '((map (pair symbol number)))
+                 (replique-parse-test--shape-of "{... 1}")))
+  ;; A key with no value is still a map that is not data, whatever the key
+  ;; is written as
+  (should (eq 'odd (replique-parse-error (replique-parse-test--one "{:a 1 :b}"))))
+  (should (eq 'odd (replique-parse-error (replique-parse-test--one "{:a 1 foo}"))))
+  ;; Three dots and no more: `....' is a symbol somebody wrote
+  (should (eq 'odd (replique-parse-error (replique-parse-test--one "{:a 1 ....}")))))
+
+
 ;;;; Reader macros
 
 (ert-deftest replique-parse-test-reader-macros ()

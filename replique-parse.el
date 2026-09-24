@@ -273,6 +273,20 @@ Point is just past the opening text."
      (t (setq err 'unclosed)))
     (vector type start (point) children err)))
 
+(defsubst replique-parse--ellipsis-p (node)
+  "Return non-nil when NODE is the token `...\\='.
+
+WHICH IS WHAT `*print-length*\\=' WRITES where it stopped, and it is written
+last, so in a map it is the form that would be a key with no value.  Told
+apart here by its text, because `...\\=' is a symbol like any other
+everywhere else and is only an elision in the one position the printer
+puts one - a map with `...\\=' written in the middle of it is a map somebody
+wrote wrong, and saying so is still the right answer."
+  (and (eq (aref node 0) 'symbol)
+       (null (aref node 4))
+       (= 3 (- (aref node 2) (aref node 1)))
+       (string= "..." (buffer-substring-no-properties (aref node 1) (aref node 2)))))
+
 (defun replique-parse--pairs (children)
   "Group CHILDREN into the entries of a map.
 Return a cons of the grouping and whether a key was left without a value.
@@ -280,7 +294,14 @@ Return a cons of the grouping and whether a key was left without a value.
 A comment or a discarded form between a key and its value goes inside the
 entry, and one between entries stays between them, so that what is
 written where stays where it is written.  A discarded form is why this
-counts entries rather than halving a length: `{:a #_1 2}' is one entry."
+counts entries rather than halving a length: `{:a #_1 2}' is one entry.
+
+A LAST FORM THAT IS `...\\=' IS NOT A KEY WITHOUT A VALUE.  It is where the
+printer stopped, and a map it printed is a map this has to be able to
+read: the repl prints under `*print-length*\\=' and says so in the
+`print-length\\=' of every prompt.  Read as an elision it leaves the map
+even, which is what lets a printed value be laid out at all - see
+`replique-parse--ellipsis-p\\=' for why only the last one."
   (let ((out nil)
         (key nil)
         (pending nil)
@@ -295,7 +316,9 @@ counts entries rather than halving a length: `{:a #_1 2}' is one entry."
             (push (vector 'pair (aref key 1) (aref child 2) inside err) out)
             (setq key nil pending nil)))))
     (when key
-      (setq odd t)
+      (if (replique-parse--ellipsis-p key)
+          (aset key 0 'elision)
+        (setq odd t))
       (push key out)
       (dolist (gap (nreverse pending)) (push gap out)))
     (cons (nreverse out) odd)))
@@ -577,6 +600,21 @@ a digit - is a number or it is nothing, and what Clojure does with
 ;; token may open with.  Whatever is not one of the dozen is a tagged
 ;; literal - a tag and the form it tags - which is the rule that keeps a
 ;; reader tag nobody here has heard of from being taken apart wrongly.
+;;
+;; WITH ONE EXCEPTION, AND IT IS NOT A CLOJURE FORM AT ALL.  A `#' with
+;; whitespace or a closing bracket after it is what `*print-level*' writes
+;; where it stopped descending, and the repl this reader is for prints under
+;; one: every `prompt' frame carries the `print-length' and the `print-level'
+;; the last result went through.  So the reader has to be able to read what
+;; the printer writes.
+;;
+;; Nothing legal is taken away by reading it, which is what makes the rule
+;; safe rather than a guess: Clojure's own reader refuses `#' followed by a
+;; space - the dispatch character has to come next - so that text cannot
+;; appear in anything that reads.  The rule it replaces was worse than a
+;; refusal.  `{:a #, :b 2}' read as ONE entry whose value was a tagged
+;; literal spanning `#, :b 2', with nothing wrong recorded anywhere, so a
+;; map the repl printed with two entries in it read as a map with one.
 
 (defun replique-parse--read-dispatch (start)
   "Read whatever the `#' at START opens."
@@ -592,6 +630,12 @@ a digit - is a number or it is nothing, and what Clojure does with
      ;; `#^' is how metadata was written before `^' was
      ((eq c2 ?^) (forward-char 2) (replique-parse--read-prefixed 'meta start 2))
      ((eq c2 ?<) (forward-char 2) (vector 'unreadable start (point) nil 'invalid))
+     ;; What `*print-level*' writes where it stopped - see above.  Read as
+     ;; what it is, a form that was left out, rather than as a tag that would
+     ;; eat the two forms after it
+     ((or (eq (char-syntax c2) ?\s) (memq c2 '(?\) ?\] ?\})))
+      (forward-char 1)
+      (vector 'elision start (point) nil nil))
      ((and (eq c2 ?!) (= start (point-min)))
       (replique-parse--read-line 'shebang start))
      ((eq c2 ?#)
