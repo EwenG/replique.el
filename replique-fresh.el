@@ -167,9 +167,15 @@ Nothing is asked of the process when there is nothing to do with the
 answer: `replique-reload-before-asking\\=' set to `never\\=', or no repl
 to load anything in.  A load happens in a repl - it compiles, it prints,
 and it is interrupted there - so a process nobody has opened one on is
-told nothing and asked nothing."
+told nothing and asked nothing.
+
+THE REPL THIS BUFFER WOULD LOAD IN, because that is the one the loading
+this offers would happen in - `replique-fresh--reload\\=' calls
+`replique-reload-all\\=', and a question asked about one repl and answered
+by loading in another would offer to bring up to date something nobody
+was about to ask."
   (unless (eq replique-reload-before-asking 'never)
-    (when-let* ((repl (replique-repl-current))
+    (when-let* ((repl (replique-repl-for-dialect (replique-dialect)))
                 (process (replique-repl-process repl))
                 (found (replique-fresh--asked process)))
       (let* ((changed (plist-get found :changed))

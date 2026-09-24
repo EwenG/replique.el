@@ -331,7 +331,13 @@ everything a load is - see `replique-load-directive'."
   "#replique/reload {}")
 
 (defun replique-eval--send (nodes)
-  "Evaluate NODES, forms of the current buffer, in the current repl.
+  "Evaluate NODES, forms of the current buffer, in this buffer\\='s repl.
+
+WHICH REPL THAT IS, IS THE BUFFER\\='S TO SAY and not the selection\\='s - a
+.clj file goes to a Clojure repl and a .cljs file to a ClojureScript one,
+whichever repl the commands were last pointed at.  See
+`replique-repl-ensure-here\\=', and the commentary in replique-repl.el for
+the .cljc case and for which commands go the other way.
 
 A node with no text in it is dropped.  That is what a grammar answers an
 unfinished construct with - a zero width node standing where the form
@@ -346,7 +352,7 @@ recorded where the buffer said this one was."
     (widen)
     (progn
       (unless nodes (user-error "Nothing to evaluate"))
-      (let ((repl (replique-repl-ensure))
+      (let ((repl (replique-repl-ensure-here))
             (file (buffer-file-name)))
         (replique-repl-send-code
          repl
@@ -507,7 +513,12 @@ runs past END: half a form is a read error, not an evaluation."
 
 ;;;###autoload
 (defun replique-load-file ()
-  "Load the file this buffer holds, in the current repl.
+  "Load the file this buffer holds, in a repl of the language it is written in.
+
+A .clj file is loaded in a Clojure repl and a .cljs file in a
+ClojureScript one, whichever repl the commands were last pointed at: a
+file handed to the compiler of the other language is a file that compiler
+was never going to read.  See `replique-repl-ensure-here\\='.
 
 Which is not the same as evaluating its forms: a file is loaded as one
 unit, its ns form first and its definitions in the order they are
@@ -536,7 +547,7 @@ was written in the first place."
     (unless (file-exists-p (plist-get what :file))
       (user-error "There is no %s to load" (plist-get what :file)))
     (replique-repl-send-code
-     (replique-repl-ensure)
+     (replique-repl-ensure-here)
      ;; Shown in the repl buffer, where a source directive is not.  That one
      ;; describes a form written underneath it and the form is what there is
      ;; to show; this one is the whole of what was asked for, and the output
@@ -578,6 +589,11 @@ Only a process whose compiler wrote down what it compiled can answer
 this.  One that cannot says so, in the repl, and says what to start it
 on instead.
 
+ASKED OF THIS BUFFER\\='S REPL, the way a load is: what the process wrote
+down it wrote down per language, so a .clj buffer asks a Clojure repl
+for it whatever repl the commands were last pointed at - see
+`replique-repl-ensure-here\\='.
+
 WAITING holds the editor until the loading has ended and returns the
 frame that ended it - a value, an exception, or the error a repl answers
 what it could not read with.  For a command that loads
@@ -587,7 +603,7 @@ otherwise be about the files as the process last read them: see
 command itself never passes it."
   (interactive)
   (save-some-buffers nil #'replique-eval-clojure-file-p)
-  (let ((repl (replique-repl-ensure))
+  (let ((repl (replique-repl-ensure-here))
         (directive (replique-reload-directive)))
     (if waiting
         (replique-repl-send-code-sync repl directive)

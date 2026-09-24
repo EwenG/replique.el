@@ -34,6 +34,7 @@ compile:
 	  test/replique-fresh-test.el test/replique-stale-test.el \
 	  test/replique-main-js-test.el \
 	  test/replique-dialect-test.el \
+	  test/replique-repl-choice-test.el \
 	  test/replique-name-fuzz-test.el
 
 # Natively compiled, into the eln cache this Emacs reads.
@@ -71,6 +72,7 @@ test: compile
 	  -l replique-fresh-test -l replique-stale-test \
 	  -l replique-main-js-test \
 	  -l replique-dialect-test \
+	  -l replique-repl-choice-test \
 	  -l replique-name-fuzz-test \
 	  -f ert-run-tests-batch-and-exit
 

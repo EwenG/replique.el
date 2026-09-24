@@ -2026,7 +2026,7 @@ than written."
      (ignore asked sent)
      (cl-letf (((symbol-function 'y-or-n-p)
                 (lambda (prompt) (setq asked prompt) replique-test--answer))
-               ((symbol-function 'replique-repl-ensure) (lambda () 'a-repl))
+               ((symbol-function 'replique-repl-ensure-here) (lambda () 'a-repl))
                ((symbol-function 'replique-repl-send-code)
                 (lambda (_repl code &rest _) (setq sent code))))
        ,@body)))
@@ -2137,7 +2137,7 @@ with it.  A buffer holding no file is no file to reload either."
                 (progn
                   (cl-letf (((symbol-function 'save-some-buffers)
                              (lambda (_arg pred) (setq offered pred)))
-                            ((symbol-function 'replique-repl-ensure) (lambda () 'a-repl))
+                            ((symbol-function 'replique-repl-ensure-here) (lambda () 'a-repl))
                             ((symbol-function 'replique-repl-send-code)
                              (lambda (&rest _) nil)))
                     (replique-reload-all))
@@ -2744,7 +2744,7 @@ a repl buffer of a repl that never opened is a buffer that says nothing."
   (let* ((process (replique-process--make :id "replique-test-gone"
                                           :host "127.0.0.1"
                                           :port (replique-test-free-port)))
-         (name (replique-repl--buffer-name process)))
+         (name (replique-repl--buffer-name process nil nil)))
     (should-error (replique-repl process) :type 'user-error)
     (should-not (get-buffer name))))
 

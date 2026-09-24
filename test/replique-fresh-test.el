@@ -36,8 +36,9 @@ is being decided is whether to load, and the loading is
   (declare (indent 1))
   `(let ((replique-fresh-test--loaded nil)
          (replique-fresh-test--asked nil))
-     (cl-letf (((symbol-function 'replique-repl-current)
-                (lambda () (replique-repl--make :process (replique-process--make :id "test"))))
+     (cl-letf (((symbol-function 'replique-repl-for-dialect)
+                (lambda (_dialect)
+                  (replique-repl--make :process (replique-process--make :id "test"))))
                ((symbol-function 'replique-fresh--asked)
                 (lambda (_process)
                   (setq replique-fresh-test--asked t)
@@ -114,7 +115,7 @@ be asked of it refuses itself, with a message about the right thing."
   "A load compiles, prints, and is interrupted in a repl.  Without one there
 is nowhere for it to happen, so the process is not even asked."
   (let ((replique-fresh-test--asked nil))
-    (cl-letf (((symbol-function 'replique-repl-current) (lambda () nil))
+    (cl-letf (((symbol-function 'replique-repl-for-dialect) (lambda (_dialect) nil))
               ((symbol-function 'replique-fresh--asked)
                (lambda (_process) (setq replique-fresh-test--asked t) nil)))
       (should-not (replique-fresh-ensure "finding every use of a name"))
