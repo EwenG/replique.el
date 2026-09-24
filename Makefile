@@ -9,7 +9,8 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
       replique-repl.el replique-locals.el replique-deps.el replique-eval.el \
       replique-pprint.el replique-forms.el replique-name.el \
       replique-fresh.el \
-      replique-completion.el replique-symbol.el replique-stale.el replique.el
+      replique-completion.el replique-symbol.el replique-stale.el \
+      replique-main-js.el replique.el
 
 LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-edn.el replique-conn.el \
@@ -17,7 +18,8 @@ LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-process.el replique-repl.el replique-locals.el replique-deps.el \
        replique-eval.el replique-pprint.el replique-forms.el replique-name.el \
        replique-fresh.el \
-       replique-completion.el replique-symbol.el replique-stale.el replique.el
+       replique-completion.el replique-symbol.el replique-stale.el \
+       replique-main-js.el replique.el
 
 .PHONY: all compile native test lint clean
 
@@ -30,6 +32,7 @@ compile:
 	  test/replique-pprint-test.el test/replique-completion-test.el \
 	  test/replique-forms-test.el test/replique-symbol-test.el \
 	  test/replique-fresh-test.el test/replique-stale-test.el \
+	  test/replique-main-js-test.el \
 	  test/replique-dialect-test.el \
 	  test/replique-name-fuzz-test.el
 
@@ -66,6 +69,7 @@ test: compile
 	  -l replique-pprint-test -l replique-completion-test \
 	  -l replique-forms-test -l replique-symbol-test \
 	  -l replique-fresh-test -l replique-stale-test \
+	  -l replique-main-js-test \
 	  -l replique-dialect-test \
 	  -l replique-name-fuzz-test \
 	  -f ert-run-tests-batch-and-exit

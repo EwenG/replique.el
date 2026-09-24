@@ -538,6 +538,66 @@ Two, and they are not interchangeable: a browser and node resolve npm
 packages differently, so they are two different compilations of the same
 sources and the process keeps one of each.")
 
+(defconst replique-repl-main-modules-timeout 10
+  "How long to wait for the process to say what its main modules are, in seconds.
+
+The answer is a walk of the project directory, which is milliseconds in
+most projects and a fraction of a second in one with a large node_modules
+beside it - the walk does not go in, but it does step over everything at
+the top of it.  Bounded so that a process which stopped answering is a
+prompt with nothing to offer rather than an Emacs that hangs.")
+
+(defun replique-repl--main-namespaces (process)
+  "Return the namespaces the main modules under PROCESS name.
+
+Each of them is a program a page of this project loads, which is what
+makes it a program this project can be started on - see
+`replique-repl--read-main' for why the two ends are one namespace.  The
+walk that finds those files is the process\\='s, so this is asked for
+rather than done here; replique 1 walked the project from the editor and
+built the same list as it went.
+
+Sorted and without repeats: two pages loading one program is an ordinary
+thing, and the order a walk came back in says nothing.
+
+Nil where the process cannot say, and NOT AN ERROR: this is the
+convenience half of opening a repl, and a command that refused to open one
+because a menu could not be built would be refusing over the part nobody
+asked for.  A refusal carries no modules and neither does a process that
+stopped answering, so both of them are read as the empty menu they are."
+  (let ((frame (replique-process-request-sync
+                process (list :op :main-modules)
+                replique-repl-main-modules-timeout)))
+    (sort (delete-dups
+           (delq nil (mapcar (lambda (module) (plist-get module :main))
+                             (plist-get frame :modules))))
+          #'string<)))
+
+(defun replique-repl--read-main (process)
+  "Read the namespace a ClojureScript repl of PROCESS is to be started on.
+
+WHAT THE PAGES OF THIS PROJECT LOAD is what is offered, which is the
+`mainNs' of each main module under it - see `replique-main-js'.  The two
+are one namespace seen from its two ends: a page imports what its own
+module names, and that import finds something on disk only where
+something compiled it.  Starting the repl on that namespace is what
+compiles it, so a page opened afterwards loads a program rather than a
+404.  Replique 1 offered the same list, harvested the same way, for the
+same reason.
+
+Offered as text rather than as a default so that it can be cleared: a
+repl standing in no particular program is an ordinary thing to want, and
+with a default, return would be the only answer the prompt has.
+
+What is typed is what is sent.  A project may have no main module at all,
+and a namespace that is the `mainNs' of none is as good a place to start
+as any - what this compiles is the namespace, not the file that named it."
+  (let* ((namespaces (replique-repl--main-namespaces process))
+         (main (string-trim
+                (completing-read "Main namespace (empty for none): "
+                                 namespaces nil nil (car namespaces)))))
+    (unless (string-empty-p main) main)))
+
 (defun replique-repl--read ()
   "Read the arguments of a repl about to be opened.
 
@@ -548,29 +608,47 @@ So the common case stays one command with no questions, and the keys are
 absent from the handshake of every Clojure repl rather than written on
 every one of them.
 
-The target is asked only for a ClojureScript repl, being the one thing
-that has no meaning for the other."
+The target and the namespace are asked only for a ClojureScript repl,
+being the two things that have no meaning for the other.
+
+The process is settled before anything is asked, and is answered rather
+than left to the command to find again: which namespaces are offered is a
+fact about one process, and asking one about its main modules and then
+opening the repl on another would be a menu of somewhere else."
   (if (not current-prefix-arg)
-      (list nil nil nil)
-    (let ((dialect (intern (concat ":" (completing-read
-                                        (format-prompt "Dialect" "clj")
-                                        replique-repl-dialects nil t
-                                        nil nil "clj")))))
-      (list nil dialect
-            (when (eq dialect :cljs)
+      (list nil nil nil nil)
+    (let* ((process (replique-process-ensure))
+           (dialect (intern (concat ":" (completing-read
+                                         (format-prompt "Dialect" "clj")
+                                         replique-repl-dialects nil t
+                                         nil nil "clj")))))
+      (if (not (eq dialect :cljs))
+          (list process dialect nil nil)
+        (list process dialect
               (intern (concat ":" (completing-read
                                    (format-prompt "Target" "browser")
                                    replique-repl-targets nil t
-                                   nil nil "browser"))))))))
+                                   nil nil "browser")))
+              (replique-repl--read-main process))))))
 
 ;;;###autoload
-(defun replique-repl (&optional process dialect target)
+(defun replique-repl (&optional process dialect target main)
   "Open a REPL on PROCESS, the current process by default.
 
 DIALECT is `:clj' or `:cljs', Clojure when it is nil.  TARGET is
 `:browser' or `:node' and is only about a ClojureScript repl, the
-process\\='s own default when it is nil.  With a prefix argument they are
-asked for - see `replique-repl--read'.
+process\\='s own default when it is nil.  MAIN is a namespace such a repl
+is to be started on, and is nil for one standing in no particular
+program.  With a prefix argument they are asked for - see
+`replique-repl--read'.
+
+MAIN IS COMPILED BEFORE THE FIRST PROMPT, it and everything it depends
+on, so the first form sent is not the one that pays for the dependency
+graph.  What that promises is the OUTPUT DIRECTORY rather than the
+runtime: on node the namespace is required into the runtime as well, and
+on the browser the page is what loads it, whenever somebody opens the
+page.  A namespace that does not compile is written into the buffer,
+before the prompt.
 
 A ClojureScript repl on the browser answers the handshake with the page
 to open, which is the whole of what such a repl needs of whoever started
@@ -596,7 +674,11 @@ page.  It is written into the buffer before the first prompt."
           :buffer buffer
           :process-id (replique-process--id process)
           :hello (append (when dialect (list :dialect dialect))
-                         (when target (list :target target)))
+                         (when target (list :target target))
+                         ;; Left out rather than sent as nil, as the two
+                         ;; above are: an absent key is how the protocol
+                         ;; writes a repl standing in no program
+                         (when main (list :main main)))
           :on-ready (lambda (conn)
                       (let ((proc (replique-conn--proc conn))
                             (url (plist-get (replique-conn--info conn) :url)))
