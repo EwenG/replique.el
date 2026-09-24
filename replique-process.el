@@ -774,7 +774,10 @@ SUMMARY being what it would have been reported as."
 The startup line is protocol: a client reads it to find the process it
 just started.  Anything else means the process is not one, and from there
 what it writes is a diagnostic - which belongs in a buffer, whole, rather
-than in the echo area a line at a time."
+than in the echo area a line at a time.
+
+STANDARD OUTPUT ALONE arrives here, which is what makes that rule true -
+see `replique-process--stderr\='."
   (if (eq 'starting (process-get proc 'replique-state))
       (let* ((acc (concat (or (process-get proc 'replique-acc) "") string))
              (idx (string-search "\n" acc)))
@@ -787,23 +790,66 @@ than in the echo area a line at a time."
               (replique-process--spawn-filter proc rest)))))
     (replique-process--wrote proc string)))
 
-(defun replique-process--wrote (proc string)
+(defun replique-process--wrote (proc string &optional face)
   "Show STRING, which PROC wrote, in the output buffer PROC belongs to.
 
+FACE is what to show it in: `replique-stderr\=' for what came on standard
+error and nothing for what came on standard output, which is the rule the
+`out\=' and `err\=' events of a connected process are shown under.  The two
+pipes are two streams here for the same reason they are two events there.
+
 Only until the control connection is up.  What the process prints goes
-both to the pipe and to the connections, so from there the two say the
+both to the pipes and to the connections, so from there the two say the
 same thing - and the connection is the one that keeps saying it when Emacs
-is not the one holding the pipe.  What comes before is the pipe alone: the
-jvm, the clojure script, and anything printed while there was nothing to
-be an event on.
+is not the one holding the pipes.  What comes before is the pipes alone:
+the jvm, the clojure script, and anything printed while there was nothing
+to be an event on.
 
 Read to the end whatever is done with it - a pipe nobody reads fills up,
 and the process stops on the write that fills it."
   (unless (eq 'connected (process-get proc 'replique-state))
     (let ((process (process-get proc 'replique-process)))
       (if process
-          (replique-process--insert process string)
-        (replique-insert-output (replique-process--startup-buffer proc) string)))))
+          (replique-process--insert process string face)
+        (replique-insert-output (replique-process--startup-buffer proc) string face)))))
+
+(defun replique-process--stderr-filter (pipe string)
+  "Show STRING, which the process PIPE carries the standard error of wrote.
+
+PIPE is given the process it belongs to as soon as that process exists,
+and that is before this can have run: a filter runs when the editor
+yields, and nothing between the two yields.  What the child wrote before
+then Emacs holds, and hands over once there is a filter to hand it to."
+  (when-let* ((proc (process-get pipe 'replique-owner)))
+    (replique-process--wrote proc string 'replique-stderr)))
+
+(defun replique-process--stderr ()
+  "Return a pipe process to attach the standard error of a process to.
+
+THE STARTUP LINE IS THE FIRST LINE OF STANDARD OUTPUT, and of standard
+output alone - which it only is when the two streams are kept apart.
+`make-process\=' mixes standard error into standard output when it is given
+no `:stderr\=', and the clojure launcher writes on standard error while it
+resolves dependencies:
+
+    Downloading: org/clojure/data.zip/1.0.0/data.zip-1.0.0.pom from central
+
+Read as the startup line that is not a process announcing itself, so a
+project whose dependencies are not all downloaded yet would never start.
+And it would not fail either: the jvm comes up, listens, writes its port
+file and waits, with the editor having given up on it before it ever
+spoke - a process nothing is connected to, holding the port file that
+stops the next start.
+
+Emacs closes and forgets the pipe when the process it belongs to exits,
+having first handed over what was written on the way out - so the trace
+of a jvm that died still reaches the buffer."
+  (make-pipe-process :name "replique-stderr"
+                     :buffer nil
+                     :noquery t
+                     :coding 'utf-8-unix
+                     :filter #'replique-process--stderr-filter
+                     :sentinel #'ignore))
 
 (defun replique-process--adopt-buffer (process proc)
   "Give PROCESS the buffer the startup output of PROC went to."
@@ -930,15 +976,20 @@ where there is one."
                             (file-name-nondirectory (directory-file-name directory))))))
       (with-current-buffer buffer (replique-process-mode))
       (message "replique: %s" (string-join command " "))
-      (let ((proc (make-process
-                   :name "replique"
-                   :buffer nil
-                   :command command
-                   :coding 'utf-8-unix
-                   :connection-type 'pipe
-                   :noquery t
-                   :filter #'replique-process--spawn-filter
-                   :sentinel #'replique-process--spawn-sentinel)))
+      (let* ((stderr (replique-process--stderr))
+             (proc (make-process
+                    :name "replique"
+                    :buffer nil
+                    :command command
+                    :coding 'utf-8-unix
+                    :connection-type 'pipe
+                    :noquery t
+                    ;; Kept apart from standard output, which is where the
+                    ;; startup line is - see `replique-process--stderr'
+                    :stderr stderr
+                    :filter #'replique-process--spawn-filter
+                    :sentinel #'replique-process--spawn-sentinel)))
+        (process-put stderr 'replique-owner proc)
         (process-put proc 'replique-buffer buffer)
         (process-put proc 'replique-state 'starting)
         (process-put proc 'replique-directory directory)

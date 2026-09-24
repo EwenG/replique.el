@@ -924,6 +924,47 @@ send a name back under the other."
                      (plist-get (replique-process-request-sync process '(:op :symbol) 1)
                                 :file))))))
 
+(ert-deftest replique-test-what-comes-on-standard-error-is-not-the-startup-line ()
+  "The clojure launcher writes on standard error while it resolves
+dependencies - \"Downloading: ... from central\" - and `make-process\=' mixes
+the two streams into one filter unless it is told not to.  Read as the
+startup line, the first of those is not a process announcing itself: every
+start in a project whose dependencies are not all downloaded yet would be
+given up on, while the jvm behind it came up, listened, and wrote the port
+file that stops the next one.
+
+Against a real process and a launcher that really does write there first,
+because what is under test is which pipe a line arrives on."
+  (let ((project (replique-test-project)))
+    (replique-test-with-project dir
+      (let ((script (expand-file-name "noisy-clojure" dir))
+            (process nil))
+        (with-temp-file (expand-file-name "deps.edn" dir)
+          (insert "{:paths [\"src\"]}"))
+        (with-temp-file script
+          (insert "#!/bin/sh\n"
+                  "echo 'Downloading: org/clojure/clojure/1.12.5/clojure-1.12.5.pom"
+                  " from central' >&2\n"
+                  "echo 'Downloading: org/clojure/clojure/1.12.5/clojure-1.12.5.jar"
+                  " from central' >&2\n"
+                  (format "exec %s \"$@\"\n"
+                          (shell-quote-argument (executable-find "clojure")))))
+        (set-file-modes script #o755)
+        (let ((replique-clojure-program script)
+              (replique-coordinates (format "{:local/root %S}" project)))
+          (setq process (replique-test-started-in dir)))
+        (should (replique-process-live-p process))
+        (let ((text (with-current-buffer (replique-process-buffer process)
+                      (buffer-string))))
+          ;; What was written on it is still shown: the point is where it
+          ;; goes, not that it goes nowhere
+          (should (string-match-p "Downloading: org/clojure/clojure" text))
+          ;; And shown as what it is, which is the rule an `err\=' event of a
+          ;; connected process is shown under
+          (should (eq 'replique-stderr
+                      (get-text-property (string-match "Downloading:" text)
+                                         'face text))))))))
+
 (ert-deftest replique-test-a-process-reached-through-a-link-answers-under-the-link ()
   "The whole of it, against a real process - the only thing that resolves
 the directory it was started in.  A project is reached through a symlink,
