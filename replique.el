@@ -65,6 +65,7 @@
 (require 'replique-symbol)
 (require 'replique-stale)
 (require 'replique-main-js)
+(require 'replique-css)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.
