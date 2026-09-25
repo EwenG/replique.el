@@ -93,17 +93,17 @@
 A path, relative to the directory the process was started in.  This and
 not the buffer: editing a partial rebuilds the entry point that includes
 it, which is the one thing replique 1 got right here and the thing a
-\='build the file I am looking at\=' gets wrong for every file whose name
+\\='build the file I am looking at\\=' gets wrong for every file whose name
 begins with an underscore.
 
-Usually set in `.dir-locals.el\=', where it is written once and is the
+Usually set in `.dir-locals.el\\=', where it is written once and is the
 same for everybody working on the project:
 
   ((scss-mode
     . ((replique-css-entry . \"scss/main.scss\")
        (replique-css-outputs . (\"public/css/main.css\")))))
 
-Not read at all where `replique-css-build-command\=' is set, since a
+Not read at all where `replique-css-build-command\\=' is set, since a
 command of your own takes whatever arguments it takes."
   :type '(choice (const :tag "None" nil) string)
   :group 'replique)
@@ -115,24 +115,24 @@ Relative to the directory the process was started in.  These are what is
 reloaded, and they are what a page fetches: the .scss you are editing is
 not a file any browser has ever asked for.
 
-Usually set in `.dir-locals.el\=' - see `replique-css-entry\='."
+Usually set in `.dir-locals.el\\=' - see `replique-css-entry\\='."
   :type '(repeat string)
   :group 'replique)
 
 (defcustom replique-css-build-command nil
-  "The command that builds this project\='s stylesheets, or nil for sass.
+  "The command that builds this project\\='s stylesheets, or nil for sass.
 
 A list of strings, the program and its arguments, run in the directory
 the process was started in.  Nil runs
 
   sass --embed-source-map ENTRY OUTPUT
 
-once for each of `replique-css-outputs\=', which is what replique 1 ran and
+once for each of `replique-css-outputs\\=', which is what replique 1 ran and
 is right for a project whose build IS sass.
 
 SET IT AND NOTHING IS SUBSTITUTED: the command is run as written, once,
-and `replique-css-outputs\=' is then only the list of what to reload.  That
-is what a project with a real build wants - `(\"npx\" \"gulp\" \"devCss\")\='
+and `replique-css-outputs\\=' is then only the list of what to reload.  That
+is what a project with a real build wants - `(\"npx\" \"gulp\" \"devCss\")\\='
 runs the pipeline the project already has, autoprefixer and all, rather
 than a second one replique invented that writes almost the same CSS."
   :type '(choice (const :tag "sass" nil) (repeat string))
@@ -205,7 +205,7 @@ what somebody needs and is not something this could word better."
   "Ask PROCESS to reload FILES, and say what came of all of them.
 
 One op each, because the op is about one file, and one sentence at the
-end - see `replique-css--report\='."
+end - see `replique-css--report\\='."
   (let ((frames nil)
         (left (length files)))
     (dolist (file files)
@@ -220,8 +220,8 @@ end - see `replique-css--report\='."
 (defun replique-css--commands (entry outputs)
   "The commands that build OUTPUTS from ENTRY, as a list of lists.
 
-One command, run as written, where `replique-css-build-command\=' says so.
-Otherwise sass, once per output, which is replique 1\='s command and is
+One command, run as written, where `replique-css-build-command\\=' says so.
+Otherwise sass, once per output, which is replique 1\\='s command and is
 right for a project whose build is sass and nothing else."
   (if replique-css-build-command
       (list replique-css-build-command)
@@ -241,7 +241,7 @@ SYNCHRONOUS, and deliberately.  On a real project sass over two hundred
 partials is a third of a second, the reload has to happen after it
 anyway, a failure has to be read where the key was pressed, and two saves
 in a row must not become two builds racing to write one file.  What waits
-here is what `replique-conn-request-sync\=' already waits for elsewhere: a
+here is what `replique-conn-request-sync\\=' already waits for elsewhere: a
 keystroke, with \\[keyboard-quit] to abandon it."
   (let ((failure nil))
     (dolist (command commands)
@@ -258,22 +258,22 @@ keystroke, with \\[keyboard-quit] to abandon it."
 (defun replique-reload-css (&optional file process)
   "Make the stylesheet FILE shows appear in every page connected to PROCESS.
 
-FILE is this buffer\='s file when it is not given, and PROCESS is the one
+FILE is this buffer\\='s file when it is not given, and PROCESS is the one
 the commands act on by default.
 
 A .css IS WHAT A PAGE FETCHES, so one is reloaded as it stands.  ANYTHING
 ELSE IS BUILT FIRST - a .scss is a file no browser has ever asked for -
 and what is reloaded is then what the build wrote, which is
-`replique-css-outputs\=' and not this buffer.  Master dispatched the same
+`replique-css-outputs\\=' and not this buffer.  Master dispatched the same
 key the same way, on the major mode; this asks the file, which is the
 fact, and holds whichever mode you happen to read .scss in.
 
-WHAT IS BUILT IS `replique-css-entry\=', NOT THIS BUFFER.  Editing a
+WHAT IS BUILT IS `replique-css-entry\\=', NOT THIS BUFFER.  Editing a
 partial has to rebuild the entry point that includes it, and building the
 buffer would be wrong for every file whose name begins with an
-underscore.  Those two, and `replique-css-build-command\=' where sass is
-not your build, are named once in `.dir-locals.el\=' - see
-`replique-css-entry\='.  Nothing is remembered anywhere else and nothing is
+underscore.  Those two, and `replique-css-build-command\\=' where sass is
+not your build, are named once in `.dir-locals.el\\=' - see
+`replique-css-entry\\='.  Nothing is remembered anywhere else and nothing is
 asked for: replique 1 asked which output to write on every single reload
 and forgot the answer when Emacs stopped.
 
@@ -282,8 +282,8 @@ you were comparing it against, and a stylesheet that reloaded in one of
 them is a stylesheet that did not reload.
 
 WHAT IS RELOADED IS THE FILE ON THE DISK - the page fetches it from
-whatever serves the application\='s assets - so a buffer with unsaved
-changes is offered to be saved first, which is `replique-load-file\='s
+whatever serves the application\\='s assets - so a buffer with unsaved
+changes is offered to be saved first, which is `replique-load-file\\='s
 answer to the same question and is asked in the same words.
 
 The build waits and the reload does not.  A build is a third of a second

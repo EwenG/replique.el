@@ -198,8 +198,8 @@ half that worked is how the half that did not goes unnoticed."
   "Run BODY with CONFIG let-bound and the build stubbed.
 Return (COMMANDS . SENT): what would have run, and the ops that went out.
 
-`replique-css--build\=' and not `call-process\=': Emacs compiles elisp
-natively in the background and reaches for `call-process\=' to do it, so a
+`replique-css--build\\=' and not `call-process\\=': Emacs compiles elisp
+natively in the background and reaches for `call-process\\=' to do it, so a
 stub of that one answers questions this test was never asked - which is
 not a guess, it is what happened here first."
   (declare (indent 1))

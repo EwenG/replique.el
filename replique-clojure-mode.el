@@ -1429,10 +1429,10 @@ one Clojure token from the next is not what a syntax table is for.")
 (defvar-local replique-clojure-read-p nil
   "Whether replique reads this buffer as Clojure.
 
-Set by `replique-clojure-setup\=', which is what makes a buffer one -
+Set by `replique-clojure-setup\\=', which is what makes a buffer one -
 the mode calls it, and so does the repl, whose buffer is not in that mode
 and holds Clojure all the same.  So this is true of exactly the buffers
-where the reading was set up, which `derived-mode-p\=' is not: it is
+where the reading was set up, which `derived-mode-p\\=' is not: it is
 false in a repl, and a repl is the buffer somebody is likeliest to be
 writing Clojure in.
 

@@ -320,7 +320,7 @@ it.  Without one the file is a file and is opened as one.
 
 Public because a definition is not the only thing the process answers with
 a file: what has to be loaded again is a list of them, and opening one is
-the same two halves resolved the same way - see `replique-stale\='."
+the same two halves resolved the same way - see `replique-stale\\='."
   (when-let* ((file (plist-get found :file))
               ((file-exists-p file)))
     (if-let* ((entry (plist-get found :entry)))
@@ -335,7 +335,7 @@ the same two halves resolved the same way - see `replique-stale\='."
 
 A location of its own because a definition inside a jar is not a file
 Emacs can visit, and there would be nothing to make an
-`xref-file-location\=' out of.  FOUND is what the process answered."
+`xref-file-location\\=' out of.  FOUND is what the process answered."
   found)
 
 (cl-defmethod xref-location-marker ((location replique-symbol--location))
@@ -755,7 +755,7 @@ somebody edits them."
 (defun replique-remove-var (var)
   "Unmap VAR from everywhere the process maps it.
 
-Not `ns-unmap\=', which would leave it where it was referred.  A var that
+Not `ns-unmap\\=', which would leave it where it was referred.  A var that
 was referred is in every namespace that referred it, under whatever name
 that namespace referred it as, so taking it away from where it was
 defined leaves every caller still calling it.
@@ -767,9 +767,9 @@ in it.  The name at point is the default, so removing the definition
 point is on is a return.
 
 A name typed rather than chosen is sent as it was typed, the way
-`replique-in-ns\=' sends a namespace: a bare one is a var of this
+`replique-in-ns\\=' sends a namespace: a bare one is a var of this
 namespace, and a qualified one is a var of somewhere else and is asked
-about first - `map\=' means clojure.core\\='s var in most namespaces, and
+about first - `map\\=' means clojure.core\\='s var in most namespaces, and
 unmapping clojure.core from the process is not something to do by
 pressing return.
 

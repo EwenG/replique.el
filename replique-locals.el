@@ -579,7 +579,7 @@ FORMS says what each written form binds - see `replique-locals-forms'."
 Which is a ^Type written in front of it - (let [^String s ...] ...) says
 every s below it holds a string, and it is the one thing a Clojure file
 says about what a local holds.  POS is where the name is, which is what
-`replique-locals-at\=' answers with, and it is where a name written
+`replique-locals-at\\=' answers with, and it is where a name written
 anywhere else is too: a ^String at the call site is written the same way.
 
 A ^Symbol and nothing else.  ^{:tag String} means the same to the

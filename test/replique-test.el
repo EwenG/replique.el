@@ -555,7 +555,7 @@ from the one process it was set in the way of."
 (ert-deftest replique-test-what-replique-says-it-is-is-said-once ()
   "The version lives in the Version header of replique.el and nowhere
 else: it is what package.el reads to know what it installed, and what
-`replique-version\=' says when somebody asks.
+`replique-version\\=' says when somebody asks.
 
 Written without its colon it is not a header - it is a comment that looks
 like one, and what package.el makes of the file is a package with no
@@ -926,7 +926,7 @@ send a name back under the other."
 
 (ert-deftest replique-test-what-comes-on-standard-error-is-not-the-startup-line ()
   "The clojure launcher writes on standard error while it resolves
-dependencies - \"Downloading: ... from central\" - and `make-process\=' mixes
+dependencies - \"Downloading: ... from central\" - and `make-process\\=' mixes
 the two streams into one filter unless it is told not to.  Read as the
 startup line, the first of those is not a process announcing itself: every
 start in a project whose dependencies are not all downloaded yet would be
@@ -959,7 +959,7 @@ because what is under test is which pipe a line arrives on."
           ;; What was written on it is still shown: the point is where it
           ;; goes, not that it goes nowhere
           (should (string-match-p "Downloading: org/clojure/clojure" text))
-          ;; And shown as what it is, which is the rule an `err\=' event of a
+          ;; And shown as what it is, which is the rule an `err' event of a
           ;; connected process is shown under
           (should (eq 'replique-stderr
                       (get-text-property (string-match "Downloading:" text)
@@ -1621,12 +1621,12 @@ what a comint buffer does when nobody else offers."
     (should (memq #'replique-symbol-xref-backend xref-backend-functions))))
 
 (ert-deftest replique-test-the-repl-hooks-are-autoloaded ()
-  "A repl opened by `replique-start\=' - autoloaded out of another file - is
-set up although nothing has loaded `replique.el\='.  What tells package.el
+  "A repl opened by `replique-start\\=' - autoloaded out of another file - is
+set up although nothing has loaded `replique.el\\='.  What tells package.el
 to do that is the autoloads it generates, so they are generated here and
 asked, rather than the source being read for a cookie."
   (let* ((source (file-name-directory (locate-library "replique")))
-         ;; Into a directory of its own: `loaddefs-generate\=' writes the file
+         ;; Into a directory of its own: `loaddefs-generate' writes the file
          ;; itself, and leaves one that is already there alone
          (dir (make-temp-file "replique-autoloads" t))
          (out (expand-file-name "replique-autoloads.el" dir)))
@@ -2749,7 +2749,7 @@ file goes on saying where it is, so it can be connected to again."
 (defun replique-test-listener (kind)
   "Return a server on this machine that accepts a connection and says nothing.
 
-KIND is `silent\=' for one that leaves the connection open and `rude\=' for
+KIND is `silent\\=' for one that leaves the connection open and `rude\\=' for
 one that closes it at once.  Either is what a port file can end up naming:
 the process that wrote it is gone, the port has been handed out again, and
 what holds it now does not speak replique.  A port that accepts is a port

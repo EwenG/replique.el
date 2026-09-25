@@ -389,8 +389,8 @@ on, where nothing of the arglists is one of its arguments.
 
 Which argument it is is not checked here - there is no right answer to an
 argument nobody wrote - but that what was faced is an argument at all.
-Where each of them is written is `replique-symbol--arguments\=' to say
-and `replique-name-fuzz--miscounted\=' to check; what is asked here
+Where each of them is written is `replique-symbol--arguments\\=' to say
+and `replique-name-fuzz--miscounted\\=' to check; what is asked here
 is of the two that read it."
   (let* ((name (replique-symbol-full-name found))
          (said (replique-symbol--said found argument))

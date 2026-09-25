@@ -777,7 +777,7 @@ what it writes is a diagnostic - which belongs in a buffer, whole, rather
 than in the echo area a line at a time.
 
 STANDARD OUTPUT ALONE arrives here, which is what makes that rule true -
-see `replique-process--stderr\='."
+see `replique-process--stderr\\='."
   (if (eq 'starting (process-get proc 'replique-state))
       (let* ((acc (concat (or (process-get proc 'replique-acc) "") string))
              (idx (string-search "\n" acc)))
@@ -793,9 +793,9 @@ see `replique-process--stderr\='."
 (defun replique-process--wrote (proc string &optional face)
   "Show STRING, which PROC wrote, in the output buffer PROC belongs to.
 
-FACE is what to show it in: `replique-stderr\=' for what came on standard
+FACE is what to show it in: `replique-stderr\\=' for what came on standard
 error and nothing for what came on standard output, which is the rule the
-`out\=' and `err\=' events of a connected process are shown under.  The two
+`out\\=' and `err\\=' events of a connected process are shown under.  The two
 pipes are two streams here for the same reason they are two events there.
 
 Only until the control connection is up.  What the process prints goes
@@ -828,8 +828,8 @@ then Emacs holds, and hands over once there is a filter to hand it to."
 
 THE STARTUP LINE IS THE FIRST LINE OF STANDARD OUTPUT, and of standard
 output alone - which it only is when the two streams are kept apart.
-`make-process\=' mixes standard error into standard output when it is given
-no `:stderr\=', and the clojure launcher writes on standard error while it
+`make-process\\=' mixes standard error into standard output when it is given
+no `:stderr\\=', and the clojure launcher writes on standard error while it
 resolves dependencies:
 
     Downloading: org/clojure/data.zip/1.0.0/data.zip-1.0.0.pom from central

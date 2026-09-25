@@ -223,7 +223,7 @@ of files to load."
 (defun replique-fresh-test--fork ()
   "Return the jar of the clojure that records what it compiled, or skip.
 
-The one the `:analysis\=' alias of the replique project names, built out
+The one the `:analysis\\=' alias of the replique project names, built out
 of the checkout beside it.  Everything here turns on a process that can
 say what it has not read as it now is, and stock clojure cannot: the
 tests that need one are skipped rather than passing against a process

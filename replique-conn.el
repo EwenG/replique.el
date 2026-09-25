@@ -59,7 +59,7 @@ process is gone.")
 (defconst replique-conn-unanswered-error "unanswered"
   "The `:error' of the frame a handshake gets when nothing answers it.
 
-Like `replique-conn-closed-error\=', not something a process sends: it is
+Like `replique-conn-closed-error\\=', not something a process sends: it is
 what replique answers on its own behalf when a port took the connection
 and then said nothing.  What it says about the port file it was read from
 is what a refusal says - the process that file names is not there - and

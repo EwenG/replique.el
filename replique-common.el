@@ -380,7 +380,7 @@ left where the reader put it."
 ;; A definition inside a jar has no file for Emacs to visit - there is no path
 ;; to a file inside an archive - so the entry is read out into a buffer of its
 ;; own, and that buffer is given a name made of the two of them: see
-;; `replique-symbol--visit-entry\='.
+;; `replique-symbol--visit-entry'.
 ;;
 ;; That name is not a path, and nothing but the buffer that made it knows how
 ;; to take it apart again.  So the two halves are kept on the buffer instead,
@@ -391,11 +391,11 @@ left where the reader put it."
   "The archive this buffer was read out of, or nil where it holds a file.")
 
 (defvar-local replique-archive-entry nil
-  "Which entry of `replique-archive-file\=' this buffer holds.")
+  "Which entry of `replique-archive-file\\=' this buffer holds.")
 
 ;; Kept through a change of major mode, which is otherwise where they would
 ;; go: turning a mode on kills the local variables of the buffer, and the
-;; buffer is given its mode after it has been filled - `set-auto-mode\=' reads
+;; buffer is given its mode after it has been filled - `set-auto-mode' reads
 ;; the name it was given and the text that was put in it.  What these say is
 ;; not about the mode anyway.  It is what the buffer holds, which is the same
 ;; whichever mode is reading it.

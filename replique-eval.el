@@ -293,7 +293,7 @@ have yet is created, with `clojure.core' referred into it - see
   "Return the directive asking for WHAT to be loaded.
 
 WHAT is a file, and the entry beside it where that file is an archive -
-see `replique-buffer-file\='.
+see `replique-buffer-file\\='.
 
 Loading a file is not evaluating the forms it holds one at a time.  It is
 read as one unit, its ns form first and its definitions in the order they
@@ -522,10 +522,10 @@ was never going to read.  See `replique-repl-ensure-here\\='.
 
 Which is not the same as evaluating its forms: a file is loaded as one
 unit, its ns form first and its definitions in the order they are
-written - see `replique-load-directive\='.
+written - see `replique-load-directive\\='.
 
 What is loaded is the file on the disk, so a buffer with unsaved changes
-is offered to be saved first.  Which is `comint-check-source\=', the one
+is offered to be saved first.  Which is `comint-check-source\\=', the one
 Emacs already has for exactly this - the modes that run a language in a
 buffer have asked this question since long before Clojure, and answering
 it the way they do means answering it in the words somebody has already

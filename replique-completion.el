@@ -244,10 +244,10 @@ that way."))
 (defun replique-completion-at-point ()
   "Return what could be written at point, for `completion-at-point-functions'.
 
-What point is writing is `replique-name-context\=' to read - the slot of
+What point is writing is `replique-name-context\\=' to read - the slot of
 a dependency form, the string point is in, or the name being written in
 ordinary code - and the region a candidate replaces is
-`replique-name-bounds\='.
+`replique-name-bounds\\='.
 
 Nil where nothing here has an answer: with no process to ask, in a
 buffer that is not read as Clojure, and where point is somewhere no name

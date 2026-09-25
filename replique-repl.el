@@ -1108,7 +1108,7 @@ shape as `replique-conn-request-sync\\='."
                           (replique-conn-live-p conn))
                 (with-local-quit
                   ;; Only this process, for the reason
-                  ;; `replique-conn-request-sync\=' gives: what another one
+                  ;; `replique-conn-request-sync' gives: what another one
                   ;; wrote is not what this wait is about
                   (accept-process-output proc 0.1 nil t)))
               (cond

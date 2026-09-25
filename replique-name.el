@@ -60,7 +60,7 @@ nobody is watching.
 What waits is what has to: a completion is asked for what it returns, and
 so is a definition somebody just pressed a key to be taken to.  What is
 asked about a call while somebody reads it does not wait at all - see
-`replique-symbol-eldoc\='."
+`replique-symbol-eldoc\\='."
   :type 'number
   :group 'replique)
 
@@ -97,10 +97,10 @@ has been in, and the one it is in now was never written there at all."
   "Return where the name written between START and END begins.
 
 Emacs reads a symbol as starting at the reader macro in front of it: the
-whole of a quoted name is one symbol to `bounds-of-thing-at-point\=', and
+whole of a quoted name is one symbol to `bounds-of-thing-at-point\\=', and
 so are a var quote and a discarded form.  What a candidate replaces is
 the name, and the macro in front of it stays where it is - a require
-written as (require \='clojure.st) is completing a namespace, and writing
+written as (require \\='clojure.st) is completing a namespace, and writing
 the candidate over the quote as well would unquote it.
 
 An underscore is skipped only behind a hash, since a name may begin with
@@ -122,7 +122,7 @@ Inside a string it starts after the quote, because what is written there
 is a path: a slash is not part of a symbol, and the whole of what was
 typed is what a candidate replaces.  Outside one it is the symbol point
 is in, less whatever reader macro is written in front of it - see
-`replique-name--start\='.  A keyword is a symbol here, and its
+`replique-name--start\\='.  A keyword is a symbol here, and its
 colon is part of it: a candidate for one carries its colon for that
 reason.
 
@@ -172,8 +172,8 @@ and being readable no longer tells a Clojure buffer from a prose one.
 What this keeps is why the question was asked - these are safe to turn on
 wherever somebody wants them, the default value of the hook included.
 
-`replique-clojure-read-p\=' rather than the mode, because the repl is
-not in that mode and is Clojure: `replique-clojure-setup\=' is what
+`replique-clojure-read-p\\=' rather than the mode, because the repl is
+not in that mode and is Clojure: `replique-clojure-setup\\=' is what
 makes a buffer one, and the repl calls it too."
   (and replique-clojure-read-p t))
 
@@ -195,7 +195,7 @@ after it is written on what the one before it returned, and what an
 expression returns is not knowable without running it.
 
 Read plainly or qualified with clojure.core, which is how
-`replique-deps\=' reads the forms it knows.")
+`replique-deps\\=' reads the forms it knows.")
 
 (defun replique-name--threading-p (node)
   "Return non-nil if NODE is the head of a threading form."
@@ -243,7 +243,7 @@ what this side can say about it without running anything: the type a
 where it is not a local, which the process reads as a var that declares
 its type or as a literal that is its own.
 
-FORMS says what each written form binds - see `replique-locals-forms\='.
+FORMS says what each written form binds - see `replique-locals-forms\\='.
 
 Nil where nothing is written on, and nil where the node says nothing
 about what it is.  The process answers a member with nothing then, which
@@ -388,7 +388,7 @@ for it, where the same nil outside one would be a point in ordinary code.
 A string and ordinary code settle between themselves - each of them is
 read where point is where the other is not."
   ;; The dependency form is asked whether this is a Clojure buffer too, and
-  ;; not only the other two.  `replique-parse\=' reads any buffer at all -
+  ;; not only the other two.  `replique-parse' reads any buffer at all -
   ;; it is text that it reads - so a require form written in a prose buffer
   ;; parses as one, and answering about it would be replique speaking for a
   ;; buffer it has no business speaking for.
@@ -424,7 +424,7 @@ the only difference between them is the word."
 (defun replique-name-at-point ()
   "Return the whole of the name point is in, as a cons of two positions.
 
-Which is `replique-name-bounds\=' with its end let out.  A completion
+Which is `replique-name-bounds\\=' with its end let out.  A completion
 replaces what has been typed so far, so it stops where point is; a name
 being asked about is the whole of the one point is in, because somebody
 who wants to know what a name is has finished writing it and left point
@@ -436,7 +436,7 @@ not a name to look anything up by.
 
 Nil too where point is on the reader macro in front of a name rather than
 on the name.  What a quote is written in front of is not part of the name
-- see `replique-name--start\=' - so point there is point in front of a
+- see `replique-name--start\\=' - so point there is point in front of a
 name and not in one, which is what a completion reads it as as well."
   (let* ((state (syntax-ppss))
          (string (and (nth 3 state) (nth 8 state)))
@@ -480,7 +480,7 @@ a line - and what is worth being told there is what the call takes and
 how far along it they are.
 
 Which argument that is, and what the call is, is what
-`replique-name--enclosing\=' reads - the same reading a completion asks
+`replique-name--enclosing\\=' reads - the same reading a completion asks
 with, since what point is writing an argument of is one question however
 many things want the answer.
 
@@ -505,7 +505,7 @@ written, and a path is an argument like the rest of them."
                 :argument argument
               ;; What the head is called on, where the head is a member -
               ;; the s of (.length s).  Read here rather than left to
-              ;; `replique-name--member-target\=', which answers for the
+              ;; `replique-name--member-target', which answers for the
               ;; name being written and not for the one around it
                 :context (replique-name--asking
                           ns
