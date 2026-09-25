@@ -360,6 +360,13 @@ the directory, and that is nearly always."
   (pcase (plist-get frame :event)
     ("out" (replique-process--insert process (plist-get frame :string)))
     ("err" (replique-process--insert process (plist-get frame :string) 'replique-stderr))
+    ;; Put in the buffer and nowhere else, like anything else the process
+    ;; printed.  A message of its own here was a message whatever the buffer
+    ;; was doing - said a second time to somebody already reading it, and
+    ;; said while they were reading something they had asked for.  What says
+    ;; it where it cannot be seen is `replique-note-unread\=', which the
+    ;; insert goes through: it knows whether a window shows the buffer, and
+    ;; this does not
     ("uncaught-exception"
      (let ((thread (plist-get frame :thread))
            (message (plist-get frame :message))
@@ -369,8 +376,7 @@ the directory, and that is nearly always."
         (replique-exception-button
          (format "Exception in thread \"%s\" %s\n" thread message)
          exception message nil (format "in thread %s" thread))
-        'replique-stderr)
-       (message "replique: exception in thread \"%s\": %s" thread message)))
+        'replique-stderr)))
     ("dropped"
      ;; Written where the gap is: everything that survived came before it
      (replique-process--note process "... %s events were dropped ..."

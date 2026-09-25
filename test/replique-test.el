@@ -333,6 +333,33 @@ shows is told about is the point of half of these tests."
        ,@body)
      replique-test--message))
 
+(defvar replique-test--messages nil
+  "Every message the code under test produced, newest first.")
+
+(defmacro replique-test-messages (&rest body)
+  "Run BODY and return every message it put in the echo area.
+
+The last one is not enough to say that something was never said: what is
+being asked is whether a line ever reached the echo area, and a message
+after it is not an answer to that."
+  (declare (indent 0))
+  `(let ((replique-test--messages nil))
+     (cl-letf (((symbol-function 'message)
+                (lambda (format &rest args)
+                  (push (apply #'format format args) replique-test--messages))))
+       ,@body)
+     replique-test--messages))
+
+(defmacro replique-test-with-shown (buffer &rest body)
+  "Run BODY with a window showing BUFFER, and put back what it showed."
+  (declare (indent 1))
+  `(let ((replique-test--shown (window-buffer (selected-window))))
+     (unwind-protect
+         (progn (set-window-buffer (selected-window) ,buffer)
+                ,@body)
+       (when (buffer-live-p replique-test--shown)
+         (set-window-buffer (selected-window) replique-test--shown)))))
+
 ;;; Printing EDN
 
 (ert-deftest replique-test-edn-scalars ()
@@ -2261,6 +2288,50 @@ process.  A developer who cannot find that buffer will think it vanished."
                    (string-match-p "^FROM-A-THREAD$" (buffer-string))))
                10))
       (should-not (string-match-p "^FROM-A-THREAD$" (replique-test-text repl))))))
+
+(ert-deftest replique-test-a-thread-that-threw-says-nothing-where-it-is-shown ()
+  "What a thread threw is output like any other: it goes to the buffer of
+the process, and that buffer being on screen is what makes saying it in
+the echo area a second way of saying what is already said."
+  (let ((process (replique-test-process)))
+    (replique-test-with-repl repl
+      (let ((buffer (replique-process-buffer process)))
+        (replique-test-with-shown buffer
+          (let ((said (replique-test-messages
+                        (replique-test-eval
+                         repl (concat "(do (.start (Thread. (fn [] (throw"
+                                      " (Exception. \"SHOWN\"))))) :started)"))
+                        (replique-test-wait-for
+                         (lambda ()
+                           (with-current-buffer buffer
+                             (string-match-p "SHOWN" (buffer-string))))
+                         10))))
+            (should-not (seq-some (lambda (one) (string-match-p "SHOWN" one)) said))))))))
+
+(ert-deftest replique-test-a-thread-that-threw-is-said-where-it-is-not ()
+  "And the other half of it: a buffer nobody is looking at is where an
+exception goes to not be read, which is the case the echo area is for."
+  (let ((process (replique-test-process)))
+    (replique-test-with-repl repl
+      (let ((replique--unread nil)
+            (global-mode-string nil)
+            (replique--echo-pending nil)
+            (replique--echo-timer nil)
+            (buffer (replique-process-buffer process)))
+        (unwind-protect
+            (progn
+              (replique-test-hide buffer)
+              (replique-test-eval
+               repl (concat "(do (.start (Thread. (fn [] (throw"
+                            " (Exception. \"UNSEEN\"))))) :started)"))
+              (should (replique-test-wait-for
+                       (lambda ()
+                         (string-match-p "UNSEEN" (or (cdr replique--echo-pending) "")))
+                       10))
+              (should (string-match-p
+                       "UNSEEN"
+                       (replique-test-message (replique--echo-flush)))))
+          (when replique--echo-timer (cancel-timer replique--echo-timer)))))))
 
 ;;; Output nothing has seen
 
