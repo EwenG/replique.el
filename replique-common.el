@@ -31,15 +31,18 @@
 ;; exception, and it is deliberately quiet.
 ;;
 ;; The other thing they share is what to do about output that arrived in a
-;; buffer no window shows.  The echo area is the wrong place to say so: what
-;; arrives on its own arrives while nobody is looking, and a message is gone
-;; by the time anybody does.  It is said in the global mode line instead,
-;; where it waits to be read.
+;; buffer no window shows.  It is said twice, because either one alone is a
+;; way of not being told: in the global mode line, which names the buffer and
+;; how much of it there is and waits to be read, and in the echo area, which
+;; says what arrived while it is arriving.  A message on its own is gone by
+;; the time anybody looks up; a mark on its own appeared once and then stood
+;; still through the thousand lines that came after the first.
 
 ;;; Code:
 
 (require 'comint)
 (require 'seq)
+(require 'subr-x)
 
 (defgroup replique nil
   "A development environment for Clojure."
@@ -104,7 +107,27 @@ what this exists to stop."
 
 What a repl answers to a form sent from a buffer is not that: its result
 is put in the echo area where the form was sent from.  This is for what
-arrives on its own - what a future printed, what a thread threw."
+arrives on its own - what a future printed, what a thread threw.
+
+Named with how much of it there is, and that number moves as more
+arrives.  A mark that appeared once and then stood still says the same
+thing whether one line came or a thousand, and says nothing at all about
+the second thousand."
+  :type 'boolean
+  :group 'replique)
+
+(defcustom replique-echo-unread t
+  "Whether output that arrives on its own is also shown in the echo area.
+
+The mode line says there is something to read and waits to be read; this
+says what it was, while it is happening.  Both, because they answer
+different questions: a name in the mode line is no use to somebody not
+looking down there, and a message is gone by the time anybody comes back
+to the frame.
+
+Only where nothing was asked for.  A form evaluated from a buffer reports
+where it was sent from - see `replique-echo-results\\=' - and what a
+background thread printed in the meantime does not get to overwrite it."
   :type 'boolean
   :group 'replique)
 
@@ -121,10 +144,14 @@ mode line is."
   :group 'replique)
 
 (defvar replique--unread '()
-  "The buffers that received output while no window showed them.
+  "What arrived where nobody saw it, as a list of (BUFFER . LINES).
 
 In the order they did it in, so that the mode line reads as things
 happened.")
+
+(defun replique--unread-lines (string)
+  "Return how many lines STRING ended."
+  (if string (seq-count (lambda (character) (= character ?\n)) string) 0))
 
 (defun replique--unread-name (buffer)
   "Return the short name of BUFFER for the mode line.
@@ -135,27 +162,34 @@ file in a buffer list; in a mode line naming nothing else it is noise."
          (name (replace-regexp-in-string "\\`\\*\\|\\*\\(<[0-9]+>\\)?\\'" "" name)))
     (replace-regexp-in-string "\\`replique\\(: \\|-\\)" "" name)))
 
-(defun replique--unread-entry (buffer)
-  "Return the mode line entry for BUFFER."
-  (propertize (replique--unread-name buffer)
-              'face 'replique-unread
-              'mouse-face 'mode-line-highlight
-              'help-echo (format "%s: output nothing has seen\nmouse-1: show it"
-                                 (buffer-name buffer))
-              'local-map (let ((map (make-sparse-keymap)))
-                           (define-key map [mode-line mouse-1]
-                                       (lambda ()
-                                         (interactive)
-                                         (when (buffer-live-p buffer)
-                                           (pop-to-buffer buffer))))
-                           map)))
+(defun replique--unread-entry (entry)
+  "Return the mode line entry for ENTRY, a buffer and the lines it holds.
+
+At least one line: what is counted is newlines, and the first thing
+written is a line that has not ended yet.  Nought would read as nothing
+having arrived, which is the one thing this is here to deny."
+  (let* ((buffer (car entry))
+         (lines (max 1 (cdr entry))))
+    (propertize (format "%s (%d)" (replique--unread-name buffer) lines)
+                'face 'replique-unread
+                'mouse-face 'mode-line-highlight
+                'help-echo (format "%s: %d lines nothing has seen\nmouse-1: show it"
+                                   (buffer-name buffer) lines)
+                'local-map (let ((map (make-sparse-keymap)))
+                             (define-key map [mode-line mouse-1]
+                                         (lambda ()
+                                           (interactive)
+                                           (when (buffer-live-p buffer)
+                                             (pop-to-buffer buffer))))
+                             map))))
 
 (defun replique-unread-mode-line ()
   "Return the global mode line description of output nothing has seen."
-  (let ((buffers (seq-filter #'buffer-live-p replique--unread)))
-    (if (null buffers)
+  (let ((entries (seq-filter (lambda (entry) (buffer-live-p (car entry)))
+                             replique--unread)))
+    (if (null entries)
         ""
-      (concat " " (mapconcat #'replique--unread-entry buffers ",")))))
+      (concat " " (mapconcat #'replique--unread-entry entries ",")))))
 
 (defvar replique--unread-mode-line '(:eval (replique-unread-mode-line))
   "The `global-mode-string' element naming the buffers nobody has read.")
@@ -171,22 +205,135 @@ been changed."
     (setq global-mode-string
           (append global-mode-string (list replique--unread-mode-line)))))
 
-(defun replique-note-unread (buffer)
-  "Note that BUFFER received output while no window showed it.
+(defun replique--unread-mark (buffer string)
+  "Note in the mode line that BUFFER received STRING and nobody saw it.
 
-Named apart from `replique-track-unread', the setting it reads: one
+The count is what changes about a buffer already named there.  Noting it
+once was enough while the mark was the whole of what was being said, and
+a mark that is already up is not a way of saying that more has come."
+  (replique--unread-install)
+  (let ((entry (assq buffer replique--unread))
+        (lines (replique--unread-lines string)))
+    (if entry
+        (setcdr entry (+ (cdr entry) lines))
+      (setq replique--unread
+            (append replique--unread (list (cons buffer lines))))))
+  (force-mode-line-update t))
+
+;;; What arrived while nobody was looking, in the echo area
+
+;; Gathered rather than said as it comes.  Output arrives in whatever chunks
+;; the operating system handed over, so a message per chunk is the last
+;; fragment of a line flashing past where a line was wanted - and a thread
+;; printing in a loop is an echo area nothing else can use.  An idle timer is
+;; the clock: a burst becomes one message, and idle is the moment nothing
+;; else is saying anything.
+
+(defconst replique-echo-max-lines 10
+  "How many lines of what a process produced the echo area shows.")
+
+(defconst replique-echo-max-chars 1000
+  "How much of what a process produced the echo area shows, in characters.")
+
+(defconst replique--echo-delay 0.2
+  "How long Emacs is left idle before what arrived unseen is said.")
+
+(defvar replique-echo-awaited-function nil
+  "A function of no arguments saying an evaluation is about to report.
+
+Nil here and set by `replique-repl\\=' where that is loaded: what owns the
+echo area is an evaluation, an evaluation belongs to a repl, and a repl
+is not something this file knows about.  See `replique-echo-unread\\='.")
+
+(defvar replique--echo-pending nil
+  "What is about to be said, as (BUFFER . TEXT).")
+
+(defvar replique--echo-timer nil
+  "The timer that will say what `replique--echo-pending\\=' holds.")
+
+(defun replique-echo-shorten (text buffer)
+  "Return TEXT cut down to what the echo area should hold, naming BUFFER.
+
+A form that printed a thousand lines is not a message.  Where it was cut
+the buffer holding the whole of it is named, so that a cut reads as one."
+  (let* ((cut (> (length text) replique-echo-max-chars))
+         (text (if cut (substring text 0 replique-echo-max-chars) text))
+         (lines (split-string text "\n"))
+         (cut (or cut (> (length lines) replique-echo-max-lines)))
+         (text (string-join (seq-take lines replique-echo-max-lines) "\n")))
+    (if cut
+        (concat text (propertize (format " ... see %s" (buffer-name buffer))
+                                 'face 'replique-note))
+      text)))
+
+(defun replique--echo-flush ()
+  "Say what arrived in a buffer nobody was looking at.
+
+Dropped rather than kept for later where the echo area is somebody
+else's.  What is being reported is that something arrived just now, and
+the mode line is what goes on saying so afterwards."
+  ;; Cancelled rather than only forgotten: this is called by the timer, and
+  ;; also by a second buffer writing before it fired
+  (when replique--echo-timer (cancel-timer replique--echo-timer))
+  (setq replique--echo-timer nil)
+  (let ((buffer (car replique--echo-pending))
+        (text (cdr replique--echo-pending)))
+    (setq replique--echo-pending nil)
+    (when (and (buffer-live-p buffer)
+               text
+               (not (string-empty-p (string-trim text)))
+               ;; Somebody is typing an answer to something
+               (null (active-minibuffer-window))
+               ;; Somebody is about to be told what they asked for
+               (not (and replique-echo-awaited-function
+                         (funcall replique-echo-awaited-function)))
+               ;; Somebody went and looked
+               (not (get-buffer-window buffer 'visible)))
+      (message "%s" (replique-echo-shorten (string-trim-right text "\n+") buffer)))))
+
+(defun replique--echo-note (buffer string face)
+  "Gather STRING, which arrived unseen in BUFFER, for the echo area.
+
+FACE is what it is shown in, which is the face it went into the buffer
+in: a line that came on standard error then reads as one without having
+to be read.
+
+Bounded, like what is kept for an evaluation: a thread printing in a loop
+must not be accumulated in full for the sake of the ten lines of it that
+will be shown."
+  (when (and string (not (string-empty-p string)))
+    (unless (eq buffer (car replique--echo-pending))
+      ;; Another buffer's turn, and a message of its own rather than one
+      ;; made of the two of them
+      (replique--echo-flush))
+    (let* ((kept (or (cdr replique--echo-pending) ""))
+           (room (- (1+ replique-echo-max-chars) (length kept))))
+      (when (> room 0)
+        (let ((string (if (> (length string) room) (substring string 0 room) string)))
+          (setq replique--echo-pending
+                (cons buffer (concat kept (if face
+                                              (propertize string 'face face)
+                                            string)))))))
+    (unless (and replique--echo-timer (memq replique--echo-timer timer-idle-list))
+      (setq replique--echo-timer
+            (run-with-idle-timer replique--echo-delay nil #'replique--echo-flush)))))
+
+(defun replique-note-unread (buffer &optional string face)
+  "Note that BUFFER received STRING, shown in FACE, while no window showed it.
+
+Named apart from `replique-track-unread\\=', the setting it reads: one
 symbol that is both a variable and a function is a symbol whose two
 descriptions are about different things.
 
-Noted once: what is being said is that there is something to read, and
-saying it again per line of it says nothing more."
-  (when (and replique-track-unread
-             (buffer-live-p buffer)
-             (not (get-buffer-window buffer 'visible))
-             (not (memq buffer replique--unread)))
-    (replique--unread-install)
-    (setq replique--unread (append replique--unread (list buffer)))
-    (force-mode-line-update t)))
+Two things are said about the one fact and they are not the same thing:
+the mode line names the buffer and waits to be read, the echo area says
+what arrived while it is arriving.  See `replique-echo-unread\\='."
+  (when (and (buffer-live-p buffer)
+             (not (get-buffer-window buffer 'visible)))
+    (when replique-track-unread
+      (replique--unread-mark buffer string))
+    (when replique-echo-unread
+      (replique--echo-note buffer string face))))
 
 (defun replique--unread-seen (&rest _)
   "Forget the buffers now on screen, and the ones that are gone.
@@ -194,9 +341,9 @@ saying it again per line of it says nothing more."
 Shown is read enough: what the mode line offers is a way to the buffer,
 and it has been taken."
   (when replique--unread
-    (let ((left (seq-filter (lambda (buffer)
-                              (and (buffer-live-p buffer)
-                                   (not (get-buffer-window buffer 'visible))))
+    (let ((left (seq-filter (lambda (entry)
+                              (and (buffer-live-p (car entry))
+                                   (not (get-buffer-window (car entry) 'visible))))
                             replique--unread)))
       (unless (equal left replique--unread)
         (setq replique--unread left)
@@ -226,7 +373,7 @@ left where the reader put it."
           (insert (if face (propertize string 'face face) string)))
         (when at-end (goto-char (point-max)))
         (dolist (w windows) (set-window-point w (point-max)))))
-    (replique-note-unread buffer)))
+    (replique-note-unread buffer string face)))
 
 ;;; Code read out of an archive
 

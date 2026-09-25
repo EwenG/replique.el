@@ -98,12 +98,6 @@ repl buffer either way - this is about not having to look at it."
   :type 'boolean
   :group 'replique)
 
-(defconst replique-repl--echo-max-lines 10
-  "How many lines of what a form produced the echo area shows.")
-
-(defconst replique-repl--echo-max-chars 1000
-  "How much of what a form produced the echo area shows, in characters.")
-
 (cl-defstruct (replique-repl
                (:constructor replique-repl--make)
                (:conc-name replique-repl--))
@@ -146,14 +140,15 @@ from one somebody else chose."
       (setf (replique-repl--at-prompt repl) nil)
       (comint-output-filter proc (if face (propertize string 'face face) string)))))
 
-(defun replique-repl--unattended (repl)
-  "Note output in the buffer of REPL that nothing is waiting for.
+(defun replique-repl--unattended (repl &optional string face)
+  "Note STRING, shown in FACE, arriving in REPL with nothing waiting for it.
 
 What a buffer asked for is reported where it was asked from.  The rest
 is only ever in the repl buffer, and a repl buffer no window shows is
-where output goes to not be read."
+where output goes to not be read - so it is said about there instead, in
+the mode line and in the echo area.  See `replique-note-unread\\='."
   (when (= 0 (or (replique-repl--to-echo repl) 0))
-    (replique-note-unread (replique-repl--buffer repl))))
+    (replique-note-unread (replique-repl--buffer repl) string face)))
 
 (defun replique-repl--echo-keep (repl string)
   "Keep STRING, printed by the form REPL is answering, for the echo area.
@@ -165,28 +160,12 @@ tells a whole one from a cut one."
   (when (and replique-echo-results
              (> (or (replique-repl--to-echo repl) 0) 0))
     (let* ((kept (or (replique-repl--echoed repl) ""))
-           (room (- (1+ replique-repl--echo-max-chars) (length kept))))
+           (room (- (1+ replique-echo-max-chars) (length kept))))
       (when (> room 0)
         (setf (replique-repl--echoed repl)
               (concat kept (if (> (length string) room)
                                (substring string 0 room)
                              string)))))))
-
-(defun replique-repl--echo-shorten (repl text)
-  "Return TEXT cut down to what the echo area of REPL should hold.
-
-A form that printed a thousand lines is not a message.  Where it was cut
-the buffer holding the whole of it is named, so that a cut reads as one."
-  (let* ((cut (> (length text) replique-repl--echo-max-chars))
-         (text (if cut (substring text 0 replique-repl--echo-max-chars) text))
-         (lines (split-string text "\n"))
-         (cut (or cut (> (length lines) replique-repl--echo-max-lines)))
-         (text (string-join (seq-take lines replique-repl--echo-max-lines) "\n")))
-    (if cut
-        (concat text (propertize
-                      (format " ... see %s" (buffer-name (replique-repl--buffer repl)))
-                      'face 'replique-note))
-      text)))
 
 (defun replique-repl--echo (repl string)
   "Show STRING, and what the form printed, in the echo area of REPL.
@@ -205,11 +184,28 @@ the protocol draws rather than one a client guesses at."
       (setf (replique-repl--echoed repl) nil)
       (when replique-echo-results
         (message "%s"
-                 (replique-repl--echo-shorten
-                  repl
+                 (replique-echo-shorten
                   (if (and printed (not (string-empty-p (string-trim printed))))
                       (concat (string-trim-right printed "\n+") "\n" string)
-                    string)))))))
+                    string)
+                  (replique-repl--buffer repl)))))))
+
+(defun replique-repl--awaited-p ()
+  "Return non-nil when an evaluation is about to say what it produced.
+
+What a buffer asked for owns the echo area, and it is about to be put
+there: a line a background thread printed in the meantime does not get to
+be the last thing said.  Any repl of any process, because the echo area
+is one."
+  (seq-some (lambda (process)
+              (seq-some (lambda (repl)
+                          (> (or (replique-repl--to-echo repl) 0) 0))
+                        (replique-process--repls process)))
+            (replique-processes-live)))
+
+;; See `replique-echo-awaited-function': the file holding the echo area holds
+;; no repls, and a repl is what an evaluation belongs to
+(setq replique-echo-awaited-function #'replique-repl--awaited-p)
 
 (defun replique-repl--ended (repl frame)
   "Tell whoever is waiting for the evaluation of REPL that FRAME ended it.
@@ -245,25 +241,25 @@ be shown as cut rather than as a whole one."
   "Render FRAME in the buffer of REPL."
   (pcase (plist-get frame :tag)
     ("out"
-     (replique-repl--unattended repl)
+     (replique-repl--unattended repl (plist-get frame :string))
      (replique-repl--echo-keep repl (plist-get frame :string))
      (replique-repl--insert repl (plist-get frame :string)))
     ("err"
-     (replique-repl--unattended repl)
+     (replique-repl--unattended repl (plist-get frame :string) 'replique-stderr)
      (replique-repl--echo-keep repl (plist-get frame :string))
      (replique-repl--insert repl (plist-get frame :string) 'replique-stderr))
     ("ret"
-     (replique-repl--unattended repl)
      (let ((value (plist-get frame :value)))
+       (replique-repl--unattended repl (concat value "\n"))
        (replique-repl--insert repl (concat value "\n"))
        (replique-repl--echo repl value))
      (replique-repl--ended repl frame))
     ("exception"
-     (replique-repl--unattended repl)
      (let* ((message (plist-get frame :message))
             (phase (plist-get frame :phase))
             (exception (plist-get frame :exception))
             (truncated (and exception (replique-repl--truncation exception))))
+       (replique-repl--unattended repl (concat message "\n") 'replique-exception)
        (setf (replique-repl--last-exception repl) frame)
        ;; The line is the way to the whole of it: what a developer looks at
        ;; first is what they would click

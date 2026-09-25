@@ -2309,14 +2309,41 @@ be reported to, so the mode line keeps a way to the buffer holding it."
       (should (replique-test-wait-for (lambda () (replique-repl--at-prompt repl))))
       ;; the result was reported where it was asked for, so nothing is owed
       ;; about it
-      (should-not (memq buffer replique--unread))
+      (should-not (assq buffer replique--unread))
       ;; at the end of a line: the code the buffer was sent is echoed into
       ;; it, and holds the string the future is about to print.  What the
       ;; future prints lands after the prompt, which is where output that
       ;; nobody is waiting for lands
       (should (replique-test-wait-for
                (lambda () (string-match-p "LATE$" (replique-test-text repl))) 10))
-      (should (memq buffer replique--unread)))))
+      (should (assq buffer replique--unread)))))
+
+(ert-deftest replique-test-what-a-future-printed-is-said-where-it-is-seen ()
+  "The whole way, with a process at the end of it: a thread of it prints
+long after the form that started it was answered, the frame arrives at a
+buffer no window shows, and what it printed is what the echo area is
+handed.  Handed rather than shown, because what shows it is an idle timer
+and a batch editor is never idle."
+  (replique-test-with-repl repl
+    (let ((replique--unread nil)
+          (global-mode-string nil)
+          (replique--echo-pending nil)
+          (replique--echo-timer nil)
+          (buffer (replique-repl--buffer repl)))
+      (unwind-protect
+          (progn
+            (replique-test-hide buffer)
+            (replique-repl-send-code
+             repl "(do (future (Thread/sleep 500) (println \"AFTERWARDS\")) :started)"
+             nil t)
+            (should (replique-test-wait-for
+                     (lambda ()
+                       (string-match-p "AFTERWARDS" (or (cdr replique--echo-pending) "")))
+                     10))
+            (should (string-match-p
+                     "AFTERWARDS"
+                     (replique-test-message (replique--echo-flush)))))
+        (when replique--echo-timer (cancel-timer replique--echo-timer))))))
 
 (ert-deftest replique-test-a-buffer-on-screen-is-a-buffer-nobody-is-told-about ()
   "Being shown is what the mode line is for; a buffer already shown needs
@@ -2328,10 +2355,10 @@ none of it, and one that is shown afterwards has been read."
     (unwind-protect
         (progn
           (replique-insert-output buffer "something\n")
-          (should (memq buffer replique--unread))
+          (should (assq buffer replique--unread))
           ;; named by what tells it apart, not by the decoration a buffer
           ;; list needs to tell it from a file
-          (should (equal " tracked" (replique-unread-mode-line)))
+          (should (equal " tracked (1)" (replique-unread-mode-line)))
           (set-window-buffer (selected-window) buffer)
           (replique-insert-output buffer "something else\n")
           (replique--unread-seen)
@@ -2352,19 +2379,19 @@ none of it, and one that is shown afterwards has been read."
   "A form that printed a thousand lines is not something to put in the
 echo area.  What is left out is not lost - it is in the buffer - so where
 it was cut the buffer is named."
-  (let* ((buffer (generate-new-buffer "*replique: long*"))
-         (repl (replique-repl--make :buffer buffer :to-echo 0)))
+  (let* ((buffer (generate-new-buffer "*replique: long*")))
     (unwind-protect
-        (let ((lines (replique-repl--echo-shorten
-                      repl (mapconcat #'number-to-string (number-sequence 1 100) "\n")))
-              (long (replique-repl--echo-shorten repl (make-string 5000 ?x))))
-          (should (equal replique-repl--echo-max-lines
+        (let ((lines (replique-echo-shorten
+                      (mapconcat #'number-to-string (number-sequence 1 100) "\n")
+                      buffer))
+              (long (replique-echo-shorten (make-string 5000 ?x) buffer)))
+          (should (equal replique-echo-max-lines
                          (length (split-string lines "\n"))))
           (should (string-match-p "see \\*replique: long\\*" lines))
           (should (< (length long) 5000))
           (should (string-match-p "see \\*replique: long\\*" long))
           ;; and a short one is left alone
-          (should (equal "nil" (replique-repl--echo-shorten repl "nil"))))
+          (should (equal "nil" (replique-echo-shorten "nil" buffer))))
       (kill-buffer buffer))))
 
 (ert-deftest replique-test-what-is-kept-for-the-echo-area-is-bounded ()
@@ -2374,14 +2401,163 @@ of the ten lines of it that will be shown."
     (dotimes (_ 100)
       (replique-repl--echo-keep repl (make-string 1000 ?x)))
     (should (<= (length (replique-repl--echoed repl))
-                (1+ replique-repl--echo-max-chars)))
+                (1+ replique-echo-max-chars)))
     ;; kept past what is shown, which is what tells a cut one from a whole one
-    (should (> (length (replique-repl--echoed repl)) replique-repl--echo-max-chars))))
+    (should (> (length (replique-repl--echoed repl)) replique-echo-max-chars))))
 
 (ert-deftest replique-test-nothing-is-kept-for-a-buffer-that-is-not-waiting ()
   (let ((repl (replique-repl--make :to-echo 0)))
     (replique-repl--echo-keep repl "printed")
     (should-not (replique-repl--echoed repl))))
+
+(defmacro replique-test-with-unseen (name &rest body)
+  "Run BODY with NAME bound to a buffer no window shows, and nothing owed.
+
+A buffer nothing has been done with is a buffer no window shows, which is
+the state every one of these is about."
+  (declare (indent 1))
+  `(let ((replique--unread nil)
+         (global-mode-string nil)
+         (replique--echo-pending nil)
+         (replique--echo-timer nil)
+         (replique-echo-awaited-function nil)
+         (,name (generate-new-buffer "*replique: unseen*")))
+     (unwind-protect (progn ,@body)
+       (when replique--echo-timer (cancel-timer replique--echo-timer))
+       (kill-buffer ,name))))
+
+(ert-deftest replique-test-what-arrived-unseen-is-said-in-the-echo-area ()
+  "The mode line waits to be read, which is no use to somebody who never
+looks down there.  What arrived is said where what a form produced is
+said, because that is where somebody is already looking."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "LATE\n")
+    (should (equal "LATE" (replique-test-message (replique--echo-flush))))))
+
+(ert-deftest replique-test-a-burst-of-writes-is-one-message ()
+  "Output arrives in whatever chunks the operating system handed over, so
+a message per chunk is the last fragment of a line flashing past where a
+line was wanted."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "one\n")
+    (replique-insert-output buffer "two\n")
+    (replique-insert-output buffer "three\n")
+    (should (equal "one\ntwo\nthree"
+                   (replique-test-message (replique--echo-flush))))))
+
+(ert-deftest replique-test-nothing-is-said-about-a-buffer-on-screen ()
+  "A buffer somebody is looking at has already said it."
+  (let ((replique--unread nil)
+        (global-mode-string nil)
+        (replique--echo-pending nil)
+        (replique--echo-timer nil)
+        (buffer (generate-new-buffer "*replique: shown*"))
+        (shown (window-buffer (selected-window))))
+    (unwind-protect
+        (progn
+          (set-window-buffer (selected-window) buffer)
+          (replique-insert-output buffer "SEEN\n")
+          (should-not replique--echo-pending)
+          (should-not (replique-test-message (replique--echo-flush))))
+      (when (buffer-live-p shown)
+        (set-window-buffer (selected-window) shown))
+      (kill-buffer buffer))))
+
+(ert-deftest replique-test-the-echo-area-is-left-to-what-was-asked-for ()
+  "An evaluation is about to report where it was asked from.  A line a
+background thread printed in the meantime does not get to be the last
+thing said - and it is not lost by not being said, because the mode line
+holds the way to it."
+  (replique-test-with-unseen buffer
+    (let ((replique-echo-awaited-function (lambda () t)))
+      (replique-insert-output buffer "MEANWHILE\n")
+      (should-not (replique-test-message (replique--echo-flush)))
+      (should (assq buffer replique--unread)))))
+
+(ert-deftest replique-test-a-buffer-read-before-the-timer-fires-says-nothing ()
+  "Between the writing and the saying is a fifth of a second, and a window
+can come to show the buffer inside it."
+  (let ((replique--unread nil)
+        (global-mode-string nil)
+        (replique--echo-pending nil)
+        (replique--echo-timer nil)
+        (replique-echo-awaited-function nil)
+        (buffer (generate-new-buffer "*replique: opened*"))
+        (shown (window-buffer (selected-window))))
+    (unwind-protect
+        (progn
+          (replique-insert-output buffer "GONE\n")
+          (set-window-buffer (selected-window) buffer)
+          (should-not (replique-test-message (replique--echo-flush))))
+      (when (buffer-live-p shown)
+        (set-window-buffer (selected-window) shown))
+      (kill-buffer buffer))))
+
+(ert-deftest replique-test-what-is-gathered-for-the-echo-area-is-bounded ()
+  "A thread printing in a loop must not be accumulated in full for the
+sake of the ten lines of it that will be shown."
+  (replique-test-with-unseen buffer
+    (dotimes (_ 100)
+      (replique-insert-output buffer (make-string 1000 ?x)))
+    (should (<= (length (cdr replique--echo-pending))
+                (1+ replique-echo-max-chars)))
+    ;; gathered past what is shown, which is what tells a cut one from a
+    ;; whole one
+    (should (> (length (cdr replique--echo-pending)) replique-echo-max-chars))))
+
+(ert-deftest replique-test-two-buffers-are-two-messages ()
+  "One message made of the two of them would be a message saying that one
+process printed what another one printed."
+  (replique-test-with-unseen one
+    (let ((two (generate-new-buffer "*replique: other*")))
+      (unwind-protect
+          (progn
+            (should (equal "AAA" (replique-test-message
+                                   (replique-insert-output one "AAA\n")
+                                   (replique-insert-output two "BBB\n"))))
+            (should (equal "BBB" (replique-test-message (replique--echo-flush)))))
+        (kill-buffer two)))))
+
+(ert-deftest replique-test-a-line-on-standard-error-reads-as-one ()
+  "Which stream it came on is something to see rather than something to
+read, and it is the face it went into the buffer in."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "BROKE\n" 'replique-stderr)
+    (let ((said (replique-test-message (replique--echo-flush))))
+      (should (equal "BROKE" said))
+      (should (eq 'replique-stderr (get-text-property 0 'face said))))))
+
+(ert-deftest replique-test-the-mode-line-counts-what-came ()
+  "A mark that appeared once and then stood still says the same thing
+whether one line came or a thousand.  A number that moves is what is seen
+out of the corner of an eye."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "one\ntwo\nthree\n")
+    (should (equal " unseen (3)" (replique-unread-mode-line)))
+    (replique-insert-output buffer "four\nfive\n")
+    (should (equal " unseen (5)" (replique-unread-mode-line)))))
+
+(ert-deftest replique-test-a-line-that-has-not-ended-counts-as-one ()
+  "What is counted is newlines, and the first thing a process writes is a
+line it has not ended yet.  Nought would read as nothing having arrived."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "no newline here")
+    (should (equal " unseen (1)" (replique-unread-mode-line)))))
+
+(ert-deftest replique-test-an-idle-editor-is-what-says-it ()
+  "Nothing calls the flush: being idle is what says the echo area is free,
+and it is also what says the burst is over.  One timer for the burst,
+because a timer armed again per chunk is a burst that is never over."
+  (replique-test-with-unseen buffer
+    (replique-insert-output buffer "IDLY\n")
+    (let ((armed replique--echo-timer))
+      (should (memq armed timer-idle-list))
+      (should (eq #'replique--echo-flush (timer--function armed)))
+      (replique-insert-output buffer "AND SO\n")
+      (should (eq armed replique--echo-timer))
+      (should (equal "IDLY\nAND SO"
+                     (replique-test-message (funcall (timer--function armed)))))
+      (should-not replique--echo-pending))))
 
 ;;; A process Emacs did not start
 
