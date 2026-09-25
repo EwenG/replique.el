@@ -39,6 +39,24 @@
 ;; found nothing says what the page HAS, where replique 1 said "Could not
 ;; find a css file to reload" and left you to guess.
 ;;
+;; AND THE FILE YOU EDIT IS NOT ALWAYS THE FILE THE PAGE HOLDS.  A .scss is
+;; built into a .css and it is the .css a page fetches, so the key builds
+;; first and reloads what the build wrote - see `replique-css-outputs'.
+;;
+;; WHAT REPLIQUE 1 DID ABOUT THE BUILD, and what is kept.  Kept: the file it
+;; compiles is not the file you are looking at.  Editing a partial has to
+;; rebuild the ENTRY POINT that includes it, and a naive "compile this
+;; buffer" gets that wrong on every file whose name starts with an
+;; underscore.  Replique 1 remembered an entry point per output file, which
+;; is the right shape.
+;;
+;; Not kept: WHERE it remembered them.  A `defvar' filled in by answering a
+;; `completing-read' means the prompt comes back on every single reload -
+;; even with one output remembered, you press return to it - and the whole
+;; memory dies with the Emacs session.  The same two facts written in
+;; `.dir-locals.el' are in the repository, are the same for everybody
+;; working on it, and are never asked for again.
+;;
 ;; TURN THE MODE ON WHERE YOU WANT THE KEY, which is what replique 1 wanted
 ;; too:
 ;;
@@ -52,10 +70,73 @@
 
 ;;; Code:
 
+(require 'ansi-color)
 (require 'comint)
+(require 'seq)
 (require 'subr-x)
 (require 'replique-name)
 (require 'replique-process)
+
+;;; What this project builds, and how
+
+
+;; NONE OF THE THREE IS MARKED SAFE, and that is the decision rather than an
+;; omission.  What `replique-css-build-command' names is a program this runs,
+;; and the other two are the paths a build reads and WRITES - so a repository
+;; that set them could have a keystroke of yours overwrite a file of yours.
+;; Emacs asks once per project, remembers the answer, and never asks again,
+;; which is a different thing from replique 1's prompt on every reload.
+
+(defcustom replique-css-entry nil
+  "The stylesheet a build of this project reads, or nil.
+
+A path, relative to the directory the process was started in.  This and
+not the buffer: editing a partial rebuilds the entry point that includes
+it, which is the one thing replique 1 got right here and the thing a
+\='build the file I am looking at\=' gets wrong for every file whose name
+begins with an underscore.
+
+Usually set in `.dir-locals.el\=', where it is written once and is the
+same for everybody working on the project:
+
+  ((scss-mode
+    . ((replique-css-entry . \"scss/main.scss\")
+       (replique-css-outputs . (\"public/css/main.css\")))))
+
+Not read at all where `replique-css-build-command\=' is set, since a
+command of your own takes whatever arguments it takes."
+  :type '(choice (const :tag "None" nil) string)
+  :group 'replique)
+
+(defcustom replique-css-outputs nil
+  "The .css files a build of this project writes, as a list of paths.
+
+Relative to the directory the process was started in.  These are what is
+reloaded, and they are what a page fetches: the .scss you are editing is
+not a file any browser has ever asked for.
+
+Usually set in `.dir-locals.el\=' - see `replique-css-entry\='."
+  :type '(repeat string)
+  :group 'replique)
+
+(defcustom replique-css-build-command nil
+  "The command that builds this project\='s stylesheets, or nil for sass.
+
+A list of strings, the program and its arguments, run in the directory
+the process was started in.  Nil runs
+
+  sass --embed-source-map ENTRY OUTPUT
+
+once for each of `replique-css-outputs\=', which is what replique 1 ran and
+is right for a project whose build IS sass.
+
+SET IT AND NOTHING IS SUBSTITUTED: the command is run as written, once,
+and `replique-css-outputs\=' is then only the list of what to reload.  That
+is what a project with a real build wants - `(\"npx\" \"gulp\" \"devCss\")\='
+runs the pipeline the project already has, autoprefixer and all, rather
+than a second one replique invented that writes almost the same CSS."
+  :type '(choice (const :tag "sass" nil) (repeat string))
+  :group 'replique)
 
 (defvar replique-css-mode-map
   (let ((map (make-sparse-keymap)))
@@ -78,54 +159,137 @@ needs a process to be running: the command says so when it is used.
   :lighter " replique-css"
   :keymap replique-css-mode-map)
 
-(defun replique-css--report (file frame)
-  "Say what the process answered about reloading FILE.
+(defun replique-css--report (files frames)
+  "Say what the process answered about reloading FILES.
 
-FRAME is the reply.  Four answers and not two, because \"nothing
-happened\" has three different reasons and they are not the same thing to
-whoever pressed the key: the process could not be asked, the page could
-not be asked, the page was asked and holds nothing like this file, or the
-page holds no stylesheets at all.
+FRAMES are the replies, one for each.  Five answers and not two, because
+\"nothing happened\" has four different reasons and they are not the same
+thing to whoever pressed the key: the process could not be asked, the
+page could not be asked, the page was asked and holds nothing like these
+files, or the page holds no stylesheets at all.
+
+ONE SENTENCE FOR THE WHOLE BUILD, and that is why this takes all of them
+at once.  A build that writes main.css, trial.css and design-system.css
+is three ops, and the page you have open includes ONE of the three - so
+reported one at a time, two of them would say \"nothing on the page
+matches\" and the last of those would be the sentence left on the screen.
+The reload that worked would be the one you could not see.
 
 A SENTENCE THE PROCESS WROTE IS SHOWN AS IT WAS WRITTEN.  Where there is
 no page open, that sentence names the URL to open - which is the whole of
 what somebody needs and is not something this could word better."
-  (cond
-   ((equal "error" (plist-get frame :tag))
-    (message "replique: %s" (plist-get frame :message)))
-   ((plist-get frame :note)
-    (message "replique: %s" (plist-get frame :note)))
-   ((plist-get frame :reloaded)
-    (message "replique: reloaded %s"
-             (string-join (plist-get frame :reloaded) ", ")))
-   ((plist-get frame :stylesheets)
-    ;; What the page has, which is the answer to the question somebody is
-    ;; about to ask.  Replique 1 had this list in its hand at this exact
-    ;; moment and threw it away
-    (message "replique: nothing on the page matches %s - it has %s"
-             (file-name-nondirectory file)
-             (string-join (plist-get frame :stylesheets) ", ")))
-   (t (message "replique: the page has no stylesheets"))))
+  (let ((failed (seq-find (lambda (f) (equal "error" (plist-get f :tag))) frames))
+        (reloaded (seq-mapcat (lambda (f) (plist-get f :reloaded)) frames))
+        (note (seq-some (lambda (f) (plist-get f :note)) frames))
+        (sheets (delete-dups
+                 (seq-mapcat (lambda (f) (plist-get f :stylesheets)) frames))))
+    (cond
+     (failed (message "replique: %s" (plist-get failed :message)))
+     ;; With the note beside it where there is one: some of these may have
+     ;; reloaded while others could not be asked, and saying only the half
+     ;; that worked is how the half that did not goes unnoticed
+     (reloaded (message "replique: reloaded %s%s"
+                        (string-join reloaded ", ")
+                        (if note (format " - %s" note) "")))
+     (note (message "replique: %s" note))
+     (sheets
+      ;; What the page has, which is the answer to the question somebody is
+      ;; about to ask.  Replique 1 had this list in its hand at this exact
+      ;; moment and threw it away
+      (message "replique: nothing on the page matches %s - it has %s"
+               (string-join (mapcar #'file-name-nondirectory files) ", ")
+               (string-join sheets ", ")))
+     (t (message "replique: the page has no stylesheets")))))
+
+(defun replique-css--reload (files process)
+  "Ask PROCESS to reload FILES, and say what came of all of them.
+
+One op each, because the op is about one file, and one sentence at the
+end - see `replique-css--report\='."
+  (let ((frames nil)
+        (left (length files)))
+    (dolist (file files)
+      (replique-process-request
+       process (list :op :reload-css :file file)
+       (lambda (frame)
+         (push frame frames)
+         (setq left (1- left))
+         (when (zerop left)
+           (replique-css--report files (nreverse frames))))))))
+
+(defun replique-css--commands (entry outputs)
+  "The commands that build OUTPUTS from ENTRY, as a list of lists.
+
+One command, run as written, where `replique-css-build-command\=' says so.
+Otherwise sass, once per output, which is replique 1\='s command and is
+right for a project whose build is sass and nothing else."
+  (if replique-css-build-command
+      (list replique-css-build-command)
+    (mapcar (lambda (output)
+              (list "sass" "--embed-source-map" entry output))
+            outputs)))
+
+(defun replique-css--build (commands root)
+  "Run COMMANDS in ROOT, and return what the first failure printed.
+
+Nil where they all succeeded, which is what says the outputs are worth
+reloading.  Stopped at the first failure, because a build is steps and a
+step after a failed one is a step run on what the failed one did not
+write.
+
+SYNCHRONOUS, and deliberately.  On a real project sass over two hundred
+partials is a third of a second, the reload has to happen after it
+anyway, a failure has to be read where the key was pressed, and two saves
+in a row must not become two builds racing to write one file.  What waits
+here is what `replique-conn-request-sync\=' already waits for elsewhere: a
+keystroke, with \\[keyboard-quit] to abandon it."
+  (let ((failure nil))
+    (dolist (command commands)
+      (unless failure
+        (with-temp-buffer
+          (let* ((default-directory (file-name-as-directory root))
+                 (code (apply #'call-process (car command) nil t nil (cdr command))))
+            (unless (equal 0 code)
+              (ansi-color-apply-on-region (point-min) (point-max))
+              (setq failure (string-trim (buffer-string))))))))
+    failure))
 
 ;;;###autoload
 (defun replique-reload-css (&optional file process)
-  "Reload the stylesheet FILE in every page connected to PROCESS.
+  "Make the stylesheet FILE shows appear in every page connected to PROCESS.
 
-FILE is this buffer\\='s file when it is not given, and PROCESS is the one
+FILE is this buffer\='s file when it is not given, and PROCESS is the one
 the commands act on by default.
+
+A .css IS WHAT A PAGE FETCHES, so one is reloaded as it stands.  ANYTHING
+ELSE IS BUILT FIRST - a .scss is a file no browser has ever asked for -
+and what is reloaded is then what the build wrote, which is
+`replique-css-outputs\=' and not this buffer.  Master dispatched the same
+key the same way, on the major mode; this asks the file, which is the
+fact, and holds whichever mode you happen to read .scss in.
+
+WHAT IS BUILT IS `replique-css-entry\=', NOT THIS BUFFER.  Editing a
+partial has to rebuild the entry point that includes it, and building the
+buffer would be wrong for every file whose name begins with an
+underscore.  Those two, and `replique-css-build-command\=' where sass is
+not your build, are named once in `.dir-locals.el\=' - see
+`replique-css-entry\='.  Nothing is remembered anywhere else and nothing is
+asked for: replique 1 asked which output to write on every single reload
+and forgot the answer when Emacs stopped.
 
 EVERY PAGE, and not the page: you have the application open and the tab
 you were comparing it against, and a stylesheet that reloaded in one of
 them is a stylesheet that did not reload.
 
 WHAT IS RELOADED IS THE FILE ON THE DISK - the page fetches it from
-whatever serves the application\\='s assets - so a buffer with unsaved
-changes is offered to be saved first, which is `replique-load-file\\='s
+whatever serves the application\='s assets - so a buffer with unsaved
+changes is offered to be saved first, which is `replique-load-file\='s
 answer to the same question and is asked in the same words.
 
-NOTHING WAITS FOR THE ANSWER.  Asking starts the process\\='s browser
-runtime where it is not up, which is seconds the first time, and what
-happened is said when it is known.
+The build waits and the reload does not.  A build is a third of a second
+and the reload cannot start until it has finished; asking the process
+starts its browser runtime where it is not up, which is seconds the first
+time, and what happened is said when it is known.
 
 The page is not reloaded and nothing in it is lost: a fresh <link> is put
 in beside the old one and the old one goes when the new one has loaded.
@@ -135,17 +299,39 @@ because what you were doing when it happened was editing that file."
   (interactive
    (let ((file (or (buffer-file-name)
                    (user-error "This buffer holds no stylesheet to reload"))))
-     ;; Before anything is sent, because saving is what puts the change where
-     ;; the page can fetch it
+     ;; Before anything is built or sent, because saving is what puts the
+     ;; change where the build - and the page - can read it
      (comint-check-source file)
      (list file)))
-  (let ((file (expand-file-name
-               (or file (buffer-file-name)
-                   (user-error "This buffer holds no stylesheet to reload"))))
-        (process (or process (replique-name-process) (replique-process-ensure))))
-    (replique-process-request
-     process (list :op :reload-css :file file)
-     (lambda (frame) (replique-css--report file frame)))))
+  (let* ((file (expand-file-name
+                (or file (buffer-file-name)
+                    (user-error "This buffer holds no stylesheet to reload"))))
+         (process (or process (replique-name-process) (replique-process-ensure)))
+         ;; Where the build runs and what its paths are relative to, which is
+         ;; the same directory a relative :main-js file is relative to: a
+         ;; client that named the process's directory once should not have to
+         ;; know where the jvm was started
+         (root (or (replique-process--directory process) default-directory)))
+    (if (string-suffix-p ".css" file t)
+        (replique-css--reload (list file) process)
+      (let ((entry replique-css-entry)
+            (outputs replique-css-outputs))
+        (unless (and outputs (or entry replique-css-build-command))
+          (user-error (concat "Nothing says how to build %s: set"
+                              " `replique-css-entry' and `replique-css-outputs'"
+                              " - or `replique-css-build-command' - in"
+                              " .dir-locals.el")
+                      (file-name-nondirectory file)))
+        (let* ((entry (and entry (expand-file-name entry root)))
+               (outputs (mapcar (lambda (o) (expand-file-name o root)) outputs))
+               (failed (replique-css--build
+                        (replique-css--commands entry outputs) root)))
+          (if failed
+              ;; As the build printed it.  What is wrong with a stylesheet is
+              ;; something sass has already said better than this could, and
+              ;; the line and column it names are in the file you are in
+              (message "%s" failed)
+            (replique-css--reload outputs process)))))))
 
 (provide 'replique-css)
 
