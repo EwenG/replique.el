@@ -35,6 +35,16 @@
 ;; recorded while it compiled - see `replique-reload-all', which is the
 ;; same question answered by doing it.
 ;;
+;; AND ASKED ABOUT ONE LANGUAGE.  A process can hold a Clojure application
+;; and a ClojureScript one at once, each with its own files behind the disk,
+;; and what is stale in one says nothing about the other - so the question
+;; carries the dialect of the buffer it was asked from, the way every other
+;; question about a name does.  The buffer then REMEMBERS it: what `g'
+;; asks again has to be the question this buffer answered, and the buffer is
+;; not a Clojure buffer of either kind, so asking it afresh from here would
+;; ask about whatever repl the commands are pointed at now.  `l' reloads
+;; that same language for the same reason.
+;;
 ;; Nothing waits for the answer.  The process reads the modification time
 ;; of every file it has compiled, which is a question about a disk rather
 ;; than about memory, so the buffer is written when the answer arrives.
@@ -45,6 +55,7 @@
 (require 'replique-eval)
 (require 'replique-name)
 (require 'replique-process)
+(require 'replique-repl)
 (require 'replique-symbol)
 
 (defvar-local replique-stale--found nil
@@ -52,6 +63,14 @@
 
 (defvar-local replique-stale--process nil
   "The process the buffer was written from, and is written again from.")
+
+(defvar-local replique-stale--dialect-keys nil
+  "The dialect keys the question carried, and is asked again with.
+
+Nil for Clojure, which is what an absent `:dialect' means to the process
+as well.  Kept because this buffer is not the buffer the question was
+asked from: reading the dialect off it would read the dialect of whatever
+repl the commands are pointed at now.")
 
 ;;; Rendering
 
@@ -94,16 +113,30 @@ everywhere."
   (let* ((inhibit-read-only t)
          (process replique-stale--process)
          (directory (and process (replique-process--directory process)))
+         (cljs (and replique-stale--dialect-keys t))
          (changed (plist-get replique-stale--found :changed))
          (stale (plist-get replique-stale--found :stale)))
     (erase-buffer)
     (if (and (null changed) (null stale))
-        (insert "Nothing has changed since this process read it.\n")
-      (insert "Changed since the process read them\n\n")
+        (insert (if cljs
+                    "Nothing has changed since this process compiled it.\n"
+                  "Nothing has changed since this process read it.\n"))
+      ;; Named, and only for ClojureScript, for the reason an absent
+      ;; `:dialect' means Clojure: a Clojure answer reads as it always did,
+      ;; and the one that would otherwise be taken for it says which it is.
+      (when cljs (insert "ClojureScript\n\n"))
+      (insert (if cljs
+                  "Changed since the process compiled them\n\n"
+                "Changed since the process read them\n\n"))
       (replique-stale--insert changed directory)
       (when stale
+        ;; "a file that has changed" rather than "a file above", which is
+        ;; true of Clojure and not of ClojureScript: a .cljs file expands
+        ;; macros written in .clj files, and those are not in the list above
+        ;; - they are Clojure files, and this answer is about ClojureScript
+        ;; ones.
         (insert "\nNot changed, and out of date all the same: these expand a macro\n"
-                "of a file above, and hold the expansion the old one made\n\n")
+                "of a file that has changed, and hold the expansion the old one made\n\n")
         (replique-stale--insert stale directory)))
     (goto-char (point-min))))
 
@@ -112,7 +145,7 @@ everywhere."
 (defvar replique-stale-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'replique-stale-refresh)
-    (define-key map (kbd "l") #'replique-reload-all)
+    (define-key map (kbd "l") #'replique-stale-reload)
     map)
   "Keymap of a staleness buffer.")
 
@@ -124,26 +157,32 @@ everywhere."
 
 ;;; Asking
 
-(defun replique-stale--show (process found)
-  "Show what PROCESS answered in FOUND, and return the buffer."
+(defun replique-stale--show (process dialect-keys found)
+  "Show what PROCESS answered in FOUND, and return the buffer.
+
+DIALECT-KEYS is the question it answered, kept for `replique-stale-refresh'
+and `replique-stale-reload'."
   (let ((buffer (get-buffer-create "*replique-stale*")))
     (with-current-buffer buffer
       ;; Before anything buffer local is set: the mode kills them
       (replique-stale-mode)
       (setq replique-stale--process process
+            replique-stale--dialect-keys dialect-keys
             replique-stale--found found)
       (replique-stale--render))
     (pop-to-buffer buffer)
     buffer))
 
-(defun replique-stale--ask (process)
-  "Ask PROCESS what has to be loaded again, and show the answer."
+(defun replique-stale--ask (process &optional dialect-keys)
+  "Ask PROCESS what has to be loaded again, and show the answer.
+
+DIALECT-KEYS says which language to ask about, nil being Clojure."
   (replique-process-request
-   process (list :op :stale)
+   process (append (list :op :stale) dialect-keys)
    (lambda (frame)
      (if (equal "error" (plist-get frame :tag))
          (message "replique: %s" (plist-get frame :message))
-       (replique-stale--show process frame)))))
+       (replique-stale--show process dialect-keys frame)))))
 
 (defun replique-stale-refresh ()
   "Ask again, of the process this buffer was written from.
@@ -153,7 +192,18 @@ that answered about one process and then answered about another, under
 the same heading, would be two answers nothing tells apart."
   (interactive)
   (replique-stale--ask (or replique-stale--process
-                           (user-error "This buffer was written from no process"))))
+                           (user-error "This buffer was written from no process"))
+                       replique-stale--dialect-keys))
+
+(defun replique-stale-reload ()
+  "Load what this buffer is showing.
+
+`replique-reload-all' told which language to reload rather than left to
+work it out: this buffer is not a buffer of either language, so it would
+otherwise reload whatever repl the commands are pointed at now - which
+could be the one this answer is not about."
+  (interactive)
+  (replique-reload-all nil (if replique-stale--dialect-keys :cljs :clj)))
 
 ;;;###autoload
 (defun replique-stale ()
@@ -171,14 +221,21 @@ second list is the one worth looking at: what needs compiling is not the
 same as what was typed in, and nothing in a buffer says which files
 those are.
 
+About the language of this buffer, which a process holding a Clojure
+application and a ClojureScript one at once has two answers for: a .cljs
+buffer asks about the ClojureScript, a .clj buffer about the Clojure, and a
+.cljc buffer about whichever repl the commands are pointed at - the three
+cases every question about a name follows.
+
 Each one opens.  \\<replique-stale-mode-map>\\[replique-stale-refresh] \
-asks again, \\[replique-reload-all] loads them.
+asks again, \\[replique-stale-reload] loads them.
 
 Only a process whose compiler wrote down what it compiled can answer
 this.  One that cannot says so, and says what to start it on instead."
   (interactive)
   (replique-stale--ask (or (replique-name-process)
-                           (user-error "No replique process"))))
+                           (user-error "No replique process"))
+                       (replique-dialect-keys)))
 
 (provide 'replique-stale)
 

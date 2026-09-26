@@ -40,7 +40,7 @@ is being decided is whether to load, and the loading is
                 (lambda (_dialect)
                   (replique-repl--make :process (replique-process--make :id "test"))))
                ((symbol-function 'replique-fresh--asked)
-                (lambda (_process)
+                (lambda (_process _keys)
                   (setq replique-fresh-test--asked t)
                   ,found))
                ((symbol-function 'replique-reload-all)
@@ -117,9 +117,27 @@ is nowhere for it to happen, so the process is not even asked."
   (let ((replique-fresh-test--asked nil))
     (cl-letf (((symbol-function 'replique-repl-for-dialect) (lambda (_dialect) nil))
               ((symbol-function 'replique-fresh--asked)
-               (lambda (_process) (setq replique-fresh-test--asked t) nil)))
+               (lambda (_process _keys) (setq replique-fresh-test--asked t) nil)))
       (should-not (replique-fresh-ensure "finding every use of a name"))
       (should-not replique-fresh-test--asked))))
+
+(ert-deftest replique-fresh-test-the-question-carries-the-dialect ()
+  "It has to be the language the reload would happen in: this offers to load
+what changed and then loads it with `replique-reload-all', which reloads the
+buffer's own dialect - so asking the other model would offer to bring up to
+date something nobody was about to ask about."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'replique-process-request-sync)
+               (lambda (_process msg _timeout) (setq asked msg) nil))
+              ((symbol-function 'replique-dialect-keys)
+               (lambda () '(:dialect :cljs :target :node))))
+      (replique-fresh--asked 'a-process (replique-dialect-keys)))
+    (should (equal '(:op :stale :dialect :cljs :target :node) asked)))
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'replique-process-request-sync)
+               (lambda (_process msg _timeout) (setq asked msg) nil)))
+      (replique-fresh--asked 'a-process nil))
+    (should (equal '(:op :stale) asked))))
 
 ;;; What the question says
 
@@ -211,7 +229,7 @@ of files to load."
       (if (equal "error" (plist-get frame :tag))
           (progn
             (should (string-match-p "keep track" (plist-get frame :message)))
-            (should-not (replique-fresh--asked (replique-repl-process repl))))
+            (should-not (replique-fresh--asked (replique-repl-process repl) nil)))
         ;; the other half: a process whose compiler does record answers with
         ;; the two lists, and a fresh one has read every file as it is
         (should (plist-member frame :changed))
@@ -286,7 +304,7 @@ renames everything and one that leaves a caller behind."
                         (should (replique-test-wait-for
                                  (lambda () (replique-repl--at-prompt repl))))
                         ;; read once, and nothing has moved since
-                        (let ((found (replique-fresh--asked process)))
+                        (let ((found (replique-fresh--asked process nil)))
                           (should found)
                           (should-not (append (plist-get found :changed)
                                               (plist-get found :stale))))

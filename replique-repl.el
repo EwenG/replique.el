@@ -1031,7 +1031,17 @@ all that is Clojure - true of the lookup, and not the thing to say."
 What `replique-repl-ensure' is for a command about a repl, this is for a
 command about a buffer - see the commentary above for which commands are
 which."
-  (or (replique-repl-for-dialect (replique-dialect))
+  (replique-repl-ensure-for-dialect (replique-dialect)))
+
+(defun replique-repl-ensure-for-dialect (dialect)
+  "Return the repl DIALECT\\='s code goes to, or signal that there is none.
+
+`replique-repl-ensure-here' asked about a dialect the caller names rather
+than about the current buffer.  Which is what a buffer that is not the one
+being talked about needs: a staleness buffer is showing what one language
+has to compile, and the command that compiles it has to reach that
+language\\='s repl whatever the commands are pointed at now."
+  (or (replique-repl-for-dialect dialect)
       (user-error "%s" (replique-repl--none-here))))
 
 ;;; Sending code

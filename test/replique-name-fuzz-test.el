@@ -167,7 +167,7 @@ which only has something to say where a form is nearly a form.")
         (format "the position is %S" (plist-get context :position)))
       (replique-name-fuzz--names (plist-get context :locals))
       (catch 'wrong
-        (dolist (key '(:ns :prefix :package :tag :target))
+        (dolist (key '(:ns :prefix :package :tag :on))
           (let ((value (plist-get context key)))
             (unless (or (null value) (stringp value))
               (throw 'wrong (format "the %s is %S" key value)))))

@@ -166,6 +166,36 @@ which world it is about."
         (should (null (plist-get msg :dialect)))
         (should (null (plist-get msg :target)))))))
 
+(ert-deftest replique-dialect-test-the-runtime-and-what-a-member-is-written-on ()
+  "Two facts, two keys, one message - and they were one key.  A ClojureScript
+question says which runtime it is about; a name written on something says what
+it is written on.  While both were `:target\=', a .cljs buffer asking about a
+member wrote the key twice and the process refused the whole line as
+unreadable EDN, naming neither of them.
+
+READ OUT OF A BUFFER and not handed in, because the context is where the one
+key was written: what a member is written on is read at point, and it is the
+reading and the dialect keys together that make the message.
+
+THE KEYS ARE COUNTED, not read back, because that is where the failure was:
+`plist-get\=' answers the first value and says nothing about a second one
+sitting behind it, so a test that only read `:target\=' would pass against the
+collision as happily as against the fix."
+  (replique-dialect-test--with-repl (replique-dialect-test--repl "cljs" "node")
+    (with-temp-buffer
+      (replique-clojure-clojurescript-mode)
+      (insert "(defn f [] (.leng \"abc\"))")
+      (goto-char (point-min))
+      (search-forward ".leng")
+      (let* ((msg (replique-name-message :symbol (replique-name-context) ".leng"))
+             (keys (cl-loop for (k _v) on msg by #'cddr collect k)))
+        (should (equal "\"abc\"" (plist-get msg :on)))
+        (should (eq :node (plist-get msg :target)))
+        (should (memq :on keys))
+        (should (memq :target keys))
+        ;; and no key twice, which is what makes the line readable EDN
+        (should (equal keys (seq-uniq keys)))))))
+
 ;;; Against a process
 
 (ert-deftest replique-dialect-test-a-clojurescript-question-is-one-a-process-reads ()

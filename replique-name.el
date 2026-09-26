@@ -239,9 +239,15 @@ so nothing is written on."
 WRITTEN is what a member being written would be called on - what the list
 holds after the name, or what a threading form threads.  What travels is
 what this side can say about it without running anything: the type a
-^String declares, on the local or at the call site, and the target itself
-where it is not a local, which the process reads as a var that declares
-its type or as a literal that is its own.
+^String declares, on the local or at the call site, and `:on\=', the thing
+itself where it is not a local, which the process reads as a var that
+declares its type or as a literal that is its own.
+
+`:on\=' AND NOT `:target\=', WHICH IS WHAT IT WAS AND WHICH COLLIDED.  A
+ClojureScript question carries the runtime it is about under `:target\=' -
+see `replique-dialect-keys\=' - and both keys go in one message, so a .cljs
+buffer asking about a member wrote `:target\=' twice and the process refused
+the whole line as unreadable EDN.  The failure named neither of them.
 
 FORMS says what each written form binds - see `replique-locals-forms\\='.
 
@@ -260,8 +266,8 @@ without running it."
         (if-let* ((local (assoc text (replique-locals-at (point) forms))))
             (when-let* ((tag (or tag (replique-locals-tag-at (cdr local)))))
               (list :tag tag))
-          (append (list :target text) (when tag (list :tag tag)))))
-       ((memq type replique-name--literals) (list :target text))
+          (append (list :on text) (when tag (list :tag tag)))))
+       ((memq type replique-name--literals) (list :on text))
        (tag (list :tag tag))))))
 
 (defun replique-name--call-node ()

@@ -555,7 +555,7 @@ was written in the first place."
      (replique-load-directive what))))
 
 ;;;###autoload
-(defun replique-reload-all (&optional waiting)
+(defun replique-reload-all (&optional waiting dialect)
   "Load every file that changed since the process read it.
 
 Nobody names the files, which is the whole point of the command: not
@@ -600,10 +600,16 @@ what it could not read with.  For a command that loads
 in order to ask the process something afterwards, where the answer would
 otherwise be about the files as the process last read them: see
 `replique-fresh-ensure\\='.  Nobody pressing the key wants that, so the
-command itself never passes it."
+command itself never passes it.
+
+DIALECT is the language to reload, for a caller that is not asking on
+behalf of the buffer it is in - `replique-stale-reload\\=', which reloads what
+the staleness buffer is showing.  Nil means this buffer\\='s own."
   (interactive)
   (save-some-buffers nil #'replique-eval-clojure-file-p)
-  (let ((repl (replique-repl-ensure-here))
+  (let ((repl (if dialect
+                  (replique-repl-ensure-for-dialect dialect)
+                (replique-repl-ensure-here)))
         (directive (replique-reload-directive)))
     (if waiting
         (replique-repl-send-code-sync repl directive)

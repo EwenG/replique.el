@@ -18,10 +18,13 @@
 (require 'replique-test)
 (require 'replique-stale)
 
-(defun replique-stale-test--shown (found &optional directory)
-  "Return the text a buffer showing FOUND holds, named from DIRECTORY."
+(defun replique-stale-test--shown (found &optional directory dialect-keys)
+  "Return the text a buffer showing FOUND holds, named from DIRECTORY.
+
+DIALECT-KEYS is the question it answered, nil being Clojure."
   (with-temp-buffer
     (setq replique-stale--process (replique-process--make :directory directory)
+          replique-stale--dialect-keys dialect-keys
           replique-stale--found found)
     (replique-stale--render)
     (buffer-substring-no-properties (point-min) (point-max))))
@@ -123,6 +126,82 @@ on instead of answering that there is nothing to do."
       (should (string-match-p "changed\\|Changed"
                               (with-current-buffer shown (buffer-string)))))
     (when (get-buffer "*replique-stale*") (kill-buffer "*replique-stale*"))))
+
+(ert-deftest replique-stale-test-a-clojurescript-answer-says-which-it-is ()
+  "A process can hold a Clojure application and a ClojureScript one at once,
+and one buffer shows either - so the answer that would otherwise be taken for
+the Clojure one says which language it is about.  The Clojure answer says
+nothing, for the reason an absent `:dialect' means Clojure: it reads as it
+always did."
+  (let ((cljs (replique-stale-test--shown
+               '(:changed ((:file "/p/src/app/core.cljs")) :stale nil)
+               "/p/" '(:dialect :cljs :target :browser)))
+        (clj (replique-stale-test--shown
+              '(:changed ((:file "/p/src/app/core.clj")) :stale nil)
+              "/p/")))
+    (should (string-match-p "ClojureScript" cljs))
+    (should (string-match-p "compiled them" cljs))
+    (should-not (string-match-p "ClojureScript" clj))
+    (should (string-match-p "read them" clj)))
+  (should (string-match-p
+           "compiled it"
+           (replique-stale-test--shown '(:changed nil :stale nil) nil
+                                       '(:dialect :cljs)))))
+
+(ert-deftest replique-stale-test-a-stale-file-does-not-claim-the-macro-is-above ()
+  "True of Clojure and not of ClojureScript, which is why it is not said: a
+.cljs file expands macros written in .clj files, and those are not in the
+list above - that list is the ClojureScript files."
+  (let ((text (replique-stale-test--shown
+               '(:changed nil :stale ((:file "/p/src/app/core.cljs")))
+               "/p/" '(:dialect :cljs))))
+    (should (string-match-p "of a file that has changed" text))
+    (should-not (string-match-p "of a file above" text))))
+
+(ert-deftest replique-stale-test-the-question-carries-the-buffers-dialect ()
+  "Which language is stale is two questions in a process holding both, and
+what says which is asked is the buffer - the same rule every question about a
+name follows."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'replique-process-request)
+               (lambda (_process msg _callback) (setq asked msg)))
+              ((symbol-function 'replique-dialect-keys)
+               (lambda () '(:dialect :cljs :target :node)))
+              ((symbol-function 'replique-name-process)
+               (lambda () 'a-process)))
+      (replique-stale))
+    (should (equal '(:op :stale :dialect :cljs :target :node) asked))))
+
+(ert-deftest replique-stale-test-asking-again-asks-the-same-question ()
+  "The buffer is not a buffer of either language, so reading the dialect off
+it would read the dialect of whatever repl the commands are pointed at now -
+and a buffer that answered about one language under the same heading as
+another would be two answers nothing tells apart."
+  (let ((asked nil))
+    (with-temp-buffer
+      (setq replique-stale--process 'a-process
+            replique-stale--dialect-keys '(:dialect :cljs :target :browser))
+      (cl-letf (((symbol-function 'replique-process-request)
+                 (lambda (_process msg _callback) (setq asked msg))))
+        (replique-stale-refresh)))
+    (should (equal '(:op :stale :dialect :cljs :target :browser) asked))))
+
+(ert-deftest replique-stale-test-loading-loads-what-is-shown ()
+  "`l' reloads the language the buffer is showing rather than the one the
+commands are pointed at, for the reason `g' asks the same question again."
+  (let ((reloaded 'unasked))
+    (with-temp-buffer
+      (setq replique-stale--dialect-keys '(:dialect :cljs :target :node))
+      (cl-letf (((symbol-function 'replique-reload-all)
+                 (lambda (&optional _waiting dialect) (setq reloaded dialect))))
+        (replique-stale-reload)))
+    (should (eq :cljs reloaded))
+    (with-temp-buffer
+      (setq replique-stale--dialect-keys nil)
+      (cl-letf (((symbol-function 'replique-reload-all)
+                 (lambda (&optional _waiting dialect) (setq reloaded dialect))))
+        (replique-stale-reload)))
+    (should (eq :clj reloaded))))
 
 (provide 'replique-stale-test)
 

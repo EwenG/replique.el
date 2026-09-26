@@ -516,8 +516,8 @@ on the name itself rather than on a vector around it."
                                            replique-locals-default-forms))))
     (should (equal '(:tag "String") (on "(defn f [^String s] (.leng| s))")))
     (should (equal '(:tag "String") (on "(defn f [] (.leng| ^String (g)))")))
-    (should (equal '(:target "some-var") (on "(defn f [] (.leng| some-var))")))
-    (should (equal '(:target "\"abc\"") (on "(defn f [] (.leng| \"abc\"))")))
+    (should (equal '(:on "some-var") (on "(defn f [] (.leng| some-var))")))
+    (should (equal '(:on "\"abc\"") (on "(defn f [] (.leng| \"abc\"))")))
     ;; a local that declares nothing says nothing, and its name is not a var
     ;; for the process to look up
     (should-not (on "(defn f [s] (.leng| s))"))

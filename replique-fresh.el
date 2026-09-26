@@ -73,8 +73,14 @@ anything to set."
                  (const :tag "Ask about the files as they were read" never))
   :group 'replique)
 
-(defun replique-fresh--asked (process)
+(defun replique-fresh--asked (process dialect-keys)
   "Return the frame PROCESS answers the `:stale\\=' op with, or nil.
+
+DIALECT-KEYS says which language to ask about, nil being Clojure.  It has to
+be the language the reload would happen in: this offers to load what changed
+and then loads it with `replique-reload-all\\=', which reloads the buffer\\='s own
+dialect - so asking the other model whether anything is stale would offer to
+bring up to date something nobody was about to ask about.
 
 The whole frame, with its two lists as they came: what is decided here is
 whether to load, which both halves are loaded by, and they are told apart
@@ -88,7 +94,8 @@ nothing to offer either of them, and the question this was going to guard
 says so itself if there is anything to say - said once, where it is about
 to be said anyway, rather than twice."
   (let ((frame (replique-process-request-sync
-                process (list :op :stale) replique-name-timeout)))
+                process (append (list :op :stale) dialect-keys)
+                replique-name-timeout)))
     (and frame (not (equal "error" (plist-get frame :tag))) frame)))
 
 (defun replique-fresh--name (found)
@@ -177,7 +184,7 @@ was about to ask."
   (unless (eq replique-reload-before-asking 'never)
     (when-let* ((repl (replique-repl-for-dialect (replique-dialect)))
                 (process (replique-repl-process repl))
-                (found (replique-fresh--asked process)))
+                (found (replique-fresh--asked process (replique-dialect-keys))))
       (let* ((changed (plist-get found :changed))
              (stale (plist-get found :stale))
              (files (append changed stale)))
