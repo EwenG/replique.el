@@ -602,15 +602,31 @@ otherwise be about the files as the process last read them: see
 `replique-fresh-ensure\\='.  Nobody pressing the key wants that, so the
 command itself never passes it.
 
+EVERY language the process has open, and the stylesheets with them, is
+`replique-reload-app\\=' - which is the one to reach for after a branch has
+been switched, where what changed is not what you were editing.
+
 DIALECT is the language to reload, for a caller that is not asking on
 behalf of the buffer it is in - `replique-stale-reload\\=', which reloads what
 the staleness buffer is showing.  Nil means this buffer\\='s own."
   (interactive)
   (save-some-buffers nil #'replique-eval-clojure-file-p)
-  (let ((repl (if dialect
-                  (replique-repl-ensure-for-dialect dialect)
-                (replique-repl-ensure-here)))
-        (directive (replique-reload-directive)))
+  (replique-reload--in (if dialect
+                           (replique-repl-ensure-for-dialect dialect)
+                         (replique-repl-ensure-here))
+                       waiting))
+
+(defun replique-reload--in (repl &optional waiting)
+  "Ask REPL to load every file that changed since the process read it.
+
+What `replique-reload-all\\=' is once the repl has been decided and the
+buffers have been saved.  Which is the half `replique-reload-app\\=' shares
+with it: that one reloads every language the process has open, so it
+decides both of those for itself and what it wants from here is only this.
+
+WAITING holds the editor until the loading has ended and returns the
+frame that ended it - see `replique-reload-all\\='."
+  (let ((directive (replique-reload-directive)))
     (if waiting
         (replique-repl-send-code-sync repl directive)
       (replique-repl-send-code repl directive nil t))))

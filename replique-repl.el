@@ -381,6 +381,7 @@ it better than anything here could."
 ;; is used from
 (declare-function replique-in-ns "replique-eval")
 (declare-function replique-remove-var "replique-symbol")
+(declare-function replique-reload-app "replique-reload")
 
 (defvar replique-repl-mode-map
   (let ((map (make-sparse-keymap)))
@@ -392,6 +393,11 @@ it better than anything here could."
     ;; and a repl buffer is one it has nothing to read out of - but the
     ;; command is the same one, and it is bound where it is used
     (define-key map (kbd "C-c M-n") #'replique-in-ns)
+    ;; Autoloaded from replique-reload, and bound here because a repl buffer
+    ;; is where somebody watching an application notices it is out of date -
+    ;; the command is about the process rather than about a buffer, so a
+    ;; buffer with no code in it is as good a place to press it as any
+    (define-key map (kbd "C-c M-r") #'replique-reload-app)
     ;; A name written at the prompt is as removable as one written in a file,
     ;; and eldoc and xref already answer about it here - see `replique.el'.
     ;; There is no load-file, because a repl buffer holds no file

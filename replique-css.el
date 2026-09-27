@@ -138,6 +138,8 @@ than a second one replique invented that writes almost the same CSS."
   :type '(choice (const :tag "sass" nil) (repeat string))
   :group 'replique)
 
+(declare-function replique-reload-app "replique-reload")
+
 (defvar replique-css-mode-map
   (let ((map (make-sparse-keymap)))
     ;; The same key a Clojure buffer loads with, and the same sentence: put
@@ -145,6 +147,10 @@ than a second one replique invented that writes almost the same CSS."
     ;; it - what that sends is a form for a repl to read, and a stylesheet is
     ;; not code this process runs
     (define-key map (kbd "C-c C-l") #'replique-reload-css)
+    ;; The whole application, from here too: a branch switched with a
+    ;; stylesheet on the screen is a branch switched, and having to find a
+    ;; .clj buffer first is a reason not to press it
+    (define-key map (kbd "C-c M-r") #'replique-reload-app)
     map)
   "Keymap of `replique-css-mode'.")
 
@@ -159,8 +165,8 @@ needs a process to be running: the command says so when it is used.
   :lighter " replique-css"
   :keymap replique-css-mode-map)
 
-(defun replique-css--report (files frames)
-  "Say what the process answered about reloading FILES.
+(defun replique-css--sentence (files frames)
+  "Return what the process answered about reloading FILES, as one sentence.
 
 FRAMES are the replies, one for each.  Five answers and not two, because
 \"nothing happened\" has four different reasons and they are not the same
@@ -175,37 +181,61 @@ reported one at a time, two of them would say \"nothing on the page
 matches\" and the last of those would be the sentence left on the screen.
 The reload that worked would be the one you could not see.
 
-A SENTENCE THE PROCESS WROTE IS SHOWN AS IT WAS WRITTEN.  Where there is
-no page open, that sentence names the URL to open - which is the whole of
-what somebody needs and is not something this could word better."
+A SENTENCE THE PROCESS WROTE IS PASSED ON AS IT WAS WRITTEN.  Where there
+is no page open, that sentence names the URL to open - which is the whole
+of what somebody needs and is not something this could word better.
+
+Without a name in front of it, so that a caller with a larger sentence to
+build can put this inside it - see `replique-css--report\\=', which is this
+one said on its own."
   (let ((failed (seq-find (lambda (f) (equal "error" (plist-get f :tag))) frames))
         (reloaded (seq-mapcat (lambda (f) (plist-get f :reloaded)) frames))
         (note (seq-some (lambda (f) (plist-get f :note)) frames))
         (sheets (delete-dups
                  (seq-mapcat (lambda (f) (plist-get f :stylesheets)) frames))))
     (cond
-     (failed (message "replique: %s" (plist-get failed :message)))
+     (failed (plist-get failed :message))
      ;; With the note beside it where there is one: some of these may have
      ;; reloaded while others could not be asked, and saying only the half
      ;; that worked is how the half that did not goes unnoticed
-     (reloaded (message "replique: reloaded %s%s"
-                        (string-join reloaded ", ")
-                        (if note (format " - %s" note) "")))
-     (note (message "replique: %s" note))
+     (reloaded (format "reloaded %s%s"
+                       (string-join reloaded ", ")
+                       (if note (format " - %s" note) "")))
+     (note note)
      (sheets
       ;; What the page has, which is the answer to the question somebody is
       ;; about to ask.  Replique 1 had this list in its hand at this exact
       ;; moment and threw it away
-      (message "replique: nothing on the page matches %s - it has %s"
-               (string-join (mapcar #'file-name-nondirectory files) ", ")
-               (string-join sheets ", ")))
-     (t (message "replique: the page has no stylesheets")))))
+      (format "nothing on the page matches %s - it has %s"
+              (string-join (mapcar #'file-name-nondirectory files) ", ")
+              (string-join sheets ", ")))
+     (t "the page has no stylesheets"))))
 
-(defun replique-css--reload (files process)
+(defun replique-css--report (files frames)
+  "Say in the echo area what the process answered about reloading FILES.
+
+FRAMES are the replies - see `replique-css--sentence\', which is the
+sentence without the name in front of it.  The two are apart because a
+reload of the stylesheets that is part of something larger has a sentence
+of its own to fit this into: `replique-reload-app\' reloads two languages
+and the stylesheets and says what became of all three at once, and three
+sentences in the echo area are two sentences nobody reads."
+  (message "replique: %s" (replique-css--sentence files frames)))
+
+(defun replique-css--reload (files process &optional done)
   "Ask PROCESS to reload FILES, and say what came of all of them.
 
-One op each, because the op is about one file, and one sentence at the
-end - see `replique-css--report\\='."
+One op each, because the op is about one file, and one answer at the
+end.  DONE is called with FILES and the replies once the last of them has
+arrived, and is `replique-css--report\\=' where nothing is given - a caller
+with more to say than that builds its own sentence out of
+`replique-css--sentence\\='.
+
+ASYNCHRONOUS, AND THAT IS WHY DONE IS A FUNCTION AND NOT A RETURN VALUE.
+The ops go out together and the answers come back in whatever order the
+pages give them, so there is no moment at which this could hand back what
+happened - and waiting for the last of them would hold the editor still
+for a round trip nobody needs to watch."
   (let ((frames nil)
         (left (length files)))
     (dolist (file files)
@@ -215,7 +245,8 @@ end - see `replique-css--report\\='."
          (push frame frames)
          (setq left (1- left))
          (when (zerop left)
-           (replique-css--report files (nreverse frames))))))))
+           (funcall (or done #'replique-css--report)
+                    files (nreverse frames))))))))
 
 (defun replique-css--commands (entry outputs)
   "The commands that build OUTPUTS from ENTRY, as a list of lists.
@@ -253,6 +284,50 @@ keystroke, with \\[keyboard-quit] to abandon it."
               (ansi-color-apply-on-region (point-min) (point-max))
               (setq failure (string-trim (buffer-string))))))))
     failure))
+
+;;; What the project says, read from wherever the key was pressed
+
+;; THE THREE BELOW ARE WHAT A COMMAND THAT IS NOT ABOUT A STYLESHEET NEEDS.
+;; `replique-reload-css' is pressed in the stylesheet and reads the two
+;; variables where they are; `replique-reload-app' reloads the whole
+;; application and is pressed in a .clj file as often as anywhere else, so it
+;; asks these rather than reaching into the same variables a second time.
+;;
+;; WHICH MEANS THE TWO VARIABLES HAVE TO BE SET FOR EVERY BUFFER OF THE
+;; PROJECT and not only for its stylesheets - the `nil' key of
+;; `.dir-locals.el' rather than the `scss-mode' one.  A project that set them
+;; under `scss-mode' has them nil in a .clj buffer, and the whole-application
+;; reload would there find a project that says nothing about stylesheets.
+
+(defun replique-css-configured-p ()
+  "Whether this project says how to build its stylesheets.
+
+Both halves, because neither is any use alone: what to build and what the
+build writes.  A project with no stylesheets at all answers nil to this
+and is not a project with anything wrong with it - see
+`replique-reload-app\\='."
+  (and replique-css-outputs
+       (or replique-css-entry replique-css-build-command)
+       t))
+
+(defun replique-css-outputs-in (root)
+  "The .css files a build of this project writes, under ROOT.
+
+`replique-css-outputs\\=' made absolute.  These are what is reloaded: the
+.scss being edited is not a file any browser has ever asked for."
+  (mapcar (lambda (output) (expand-file-name output root)) replique-css-outputs))
+
+(defun replique-css-build (root)
+  "Build this project\\='s stylesheets in ROOT, and return what failed.
+
+Nil where the build succeeded, which is what says
+`replique-css-outputs-in\\=' is worth reloading, and otherwise what the
+first failing command printed - see `replique-css--build\\='."
+  (replique-css--build
+   (replique-css--commands (and replique-css-entry
+                                (expand-file-name replique-css-entry root))
+                           (replique-css-outputs-in root))
+   root))
 
 ;;;###autoload
 (defun replique-reload-css (&optional file process)
@@ -314,24 +389,19 @@ because what you were doing when it happened was editing that file."
          (root (or (replique-process--directory process) default-directory)))
     (if (string-suffix-p ".css" file t)
         (replique-css--reload (list file) process)
-      (let ((entry replique-css-entry)
-            (outputs replique-css-outputs))
-        (unless (and outputs (or entry replique-css-build-command))
-          (user-error (concat "Nothing says how to build %s: set"
-                              " `replique-css-entry' and `replique-css-outputs'"
-                              " - or `replique-css-build-command' - in"
-                              " .dir-locals.el")
-                      (file-name-nondirectory file)))
-        (let* ((entry (and entry (expand-file-name entry root)))
-               (outputs (mapcar (lambda (o) (expand-file-name o root)) outputs))
-               (failed (replique-css--build
-                        (replique-css--commands entry outputs) root)))
-          (if failed
-              ;; As the build printed it.  What is wrong with a stylesheet is
-              ;; something sass has already said better than this could, and
-              ;; the line and column it names are in the file you are in
-              (message "%s" failed)
-            (replique-css--reload outputs process)))))))
+      (unless (replique-css-configured-p)
+        (user-error (concat "Nothing says how to build %s: set"
+                            " `replique-css-entry' and `replique-css-outputs'"
+                            " - or `replique-css-build-command' - in"
+                            " .dir-locals.el")
+                    (file-name-nondirectory file)))
+      (let ((failed (replique-css-build root)))
+        (if failed
+            ;; As the build printed it.  What is wrong with a stylesheet is
+            ;; something sass has already said better than this could, and
+            ;; the line and column it names are in the file you are in
+            (message "%s" failed)
+          (replique-css--reload (replique-css-outputs-in root) process))))))
 
 (provide 'replique-css)
 
