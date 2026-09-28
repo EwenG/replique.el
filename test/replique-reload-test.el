@@ -505,6 +505,61 @@ the printed empty vector, rather than by anything read out of the rest."
     (should (equal "replique: loaded ClojureScript (browser)"
                    (replique-reload-test--sentence)))))
 
+(ert-deftest replique-reload-test-a-language-nothing-has-been-loaded-into-says-that ()
+  "Rather than \"nothing to load\", which is the other way of answering
+nothing and is a different fact.  A Clojure model holds what its compiler
+read under the sink, which a load and a reload push - so an application
+that arrived by `require\=' is running and is in no model, and the process
+answers two empty lists whatever is edited.  Reading that as an
+application up to date is reading it off a process that has never heard of
+it."
+  (replique-reload-test--with-repls ((clj nil nil) (cljs "cljs" "node"))
+    (ignore clj)
+    (replique-reload-test--run
+        (:stale (lambda (repl)
+                  (if (eq repl cljs)
+                      '(:changed nil :stale nil :connected t :analysed 12)
+                    '(:changed nil :stale nil :analysed 0))))
+      (replique-reload-app))
+    ;; and nothing was sent to it: there is nothing to load, whatever the
+    ;; reason, and the reason is what the sentence is for
+    (should (equal nil replique-reload-test--asked))
+    (should (equal (concat "replique: nothing has been loaded into Clojure"
+                           " through this process, so it has nothing to bring"
+                           " up to date")
+                   (replique-reload-test--sentence)))))
+
+(ert-deftest replique-reload-test-a-language-nothing-was-loaded-into-is-said-beside-the-rest ()
+  "Said whatever else happened, because it is not a report of what this
+command did - it is the reason a language is missing from everything else
+in the sentence."
+  (replique-reload-test--with-repls ((clj nil nil) (cljs "cljs" "node"))
+    (ignore clj)
+    (replique-reload-test--run
+        (:stale (lambda (repl)
+                  (if (eq repl cljs)
+                      '(:changed ((:file "/p/a.cljs")) :stale nil
+                        :connected t :analysed 12)
+                    '(:changed nil :stale nil :analysed 0))))
+      (replique-reload-app))
+    (should (equal '("ClojureScript (node)") replique-reload-test--asked))
+    (should (string-match-p "loaded ClojureScript (node)"
+                            (replique-reload-test--sentence)))
+    (should (string-match-p "nothing has been loaded into Clojure"
+                            (replique-reload-test--sentence)))))
+
+(ert-deftest replique-reload-test-an-answer-with-no-count-in-it-reads-as-it-always-did ()
+  "A process older than this client sends no `analysed\=' at all, and reading
+its silence as a model with nothing in it would announce an empty model
+that is not there."
+  (replique-reload-test--with-repls ((clj nil nil))
+    (ignore clj)
+    (replique-reload-test--run
+        (:stale (lambda (_repl) '(:changed nil :stale nil)))
+      (replique-reload-app))
+    (should (equal "replique: nothing to load in Clojure"
+                   (replique-reload-test--sentence)))))
+
 (ert-deftest replique-reload-test-nothing-to-load-anywhere-names-what-was-asked ()
   "Rather than saying nothing, which is how a key that did nothing because
 it went to the wrong process looks exactly like a key that did nothing

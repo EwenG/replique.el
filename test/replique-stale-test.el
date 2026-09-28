@@ -62,6 +62,33 @@ an answer that did not arrive."
     (should (string-match-p "Nothing has changed" text))
     (should-not (string-match-p "out of date" text))))
 
+(ert-deftest replique-stale-test-a-process-that-has-read-nothing-says-that ()
+  "Rather than \"nothing has changed\", which is the other way of answering
+nothing and is a different fact.  A model with no files in it answers two
+empty lists whatever is edited, and reading that as an application up to
+date is reading it off a process that has never heard of it."
+  (let ((clj (replique-stale-test--shown '(:changed nil :stale nil :analysed 0)))
+        (cljs (replique-stale-test--shown '(:changed nil :stale nil :analysed 0)
+                                          nil '(:dialect :cljs)))
+        (read (replique-stale-test--shown '(:changed nil :stale nil :analysed 7))))
+    (should (string-match-p "Nothing has been loaded through this process yet" clj))
+    (should-not (string-match-p "Nothing has changed" clj))
+    ;; and how it comes to be in that state, which is the half nobody guesses
+    (should (string-match-p "arrived by `require'" clj))
+    (should (string-match-p "Nothing has been compiled by this process yet" cljs))
+    ;; nothing about `require' there: a ClojureScript model is filled by
+    ;; compiling, which is the only way anything reaches that runtime at all
+    (should-not (string-match-p "arrived by `require'" cljs))
+    (should (string-match-p "Nothing has changed" read))))
+
+(ert-deftest replique-stale-test-an-answer-with-no-count-in-it-reads-as-it-always-did ()
+  "A process older than this client sends no `analysed\=' at all, and reading
+its silence as a model with nothing in it would announce an empty model
+that is not there."
+  (let ((text (replique-stale-test--shown '(:changed nil :stale nil))))
+    (should (string-match-p "Nothing has changed" text))
+    (should-not (string-match-p "has been loaded through" text))))
+
 (ert-deftest replique-stale-test-only-what-changed-is-shown-where-nothing-is-stale ()
   "A macro nothing expands is an ordinary thing to edit, and the second
 heading would then stand over nothing."
@@ -105,38 +132,26 @@ archive - so a file inside a jar opens here too."
         (push-button (1- (point)))))
     (should (equal '(:file "/p/src/app/util.clj") opened))))
 
-(ert-deftest replique-stale-test-what-cannot-be-answered-is-said-and-nothing-is-shown ()
-  "A buffer is what an answer looks like, so a refusal must not open one -
-an empty staleness buffer would read as a process with nothing to do."
-  (when (get-buffer "*replique-stale*") (kill-buffer "*replique-stale*"))
-  (let ((said nil))
-    (cl-letf (((symbol-function 'replique-process-request)
-               (lambda (_process _msg callback)
-                 (funcall callback '(:tag "error" :message "no analysis here"))))
-              ((symbol-function 'message)
-               (lambda (format &rest args) (setq said (apply #'format format args)))))
-      (replique-stale--ask 'a-process nil))
-    (should (string-match-p "no analysis here" said))
-    (should-not (get-buffer "*replique-stale*"))))
-
 (ert-deftest replique-stale-test-the-process-is-asked-and-the-answer-shown ()
   "Whichever process it is.  One whose compiler wrote down what it compiled
-answers with two lists; one that did not says so, and says what to start it
-on instead of answering that there is nothing to do."
-  (let* ((process (replique-test-process))
-         (said nil)
-         (shown nil))
-    (cl-letf (((symbol-function 'message)
-               (lambda (format &rest args) (setq said (apply #'format format args))))
-              ((symbol-function 'pop-to-buffer)
-               (lambda (buffer &rest _) (setq shown buffer))))
-      (replique-stale--ask process nil)
-      (should (replique-test-wait-for (lambda () (or said shown)))))
-    (if said
-        (should (string-match-p "keep track of what it compiled" said))
+answers with two lists; one that did not says so, in the section of its own
+language, and says what to start it on instead of answering that there is
+nothing to do."
+  (let ((shown nil))
+    ;; A repl, because this question is asked per repl now and a process with
+    ;; none is a process with nothing to ask about - which the command says
+    ;; rather than answers
+    (replique-test-with-repl repl
+      (ignore repl)
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buffer &rest _) (setq shown buffer))))
+        (replique-stale--ask-app (replique-test-process))
+        (should (replique-test-wait-for (lambda () shown))))
       (should (buffer-live-p shown))
-      (should (string-match-p "changed\\|Changed"
-                              (with-current-buffer shown (buffer-string)))))
+      (should (string-match-p
+               (concat "changed\\|Changed\\|been loaded through this process"
+                       "\\|keep track of what it compiled")
+               (with-current-buffer shown (buffer-string)))))
     (when (get-buffer "*replique-stale*") (kill-buffer "*replique-stale*"))))
 
 (ert-deftest replique-stale-test-a-clojurescript-answer-says-which-it-is ()
@@ -170,58 +185,28 @@ list above - that list is the ClojureScript files."
     (should (string-match-p "of a file that has changed" text))
     (should-not (string-match-p "of a file above" text))))
 
-(ert-deftest replique-stale-test-the-question-carries-the-buffers-dialect ()
-  "Which language is stale is two questions in a process holding both, and
-what says which is asked is the buffer - the same rule every question about a
-name follows."
-  (let ((asked nil))
-    (cl-letf (((symbol-function 'replique-process-request)
-               (lambda (_process msg _callback) (setq asked msg)))
-              ((symbol-function 'replique-dialect-keys)
-               (lambda () '(:dialect :cljs :target :node)))
-              ((symbol-function 'replique-name-process)
-               (lambda () 'a-process)))
-      (replique-stale))
-    (should (equal '(:op :stale :dialect :cljs :target :node) asked))))
-
-(ert-deftest replique-stale-test-asking-again-asks-the-same-question ()
-  "The buffer is not a buffer of either language, so reading the dialect off
-it would read the dialect of whatever repl the commands are pointed at now -
-and a buffer that answered about one language under the same heading as
-another would be two answers nothing tells apart."
+(ert-deftest replique-stale-test-asking-again-asks-the-same-process ()
+  "That process rather than whichever one the commands act on now: a buffer
+that answered about one process and then about another, under the same
+headings, would be two answers nothing tells apart.  And the repls it has
+NOW, since a repl opened since is a language this question is about."
   (let ((asked nil))
     (with-temp-buffer
-      (setq replique-stale--process 'a-process
-            replique-stale--scope 'here
-            replique-stale--sections
-            '((:label "ClojureScript" :dialect-keys (:dialect :cljs :target :browser)
-               :found nil)))
-      (cl-letf (((symbol-function 'replique-process-request)
-                 (lambda (_process msg _callback) (setq asked msg))))
+      (setq replique-stale--process 'a-process)
+      (cl-letf (((symbol-function 'replique-stale--ask-app)
+                 (lambda (process) (setq asked process))))
         (replique-stale-refresh)))
-    (should (equal '(:op :stale :dialect :cljs :target :browser) asked))))
+    (should (eq 'a-process asked)))
+  (with-temp-buffer
+    (should-error (replique-stale-refresh))))
 
 (ert-deftest replique-stale-test-loading-loads-what-is-shown ()
-  "`l' reloads the language the buffer is showing rather than the one the
-commands are pointed at, for the reason `g' asks the same question again."
-  (let ((reloaded 'unasked))
+  "The whole process, stylesheets and all, which is what this buffer shows.
+Told what to reload rather than left to work it out: this buffer is not a
+buffer of either language, so a reload that asked it would ask the wrong
+thing."
+  (let ((reloaded nil))
     (with-temp-buffer
-      (setq replique-stale--scope 'here
-            replique-stale--sections
-            '((:dialect-keys (:dialect :cljs :target :node))))
-      (cl-letf (((symbol-function 'replique-reload-all)
-                 (lambda (&optional _waiting dialect) (setq reloaded dialect))))
-        (replique-stale-reload)))
-    (should (eq :cljs reloaded))
-    (with-temp-buffer
-      (setq replique-stale--scope 'here
-            replique-stale--sections '((:dialect-keys nil)))
-      (cl-letf (((symbol-function 'replique-reload-all)
-                 (lambda (&optional _waiting dialect) (setq reloaded dialect))))
-        (replique-stale-reload)))
-    (should (eq :clj reloaded))
-    (with-temp-buffer
-      (setq replique-stale--scope 'app)
       (cl-letf (((symbol-function 'replique-reload-app)
                  (lambda () (setq reloaded 'app))))
         (replique-stale-reload)))
@@ -357,7 +342,9 @@ the buffer is written when the last of them has arrived."
                    (nreverse asked)))
     (should (buffer-live-p shown))
     (with-current-buffer shown
-      (should (eq 'app replique-stale--scope))
+      ;; kept, because `g\=' and `l\=' are about the process this answered about
+      ;; and not about whichever one the commands act on now
+      (should (equal "/p/" (replique-process--directory replique-stale--process)))
       (should (string-match-p "ClojureScript (browser)" (buffer-string))))
     (when (get-buffer "*replique-stale*") (kill-buffer "*replique-stale*"))))
 

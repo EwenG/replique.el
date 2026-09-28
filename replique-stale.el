@@ -35,21 +35,28 @@
 ;; recorded while it compiled - see `replique-reload-all', which is the
 ;; same question answered by doing it.
 ;;
-;; AND ASKED ABOUT ONE LANGUAGE, OR ABOUT ALL OF THEM.  A process can hold a
+;; AND ASKED ABOUT EVERY LANGUAGE THE PROCESS HAS OPEN.  A process can hold a
 ;; Clojure application and a ClojureScript one at once, each with its own files
-;; behind the disk, and what is stale in one says nothing about the other.
-;; `replique-stale' is asked from a buffer and carries that buffer's dialect,
-;; the way every other question about a name does; `replique-stale-app' is
-;; asked about the process and carries one question per repl, which is the
-;; question `replique-reload-app' is about to answer by doing it - and the
+;; behind the disk, and what is stale in one says nothing about the other - so
+;; the question is one per repl and the answer is a section each.  Which is the
+;; question `replique-reload-app' is about to answer by doing it, and the
 ;; moment worth looking before leaping is exactly that one, after a branch has
 ;; been switched.
 ;;
-;; THE BUFFER REMEMBERS WHICH IT WAS: what `g' asks again has to be the
-;; question this buffer answered, and the buffer is not a Clojure buffer of
+;; THE BUFFER REMEMBERS WHICH PROCESS IT WAS: what `g' asks again has to be the
+;; process this buffer answered about, and the buffer is not a Clojure buffer of
 ;; either kind, so asking it afresh from here would ask about whatever repl the
 ;; commands are pointed at now.  `l' reloads the same thing for the same
-;; reason - that language, or the whole application.
+;; reason.
+;;
+;; AND A PROCESS THAT HAS READ NOTHING IS NOT A PROCESS WITH NOTHING TO LOAD.
+;; A Clojure model holds what the compiler read under the sink, which is what a
+;; load and a reload push - so an application that arrived by `require', from an
+;; init script or at a prompt, is running and is in no model.  Two empty lists,
+;; every time, whatever is edited.  The process says how many files it has read
+;; so that the two can be told apart, because reporting the wrong one of them
+;; is telling somebody their application is up to date on the strength of a
+;; process that has never heard of it.
 ;;
 ;; AND THE STYLESHEETS, WHICH ARE A WEAKER FACT AND SAY SO.  The other two
 ;; lists are what the process compiled and when; this one is two modification
@@ -65,14 +72,9 @@
 
 ;;; Code:
 
-(require 'seq)
-(require 'subr-x)
 (require 'replique-css)
-(require 'replique-eval)
-(require 'replique-name)
 (require 'replique-process)
 (require 'replique-reload)
-(require 'replique-repl)
 (require 'replique-symbol)
 
 (defvar-local replique-stale--sections nil
@@ -93,18 +95,6 @@ buffer where the shape lies about where a fact came from.")
 (defvar-local replique-stale--process nil
   "The process the buffer was written from, and is written again from.")
 
-(defvar-local replique-stale--scope nil
-  "What this buffer is about: `here\=' for one language, `app\=' for all of them.
-
-Kept because this buffer is not the buffer the question was asked from.
-Asking afresh would ask about whatever repl the commands are pointed at
-now, and `g\=' has to ask the question this buffer answered; `l\=' reloads
-what `g\=' would ask about, which is the same rule read the other way.
-
-`app\=' is also what says the stylesheets belong here: they are a third of
-`replique-reload-app\=' and no part of a question asked about one
-language.")
-
 (defvar-local replique-stale--stylesheets nil
   "The built stylesheets a source has got ahead of, or nil.
 
@@ -115,6 +105,17 @@ a .scss.  Which is also why it is kept apart from the answers: see
 `replique-stale--sections\='.")
 
 ;;; Rendering
+
+(defun replique-stale--load-key ()
+  "How to name the command that loads a file, as this buffer has to name it.
+
+Through `replique-mode-map\=' because this buffer is not a buffer that map
+is active in, and guarded because that map lives in the file that requires
+this one: loading this file on its own would otherwise be asked for the
+bindings of a keymap that is not there yet."
+  (if (boundp 'replique-mode-map)
+      (substitute-command-keys "\\<replique-mode-map>\\[replique-load-file]")
+    "M-x replique-load-file"))
 
 (defun replique-stale--label (found directory)
   "Return what to call the file FOUND, for somebody working in DIRECTORY.
@@ -203,6 +204,24 @@ which is which."
      ;; a process with nothing to load.
      ((equal "error" (plist-get found :tag))
       (insert "  " (or message "the process would not answer") "\n"))
+     ;; Before the two empty lists, because it is the other way of answering
+     ;; nothing and is a different fact.  A model with no files in it will
+     ;; answer this whatever is edited, and "nothing has changed" read off one
+     ;; of those is an application reported as up to date by a process that has
+     ;; never heard of it.  An answer with no count in it at all is an older
+     ;; process than this and is read the way it always was.
+     ((eql 0 (plist-get found :analysed))
+      (insert (if cljs
+                  "  Nothing has been compiled by this process yet, so there is\n"
+                "  Nothing has been loaded through this process yet, so there is\n")
+              "  nothing it can say has changed.\n")
+      (unless cljs
+        (insert "\n  What it holds is what its compiler read while it was loading a\n"
+                "  file for you - "
+                (replique-stale--load-key)
+                " - and a namespace that arrived by `require', at a\n"
+                "  prompt or from an init script, is loaded, is running, and is not\n"
+                "  in it.\n")))
      ((and (null changed) (null stale))
       (insert (if cljs
                   "  Nothing has changed since this process compiled it.\n"
@@ -271,42 +290,21 @@ which is which."
 
 ;;; Asking
 
-(defun replique-stale--show (process scope sections stylesheets)
+(defun replique-stale--show (process sections stylesheets)
   "Show what PROCESS said in SECTIONS, with STYLESHEETS under them.
 
-Returns the buffer.  SCOPE is what this buffer is about, kept for
-`replique-stale-refresh' and `replique-stale-reload' - see
-`replique-stale--scope'."
+Returns the buffer.  PROCESS is kept for `replique-stale-refresh' and
+`replique-stale-reload' - see `replique-stale--process'."
   (let ((buffer (get-buffer-create "*replique-stale*")))
     (with-current-buffer buffer
       ;; Before anything buffer local is set: the mode kills them
       (replique-stale-mode)
       (setq replique-stale--process process
-            replique-stale--scope scope
             replique-stale--sections sections
             replique-stale--stylesheets stylesheets)
       (replique-stale--render))
     (pop-to-buffer buffer)
     buffer))
-
-(defun replique-stale--ask (process dialect-keys)
-  "Ask PROCESS what one language has to load again, and show the answer.
-
-DIALECT-KEYS says which, nil being Clojure.  The refusal a process that
-kept no track of what it compiled answers with is shown in the echo area
-rather than in a buffer: one question was asked, it was not answered, and
-a window holding that sentence and nothing else is a window for nothing."
-  (replique-process-request
-   process (append (list :op :stale) dialect-keys)
-   (lambda (frame)
-     (if (equal "error" (plist-get frame :tag))
-         (message "replique: %s" (plist-get frame :message))
-       (replique-stale--show
-        process 'here
-        (list (list :label (if dialect-keys "ClojureScript" "Clojure")
-                    :dialect-keys dialect-keys
-                    :found frame))
-        nil)))))
 
 (defun replique-stale--ask-app (process)
   "Ask PROCESS what every repl it has open would load, and show the answers.
@@ -317,10 +315,10 @@ gives is the order they are reloaded in.  They go out together and come
 back in whatever order the process answers them, so the buffer is written
 when the last one has arrived.
 
-A REFUSAL IS SHOWN RATHER THAN THROWN AWAY HERE, which is where this
-parts company with `replique-stale--ask'.  One question refused is
-nothing to show; one of four refused, beside three that were answered, is
-a fact about this process worth reading next to the rest.
+A REFUSAL IS SHOWN RATHER THAN THROWN AWAY.  Only a process whose
+compiler wrote down what it compiled can answer this, and one section of
+four saying so, beside three that answered, is a fact about this process
+worth reading next to the rest.
 
 And the stylesheets under them, which are worked out here and asked of
 nobody - see `replique-css-stale-in'."
@@ -338,7 +336,7 @@ nobody - see `replique-css-stale-in'."
            (setq left (1- left))
            (when (zerop left)
              (replique-stale--show
-              process 'app
+              process
               (mapcar (lambda (repl)
                         (list :label (replique-reload--label repl)
                               :dialect-keys (replique-reload--dialect-keys repl)
@@ -353,68 +351,23 @@ That process rather than whichever one the commands act on now: a buffer
 that answered about one process and then answered about another, under
 the same heading, would be two answers nothing tells apart.
 
-And the same question.  A buffer showing one language goes on showing
-that language, and one showing the whole process goes on showing the
-whole process - which for the second means the repls it has NOW, since
-that is what the question is about."
+And of the repls it has NOW, which is what the question is about: a repl
+opened since this buffer was written is a language whose staleness is as
+much a part of the answer as the rest."
   (interactive)
-  (let ((process (or replique-stale--process
-                     (user-error "This buffer was written from no process"))))
-    (if (eq 'app replique-stale--scope)
-        (replique-stale--ask-app process)
-      (replique-stale--ask process
-                           (plist-get (car replique-stale--sections)
-                                      :dialect-keys)))))
+  (replique-stale--ask-app
+   (or replique-stale--process
+       (user-error "This buffer was written from no process"))))
 
 (defun replique-stale-reload ()
   "Load what this buffer is showing.
 
-Told what to reload rather than left to work it out: this buffer is not a
-buffer of either language, so `replique-reload-all' would otherwise
-reload whatever repl the commands are pointed at now - which could be the
-one this answer is not about.
-
-A buffer showing the whole process reloads the whole process,
-stylesheets and all, which is what it is showing."
+The whole process, stylesheets and all, which is what this buffer is
+showing.  Told what to reload rather than left to work it out: this
+buffer is not a buffer of either language, so a reload that asked it
+would be asking the wrong thing."
   (interactive)
-  (if (eq 'app replique-stale--scope)
-      (replique-reload-app)
-    (replique-reload-all
-     nil (if (plist-get (car replique-stale--sections) :dialect-keys) :cljs :clj))))
-
-;;;###autoload
-(defun replique-stale ()
-  "Show what loading everything that changed would load.
-
-The same question `replique-reload-all' answers by doing it, asked
-without doing it: nothing is compiled, and nothing in the process
-changes.
-
-Two lists.  The files whose copy on the disk is newer than what the
-process read - what was edited - and, apart from those, the files that
-were not edited and are out of date all the same, because they expand a
-macro of a file that was and hold the expansion the old one made.  The
-second list is the one worth looking at: what needs compiling is not the
-same as what was typed in, and nothing in a buffer says which files
-those are.
-
-About the language of this buffer, which a process holding a Clojure
-application and a ClojureScript one at once has two answers for: a .cljs
-buffer asks about the ClojureScript, a .clj buffer about the Clojure, and a
-.cljc buffer about whichever repl the commands are pointed at - the three
-cases every question about a name follows.  Every language the process
-has open at once, and the stylesheets with them, is
-\\[replique-stale-app].
-
-Each one opens.  \\<replique-stale-mode-map>\\[replique-stale-refresh] \
-asks again, \\[replique-stale-reload] loads them.
-
-Only a process whose compiler wrote down what it compiled can answer
-this.  One that cannot says so, and says what to start it on instead."
-  (interactive)
-  (replique-stale--ask (or (replique-name-process)
-                           (user-error "No replique process"))
-                       (replique-dialect-keys)))
+  (replique-reload-app))
 
 ;;;###autoload
 (defun replique-stale-app ()
@@ -429,11 +382,26 @@ which is the moment worth looking before leaping: what changed is not
 what you were editing, no buffer on the screen says which language it was
 in, and the list of files nobody can predict is exactly what this is.
 
-A section per language and runtime, in the order they would be reloaded -
-the Clojure, then each ClojureScript runtime - each with the two lists
-\\[replique-stale] shows.  A ClojureScript runtime with something to load
-and nothing connected to it says so under its files: that reload would
-compile the whole program correctly and land nowhere.
+A SECTION PER LANGUAGE AND RUNTIME, in the order they would be reloaded -
+the Clojure, then each ClojureScript runtime - each with two lists.  The
+files whose copy on the disk is newer than what the process read, which is
+what was edited; and, apart from those, the files that were not edited and
+are out of date all the same, because they expand a macro of a file that
+was and hold the expansion the old one made.  The second list is the one
+worth looking at: what needs compiling is not what was typed in, and
+nothing in a buffer says which files those are.
+
+A ClojureScript runtime with something to load and nothing connected to it
+says so under its files: that reload would compile the whole program
+correctly and land nowhere.
+
+AND A LANGUAGE THIS PROCESS HAS READ NO FILES OF SAYS THAT, rather than
+saying nothing has changed.  A Clojure model holds what the compiler read
+while it was loading a file - \\[replique-load-file], and a reload - so an
+application that arrived by `require\\=', from an init script or at a prompt,
+is running and is in no model.  It would answer two empty lists whatever
+was edited, and reading that as an application up to date is reading it
+off a process that has never heard of it.
 
 AND THE STYLESHEETS, WHICH ARE A WEAKER FACT AND SAY SO.  The other
 sections are what the process compiled and when.  This one is the built

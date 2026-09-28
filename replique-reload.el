@@ -39,7 +39,8 @@
 ;;
 ;; NOTHING NEW REACHES THE PROCESS.  The Clojure and the ClojureScript are
 ;; the `#replique/reload' every reload sends, the plan is the `:stale' op
-;; `replique-stale' asks, and the stylesheets are the `:reload-css' op - see
+;; `replique-stale-app' asks, and the stylesheets are the `:reload-css' op -
+;; see
 ;; doc/protocol.md.  What is here is the order, which repls, and one sentence
 ;; for the three of them.
 ;;
@@ -184,9 +185,10 @@ about which half - the state this command exists to get out of."
 (defun replique-reload--plan-of (repl frame)
   "What to do about REPL, given the FRAME it answered the `:stale' op with.
 
-One of four, and the useful one is the last:
+One of five, and the useful one is the last:
 
   :ask      the question could not be answered - send the reload anyway
+  :unread   this process has read no files of this language at all
   :nothing  nothing has changed and nothing went stale
   :blocked  there is something to load and nowhere to run it
   :load     there is something to load
@@ -206,12 +208,24 @@ process - and a browser runtime with no page connected is a reload that
 would compile everything correctly and land nowhere.  Which the answer
 says, because it is half of what would happen if a reload were asked for.
 
+:unread IS THE OTHER WAY OF ANSWERING NOTHING, and it is a different fact.
+A Clojure process holds what its compiler read UNDER THE SINK, which is
+what \[replique-load-file] and a reload push - so a namespace that arrived
+by `require\=', at a prompt or from an init script, is loaded, is running,
+and is not in the model.  Such a process answers with two empty lists and
+will go on answering that whatever is edited, and calling that \"nothing to
+load\" would be telling somebody their application is up to date on the
+strength of a process that has never heard of it.  The `analysed\=' count
+is what tells the two apart; an answer with no such count in it is an older
+process than this and is read the way it always was.
+
 :nothing IS CHECKED FIRST, including where nothing is connected: a repl
 with nothing to load has nothing to complain about, and reporting the
 missing page of a reload that was not going to do anything would be
 reporting a problem nobody has."
   (cond
    ((equal "error" (plist-get frame :tag)) :ask)
+   ((eql 0 (plist-get frame :analysed)) :unread)
    ((and (null (plist-get frame :changed))
          (null (plist-get frame :stale)))
     :nothing)
@@ -337,6 +351,7 @@ threw it, whole and triaged, which is where it is read - saying it again
 here would be the first line of it, in an echo area, with the rest cut."
   (let* ((loaded (plist-get languages :loaded))
          (quiet (plist-get languages :quiet))
+         (unread (plist-get languages :unread))
          (blocked (plist-get languages :blocked))
          (stopped (plist-get languages :stopped))
          (busy (plist-get languages :busy))
@@ -354,8 +369,17 @@ here would be the first line of it, in an echo area, with the rest cut."
                                  busy)))
                  (when gone
                    (list (format "the %s repl closed while this was running" gone)))
+                 ;; Said whatever else happened, because it is not a report of
+                 ;; what this command did - it is the reason a language is
+                 ;; missing from everything above, and the one thing that would
+                 ;; otherwise read as an application that is up to date
+                 (when unread
+                   (list (format (concat "nothing has been loaded into %s through"
+                                         " this process, so it has nothing to"
+                                         " bring up to date")
+                                 (string-join unread ", "))))
                  (when (and (null loaded) (null stopped) (null busy) (null blocked)
-                            (null gone))
+                            (null gone) (null unread))
                    (list (format "nothing to load in %s"
                                  (string-join quiet ", "))))
                  (when stylesheets (list stylesheets)))))
@@ -457,7 +481,10 @@ sent a reload whose answer would be their form\\='s."
         (lambda ()
           (let ((state nil))
             (dolist (plan plans)
-              (let ((key (pcase (cdr plan) (:nothing :quiet) (:blocked :blocked))))
+              (let ((key (pcase (cdr plan)
+                           (:nothing :quiet)
+                           (:unread :unread)
+                           (:blocked :blocked))))
                 (when key
                   (setq state
                         (plist-put state key

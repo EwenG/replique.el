@@ -320,7 +320,7 @@ it.  Without one the file is a file and is opened as one.
 
 Public because a definition is not the only thing the process answers with
 a file: what has to be loaded again is a list of them, and opening one is
-the same two halves resolved the same way - see `replique-stale\\='."
+the same two halves resolved the same way - see `replique-stale-app\\='."
   (when-let* ((file (plist-get found :file))
               ((file-exists-p file)))
     (if-let* ((entry (plist-get found :entry)))
