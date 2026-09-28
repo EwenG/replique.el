@@ -2142,9 +2142,14 @@ is saved, and refusing it first would refuse the one case the offer fixes."
 
 (ert-deftest replique-test-the-reload-directive-asks-for-everything-that-changed ()
   "The client names no file: which ones changed is the process's own
-question to answer.  The map is empty and is written all the same, because
-a tagged literal reads the form after it whatever that form is."
-  (should (equal "#replique/reload {}" (replique-reload-directive))))
+question to answer.  What it does say is how long a runtime may take, which
+is the one thing the process cannot work out for itself - a reload sent from
+here is a reload a command sent, and it must not be able to take Emacs with
+it."
+  (let ((replique-reload-timeout 30000))
+    (should (equal "#replique/reload {:timeout 30000}" (replique-reload-directive))))
+  (let ((replique-reload-timeout nil))
+    (should (equal "#replique/reload {}" (replique-reload-directive)))))
 
 (ert-deftest replique-test-only-modified-clojure-buffers-are-offered-before-a-reload ()
   "The process reads the disk, so a buffer with unsaved changes holds

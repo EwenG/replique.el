@@ -22,10 +22,20 @@
   "Return the text a buffer showing FOUND holds, named from DIRECTORY.
 
 DIALECT-KEYS is the question it answered, nil being Clojure."
+  (replique-stale-test--shown-all
+   (list (list :label (if dialect-keys "ClojureScript" "Clojure")
+               :dialect-keys dialect-keys
+               :found found))
+   directory))
+
+(defun replique-stale-test--shown-all (sections &optional directory stylesheets)
+  "Return the text a buffer showing SECTIONS holds, named from DIRECTORY.
+
+STYLESHEETS is what `replique-css-stale-in' answered, or nil."
   (with-temp-buffer
     (setq replique-stale--process (replique-process--make :directory directory)
-          replique-stale--dialect-keys dialect-keys
-          replique-stale--found found)
+          replique-stale--sections sections
+          replique-stale--stylesheets stylesheets)
     (replique-stale--render)
     (buffer-substring-no-properties (point-min) (point-max))))
 
@@ -86,7 +96,9 @@ archive - so a file inside a jar opens here too."
               ((symbol-function 'pop-to-buffer) #'ignore))
       (with-temp-buffer
         (setq replique-stale--process (replique-process--make :directory "/p/")
-              replique-stale--found '(:changed ((:file "/p/src/app/util.clj"))))
+              replique-stale--sections
+              '((:label "Clojure" :dialect-keys nil
+                 :found (:changed ((:file "/p/src/app/util.clj"))))))
         (replique-stale--render)
         (goto-char (point-min))
         (should (search-forward "util.clj" nil t))
@@ -103,7 +115,7 @@ an empty staleness buffer would read as a process with nothing to do."
                  (funcall callback '(:tag "error" :message "no analysis here"))))
               ((symbol-function 'message)
                (lambda (format &rest args) (setq said (apply #'format format args)))))
-      (replique-stale--ask 'a-process))
+      (replique-stale--ask 'a-process nil))
     (should (string-match-p "no analysis here" said))
     (should-not (get-buffer "*replique-stale*"))))
 
@@ -118,7 +130,7 @@ on instead of answering that there is nothing to do."
                (lambda (format &rest args) (setq said (apply #'format format args))))
               ((symbol-function 'pop-to-buffer)
                (lambda (buffer &rest _) (setq shown buffer))))
-      (replique-stale--ask process)
+      (replique-stale--ask process nil)
       (should (replique-test-wait-for (lambda () (or said shown)))))
     (if said
         (should (string-match-p "keep track of what it compiled" said))
@@ -180,7 +192,10 @@ another would be two answers nothing tells apart."
   (let ((asked nil))
     (with-temp-buffer
       (setq replique-stale--process 'a-process
-            replique-stale--dialect-keys '(:dialect :cljs :target :browser))
+            replique-stale--scope 'here
+            replique-stale--sections
+            '((:label "ClojureScript" :dialect-keys (:dialect :cljs :target :browser)
+               :found nil)))
       (cl-letf (((symbol-function 'replique-process-request)
                  (lambda (_process msg _callback) (setq asked msg))))
         (replique-stale-refresh)))
@@ -191,17 +206,160 @@ another would be two answers nothing tells apart."
 commands are pointed at, for the reason `g' asks the same question again."
   (let ((reloaded 'unasked))
     (with-temp-buffer
-      (setq replique-stale--dialect-keys '(:dialect :cljs :target :node))
+      (setq replique-stale--scope 'here
+            replique-stale--sections
+            '((:dialect-keys (:dialect :cljs :target :node))))
       (cl-letf (((symbol-function 'replique-reload-all)
                  (lambda (&optional _waiting dialect) (setq reloaded dialect))))
         (replique-stale-reload)))
     (should (eq :cljs reloaded))
     (with-temp-buffer
-      (setq replique-stale--dialect-keys nil)
+      (setq replique-stale--scope 'here
+            replique-stale--sections '((:dialect-keys nil)))
       (cl-letf (((symbol-function 'replique-reload-all)
                  (lambda (&optional _waiting dialect) (setq reloaded dialect))))
         (replique-stale-reload)))
-    (should (eq :clj reloaded))))
+    (should (eq :clj reloaded))
+    (with-temp-buffer
+      (setq replique-stale--scope 'app)
+      (cl-letf (((symbol-function 'replique-reload-app)
+                 (lambda () (setq reloaded 'app))))
+        (replique-stale-reload)))
+    (should (eq 'app reloaded))))
+
+(ert-deftest replique-stale-test-every-language-is-a-section-of-its-own ()
+  "A process can hold a Clojure application and a ClojureScript one on two
+runtimes at once, and what is stale in one says nothing about the others.
+Named, in the order they would be reloaded, because a list of files under
+no heading is a list nothing says which compiler it is about."
+  (let ((text (replique-stale-test--shown-all
+               '((:label "Clojure" :dialect-keys nil
+                  :found (:changed ((:file "/p/src/app/util.clj"))))
+                 (:label "ClojureScript (browser)"
+                  :dialect-keys (:dialect :cljs :target :browser)
+                  :found (:changed ((:file "/p/src/app/core.cljs")) :connected t))
+                 (:label "ClojureScript (node)"
+                  :dialect-keys (:dialect :cljs :target :node)
+                  :found (:changed nil :stale nil :connected t)))
+               "/p/")))
+    (should (string-match-p "^Clojure$" text))
+    (should (string-match-p "ClojureScript (browser)" text))
+    (should (string-match-p "ClojureScript (node)" text))
+    (should (string-match-p "src/app/util.clj" text))
+    (should (string-match-p "src/app/core.cljs" text))
+    (should (string-match-p "Nothing has changed since this process compiled it" text))
+    ;; in the order they are reloaded in, which is the order they are shown in
+    (should (< (string-match "util.clj" text) (string-match "core.cljs" text)))))
+
+(ert-deftest replique-stale-test-a-runtime-with-nowhere-to-run-it-says-so ()
+  "A ClojureScript reload has a second act - the bodies have to be run in the
+runtime - so a runtime with nothing connected to it is a reload that would
+compile all of it and land nowhere.  Under the files, because it is the
+answer to \"and then what\"; and only where there are files, because a
+language with nothing to load has no then."
+  (let ((stuck (replique-stale-test--shown-all
+                '((:label "ClojureScript (browser)"
+                   :dialect-keys (:dialect :cljs :target :browser)
+                   :found (:changed ((:file "/p/a.cljs")) :connected nil)))
+                "/p/"))
+        (empty (replique-stale-test--shown-all
+                '((:label "ClojureScript (browser)"
+                   :dialect-keys (:dialect :cljs :target :browser)
+                   :found (:changed nil :stale nil :connected nil)))
+                "/p/"))
+        (clj (replique-stale-test--shown-all
+              '((:label "Clojure" :dialect-keys nil
+                 :found (:changed ((:file "/p/a.clj")))))
+              "/p/")))
+    (should (string-match-p "Nothing is connected to this runtime" stuck))
+    (should (< (string-match "a.cljs" stuck)
+               (string-match "Nothing is connected" stuck)))
+    (should-not (string-match-p "Nothing is connected" empty))
+    ;; and never of Clojure, where the question does not exist
+    (should-not (string-match-p "Nothing is connected" clj))))
+
+(ert-deftest replique-stale-test-a-refused-question-is-shown-as-refused ()
+  "One question refused is nothing to show and is said in the echo area.  One
+of several refused, beside the ones that were answered, is a fact about
+this process worth reading next to the rest - and two empty lists under a
+heading would report a process that cannot answer as one with nothing to
+do."
+  (let ((text (replique-stale-test--shown-all
+               '((:label "Clojure" :dialect-keys nil
+                  :found (:tag "error" :message "no analysis here"))
+                 (:label "ClojureScript (node)"
+                  :dialect-keys (:dialect :cljs :target :node)
+                  :found (:changed ((:file "/p/a.cljs")) :connected t)))
+               "/p/")))
+    (should (string-match-p "no analysis here" text))
+    (should-not (string-match-p "Nothing has changed" text))))
+
+(ert-deftest replique-stale-test-the-stylesheets-are-a-weaker-fact-and-say-so ()
+  "The other sections are what the process compiled and when.  This one is
+two modification times compared in Emacs, because the process has never
+heard of a .scss - so the heading says what it is rather than claiming the
+build would read these."
+  (let ((text (replique-stale-test--shown-all
+               '((:label "Clojure" :dialect-keys nil
+                  :found (:changed nil :stale nil)))
+               "/p/"
+               '(("/p/public/css/main.css" . "/p/scss/_colours.scss")))))
+    (should (string-match-p "Stylesheets" text))
+    (should (string-match-p "public/css/main.css" text))
+    (should (string-match-p "scss/_colours.scss is newer" text))
+    (should (string-match-p "sass's to know" text))))
+
+(ert-deftest replique-stale-test-a-stylesheet-opens-and-the-source-does-not ()
+  "The output is the file that is behind - what a page fetches, and what a
+build would write over.  The source is named beside it to say what the
+output is behind, and it is one of many."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'find-file-noselect)
+               (lambda (path &rest _) (setq opened path) (current-buffer)))
+              ((symbol-function 'file-exists-p) (lambda (_) t))
+              ((symbol-function 'pop-to-buffer) #'ignore))
+      (with-temp-buffer
+        (setq replique-stale--process (replique-process--make :directory "/p/")
+              replique-stale--sections nil
+              replique-stale--stylesheets
+              '(("/p/public/css/main.css" . "/p/scss/main.scss")))
+        (replique-stale--render)
+        (goto-char (point-min))
+        (should (search-forward "public/css/main.css" nil t))
+        (push-button (1- (point)))))
+    (should (equal "/p/public/css/main.css" opened))))
+
+(ert-deftest replique-stale-test-the-application-is-asked-once-per-repl ()
+  "One question per language and runtime rather than one per repl - two repls
+on one runtime are one program - in the order they would be reloaded, and
+the buffer is written when the last of them has arrived."
+  (let ((asked nil)
+        (shown nil))
+    (cl-letf (((symbol-function 'replique-reload--repls)
+               (lambda (_process)
+                 (list 'clj-repl 'browser-repl)))
+              ((symbol-function 'replique-reload--dialect-keys)
+               (lambda (repl)
+                 (when (eq repl 'browser-repl) '(:dialect :cljs :target :browser))))
+              ((symbol-function 'replique-reload--label)
+               (lambda (repl)
+                 (if (eq repl 'browser-repl) "ClojureScript (browser)" "Clojure")))
+              ((symbol-function 'replique-css-stale-in) (lambda (_root) nil))
+              ((symbol-function 'replique-process-request)
+               (lambda (_process msg callback)
+                 (push msg asked)
+                 (funcall callback '(:changed nil :stale nil :connected t))))
+              ((symbol-function 'pop-to-buffer)
+               (lambda (buffer &rest _) (setq shown buffer))))
+      (replique-stale--ask-app (replique-process--make :directory "/p/")))
+    (should (equal '((:op :stale)
+                     (:op :stale :dialect :cljs :target :browser))
+                   (nreverse asked)))
+    (should (buffer-live-p shown))
+    (with-current-buffer shown
+      (should (eq 'app replique-stale--scope))
+      (should (string-match-p "ClojureScript (browser)" (buffer-string))))
+    (when (get-buffer "*replique-stale*") (kill-buffer "*replique-stale*"))))
 
 (provide 'replique-stale-test)
 

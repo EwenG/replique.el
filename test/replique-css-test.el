@@ -358,6 +358,74 @@ can say."
                           (string-match-p "No browser is connected\\|ClojureScript" l))
                         said)))))
 
+;;; What a build would get ahead of
+
+(defmacro replique-css-test--with-tree (root &rest body)
+  "Run BODY with ROOT bound to a project holding a stylesheet tree.
+
+  scss/main.scss, scss/_colours.scss and public/css/main.css, written in
+that order so that the built file is the newest thing there - which is a
+project with nothing stale in it, and the state every test here starts
+from."
+  (declare (indent 1))
+  `(let ((,root (make-temp-file "replique-css-test" t)))
+     (unwind-protect
+         (let ((replique-css-entry "scss/main.scss")
+               (replique-css-outputs '("public/css/main.css"))
+               (replique-css-build-command nil))
+           (make-directory (expand-file-name "scss" ,root))
+           (make-directory (expand-file-name "public/css" ,root) t)
+           (dolist (file '("scss/main.scss" "scss/_colours.scss"
+                           "public/css/main.css"))
+             (write-region "" nil (expand-file-name file ,root))
+             ;; a second apart, because a filesystem that keeps whole seconds
+             ;; would otherwise make every file here the same age
+             (set-file-times (expand-file-name file ,root)
+                             (time-add (current-time)
+                                       (seq-position '("scss/main.scss"
+                                                       "scss/_colours.scss"
+                                                       "public/css/main.css")
+                                                     file))))
+           ,@body)
+       (delete-directory ,root t))))
+
+(ert-deftest replique-css-test-a-built-stylesheet-newer-than-its-sources-is-not-stale ()
+  "Which is the ordinary state of a project somebody has just built."
+  (replique-css-test--with-tree root
+    (should-not (replique-css-stale-in root))))
+
+(ert-deftest replique-css-test-a-partial-saved-since-the-build-is-stale ()
+  "The question somebody has is whether the .css a page fetches is behind the
+.scss, and a partial is where most editing happens - which is exactly the
+edit that shows nowhere else, since no .scss file is a file the process has
+ever heard of."
+  (replique-css-test--with-tree root
+    (let ((partial (expand-file-name "scss/_colours.scss" root)))
+      (set-file-times partial (time-add (current-time) 10))
+      (let ((stale (replique-css-stale-in root)))
+        (should (equal (list (expand-file-name "public/css/main.css" root))
+                       (mapcar #'car stale)))
+        (should (equal partial (cdr (car stale))))))))
+
+(ert-deftest replique-css-test-a-stylesheet-that-was-never-built-is-behind ()
+  "A page fetching it gets nothing.  There is no built file for a source to
+be newer than, and the source is named all the same because it is what the
+build would read."
+  (replique-css-test--with-tree root
+    (delete-file (expand-file-name "public/css/main.css" root))
+    (should (equal (list (expand-file-name "public/css/main.css" root))
+                   (mapcar #'car (replique-css-stale-in root))))))
+
+(ert-deftest replique-css-test-a-project-that-cannot-be-asked-answers-nothing ()
+  "`replique-css-build-command' is a command, and a command is not a list of
+files: what it reads is its own business.  Nil rather than an empty list,
+so that the section showing this is absent rather than claiming a project
+with nothing stale in it."
+  (replique-css-test--with-tree root
+    (let ((replique-css-entry nil)
+          (replique-css-build-command '("make" "css")))
+      (should-not (replique-css-stale-in root)))))
+
 (provide 'replique-css-test)
 
 ;;; replique-css-test.el ends here

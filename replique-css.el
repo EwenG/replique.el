@@ -299,6 +299,14 @@ keystroke, with \\[keyboard-quit] to abandon it."
 ;; under `scss-mode' has them nil in a .clj buffer, and the whole-application
 ;; reload would there find a project that says nothing about stylesheets.
 
+(defconst replique-css-source-suffixes
+  '(".css" ".scss" ".sass" ".less")
+  "The file names a stylesheet build might read.
+
+By name and not by major mode, which is how `replique-reload-css\=' decides
+the same thing and for the same reason: the fact is the file, and which
+mode you happen to read a .scss in is yours.")
+
 (defun replique-css-configured-p ()
   "Whether this project says how to build its stylesheets.
 
@@ -316,6 +324,59 @@ and is not a project with anything wrong with it - see
 `replique-css-outputs\\=' made absolute.  These are what is reloaded: the
 .scss being edited is not a file any browser has ever asked for."
   (mapcar (lambda (output) (expand-file-name output root)) replique-css-outputs))
+
+(defun replique-css--sources-in (root)
+  "Every file a build of this project might read, under ROOT.
+
+THE DIRECTORY `replique-css-entry\=' IS IN, walked.  Which is a guess and
+is the only one available: what a build reads is what the entry point
+`@use\='s, and the file that knows is sass rather than anything here.  A
+stylesheet tree is a directory, so the directory is what is looked at -
+and a project whose partials are somewhere else is a project this
+undercounts, which is a wrong answer in the safe direction: it reports
+less staleness than there is, and the build that follows reads the truth
+either way.
+
+Nil where this project says only how to run its build and not what it
+reads: `replique-css-build-command\=' is a command, and a command is not a
+list of files.  The section that shows this is then absent rather than
+empty - a project that cannot be asked is not a project with nothing
+stale in it."
+  (when-let* ((entry (and replique-css-entry
+                          (expand-file-name replique-css-entry root)))
+              (dir (file-name-directory entry))
+              (_ (file-directory-p dir)))
+    (directory-files-recursively
+     dir (concat "\\(?:" (regexp-opt replique-css-source-suffixes) "\\)\\'"))))
+
+(defun replique-css-stale-in (root)
+  "The built stylesheets under ROOT that a source has got ahead of.
+
+A list of (OUTPUT . SOURCE): the .css a page fetches, and the newest file
+the build would read.  Nil where everything built is newer than
+everything read, and nil where this project cannot be asked - see
+`replique-css--sources-in\='.
+
+A WEAKER FACT THAN THE OTHER TWO LISTS, and the heading that shows it has
+to say so.  What the process answers about Clojure and ClojureScript is
+what it compiled and when; this is two modification times compared, with
+no idea which partial the entry point actually reads.  A build run after
+it rebuilds the entry whatever this said.  Which still answers the
+question somebody has - is the .css on disk behind the .scss - and that
+question has had no answer at all until now.
+
+The output that is not there yet counts as behind, since a page fetching
+it gets nothing: there is no built file for a source to be newer than,
+and the source is named all the same because it is what the build would
+read."
+  (when-let* ((sources (replique-css--sources-in root))
+              (newest (car (sort sources
+                                 (lambda (a b) (file-newer-than-file-p a b))))))
+    (seq-keep (lambda (output)
+                (when (or (not (file-exists-p output))
+                          (file-newer-than-file-p newest output))
+                  (cons output newest)))
+              (replique-css-outputs-in root))))
 
 (defun replique-css-build (root)
   "Build this project\\='s stylesheets in ROOT, and return what failed.

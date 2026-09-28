@@ -316,19 +316,55 @@ nothing to do with it, and being asked about one is being asked a question
 that is not about what was asked for."
   (and buffer-file-name (derived-mode-p 'replique-clojure-mode)))
 
+(defcustom replique-reload-timeout 30000
+  "How long a ClojureScript runtime is given to run what a reload compiled.
+
+In milliseconds, or nil to wait for as long as it takes.
+
+ONLY THE CLOJURESCRIPT HALF HAS ANYTHING TO WAIT FOR.  A Clojure reload
+ends when the files have been loaded in the process; a ClojureScript one
+has a second act - the recompiled bodies have to be run in the page or
+the node process the repl is talking to - and a runtime that has stopped
+answering is otherwise waited for without end.
+
+WHICH A CONNECTED PAGE CAN DO, and that is why this is not nil.  A tab
+asleep on a laptop answers eventually, and a page whose main module names
+a port this process does not own fetches modules that 404 and never
+finishes.  Neither of those looks like a page that is gone - a page that
+is gone is noticed at once and says so - and before this bound they were
+an editor that did not come back.
+
+WHY THE EDITOR SAYS IT AND THE PROCESS DOES NOT.  A reload typed at a
+prompt is a form like any other and should wait as long as it takes; a
+reload a command sent is one nobody is watching a particular expression
+of, and it must not be able to take Emacs with it.  Those are the same
+directive, and only the side that sent it knows which it was.
+
+Thirty seconds because it is not a budget for the work.  The bound is per
+file shipped, not over the whole reload, so a big program is not what
+runs into it - only a runtime that has gone quiet is.  What comes back
+then says which of the two it was: the file never got in front of the
+runtime, or the runtime has it and is still thinking."
+  :type '(choice (const :tag "Wait for as long as it takes" nil)
+                 (integer :tag "Milliseconds"))
+  :group 'replique)
+
 (defun replique-reload-directive ()
   "Return the directive asking for everything that changed to be loaded.
 
 Which files those are is the process's question to answer, not the
 client's: it knows what it read and when, and nothing in a buffer does.
 
-The map is empty and is written all the same.  A tagged literal reads the
-form after it whatever that form is, and what is asked for here has
-somewhere to go the day there is something to ask for.
+What is in the map is `replique-reload-timeout\=', which is the one thing
+the process cannot work out for itself: how long a runtime may take
+before whoever asked would rather have a sentence than an answer.  A
+reload sent from here is always a reload a command sent.
 
 Sent to the repl rather than asked of the process on the side, for
 everything a load is - see `replique-load-directive'."
-  "#replique/reload {}")
+  (if replique-reload-timeout
+      (format "#replique/reload {:timeout %d}" replique-reload-timeout)
+    "#replique/reload {}"))
 
 (defun replique-eval--send (nodes)
   "Evaluate NODES, forms of the current buffer, in this buffer\\='s repl.
@@ -620,9 +656,15 @@ the staleness buffer is showing.  Nil means this buffer\\='s own."
   "Ask REPL to load every file that changed since the process read it.
 
 What `replique-reload-all\\=' is once the repl has been decided and the
-buffers have been saved.  Which is the half `replique-reload-app\\=' shares
-with it: that one reloads every language the process has open, so it
-decides both of those for itself and what it wants from here is only this.
+buffers have been saved.
+
+NOT WHAT `replique-reload-app\\=' USES, although the directive is the same
+one and this used to be where it got it.  That command reloads several
+repls one after another and must not hold the editor for the length of
+all of them, so it sends each one with `replique-repl-send-code-then\\='
+and carries on from the callback: the order without the waiting.  What
+is left here is the half that waits, which is what a caller with a
+question to ask afterwards needs.
 
 WAITING holds the editor until the loading has ended and returns the
 frame that ended it - see `replique-reload-all\\='."

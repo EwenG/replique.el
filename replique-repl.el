@@ -1078,6 +1078,45 @@ in the echo area too."
       (setf (replique-repl--to-echo repl) (1+ (or (replique-repl--to-echo repl) 0))))
     (replique-conn-send-code conn code)))
 
+(defun replique-repl-send-code-then (repl code display callback)
+  "Evaluate CODE in REPL, and call CALLBACK with the frame that ended it.
+
+`replique-repl-send-code-sync\=' without the waiting, and the same three
+frames end an evaluation: the \"ret\" carrying what it printed and
+returned, the \"exception\" carrying what it threw, or the \"error\"
+saying the repl could not read it.  DISPLAY is what the repl buffer is
+shown instead of CODE, as in `replique-repl-send-code\='.
+
+FOR A COMMAND THAT IS SEVERAL EVALUATIONS IN A ROW, which is the one shape
+that made the synchronous version necessary and does not need it: a
+ClojureScript compile expands Clojure macros, so a whole-application
+reload has to know the Clojure load ended before it starts the
+ClojureScript one.  That is an ORDER and not a WAIT.  CALLBACK sends the
+next one, and Emacs is free in between - which is the difference between
+a reload that takes twenty seconds and an editor that is gone for twenty
+seconds.
+
+Only when the repl is at a prompt, for `replique-repl-send-code-sync\='s
+reason and with one more consequence: nothing matches a frame to what
+asked for it, so the evaluation that ends next is whichever was running.
+A caller stepping through several repls has to ask again before each
+step, because between two steps the repl is free and somebody may have
+typed in it.
+
+CALLBACK IS CALLED ON THE PROCESS FILTER, which is what it means for this
+not to wait: whatever it does happens while Emacs is in the middle of
+reading from a socket.  A repl that closes under it is a frame that never
+comes, and a caller with something to finish has nothing to hang its
+finishing on - which is the price of not holding the editor, and is why
+this is for commands rather than for questions."
+  (let ((conn (replique-repl--conn repl)))
+    (unless (replique-conn-live-p conn)
+      (user-error "The repl is closed"))
+    (unless (replique-repl--at-prompt repl)
+      (user-error "The repl is busy with something else"))
+    (setf (replique-repl--on-end repl) callback)
+    (replique-repl-send-code repl code display t)))
+
 (defun replique-repl-send-code-sync (repl code &optional display)
   "Evaluate CODE in REPL, wait for it to end, and return the frame that ended it.
 

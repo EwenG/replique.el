@@ -9,8 +9,9 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
       replique-repl.el replique-locals.el replique-deps.el replique-eval.el \
       replique-pprint.el replique-forms.el replique-name.el \
       replique-fresh.el \
-      replique-completion.el replique-symbol.el replique-stale.el \
-      replique-main-js.el replique-css.el replique-reload.el replique.el
+      replique-completion.el replique-symbol.el \
+      replique-main-js.el replique-css.el replique-reload.el \
+      replique-stale.el replique.el
 
 LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-edn.el replique-conn.el \
@@ -18,8 +19,9 @@ LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-process.el replique-repl.el replique-locals.el replique-deps.el \
        replique-eval.el replique-pprint.el replique-forms.el replique-name.el \
        replique-fresh.el \
-       replique-completion.el replique-symbol.el replique-stale.el \
-       replique-main-js.el replique-css.el replique-reload.el replique.el
+       replique-completion.el replique-symbol.el \
+       replique-main-js.el replique-css.el replique-reload.el \
+       replique-stale.el replique.el
 
 .PHONY: all compile native test lint clean
 
