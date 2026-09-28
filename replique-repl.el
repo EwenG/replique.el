@@ -140,6 +140,24 @@ from one somebody else chose."
       (setf (replique-repl--at-prompt repl) nil)
       (comint-output-filter proc (if face (propertize string 'face face) string)))))
 
+(defun replique-repl--aside (buffer string &optional face)
+  "Write STRING at the end of BUFFER, in FACE, as replique\\='s own word.
+
+NOT `replique-repl--insert\\=', which writes what the repl said and needs a
+repl to read a connection and a process mark off.  What goes through here
+is what replique has to say about a connection that has none - one being
+opened, and one that was refused or has closed - so it writes into the
+buffer and nothing else.
+
+At the end and leaving point where it was: the buffer may be the one
+somebody is reading, and a note is not a reason to move them."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (insert (propertize string 'face (or face 'replique-note))))))))
+
 (defun replique-repl--unattended (repl &optional string face)
   "Note STRING, shown in FACE, arriving in REPL with nothing waiting for it.
 
@@ -237,6 +255,38 @@ be shown as cut rather than as a whole one."
      (cut " (the chain goes on below the causes carried)")
      (t nil))))
 
+(defun replique-repl--runtime (repl frame)
+  "Say what FRAME, the `runtime\\=' event of REPL, came to.
+
+WHAT A CLOJURESCRIPT HANDSHAKE NO LONGER SAYS.  The reply comes back
+before the compiler is loaded and before the runtime is started, because
+those are seconds and a handshake that waits for them is a handshake an
+editor gives up on - see `replique-repl\\='.  So where the runtime is
+arrives afterwards, as this, and it is the frame before the first prompt.
+
+TWO THINGS AND THE SAME FRAME CARRIES EITHER.  A `url\\=' is the page to
+open, which only a browser repl has.  A `message\\=' is why there is no
+runtime and so no prompt either - a compiler that would not load, a node
+that is not on PATH, a port already taken - and the connection closes
+after it.
+
+A node runtime that started says neither, and there is nothing to write:
+what it would say is that the waiting is over, and the prompt says that
+better."
+  (let ((message (plist-get frame :message))
+        (url (plist-get frame :url)))
+    (cond
+     (message
+      (replique-repl--unattended repl (concat message "\n") 'replique-exception)
+      (replique-repl--insert
+       repl
+       (replique-exception-button (concat message "\n")
+                                  (plist-get frame :exception)
+                                  message nil "starting the runtime")
+       'replique-exception))
+     (url
+      (replique-repl--insert repl (format "Open %s\n" url) 'replique-note)))))
+
 (defun replique-repl--frame (repl frame)
   "Render FRAME in the buffer of REPL."
   (pcase (plist-get frame :tag)
@@ -307,6 +357,12 @@ be shown as cut rather than as a whole one."
                                     (plist-get frame :message))
                             'replique-exception)
      (replique-repl--ended repl frame))
+    ;; A repl connection carries one, and it is the runtime a ClojureScript
+    ;; repl is waiting for - see `replique-repl--runtime'.  Anything else is
+    ;; the control connection's business and is not read here
+    ("event"
+     (when (equal "runtime" (plist-get frame :event))
+       (replique-repl--runtime repl frame)))
     (_ nil)))
 
 ;;; Whether what is typed is a form yet
@@ -725,10 +781,21 @@ on the browser the page is what loads it, whenever somebody opens the
 page.  A namespace that does not compile is written into the buffer,
 before the prompt.
 
-A ClojureScript repl on the browser answers the handshake with the page
-to open, which is the whole of what such a repl needs of whoever started
-it: nothing runs, and so nothing is evaluated, until a browser is on that
-page.  It is written into the buffer before the first prompt."
+A CLOJURESCRIPT HANDSHAKE IS ANSWERED AT ONCE AND ITS RUNTIME STARTED
+AFTERWARDS, which is what the seconds between opening this and the first
+prompt are.  Loading the compiler takes clojure\\='s require lock with it,
+so a Clojure repl on the same process that is loading anything at all
+holds those seconds open for as long as it takes - and a handshake that
+waited would be one `replique-conn-handshake-timeout\\=' gives up on, which
+reads in the buffer as a process that died.
+
+So the page to open arrives afterwards, as the `runtime\\=' event
+`replique-repl--runtime\\=' writes into the buffer - and it is the whole of
+what a browser repl needs of whoever started it: nothing runs, and so
+nothing is evaluated, until a browser is on that page.  Why there will be
+no runtime arrives the same way, and so does why there is no repl at all:
+a refused handshake says so in the buffer rather than only in the echo
+area."
   (interactive (replique-repl--read))
   (let* ((process (or process (replique-process-ensure)))
          ;; Named from what is being asked for, and named again from the
@@ -761,7 +828,8 @@ page.  It is written into the buffer before the first prompt."
                          (when main (list :main main)))
           :on-ready (lambda (conn)
                       (let ((proc (replique-conn--proc conn))
-                            (url (plist-get (replique-conn--info conn) :url)))
+                            (cljs (equal "cljs" (plist-get (replique-conn--info conn)
+                                                           :dialect))))
                         (process-put proc 'replique-repl repl)
                         ;; Before anything is written into the buffer, so
                         ;; that what a repl says arrives in a buffer already
@@ -772,28 +840,56 @@ page.  It is written into the buffer before the first prompt."
                           ;; Before the process mark is set, so that the
                           ;; mark - and the prompt the process writes at
                           ;; it - comes after the note rather than before
-                          ;; it.  `replique-repl--insert' is what would
+                          ;; it.  `replique-repl--aside' is what would
                           ;; write this anywhere else, and it cannot be
-                          ;; used here: it reads the connection off the
-                          ;; repl, which is being opened and is not on it
+                          ;; used here: it writes at the end and this has
+                          ;; to be written before a mark that is not set
                           ;; yet
-                          (when url
+                          ;;
+                          ;; SAID BECAUSE NOTHING ELSE IS, and for as long
+                          ;; as it takes: a ClojureScript handshake is
+                          ;; answered at once and its compiler and its
+                          ;; runtime are started afterwards - see
+                          ;; `replique-repl--runtime' - so between this and
+                          ;; the first prompt there are seconds in which
+                          ;; the buffer would otherwise be empty, which is
+                          ;; what a repl that failed to open looks like
+                          (when cljs
                             (let ((inhibit-read-only t))
                               (insert (propertize
-                                       (format "Open %s\n" url)
+                                       "Starting the ClojureScript compiler and its runtime...\n"
                                        'face 'replique-note))))
                           (goto-char (point-max))
                           (set-marker (process-mark proc) (point))
                           (run-hooks 'comint-exec-hook))))
           :on-frame (lambda (frame) (replique-repl--frame repl frame))
+          ;; IN THE BUFFER AND NOT ONLY IN THE ECHO AREA, which is what
+          ;; giving this at all is for.  A refused handshake closes the
+          ;; connection, so without it the buffer says "The connection is
+          ;; closed" and nothing else, the reason having been a message that
+          ;; is gone by the time anybody looks - and a repl that would not
+          ;; open reads as a process that died.  The buffer is what is still
+          ;; there afterwards, so the reason goes there and the echo area
+          ;; keeps its copy for whoever is looking now
+          :on-error (lambda (frame)
+                      (let* ((host (replique-process--host process))
+                             (port (replique-process--port process))
+                             (kind (plist-get frame :error))
+                             (said (cond
+                                    ((equal kind replique-conn-closed-error)
+                                     (format "%s:%s closed the connection before answering"
+                                             host port))
+                                    ((equal kind replique-conn-unanswered-error)
+                                     (format "%s:%s took the connection and did not answer in %ss"
+                                             host port replique-conn-handshake-timeout))
+                                    (t (format "%s (%s)"
+                                               (plist-get frame :message) kind)))))
+                        (replique-repl--aside
+                         buffer (format "This repl could not be opened: %s\n" said)
+                         'replique-exception)
+                        (message "replique: %s" said)))
           :on-close (lambda (_conn)
-                      (when (buffer-live-p buffer)
-                        (with-current-buffer buffer
-                          (let ((inhibit-read-only t))
-                            (save-excursion
-                              (goto-char (point-max))
-                              (insert (propertize "\nThe connection is closed\n"
-                                                  'face 'replique-note))))))
+                      (replique-repl--aside buffer "\nThe connection is closed\n")
                       (setf (replique-process--repls process)
                             (delq repl (replique-process--repls process)))
                       (when (eq replique-current-repl repl)
