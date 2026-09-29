@@ -44,6 +44,7 @@
 
 ;;; Code:
 
+(require 'seq)
 (require 'subr-x)
 (require 'replique-eval)
 (require 'replique-name)
@@ -191,6 +192,63 @@ asks."
                         written (plist-get frame :main) (plist-get frame :url))
              (message "replique: %s connects to %s and loads nothing"
                       written (plist-get frame :url)))))))))
+
+
+;;;###autoload
+(defun replique-refresh-main-js (&optional process)
+  "Move every main module under PROCESS\='s directory to its port.
+
+PROCESS is the one to ask, the one the commands act on by default.
+
+THIS IS THE ONE FOR A HOOK, and `replique-main-js\=' is the one to keep out
+of one - the difference is what each does when no browser runtime is up.
+Writing a module is writing a port, so asking for it starts the two
+servers; moving one to a port that does not exist yet is nothing anybody
+wants, so this leaves them alone and says nothing moved.
+
+WHAT IT IS FOR IS THE FILES MOVING RATHER THAN THE PORT.  A process
+refreshes every main module under its directory when its browser runtime
+starts, which is the moment the port changes and the only such moment the
+process can find by itself.  It is not the only moment the answer
+changes: a project directory that is a tree of links into a checkout
+elsewhere - one directory pointed at whichever worktree is being worked
+on - has another checkout\='s modules under it the moment those links move,
+naming whichever port was current the day they were last written.  The
+process cannot see that happen.  Whoever moved the links can, and this is
+what they say it with.
+
+Nothing waits for the answer, and what moved is said when it arrives.
+Silent where nothing did, which is most of the time and every project
+with no main module in it."
+  (interactive)
+  (let ((process (or process (replique-name-process) (replique-process-ensure))))
+    (replique-process-request
+     process (list :op :refresh-main-js)
+     (lambda (frame)
+       (if (equal "error" (plist-get frame :tag))
+           (message "replique: %s" (plist-get frame :message))
+         (let* ((modules (plist-get frame :modules))
+                (failed (seq-filter (lambda (m) (plist-get m :error)) modules))
+                (moved (seq-count (lambda (m) (plist-get m :refreshed)) modules)))
+           (cond
+            ;; A module the process could not read or write is the one
+            ;; thing here worth a sentence of its own: the file is still
+            ;; naming a port nobody serves, and the page that includes it
+            ;; will reach nothing at all.
+            (failed
+             (message "replique: %s"
+                      (mapconcat
+                       (lambda (m)
+                         (format "%s: %s"
+                                 (replique-main-js--label
+                                  (plist-get m :file)
+                                  (replique-process--directory process))
+                                 (plist-get m :error)))
+                       failed "; ")))
+            ((> moved 0)
+             (message "replique: %d main module%s refreshed to %s"
+                      moved (if (> moved 1) "s" "")
+                      (plist-get frame :url))))))))))
 
 (provide 'replique-main-js)
 
