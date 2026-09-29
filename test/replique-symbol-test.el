@@ -846,6 +846,27 @@ they would rather be told by something else."
     (should-not (memq #'replique-symbol-eldoc eldoc-documentation-functions))
     (should-not (memq #'replique-symbol-xref-backend xref-backend-functions))))
 
+(ert-deftest replique-symbol-test-a-package-says-what-of-it-is-used ()
+  "Every use of a package of the host's says which part of it it was, and
+what is said beside the list is those parts counted - the module itself
+under its own name, and a :refer in the ns form not at all, since it is
+where a name is written and not a use of it."
+  (let ((said nil)
+        (usages (list (list :member "trim") (list :member "startsWith")
+                      (list :member "trim") (list :member nil)
+                      (list :member "trim" :declaration "refer"))))
+    (should (equal '(("trim" . 2) ("startsWith" . 1) (nil . 1))
+                   (replique-symbol--members usages)))
+    (cl-letf (((symbol-function 'message)
+               (lambda (format &rest args) (setq said (apply #'format format args)))))
+      (replique-symbol--say-members (list :type "host" :kind "js-module" :name "fs") usages))
+    (should (equal "fs: trim ×2, startsWith ×1, fs ×1" said))
+    ;; and nothing for the uses of one thing, which carry no member
+    (setq said nil)
+    (replique-symbol--say-members (list :type "host" :name "trim")
+                                  (list (list :line 1) (list :line 2)))
+    (should-not said)))
+
 (provide 'replique-symbol-test)
 
 ;;; replique-symbol-test.el ends here

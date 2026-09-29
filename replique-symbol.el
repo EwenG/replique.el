@@ -607,6 +607,37 @@ also the order the summaries are cut up in - see
                    (kill-buffer (car value))))
                opened))))
 
+(defun replique-symbol--members (usages)
+  "Return what USAGES use of a package, as (MEMBER . COUNT), most used first.
+
+A use of the package itself rather than of anything in it - the module
+object, js/console as a value - is counted under the package's own name,
+which is nil here and is written as such by `replique-symbol--say-members'."
+  (let ((counts nil))
+    (dolist (usage usages)
+      (unless (plist-get usage :declaration)
+        (let* ((member (plist-get usage :member))
+               (entry (assoc member counts)))
+          (if entry (setcdr entry (1+ (cdr entry))) (push (cons member 1) counts)))))
+    ;; In the order they were first used among equals, which is the order the
+    ;; list shows them in: `sort' keeps it
+    (sort (nreverse counts) (lambda (a b) (> (cdr a) (cdr b))))))
+
+(defun replique-symbol--say-members (found usages)
+  "Say which parts of the package FOUND names USAGES use, where they say.
+
+Where the name at point is a package of the host's - a JavaScript module,
+a Closure namespace, an object under js/ - every use of anything in it is
+an answer, and each says which part of it it was.  The list shows the
+places; this is the other half of the question, which the list only says
+one line at a time: what the project uses of the package at all."
+  (when (cl-some (lambda (usage) (plist-get usage :member)) usages)
+    (let ((name (replique-symbol-full-name found)))
+      (message "%s: %s" name
+               (mapconcat (lambda (entry)
+                            (format "%s ×%d" (or (car entry) name) (cdr entry)))
+                          (replique-symbol--members usages) ", ")))))
+
 (cl-defmethod xref-backend-references ((_backend (eql replique)) identifier)
   "Return every place IDENTIFIER is used, as a list of xref items.
 
@@ -616,6 +647,9 @@ project is, and it is xref's command rather than one of replique's.
 
 A var, a keyword and a class are all answered, since all three are things
 somebody renames and none of the three can be found by reading the text.
+So is a name of the host's in ClojureScript - js/console, gstr/trim, an
+export of a JavaScript module - and a package of them, whose answer is
+every use of anything in it: see `replique-symbol--say-members'.
 
 A local is not: it is bound by a form in this buffer, the process has
 never seen it, and a process that answered about one would be answering
@@ -644,6 +678,7 @@ everywhere has to be all of them."
       (when frame
         (when (equal "error" (plist-get frame :tag))
           (user-error "Replique: %s" (plist-get frame :message)))
+        (replique-symbol--say-members (plist-get frame :symbol) (plist-get frame :usages))
         (replique-symbol--references (plist-get frame :usages))))))
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql replique)))
