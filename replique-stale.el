@@ -183,6 +183,40 @@ behind, and it is one of many."
                     (replique-stale--path-label (cdr pair) directory))
             "\n")))
 
+(defun replique-stale--insert-unread (unread)
+  "Say that UNREAD of this project\='s files are running here and unread.
+
+THE ANSWER ABOVE IS PARTIAL, AND NOTHING ELSE IN IT SAYS SO.  A model
+holds what the compiler read while it was loading a file; a namespace
+that arrived by `require\=' - at a prompt, from an init script, or pulled
+in by the first one that was loaded - is loaded, is running, and is in no
+model.  So the lists above are the whole truth about the files the
+process has read, and say nothing whatever about the rest: read off one
+of those, `nothing has changed\=' is an application reported as up to date
+by a process that has never heard of most of it.
+
+THE CASE WORTH THE SENTENCE IS NOT THE EMPTY MODEL, which is answered
+above this and is rare.  It is the model with one or two files in it,
+which is what a process whose application came up by `require\=' and was
+then loaded from once actually holds - not zero, so it reads as a model,
+and it answers nothing whatever is edited.
+
+Written under the answer rather than instead of it, and under both of the
+shapes the answer takes: a partial list of changed files is worth having
+and is still partial."
+  (insert "\n  " (number-to-string unread)
+          (if (eql 1 unread)
+              " more file of this project is running here and has\n  not been read"
+            " more files of this project are running here and have\n  not been read")
+          ", so nothing above speaks for "
+          (if (eql 1 unread) "it" "them") ".\n"
+          "\n  What this process holds is what its compiler read while it was\n"
+          "  loading a file for you - "
+          (replique-stale--load-key)
+          " - and a namespace that arrived\n"
+          "  by `require', at a prompt or from an init script, is loaded, is\n"
+          "  running, and is not in it.\n"))
+
 (defun replique-stale--render-section (section directory named)
   "Write SECTION into the current buffer, naming files from DIRECTORY.
 
@@ -247,7 +281,20 @@ which is which."
                (not (plist-get found :connected)))
       (insert "\n  Nothing is connected to this runtime, so a reload would compile\n"
               "  all of it and land nowhere.  Open the application, or check that\n"
-              "  its main module names this process - M-x replique-main-js.\n"))))
+              "  its main module names this process - M-x replique-main-js.\n"))
+    ;; And under everything, because it is true of everything above it: the
+    ;; lists and the sentence that stands in for them are equally about the
+    ;; files this process has read, and equally silent about the rest.  Not
+    ;; where the process refused the question, which has no answer to be
+    ;; partial, and not where it has read nothing at all, which is said in
+    ;; full above and would otherwise be said twice.  An answer with no such
+    ;; count in it is a process older than this one and is read as it always
+    ;; was.
+    (let ((unread (plist-get found :unread)))
+      (when (and (not (equal "error" (plist-get found :tag)))
+                 (not (eql 0 (plist-get found :analysed)))
+                 (integerp unread) (> unread 0))
+        (replique-stale--insert-unread unread)))))
 
 (defun replique-stale--render ()
   "Write what the process answered into the current buffer."
@@ -402,6 +449,15 @@ application that arrived by `require\\=', from an init script or at a prompt,
 is running and is in no model.  It would answer two empty lists whatever
 was edited, and reading that as an application up to date is reading it
 off a process that has never heard of it.
+
+AND SO DOES ONE THAT HAS READ ALMOST NONE OF THEM, which is the same
+state and the one a process is actually in: an application required in and
+then loaded from once has read a file, so it is not nothing, and its lists
+are the whole truth about that one file and silent about the other three
+hundred.  Where there are files running here that no model holds, every
+section of Clojure says how many under whatever it answered - the lists as
+much as the sentence that stands in for them, since a partial list is
+worth having and is still partial.
 
 AND THE STYLESHEETS, WHICH ARE A WEAKER FACT AND SAY SO.  The other
 sections are what the process compiled and when.  This one is the built

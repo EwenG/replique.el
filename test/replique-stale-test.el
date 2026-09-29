@@ -81,6 +81,66 @@ date is reading it off a process that has never heard of it."
     (should-not (string-match-p "arrived by `require'" cljs))
     (should (string-match-p "Nothing has changed" read))))
 
+(ert-deftest replique-stale-test-a-model-that-holds-almost-nothing-says-so ()
+  "The case the count of what has been read cannot catch, and the one a
+process actually ends up in.  An application that came up by `require\=' and
+was then loaded from once has read a file - so the count is not zero, the
+paragraph above does not fire, and two empty lists read as an application
+up to date by a process that has never heard of all but one file of it."
+  (let ((almost (replique-stale-test--shown
+                 '(:changed nil :stale nil :analysed 1 :unread 292)))
+        (whole (replique-stale-test--shown
+                '(:changed nil :stale nil :analysed 293 :unread 0))))
+    (should (string-match-p "Nothing has changed" almost))
+    (should (string-match-p "292 more files of this project are running here"
+                            almost))
+    ;; The phrase is wrapped where the paragraph wraps, so what is looked
+    ;; for is the half that cannot move
+    (should (string-match-p "by `require'" almost))
+    ;; and the same answer with nothing unread says none of it, or the
+    ;; sentence would be under every answer and read by nobody
+    (should (string-match-p "Nothing has changed" whole))
+    (should-not (string-match-p "running here" whole))))
+
+(ert-deftest replique-stale-test-a-partial-list-of-changes-says-it-is-partial ()
+  "Under the files as well as under the sentence that stands in for them.
+The list is the whole truth about the files the process has read and says
+nothing whatever about the rest, which is as true when it has something in
+it as when it is empty."
+  (let ((text (replique-stale-test--shown
+               '(:changed ((:file "/p/a.clj")) :stale nil
+                 :analysed 1 :unread 4)
+               "/p/")))
+    (should (string-match-p "Changed since the process read them" text))
+    (should (string-match-p "4 more files of this project are running here" text))
+    ;; under them, since it is what the list does not cover
+    (should (< (string-match "a.clj" text) (string-match "4 more files" text)))))
+
+(ert-deftest replique-stale-test-one-file-unread-is-said-as-one ()
+  "A count is written into a sentence, and a sentence that says \"1 more
+files\" is one nobody wrote."
+  (let ((text (replique-stale-test--shown
+               '(:changed nil :stale nil :analysed 2 :unread 1))))
+    (should (string-match-p "1 more file of this project is running here" text))
+    (should (string-match-p "speaks for it\\." text))))
+
+(ert-deftest replique-stale-test-nothing-is-said-about-unread-where-nothing-was-read ()
+  "A model with no files in it is answered in full above, and saying both
+would say the same thing twice - the second time as an afterthought."
+  (let ((text (replique-stale-test--shown
+               '(:changed nil :stale nil :analysed 0 :unread 12))))
+    (should (string-match-p "Nothing has been loaded through this process yet" text))
+    (should-not (string-match-p "12 more" text))))
+
+(ert-deftest replique-stale-test-a-refusal-is-not-made-partial ()
+  "A process that would not answer has no answer to be incomplete, and a
+count beside the refusal would read as though it had given one."
+  (let ((text (replique-stale-test--shown
+               '(:tag "error" :message "start it on the other clojure"
+                 :analysed 3 :unread 9))))
+    (should (string-match-p "start it on the other clojure" text))
+    (should-not (string-match-p "9 more" text))))
+
 (ert-deftest replique-stale-test-an-answer-with-no-count-in-it-reads-as-it-always-did ()
   "A process older than this client sends no `analysed\=' at all, and reading
 its silence as a model with nothing in it would announce an empty model
