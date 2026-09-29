@@ -1,4 +1,21 @@
 EMACS ?= emacs
+
+# The macOS version the native compiler builds for.  gcc's driver works it out
+# from the kernel's version when nothing says otherwise - Darwin 27 as macOS
+# 18.0 - which was true until macOS renumbered itself 26, and clang then
+# refuses the -mmacosx-version-min=18.0 it is handed: "invalid version
+# number".  Naming it here is what the driver reads first, so nothing
+# computes it.
+#
+# It matters for the suite and not only for `native', because a test that
+# redefines a primitive - `message', say, to read what was said - makes emacs
+# build a subr trampoline for it, and a trampoline is natively compiled.  A
+# native compiler that cannot run takes those tests down with it.
+ifeq ($(shell uname -s),Darwin)
+MACOSX_DEPLOYMENT_TARGET ?= $(shell sw_vers -productVersion)
+export MACOSX_DEPLOYMENT_TARGET
+endif
+
 # The Clojure project that provides replique, for the tests that need a
 # process.  Without it they are skipped.
 REPLIQUE_PROJECT ?=

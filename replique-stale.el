@@ -29,6 +29,13 @@
 ;; buffers, and it is the reason this is worth a command of its own: what
 ;; needs compiling is not the same list as what was typed in.
 ;;
+;; And a third that is not something to load at all: the files the process
+;; read that the disk no longer has.  A reload drops those and takes away
+;; what they defined, which is the one thing a reload does that nobody asked
+;; for by editing anything - and switching a branch is a thing that mostly
+;; does this and nothing else, so an answer without them is two empty lists
+;; and an application reported as up to date.
+;;
 ;; Asked of the process rather than worked out here.  What changed is a
 ;; comparison against the time the process read each file, which nothing
 ;; but the process knows, and what that made stale is a graph its compiler
@@ -151,6 +158,16 @@ everywhere."
                         'help-echo "RET or mouse-1: open this file")
             "\n")))
 
+(defun replique-stale--insert-gone (sources)
+  "Insert SOURCES, the files the process read that the disk no longer has.
+
+Named as the process names them, and not as something that opens: every
+other list here opens the file it names, and these have no file to open.
+It is also the name a reload uses while it drops them, so the line it
+prints and this list read alike."
+  (dolist (source sources)
+    (insert "  " source "\n")))
+
 (defun replique-stale--open-path (path)
   "Open the file at PATH."
   (if (file-exists-p path)
@@ -228,6 +245,7 @@ which is which."
          (cljs (and (plist-get section :dialect-keys) t))
          (changed (plist-get found :changed))
          (stale (plist-get found :stale))
+         (deleted (plist-get found :deleted))
          (message (plist-get found :message)))
     (when named (insert (plist-get section :label) "\n\n"))
     (cond
@@ -256,24 +274,46 @@ which is which."
                 " - and a namespace that arrived by `require', at a\n"
                 "  prompt or from an init script, is loaded, is running, and is not\n"
                 "  in it.\n")))
-     ((and (null changed) (null stale))
+     ((and (null changed) (null stale) (null deleted))
       (insert (if cljs
                   "  Nothing has changed since this process compiled it.\n"
                 "  Nothing has changed since this process read it.\n")))
      (t
-      (insert (if cljs
-                  "Changed since the process compiled them\n\n"
-                "Changed since the process read them\n\n"))
-      (replique-stale--insert changed directory)
-      (when stale
-        ;; "a file that has changed" rather than "a file above", which is
-        ;; true of Clojure and not of ClojureScript: a .cljs file expands
-        ;; macros written in .clj files, and those are not in the list above
-        ;; - they are Clojure files, and this answer is about ClojureScript
-        ;; ones.
-        (insert "\nNot changed, and out of date all the same: these expand a macro\n"
-                "of a file that has changed, and hold the expansion the old one made\n\n")
-        (replique-stale--insert stale directory))))
+      ;; Each list only where it has something in it, and a blank line between
+      ;; two of them rather than above each: a heading with nothing under it
+      ;; reads as a list that came back empty, which is a different answer from
+      ;; a list that was not asked for.
+      (let ((written nil))
+        (when changed
+          (insert (if cljs
+                      "Changed since the process compiled them\n\n"
+                    "Changed since the process read them\n\n"))
+          (replique-stale--insert changed directory)
+          (setq written t))
+        (when stale
+          ;; "a file that has changed" rather than "a file above", which is
+          ;; true of Clojure and not of ClojureScript: a .cljs file expands
+          ;; macros written in .clj files, and those are not in the list above
+          ;; - they are Clojure files, and this answer is about ClojureScript
+          ;; ones.
+          (when written (insert "\n"))
+          (insert "Not changed, and out of date all the same: these expand a macro\n"
+                  "of a file that has changed, and hold the expansion the old one made\n\n")
+          (replique-stale--insert stale directory)
+          (setq written t))
+        ;; LAST, because it is not something to load and the two above are.
+        ;; Worth its own list all the same: a reload drops these and unmaps
+        ;; what they defined, which is the one thing a reload does that nobody
+        ;; asked for by editing anything - and switching a branch is a thing
+        ;; that mostly does this and nothing else, so an answer without it
+        ;; reads as an application that is up to date.
+        (when deleted
+          (when written (insert "\n"))
+          (insert (if cljs
+                      "Gone: the process compiled these and the disk no longer has\n"
+                    "Gone: the process read these and the disk no longer has\n")
+                  "them, so a reload drops them and takes away what they defined\n\n")
+          (replique-stale--insert-gone deleted)))))
     ;; Under the files rather than above them, and only where there are files:
     ;; it is the answer to "and then what", and a language with nothing to load
     ;; has no then.
@@ -377,7 +417,13 @@ nobody - see `replique-css-stale-in'."
           (root (or (replique-process--directory process) default-directory)))
       (dolist (repl repls)
         (replique-process-request
-         process (append (list :op :stale) (replique-reload--dialect-keys repl))
+         ;; WITH THE UNREAD COUNT, which is asked for rather than always
+         ;; answered: it costs the process a walk of every var it holds, and
+         ;; this is the one place that shows it - see
+         ;; `replique-stale--insert-unread'.  What asks before a find-usages
+         ;; reads the two lists and nothing else, and does not ask for it.
+         process (append (list :op :stale :unread t)
+                         (replique-reload--dialect-keys repl))
          (lambda (frame)
            (puthash repl frame answers)
            (setq left (1- left))

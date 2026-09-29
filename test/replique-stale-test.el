@@ -62,6 +62,30 @@ an answer that did not arrive."
     (should (string-match-p "Nothing has changed" text))
     (should-not (string-match-p "out of date" text))))
 
+(ert-deftest replique-stale-test-a-file-that-is-gone-is-its-own-list ()
+  "A reload drops the files the disk no longer has and takes away what they
+defined, which is the one thing it does that no edit asked for - and which
+switching a branch mostly does.  In neither list above, so without a list of
+their own they are two empty lists and an application up to date."
+  (let ((text (replique-stale-test--shown
+               '(:changed nil :stale nil :deleted ("app/gone.clj"))
+               "/p/")))
+    (should-not (string-match-p "Nothing has changed" text))
+    (should (string-match-p "the disk no longer has" text))
+    (should (string-match-p "app/gone.clj" text))))
+
+(ert-deftest replique-stale-test-what-is-gone-comes-after-what-is-to-be-loaded ()
+  "The two above are files to load and this one is not, so it goes last -
+and each heading only where there is something under it, since a heading
+with nothing under it reads as a list that came back empty."
+  (let ((text (replique-stale-test--shown
+               '(:changed ((:file "/p/src/app/util.clj"))
+                 :stale nil
+                 :deleted ("app/gone.clj"))
+               "/p/")))
+    (should (< (string-match "util.clj" text) (string-match "app/gone.clj" text)))
+    (should-not (string-match-p "out of date all the same" text))))
+
 (ert-deftest replique-stale-test-a-process-that-has-read-nothing-says-that ()
   "Rather than \"nothing has changed\", which is the other way of answering
 nothing and is a different fact.  A model with no files in it answers two
@@ -397,8 +421,10 @@ the buffer is written when the last of them has arrived."
               ((symbol-function 'pop-to-buffer)
                (lambda (buffer &rest _) (setq shown buffer))))
       (replique-stale--ask-app (replique-process--make :directory "/p/")))
-    (should (equal '((:op :stale)
-                     (:op :stale :dialect :cljs :target :browser))
+    ;; WITH THE UNREAD COUNT ASKED FOR, which this is the one place that does:
+    ;; it is dear for the process to work out and this is where it is shown.
+    (should (equal '((:op :stale :unread t)
+                     (:op :stale :unread t :dialect :cljs :target :browser))
                    (nreverse asked)))
     (should (buffer-live-p shown))
     (with-current-buffer shown

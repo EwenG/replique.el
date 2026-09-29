@@ -88,6 +88,11 @@ only long enough to be counted - see `replique-fresh--question\\='.  A
 process with nothing to load answers the two lists empty, which is a frame
 like any other.
 
+WITHOUT THE UNREAD COUNT, which this has no use for and which the process
+works out by walking every var it holds.  What is decided here is whether
+anything is stale; how much of the project is running unread is a fact for
+somebody reading the answer, and `replique-stale-app\=' is what asks for it.
+
 Nil where the process did not answer, which is a process whose compiler
 records nothing, and a process that did not answer in time.  There is
 nothing to offer either of them, and the question this was going to guard
