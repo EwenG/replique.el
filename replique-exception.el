@@ -46,6 +46,9 @@
   '("\\`clojure\\.lang\\."
     "\\`clojure\\.main"
     "\\`clojure\\.core\\$"
+    ;; the forked clojure's compiler recording what it resolved, around every
+    ;; evaluation
+    "\\`clojure\\.analysis\\$"
     "\\`java\\.base/"
     "\\`jdk\\.internal\\."
     "\\`replique\\.")

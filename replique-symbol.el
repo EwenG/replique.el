@@ -811,7 +811,7 @@ pressing return.
 There is no undoing it short of evaluating the definition again."
   (interactive
    (let* ((process (or (replique-name-process)
-                       (user-error "No process - M-x replique-start")))
+                       (user-error "No process - M-x replique-connect")))
           (ns (or (replique-name-namespace)
                   (user-error "Nothing here says which namespace to look in")))
           (names (replique-symbol--var-names (replique-symbol--vars process ns))))

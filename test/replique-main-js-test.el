@@ -334,7 +334,7 @@ anything."
 ANSWERS maps a word of a prompt to what is typed at it.  A prompt that is
 not in it is a prompt this did not expect to be shown."
   (let ((current-prefix-arg '(4)))
-    (cl-letf (((symbol-function 'replique-process-ensure)
+    (cl-letf (((symbol-function 'replique-process-current)
                (lambda () (replique-process--make :directory "/p/")))
               ((symbol-function 'replique-repl--main-namespaces)
                (lambda (_process) '("my.admin" "my.app")))

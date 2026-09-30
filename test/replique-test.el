@@ -202,8 +202,8 @@ stop this run starting anything in that project."
   "Start a process in the test project and wait for it.
 
 OPTIONS is what to pass to replique.main, defaulting to what
-`replique-start' passes.  Returns the replique process when Emacs started
-it, and the operating system process when OPTIONS asked for one Emacs
+`replique-process-start' passes.  Returns the replique process when Emacs
+started it, and the operating system process when OPTIONS asked for one Emacs
 knows nothing about - a test that is given nothing cannot tell a process
 that went from one that was never there."
   (let* ((project (replique-test-project))
@@ -221,7 +221,7 @@ that went from one that was never there."
           (replique-test--note (cons 'pid (process-id proc)))
           proc)
       (progn
-        (replique-start project)
+        (replique-process-start project)
         (unless (replique-test-wait-for
                  (lambda () (seq-difference replique-processes known)) 120)
           ;; The jvm may be coming up all the same, and nothing in the
@@ -239,7 +239,7 @@ one reached by a name of the test's choosing.  The shared process is
 `replique-test-process', and is what a test that only needs a process
 should ask for."
   (let ((known replique-processes))
-    (replique-start directory)
+    (replique-process-start directory)
     (unless (replique-test-wait-for
              (lambda () (seq-difference replique-processes known)) 120)
       (replique-test--note-running-in directory)
@@ -406,7 +406,7 @@ not be honoured there."
 
 (ert-deftest replique-test-a-missing-clojure-says-which-setting-to-look-at ()
   (let ((replique-clojure-program "replique-no-such-program"))
-    (should-error (replique-start temporary-file-directory) :type 'user-error)))
+    (should-error (replique-process-start temporary-file-directory) :type 'user-error)))
 
 (ert-deftest replique-test-a-start-that-lost-its-buffer-still-says-what-happened ()
   "The buffer holding what a process wrote can be killed while it is
@@ -732,8 +732,8 @@ clojure reads, so the nearest one is where a process can run."
 
 (ert-deftest replique-test-a-directory-that-is-taken-is-not-proposed-for-a-start ()
   "A repl buffer is in the directory of its own process, which is the one
-directory `replique-start' refuses.  What is proposed there is the project
-above it."
+directory `replique-process-start' refuses.  What is proposed there is the
+project above it."
   (replique-test-with-project dir
     (with-temp-file (expand-file-name "deps.edn" dir) (insert "{}"))
     (make-directory (expand-file-name "mod" dir))
@@ -778,7 +778,7 @@ is only usually the same directory."
   (let* ((process (replique-test-process))
          (known replique-processes))
     (setq replique-current-process nil)
-    (replique-connect (replique-process--directory process))
+    (replique-process-connect (replique-process--directory process))
     ;; A connection that was opened would register on its handshake rather
     ;; than now, so what says none was is that nothing arrives
     (replique-test-settle)
@@ -788,7 +788,7 @@ is only usually the same directory."
 (ert-deftest replique-test-a-second-process-in-one-directory-is-refused ()
   (let ((process (replique-test-process))
         (buffers (match-buffers "\\`\\*replique-process: ")))
-    (should-error (replique-start (replique-process--directory process))
+    (should-error (replique-process-start (replique-process--directory process))
                   :type 'user-error)
     ;; Refused before anything was made: a command that failed leaves no
     ;; buffer of a process that was never started
@@ -809,7 +809,7 @@ before it spawned anything."
             ;; Port 1, which nothing listens on
             (insert (json-serialize (list :process-id "gone" :host "127.0.0.1"
                                           :port 1 :pid 999999 :started-at 1))))
-          (setq proc (replique-start dir))
+          (setq proc (replique-process-start dir))
           (should-not (file-exists-p file)))
       (when proc
         (when (buffer-live-p (replique-process--startup-buffer proc))
@@ -1648,7 +1648,7 @@ what a comint buffer does when nobody else offers."
     (should (memq #'replique-symbol-xref-backend xref-backend-functions))))
 
 (ert-deftest replique-test-the-repl-hooks-are-autoloaded ()
-  "A repl opened by `replique-start\\=' - autoloaded out of another file - is
+  "A repl opened by `replique-connect\\=' - autoloaded out of another file - is
 set up although nothing has loaded `replique.el\\='.  What tells package.el
 to do that is the autoloads it generates, so they are generated here and
 asked, rather than the source being read for a cookie."
@@ -2650,7 +2650,7 @@ than through a pipe - which is the whole reason the protocol carries it."
           (should (replique-test-wait-for
                    (lambda () (replique-process-descriptions workdir)) 120))
           (let ((known replique-processes))
-            (replique-connect workdir)
+            (replique-process-connect workdir)
             (should (replique-test-wait-for
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known))))
@@ -2689,7 +2689,7 @@ is what is left, and it is what makes the process clean up after itself."
           (should (replique-test-wait-for
                    (lambda () (replique-process-descriptions workdir)) 120))
           (let ((known replique-processes))
-            (replique-connect workdir)
+            (replique-process-connect workdir)
             (should (replique-test-wait-for
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known))))
@@ -2766,7 +2766,7 @@ developer who is told the process stopped stops looking for it."
           (should (replique-test-wait-for
                    (lambda () (replique-process-descriptions workdir)) 120))
           (let ((known replique-processes))
-            (replique-connect workdir)
+            (replique-process-connect workdir)
             (should (replique-test-wait-for
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known))))
@@ -2793,7 +2793,7 @@ file goes on saying where it is, so it can be connected to again."
           (should (replique-test-wait-for
                    (lambda () (replique-process-descriptions workdir)) 120))
           (let ((known replique-processes))
-            (replique-connect workdir)
+            (replique-process-connect workdir)
             (should (replique-test-wait-for
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known))))
@@ -2804,7 +2804,7 @@ file goes on saying where it is, so it can be connected to again."
           (should (process-live-p outside))
           (should (replique-process-descriptions workdir))
           (let ((known replique-processes))
-            (replique-connect workdir)
+            (replique-process-connect workdir)
             (should (replique-test-wait-for
                      (lambda () (seq-difference replique-processes known)) 30))
             (setq process (car (seq-difference replique-processes known)))))
@@ -2856,7 +2856,7 @@ process that is gone.  Left there, it would go on being offered."
                            :directory (directory-file-name dir)
                            :pid 1 :started-at 1))))
       (should (file-exists-p file))
-      (replique-connect dir)
+      (replique-process-connect dir)
       (should-not (file-exists-p file)))))
 
 (ert-deftest replique-test-a-port-file-of-another-machine-is-kept ()
@@ -2900,7 +2900,7 @@ is busy."
                              :host (replique-process--host process)
                              :port (replique-process--port process)
                              :pid 1 :started-at 1))))
-        (replique-connect dir)
+        (replique-process-connect dir)
         (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
         ;; and the process that refused it is untouched
         (should (replique-process-live-p process))))))
@@ -2920,7 +2920,7 @@ be offered again.  The file is what has to go."
                                  :port (process-contact listener :service)
                                  :directory (directory-file-name dir)
                                  :pid 1 :started-at 1))))
-            (replique-connect dir)
+            (replique-process-connect dir)
             (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
             ;; and nothing was connected to: a port that says nothing is
             ;; not a process, however long the socket stayed open
@@ -2940,7 +2940,7 @@ thing that makes the directory usable again."
                                  :port (process-contact listener :service)
                                  :directory (directory-file-name dir)
                                  :pid 1 :started-at 1))))
-            (replique-connect dir)
+            (replique-process-connect dir)
             (should (replique-test-wait-for (lambda () (not (file-exists-p file))) 10))
             ;; and nothing was connected to: a port that says nothing is
             ;; not a process, however long the socket stayed open
@@ -2959,7 +2959,7 @@ process `replique-connect' goes on offering."
               (format "{:local/root \"%s\"}" (directory-file-name project)))
              (known replique-processes)
              (process nil))
-        (replique-start dir)
+        (replique-process-start dir)
         (should (replique-test-wait-for
                  (lambda () (seq-difference replique-processes known)) 120))
         (setq process (car (seq-difference replique-processes known)))
@@ -2972,6 +2972,45 @@ process `replique-connect' goes on offering."
           ;; is done when it returns
           (replique-kill-process process)
           (should-not (file-exists-p port-file)))))))
+
+(ert-deftest replique-test-a-restarted-process-has-its-repls-again ()
+  "In the buffers they had, on the process that replaced the one stopped."
+  (let ((project (replique-test-project)))
+    (replique-test-with-project dir
+      (let* ((replique-coordinates
+              (format "{:local/root \"%s\"}" (directory-file-name project)))
+             (repl nil)
+             (process nil))
+        (unwind-protect
+            (progn
+              (replique-process-start
+               dir (lambda (p) (setq process p repl (replique-repl--open p nil nil nil))))
+              (should (replique-test-wait-for
+                       (lambda () (and repl (replique-repl--ns repl))) 120))
+              (let ((buffer (replique-repl--buffer repl))
+                    (old process))
+                (replique-restart old)
+                (should-not (memq old replique-processes))
+                (should (replique-test-wait-for
+                         (lambda ()
+                           (let ((now (buffer-local-value 'replique--buffer-repl buffer)))
+                             (and (not (eq now repl))
+                                  (replique-repl-live-p now)
+                                  (replique-repl--ns now))))
+                         120))
+                (setq process (replique-process-in dir))
+                (should process)
+                (should-not (eq old process))
+                (should (eq process
+                            (replique-repl--process
+                             (buffer-local-value 'replique--buffer-repl buffer))))
+                ;; and the old process's output buffer went with it
+                (should (equal (list (replique-process-buffer process))
+                               (match-buffers (regexp-quote
+                                               (format "*replique-process: %s*"
+                                                       (replique-process--id process))))))))
+          (when (replique-process-live-p process)
+            (replique-kill-process process)))))))
 
 (ert-deftest replique-test-a-request-nobody-will-answer-is-answered ()
   "A connection that dies takes every unanswered request with it.  A caller

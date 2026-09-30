@@ -117,9 +117,10 @@ ON-END is what to call when the evaluation now running ends, for the one
 caller that cannot carry on until it has - see
 `replique-repl-send-code-sync\\='.  GIVEN-NAME is the buffer name this gave
 the buffer, which is how `replique-repl--rename\\=' tells a name of its own
-from one somebody else chose."
+from one somebody else chose.  MAIN is the namespace it was started on,
+which is what `replique-restart\=' starts it on again."
   process conn buffer given-name ns params at-prompt to-echo echoed queued
-  last-exception on-end)
+  last-exception on-end main)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -729,8 +730,31 @@ as any - what this compiles is the namespace, not the file that named it."
                                  namespaces nil nil (car namespaces)))))
     (unless (string-empty-p main) main)))
 
+(defun replique-repl--read-target ()
+  "Read the runtime a ClojureScript repl is to run in."
+  (intern (concat ":" (completing-read (format-prompt "Target" "browser")
+                                       replique-repl-targets nil t
+                                       nil nil "browser"))))
+
+(defun replique-repl--read-for (process)
+  "Read the dialect, target and namespace of a repl about to be opened on PROCESS.
+
+The target and the namespace are asked only for a ClojureScript repl,
+being the two things that have no meaning for the other.  The process is
+settled before anything is asked: which namespaces are offered is a fact
+about one process, and asking one about its main modules and then opening
+the repl on another would be a menu of somewhere else."
+  (let ((dialect (intern (concat ":" (completing-read
+                                      (format-prompt "Dialect" "clj")
+                                      replique-repl-dialects nil t
+                                      nil nil "clj")))))
+    (if (not (eq dialect :cljs))
+        (list dialect nil nil)
+      (let ((target (replique-repl--read-target)))
+        (list dialect target (replique-repl--read-main process))))))
+
 (defun replique-repl--read ()
-  "Read the arguments of a repl about to be opened.
+  "Read the arguments of `replique-repl'.
 
 Nothing is asked without a prefix argument, and nothing is then sent:
 a repl is a Clojure repl unless somebody says otherwise, which is the
@@ -739,31 +763,17 @@ So the common case stays one command with no questions, and the keys are
 absent from the handshake of every Clojure repl rather than written on
 every one of them.
 
-The target and the namespace are asked only for a ClojureScript repl,
-being the two things that have no meaning for the other.
-
-The process is settled before anything is asked, and is answered rather
-than left to the command to find again: which namespaces are offered is a
-fact about one process, and asking one about its main modules and then
-opening the repl on another would be a menu of somewhere else."
-  (if (not current-prefix-arg)
-      (list nil nil nil nil)
-    (let* ((process (replique-process-ensure))
-           (dialect (intern (concat ":" (completing-read
-                                         (format-prompt "Dialect" "clj")
-                                         replique-repl-dialects nil t
-                                         nil nil "clj")))))
-      (if (not (eq dialect :cljs))
-          (list process dialect nil nil)
-        (list process dialect
-              (intern (concat ":" (completing-read
-                                   (format-prompt "Target" "browser")
-                                   replique-repl-targets nil t
-                                   nil nil "browser")))
-              (replique-repl--read-main process))))))
+With one, and no process yet, what there is to ask is asked once there
+is one - see `replique-repl--read-for' for why the process comes first."
+  (cond
+   ((not current-prefix-arg) (list nil nil nil nil))
+   ((replique-process-current)
+    (let ((process (replique-process-current)))
+      (cons process (replique-repl--read-for process))))
+   (t (list nil nil nil nil t))))
 
 ;;;###autoload
-(defun replique-repl (&optional process dialect target main)
+(defun replique-repl (&optional process dialect target main ask)
   "Open a REPL on PROCESS, the current process by default.
 
 DIALECT is `:clj' or `:cljs', Clojure when it is nil.  TARGET is
@@ -771,7 +781,13 @@ DIALECT is `:clj' or `:cljs', Clojure when it is nil.  TARGET is
 process\\='s own default when it is nil.  MAIN is a namespace such a repl
 is to be started on, and is nil for one standing in no particular
 program.  With a prefix argument they are asked for - see
-`replique-repl--read'.
+`replique-repl--read'.  `replique-cljs' is the command for a
+ClojureScript repl.
+
+With no process at all, one is chosen, connected to or started first -
+see `replique-connect' - and ASK says to ask for the rest then, which is
+what a prefix argument comes to when there was nothing to ask about yet.
+Nothing is returned then: the repl is opened once the process is up.
 
 MAIN IS COMPILED BEFORE THE FIRST PROMPT, it and everything it depends
 on, so the first form sent is not the one that pays for the dependency
@@ -797,17 +813,40 @@ no runtime arrives the same way, and so does why there is no repl at all:
 a refused handshake says so in the buffer rather than only in the echo
 area."
   (interactive (replique-repl--read))
-  (let* ((process (or process (replique-process-ensure)))
+  (if-let* ((process (or process (replique-process-current))))
+      (replique-repl--open process dialect target main)
+    (replique-repl--choose-process
+     (lambda (process)
+       (apply #'replique-repl--open process
+              (if ask
+                  (replique-repl--read-for process)
+                (list dialect target main)))))
+    nil))
+
+(defun replique-repl--open (process dialect target main &optional buffer)
+  "Open a repl on PROCESS, as `replique-repl' describes, and return it.
+
+DIALECT, TARGET and MAIN are what `replique-repl' takes.  BUFFER is a
+buffer to open it in again - one whose repl was closed by
+`replique-restart' - and is nil for a new one.  What it holds is kept,
+the input history with it, and it is not popped to: it is where it was."
+  (let* ((reused buffer)
          ;; Named from what is being asked for, and named again from the
          ;; reply - see `replique-repl--rename'.  The buffer has to exist
          ;; before the connection does: it is where the connection writes
-         (name (replique-repl--buffer-name process dialect target))
-         (buffer (get-buffer-create name))
+         (name (if reused
+                   (buffer-name buffer)
+                 (replique-repl--buffer-name process dialect target)))
+         (buffer (or buffer (get-buffer-create name)))
          (repl (replique-repl--make :process process :buffer buffer
-                                    :given-name name :to-echo 0)))
+                                    :given-name name :to-echo 0 :main main)))
     (with-current-buffer buffer
-      ;; Before anything buffer local is set: comint-mode kills them
-      (replique-repl-mode)
+      ;; Before anything buffer local is set: comint-mode kills them - the
+      ;; input history among them, which is what makes a repl opened again
+      ;; the one it was
+      (let ((history (and reused comint-input-ring)))
+        (replique-repl-mode)
+        (when history (setq-local comint-input-ring history)))
       (setq-local replique--buffer-repl repl)
       (when-let* ((directory (replique-process--directory process)))
         (setq-local default-directory (file-name-as-directory directory))))
@@ -889,24 +928,166 @@ area."
                          'replique-exception)
                         (message "replique: %s" said)))
           :on-close (lambda (_conn)
-                      (replique-repl--aside buffer "\nThe connection is closed\n")
+                      ;; Only while the buffer is still this repl's: a
+                      ;; restart opens the next repl in it, and what the old
+                      ;; connection has to say about closing is not to be
+                      ;; written after the new one's prompt
+                      (when (and (buffer-live-p buffer)
+                                 (eq repl (buffer-local-value 'replique--buffer-repl
+                                                              buffer)))
+                        (replique-repl--aside buffer "\nThe connection is closed\n"))
                       (setf (replique-process--repls process)
                             (delq repl (replique-process--repls process)))
                       (when (eq replique-current-repl repl)
                         (setq replique-current-repl nil))))
        ;; The process is gone.  `replique-process--connect' says this for the
        ;; control connection; a repl is opened later, and the process can
-       ;; have left in between
+       ;; have left in between.  A buffer opened again is kept: what it held
+       ;; is not this repl's to throw away
        (file-error
-        (kill-buffer buffer)
+        (unless reused (kill-buffer buffer))
         (user-error "Nothing is listening on %s:%s - %s"
                     (replique-process--host process)
                     (replique-process--port process)
                     (or (nth 2 err) "the process is gone")))))
     (push repl (replique-process--repls process))
     (setq replique-current-repl repl)
-    (pop-to-buffer buffer)
+    (unless reused (pop-to-buffer buffer))
     repl))
+
+;;; Which process, connected to or started
+
+(defun replique-repl--process-label (process)
+  "Return how PROCESS, one Emacs is connected to, is named in a list."
+  (format "%s - connected, in %s"
+          (replique-process--id process)
+          (abbreviate-file-name (or (replique-process--directory process) "?"))))
+
+(defun replique-repl--process-choices ()
+  "Return what `replique-connect' offers, each a label and what it means.
+
+What Emacs is connected to first, the current process at the head of
+them; then what the port files around the buffer name that Emacs is not
+connected to; then a start where the buffer is, when nothing is running
+there; and last, somewhere else.  Each is `(process PROCESS)',
+`(connect DESCRIPTION DIRECTORY)', `(start DIRECTORY)' or `(other)'.
+
+The port files are those of the directory a connect is proposed and the
+one a start is, which are only usually the same.  They are reaped before
+they are offered: a file whose process is gone is otherwise offered, and
+choosing it is how anybody would find out."
+  (let* ((current (replique-process-current))
+         (held (cons current (remq current (replique-processes-live))))
+         (start (replique-process--directory-to-start))
+         (directories (delete-dups (list (replique-process--directory-to-connect)
+                                         start)))
+         (found (seq-mapcat
+                 (lambda (directory)
+                   (replique-process--reap-directory directory)
+                   (seq-keep
+                    (lambda (description)
+                      (unless (replique-process-connected (cdr description))
+                        (list (format "%s - running in %s"
+                                      (replique-process--describe (cdr description))
+                                      (abbreviate-file-name directory))
+                              'connect description directory)))
+                    (replique-process-descriptions directory)))
+                 directories)))
+    (append
+     (mapcar (lambda (process)
+               (list (replique-repl--process-label process) 'process process))
+             (delq nil held))
+     found
+     (unless (or (replique-process-in start)
+                 (replique-process-descriptions start))
+       (list (list (format "Start a process in %s" (abbreviate-file-name start))
+                   'start start)))
+     (list (list "Start or connect in another directory..." 'other)))))
+
+(defun replique-repl--in-directory (directory then)
+  "Call THEN with the process of DIRECTORY, connecting to it or starting it.
+
+The one Emacs has there, the one a port file there names, or a new one,
+in that order - a directory has one process, and which of the three it is
+is what is there rather than what was asked for."
+  (let ((directory (file-name-as-directory (expand-file-name directory))))
+    (if-let* ((process (replique-process-in directory)))
+        (funcall then process)
+      (replique-process--reap-directory directory)
+      (if (replique-process-descriptions directory)
+          (replique-process-connect directory then)
+        (replique-process-start directory then)))))
+
+(defun replique-repl--choose-process (then)
+  "Ask for a process and call THEN with it, connecting or starting it first.
+
+A process Emacs is connected to is answered at once and made the current
+one.  One that has to be connected to or started is answered once it is
+up, and never when it does not come up - what went wrong is said where it
+happened."
+  (let* ((choices (replique-repl--process-choices))
+         (choice (cdr (assoc (completing-read "Process: " choices nil t nil nil
+                                              (caar choices))
+                             choices))))
+    (pcase choice
+      (`(process ,process)
+       (setq replique-current-process process)
+       (funcall then process))
+      (`(connect ,description ,directory)
+       (replique-process-connect-to description directory then))
+      (`(start ,directory)
+       (replique-process-start directory then))
+      (`(other)
+       (replique-repl--in-directory
+        (read-directory-name "Project directory: "
+                             (replique-process--directory-to-start) nil t)
+        then)))))
+
+(defun replique-repl--show (process)
+  "Show the most recent repl of PROCESS, opening a Clojure repl if it has none."
+  (if-let* ((repl (seq-find #'replique-repl-live-p (replique-process--repls process))))
+      (progn
+        (setq replique-current-repl repl)
+        (pop-to-buffer (replique-repl--buffer repl)))
+    (replique-repl--open process nil nil nil)))
+
+;;;###autoload
+(defun replique-connect ()
+  "Choose a process to work with, connecting to it or starting it.
+
+What is offered is every process Emacs is connected to, every process a
+port file near the buffer names, a start in the project of the buffer when
+nothing is running there, and a start or a connect somewhere else - see
+`replique-repl--process-choices'.
+
+The process chosen becomes the current one and its most recent repl is
+shown.  A process with none - one just started, or just connected to - is
+given a Clojure repl: `replique-cljs' is the command for a process that is
+to have a ClojureScript one instead."
+  (interactive)
+  (replique-repl--choose-process #'replique-repl--show))
+
+;;;###autoload
+(defun replique-cljs (&optional process target main)
+  "Open a ClojureScript REPL on PROCESS, the current process by default.
+
+TARGET and MAIN are what `replique-repl' takes, and are asked for.  With
+no process at all, one is chosen, connected to or started first - see
+`replique-connect' - and MAIN is asked for once it is up, the namespaces
+it offers being the ones that process knows of.  Only this repl is opened
+on a process started this way: a Clojure repl is one command away, and
+not always wanted."
+  (interactive
+   (let ((target (replique-repl--read-target))
+         (process (replique-process-current)))
+     (list process target (when process (replique-repl--read-main process)))))
+  (if-let* ((process (or process (replique-process-current))))
+      (replique-repl--open process :cljs target main)
+    (replique-repl--choose-process
+     (lambda (process)
+       (replique-repl--open process :cljs target
+                            (or main (replique-repl--read-main process)))))
+    nil))
 
 ;;; What the commands act on
 
@@ -1120,7 +1301,7 @@ buffer to whatever repl the commands are pointed at, and with no repl at
 all that is Clojure - true of the lookup, and not the thing to say."
   (cond
    ((derived-mode-p 'replique-clojure-clojurescript-mode)
-    "No ClojureScript repl - M-x replique-repl with a prefix argument")
+    "No ClojureScript repl - M-x replique-cljs")
    ((derived-mode-p 'replique-clojure-clojurec-mode)
     "No repl - M-x replique-repl")
    ((derived-mode-p 'replique-clojure-mode)
@@ -1365,16 +1546,36 @@ connection closing, which is what the process leaving does to it."
           (accept-process-output nil 0.05)))
       (not (replique-conn-live-p conn)))))
 
-(defun replique-process--close (process)
+(defun replique-process--buffers (process)
+  "Return the buffers of PROCESS: its repls, open or closed, and its output.
+
+Every repl buffer that was ever one of its repls, and not only those of
+the repls still open: a repl that was quit is a buffer that says so, and
+it belongs to the process as much as the others do."
+  (cons (replique-process--output-buffer process)
+        (seq-filter (lambda (buffer)
+                      (when-let* ((repl (buffer-local-value 'replique--buffer-repl
+                                                            buffer)))
+                        (eq process (replique-repl--process repl))))
+                    (match-buffers '(derived-mode . replique-repl-mode)))))
+
+(defun replique-process--close (process &optional kill-buffers)
   "Close the connections to PROCESS and forget it.
 
-The repl buffers are left as they are: what a repl printed is what was
-printed, and a connection that closed says so in the buffer it belonged
-to."
-  (dolist (repl (replique-process--repls process))
-    (replique-conn-close (replique-repl--conn repl)))
-  (replique-conn-close (replique-process--control process))
-  (replique-process--forget process))
+The repl buffers are left as they are unless KILL-BUFFERS, which is what
+the commands that let go of a process on purpose ask for: nothing more is
+coming in them, and the next repl of that process is a buffer of its
+own.  A process that went by itself leaves them - what a repl printed is
+what was printed, and a connection that closed says so in the buffer it
+belonged to."
+  (let ((buffers (when kill-buffers (replique-process--buffers process))))
+    (dolist (repl (replique-process--repls process))
+      (replique-conn-close (replique-repl--conn repl)))
+    (replique-conn-close (replique-process--control process))
+    (replique-process--forget process)
+    (dolist (buffer buffers)
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
 
 (defun replique-disconnect (process)
   "Let go of PROCESS: close the connections to it and leave it running.
@@ -1382,13 +1583,27 @@ to."
 What to do with a process that is not yours to stop - one that belongs to
 a terminal, or to whoever is working on the machine it runs on.  It goes
 on running and its port file goes on saying where it is, so
-`replique-connect' finds it again."
+`replique-connect' finds it again.  Its buffers are killed - see
+`replique-process--buffers'."
   (interactive (list (replique-process-ensure)))
-  (replique-process--close process)
+  (replique-process--close process t)
   (message "replique: let go of %s" (replique-process--id process)))
 
+(defun replique-process--shut (process kill-buffers)
+  "Stop PROCESS, close the connections to it, and return non-nil when it went.
+
+KILL-BUFFERS is what `replique-process--close' takes.  See
+`replique-kill-process' for how a process is stopped."
+  (let* ((proc (replique-process--proc process))
+         (stopped (replique-process--ask-to-stop process)))
+    (replique-process--close process kill-buffers)
+    (when (process-live-p proc)
+      (replique-process--stop proc)
+      (setq stopped t))
+    stopped))
+
 (defun replique-kill-process (process)
-  "Stop PROCESS and close the connections to it.
+  "Stop PROCESS, close the connections to it and kill its buffers.
 
 Asked before it is signalled: asking is what works for a process Emacs did
 not start, and a signal is what is left for one that will not answer -
@@ -1401,21 +1616,73 @@ when it was asked - is left running, and saying so is all this can do about
 it.  Silence there would be this command behaving the way
 `replique-disconnect' does, under the name that promises the opposite.
 
-To let go of a process without stopping it, see `replique-disconnect'."
+To let go of a process without stopping it, see `replique-disconnect'.  To
+stop it and start it again, see `replique-restart'."
   (interactive (list (replique-process-ensure)))
-  (let* ((id (replique-process--id process))
-         (proc (replique-process--proc process))
-         (stopped (replique-process--ask-to-stop process)))
-    (replique-process--close process)
-    (when (process-live-p proc)
-      (replique-process--stop proc)
-      (setq stopped t))
-    (if stopped
+  (let ((id (replique-process--id process)))
+    (if (replique-process--shut process t)
         (message "replique: stopped %s" id)
       (message (concat "replique: %s would not stop - Emacs did not start it,"
                        " so there is nothing to signal.  Its port file goes on"
                        " naming it")
                id))))
+
+(defun replique-restart (process)
+  "Stop PROCESS and start it again, with the repls it had.
+
+Each repl open on it is opened again in the buffer it had, in the order
+they were opened, with the dialect, the target and the namespace it had -
+so the buffers keep their names, their windows, what they printed and
+their input history, and the repl that was current is current again.  A
+process that had none is given a Clojure repl, as a start is.
+
+What starts is a process of Emacs\='s own, in the directory the old one
+ran in, whoever started that one.  The output buffer of the old one goes:
+the new process has its own.
+
+A browser repl comes back with nothing running in it until the page is
+opened again - the page was talking to the process that stopped."
+  (interactive (list (replique-process-ensure)))
+  (let* ((id (replique-process--id process))
+         (directory (or (replique-process--directory process)
+                        (user-error "%s does not say where it runs" id)))
+         ;; Oldest first, which is the order they were opened in: the list
+         ;; is pushed onto
+         (repls (reverse (seq-filter #'replique-repl-live-p
+                                     (replique-process--repls process))))
+         (current (when (memq replique-current-repl repls)
+                    (replique-repl--buffer replique-current-repl)))
+         (again (mapcar (lambda (repl)
+                          (list (replique-repl--buffer repl)
+                                (when (eq :cljs (replique-repl-dialect repl)) :cljs)
+                                (replique-repl-target repl)
+                                (replique-repl--main repl)))
+                        repls))
+         (output (replique-process--output-buffer process)))
+    (unless (replique-process--shut process nil)
+      (user-error "%s would not stop - Emacs did not start it, so there is nothing to signal"
+                  id))
+    (when (buffer-live-p output) (kill-buffer output))
+    (dolist (each again)
+      (replique-repl--aside (car each) (format "\nRestarting %s...\n" id)))
+    (replique-process-start
+     directory
+     (lambda (process)
+       (let ((opened (seq-keep (lambda (each)
+                                 (when (buffer-live-p (car each))
+                                   (replique-repl--open process (nth 1 each) (nth 2 each)
+                                                        (nth 3 each) (car each))))
+                               again)))
+         (if (null opened)
+             (replique-repl--open process nil nil nil)
+           (when-let* ((repl (seq-find (lambda (repl)
+                                         (eq current (replique-repl--buffer repl)))
+                                       opened)))
+             (setq replique-current-repl repl)
+             (let ((repls (replique-process--repls process)))
+               (setf (replique-process--repls process)
+                     (cons repl (delq repl repls)))))))))
+    (message "replique: restarting %s" id)))
 
 (defun replique-switch-to-repl ()
   "Show the buffer of the current repl."

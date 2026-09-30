@@ -55,6 +55,7 @@ compile:
 	  test/replique-reload-test.el \
 	  test/replique-dialect-test.el \
 	  test/replique-repl-choice-test.el \
+	  test/replique-connect-test.el \
 	  test/replique-name-fuzz-test.el \
 	  test/replique-lint-test.el
 
@@ -95,6 +96,7 @@ test: compile
 	  -l replique-reload-test \
 	  -l replique-dialect-test \
 	  -l replique-repl-choice-test \
+	  -l replique-connect-test \
 	  -l replique-name-fuzz-test \
 	  -l replique-lint-test \
 	  -f ert-run-tests-batch-and-exit

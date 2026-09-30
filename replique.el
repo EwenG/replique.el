@@ -26,9 +26,12 @@
 
 ;; The entry point: what to turn on in a Clojure buffer.
 ;;
-;;   M-x replique-start      start a process in a directory and connect to it
-;;   M-x replique-connect    connect to one that is already running
-;;   M-x replique-repl       open a repl on it
+;;   M-x replique-connect    choose a process: one Emacs has, one running,
+;;                           or a new one - and show its repl
+;;   M-x replique-repl       open a Clojure repl on it
+;;   M-x replique-cljs       open a ClojureScript repl on it
+;;   M-x replique-restart    stop it and start it again, with its repls
+;;   M-x replique-kill-process  stop it, and kill its buffers
 ;;
 ;; This is the editor client of the replique protocol, plus the mode it reads
 ;; Clojure with.  Completion is answered wherever a name is written, in the
@@ -129,7 +132,7 @@ that needs one says so when it is used.
 ;; defines a repl depend on the one that completes in it
 ;;
 ;; From the autoloads, for the same reason as the hook below: `replique-repl'
-;; and `replique-start' are autoloaded out of other files, so a repl can be
+;; and `replique-connect' are autoloaded out of other files, so a repl can be
 ;; opened without this one ever being loaded - and a repl opened that way
 ;; completed filenames, the way a comint buffer does, and answered nothing to
 ;; eldoc or to xref
