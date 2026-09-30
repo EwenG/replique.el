@@ -63,6 +63,7 @@
 (require 'replique-fresh)
 (require 'replique-completion)
 (require 'replique-symbol)
+(require 'replique-lint)
 (require 'replique-main-js)
 (require 'replique-css)
 (require 'replique-reload)
@@ -116,9 +117,11 @@ that needs one says so when it is used.
   ;; the way to stop replique answering completion in a buffer
   (if replique-mode
       (progn (replique-completion-install)
-             (replique-symbol-install))
+             (replique-symbol-install)
+             (replique-lint-install))
     (replique-completion-uninstall)
-    (replique-symbol-uninstall)))
+    (replique-symbol-uninstall)
+    (replique-lint-uninstall)))
 
 ;; A repl reads Clojure at its prompt, requires included, and it is parsed
 ;; the way a Clojure buffer is - see `replique-repl--clojure'.  Added from

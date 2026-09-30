@@ -26,7 +26,7 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
       replique-repl.el replique-locals.el replique-deps.el replique-eval.el \
       replique-pprint.el replique-forms.el replique-name.el \
       replique-fresh.el \
-      replique-completion.el replique-symbol.el \
+      replique-completion.el replique-symbol.el replique-lint.el \
       replique-main-js.el replique-css.el replique-reload.el \
       replique-stale.el replique.el
 
@@ -36,7 +36,7 @@ LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
        replique-process.el replique-repl.el replique-locals.el replique-deps.el \
        replique-eval.el replique-pprint.el replique-forms.el replique-name.el \
        replique-fresh.el \
-       replique-completion.el replique-symbol.el \
+       replique-completion.el replique-symbol.el replique-lint.el \
        replique-main-js.el replique-css.el replique-reload.el \
        replique-stale.el replique.el
 
@@ -55,7 +55,8 @@ compile:
 	  test/replique-reload-test.el \
 	  test/replique-dialect-test.el \
 	  test/replique-repl-choice-test.el \
-	  test/replique-name-fuzz-test.el
+	  test/replique-name-fuzz-test.el \
+	  test/replique-lint-test.el
 
 # Natively compiled, into the eln cache this Emacs reads.
 #
@@ -95,6 +96,7 @@ test: compile
 	  -l replique-dialect-test \
 	  -l replique-repl-choice-test \
 	  -l replique-name-fuzz-test \
+	  -l replique-lint-test \
 	  -f ert-run-tests-batch-and-exit
 
 lint:

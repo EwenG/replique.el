@@ -355,9 +355,17 @@ the directory, and that is nearly always."
 
 ;;; Events
 
+(defvar replique-process-analysis-functions nil
+  "Called with a process and the frame, when it says what it knows changed.
+
+The `analysis\=' event: something rewrote what the process\='s compilers
+recorded - a load, a reload, a var removed - so an answer read from it may
+be out of date.  See `replique-lint\='.")
+
 (defun replique-process--event (process frame)
   "Handle FRAME, an unsolicited frame from the control connection of PROCESS."
   (pcase (plist-get frame :event)
+    ("analysis" (run-hook-with-args 'replique-process-analysis-functions process frame))
     ("out" (replique-process--insert process (plist-get frame :string)))
     ("err" (replique-process--insert process (plist-get frame :string) 'replique-stderr))
     ;; Put in the buffer and nowhere else, like anything else the process
