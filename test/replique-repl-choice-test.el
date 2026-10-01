@@ -367,6 +367,42 @@ doing and not ours to undo."
         (when (process-live-p proc) (delete-process proc)))
       (setq replique-repl-choice-test--procs nil))))
 
+;;; Which page `replique-browser' opens
+
+(defun replique-repl-choice-test--opened ()
+  "Return the url `replique-browser' opens, or the error it signals."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+      (condition-case err
+          (progn (replique-browser) opened)
+        (user-error (cadr err))))))
+
+(ert-deftest replique-repl-choice-test-the-runtime-event-is-the-page-opened ()
+  "The url a browser repl is told to open is the one kept, and a Clojure
+repl being the current one does not stop the page of its process being
+opened: the page belongs to the process, and a Clojure buffer is where
+somebody is when they want it."
+  (replique-repl-choice-test--with-repls ((clj nil nil) (cljs "cljs" "browser"))
+    (should (equal "No browser repl - M-x replique-cljs"
+                   (replique-repl-choice-test--opened)))
+    (replique-repl--frame cljs (list :tag "event" :event "runtime"
+                                     :url "http://127.0.0.1:59280/"))
+    (should (equal "http://127.0.0.1:59280/" (replique-repl--url cljs)))
+    (setq replique-current-repl clj)
+    (should (equal "http://127.0.0.1:59280/" (replique-repl-choice-test--opened)))
+    (setq replique-current-repl cljs)
+    (should (equal "http://127.0.0.1:59280/" (replique-repl-choice-test--opened)))))
+
+(ert-deftest replique-repl-choice-test-a-runtime-that-failed-is-no-page ()
+  "A `runtime' event that says why there is no runtime carries no url, and
+there is no page to open."
+  (replique-repl-choice-test--with-repls ((cljs "cljs" "browser"))
+    (replique-repl--frame cljs (list :tag "event" :event "runtime"
+                                     :message "Address already in use"))
+    (should-not (replique-repl--url cljs))
+    (should (equal "No browser repl - M-x replique-cljs"
+                   (replique-repl-choice-test--opened)))))
+
 (provide 'replique-repl-choice-test)
 
 ;;; replique-repl-choice-test.el ends here

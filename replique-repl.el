@@ -118,9 +118,12 @@ caller that cannot carry on until it has - see
 `replique-repl-send-code-sync\\='.  GIVEN-NAME is the buffer name this gave
 the buffer, which is how `replique-repl--rename\\=' tells a name of its own
 from one somebody else chose.  MAIN is the namespace it was started on,
-which is what `replique-restart\=' starts it on again."
+which is what `replique-restart\=' starts it on again.  URL is the page
+its browser runtime is served on, as its `runtime\=' event gave it - nil
+for any repl that is not on the browser, and for one whose runtime has
+not started yet."
   process conn buffer given-name ns params at-prompt to-echo echoed queued
-  last-exception on-end main)
+  last-exception on-end main url)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -286,6 +289,7 @@ better."
                                   message nil "starting the runtime")
        'replique-exception))
      (url
+      (setf (replique-repl--url repl) url)
       (replique-repl--insert repl (format "Open %s\n" url) 'replique-note)))))
 
 (defun replique-repl--frame (repl frame)
@@ -1688,6 +1692,36 @@ opened again - the page was talking to the process that stopped."
   "Show the buffer of the current repl."
   (interactive)
   (pop-to-buffer (replique-repl--buffer (replique-repl-ensure))))
+
+(defun replique-repl--browser-repl ()
+  "Return the repl whose page `replique-browser\=' opens, or nil.
+
+The current repl when it is on the browser.  Otherwise the most recent
+browser repl of the process the current repl belongs to, or of the
+current process when there is no current repl - so a Clojure buffer
+whose commands go to a Clojure repl still opens the page of the process
+it is working with, and not of some other one."
+  (let* ((current (replique-repl-current))
+         (process (if current
+                      (replique-repl--process current)
+                    (replique-process-current))))
+    (if (and current (replique-repl--url current))
+        current
+      (when process
+        (seq-find (lambda (repl)
+                    (and (replique-repl-live-p repl) (replique-repl--url repl)))
+                  (replique-process--repls process))))))
+
+(defun replique-browser ()
+  "Open the page of the browser runtime of the current repl in a browser.
+
+It is the page a browser repl says to open before its first prompt, and
+nothing a browser repl reads is evaluated until a page is on it.  Which
+repl is `replique-repl--browser-repl\='s to say."
+  (interactive)
+  (let ((repl (or (replique-repl--browser-repl)
+                  (user-error "No browser repl - M-x replique-cljs"))))
+    (browse-url (replique-repl--url repl))))
 
 (provide 'replique-repl)
 
