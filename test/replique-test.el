@@ -2987,6 +2987,9 @@ process `replique-connect' goes on offering."
                dir (lambda (p) (setq process p repl (replique-repl--open p nil nil nil))))
               (should (replique-test-wait-for
                        (lambda () (and repl (replique-repl--ns repl))) 120))
+              ;; Printing the repl was set to is the repl's, and a restart
+              ;; keeps it
+              (replique-test-eval repl "(set! *print-length* 5)")
               (let ((buffer (replique-repl--buffer repl))
                     (old process))
                 (replique-restart old)
@@ -3004,6 +3007,9 @@ process `replique-connect' goes on offering."
                 (should (eq process
                             (replique-repl--process
                              (buffer-local-value 'replique--buffer-repl buffer))))
+                (should (equal 5 (plist-get (replique-repl--params
+                                             (buffer-local-value 'replique--buffer-repl buffer))
+                                            :print-length)))
                 ;; and the old process's output buffer went with it
                 (should (equal (list (replique-process-buffer process))
                                (match-buffers (regexp-quote
@@ -3011,6 +3017,33 @@ process `replique-connect' goes on offering."
                                                        (replique-process--id process))))))))
           (when (replique-process-live-p process)
             (replique-kill-process process)))))))
+
+(ert-deftest replique-test-a-repl-starts-with-the-params-asked-for ()
+  "Set by the handshake rather than by a form: the first prompt reports
+them, and nothing was evaluated, so nothing is written in the buffer."
+  (let ((replique-repl-params '(:print-length 3 :warn-on-reflection t)))
+    (replique-test-with-repl repl
+      (should (equal 3 (plist-get (replique-repl--params repl) :print-length)))
+      (should (eq t (plist-get (replique-repl--params repl) :warn-on-reflection)))
+      (should-not (string-match-p "set!" (replique-test-text repl)))
+      (should (string-match-p "(0 1 2 \\.\\.\\.)"
+                              (replique-test-eval repl "(range 10)"))))))
+
+(ert-deftest replique-test-a-param-is-set-in-the-repl ()
+  "And the prompt after it says what it came to, which is what the next
+`replique-set-param' offers it as."
+  (replique-test-with-repl repl
+    (with-current-buffer (replique-repl--buffer repl)
+      (replique-set-param :print-level 2)
+      (should (replique-test-wait-for
+               (lambda () (equal 2 (plist-get (replique-repl--params repl) :print-level)))))
+      (replique-set-param :print-meta t)
+      (should (replique-test-wait-for
+               (lambda () (eq t (plist-get (replique-repl--params repl) :print-meta)))))
+      (replique-set-param :print-level nil)
+      (should (replique-test-wait-for
+               (lambda () (and (replique-repl--at-prompt repl)
+                               (null (plist-get (replique-repl--params repl) :print-level)))))))))
 
 (ert-deftest replique-test-a-request-nobody-will-answer-is-answered ()
   "A connection that dies takes every unanswered request with it.  A caller

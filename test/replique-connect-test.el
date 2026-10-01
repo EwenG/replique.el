@@ -197,10 +197,11 @@ output - and nothing of another process."
 ;;; Restarting
 
 (ert-deftest replique-connect-test-a-restart-opens-the-repls-again-where-they-were ()
-  "Oldest first, in their own buffers, as what they were - and the one that
-was current is current again."
+  "Oldest first, in their own buffers, as what they were, printing the way
+they were - and the one that was current is current again."
   (replique-repl-choice-test--with-repls ((clj nil nil) (cljs "cljs" "node"))
     (setf (replique-repl--main cljs) "my.app")
+    (setf (replique-repl--params clj) '(:print-length 5 :print-level nil))
     (setq replique-current-repl clj)
     (let* ((new (replique-process--make :id "choice-test" :repls nil))
            (started-in nil)
@@ -211,16 +212,17 @@ was current is current again."
                    (setq started-in directory)
                    (funcall then new)))
                 ((symbol-function 'replique-repl--open)
-                 (lambda (process dialect target main buffer)
+                 (lambda (process dialect target main buffer params)
                    (let ((repl (replique-repl--make :process process :buffer buffer)))
-                     (push (list dialect target main buffer) opened)
+                     (push (list dialect target main buffer params) opened)
                      (push repl (replique-process--repls process))
                      (setq replique-current-repl repl)
                      repl))))
         (replique-restart process))
       (should (equal "/tmp/" started-in))
-      (should (equal (list (list nil nil nil (replique-repl--buffer clj))
-                           (list :cljs :node "my.app" (replique-repl--buffer cljs)))
+      (should (equal (list (list nil nil nil (replique-repl--buffer clj)
+                                 '(:print-length 5 :print-level nil))
+                           (list :cljs :node "my.app" (replique-repl--buffer cljs) nil))
                      (reverse opened)))
       (should (eq (replique-repl--buffer clj)
                   (replique-repl--buffer replique-current-repl)))

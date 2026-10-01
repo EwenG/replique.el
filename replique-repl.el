@@ -89,6 +89,31 @@
   :type 'boolean
   :group 'replique)
 
+(defcustom replique-repl-params nil
+  "The printing a repl starts with.
+
+A property list of any of `:print-length\=' and `:print-level\=', a
+count or nil for no limit, and `:print-meta\=' and
+`:warn-on-reflection\=', t or nil.  One left out is what the language
+starts with.  The process sets them before the first prompt, so nothing
+is evaluated to set them and nothing is written in the buffer.
+
+A ClojureScript repl takes all of them but `:warn-on-reflection\=',
+which ClojureScript has no such thing as - and they are its RUNTIME\='s:
+every repl on that runtime prints the same way, and opening one with
+them changes how the others print too.  The process gives them back to a
+page that reloads.
+
+What a repl opened again by `replique-restart\=' starts with is what it
+had instead - see `replique-set-param\=' to change it in one that is
+running."
+  :type '(plist :options
+                ((:print-length (choice (const :tag "No limit" nil) natnum))
+                 (:print-level (choice (const :tag "No limit" nil) natnum))
+                 (:print-meta boolean)
+                 (:warn-on-reflection boolean)))
+  :group 'replique)
+
 (defcustom replique-echo-results t
   "Whether what a form evaluated from a buffer produced is shown in the echo area.
 
@@ -827,13 +852,15 @@ area."
                 (list dialect target main)))))
     nil))
 
-(defun replique-repl--open (process dialect target main &optional buffer)
+(defun replique-repl--open (process dialect target main &optional buffer params)
   "Open a repl on PROCESS, as `replique-repl' describes, and return it.
 
 DIALECT, TARGET and MAIN are what `replique-repl' takes.  BUFFER is a
 buffer to open it in again - one whose repl was closed by
 `replique-restart' - and is nil for a new one.  What it holds is kept,
-the input history with it, and it is not popped to: it is where it was."
+the input history with it, and it is not popped to: it is where it was.
+PARAMS is the printing a Clojure repl starts with, as the prompts of the
+one it replaces reported it, and `replique-repl-params\=' when it is nil."
   (let* ((reused buffer)
          ;; Named from what is being asked for, and named again from the
          ;; reply - see `replique-repl--rename'.  The buffer has to exist
@@ -868,7 +895,13 @@ the input history with it, and it is not popped to: it is where it was."
                          ;; Left out rather than sent as nil, as the two
                          ;; above are: an absent key is how the protocol
                          ;; writes a repl standing in no program
-                         (when main (list :main main)))
+                         (when main (list :main main))
+                         ;; The printing it starts with: what it had, for one
+                         ;; opened again, and what the developer asked for
+                         ;; otherwise
+                         (when-let* ((params (replique-repl--params-for
+                                              dialect (or params replique-repl-params))))
+                           (list :params params)))
           :on-ready (lambda (conn)
                       (let ((proc (replique-conn--proc conn))
                             (cljs (equal "cljs" (plist-get (replique-conn--info conn)
@@ -1635,7 +1668,8 @@ stop it and start it again, see `replique-restart'."
   "Stop PROCESS and start it again, with the repls it had.
 
 Each repl open on it is opened again in the buffer it had, in the order
-they were opened, with the dialect, the target and the namespace it had -
+they were opened, with the dialect, the target, the namespace and the
+printing it had - see `replique-repl-params\=' -
 so the buffers keep their names, their windows, what they printed and
 their input history, and the repl that was current is current again.  A
 process that had none is given a Clojure repl, as a start is.
@@ -1660,7 +1694,8 @@ opened again - the page was talking to the process that stopped."
                           (list (replique-repl--buffer repl)
                                 (when (eq :cljs (replique-repl-dialect repl)) :cljs)
                                 (replique-repl-target repl)
-                                (replique-repl--main repl)))
+                                (replique-repl--main repl)
+                                (replique-repl--params repl)))
                         repls))
          (output (replique-process--output-buffer process)))
     (unless (replique-process--shut process nil)
@@ -1675,7 +1710,8 @@ opened again - the page was talking to the process that stopped."
        (let ((opened (seq-keep (lambda (each)
                                  (when (buffer-live-p (car each))
                                    (replique-repl--open process (nth 1 each) (nth 2 each)
-                                                        (nth 3 each) (car each))))
+                                                        (nth 3 each) (car each)
+                                                        (nth 4 each))))
                                again)))
          (if (null opened)
              (replique-repl--open process nil nil nil)
@@ -1692,6 +1728,117 @@ opened again - the page was talking to the process that stopped."
   "Show the buffer of the current repl."
   (interactive)
   (pop-to-buffer (replique-repl--buffer (replique-repl-ensure))))
+
+;;; Printing params
+
+(defconst replique-repl--param-kinds
+  '((:print-length . count)
+    (:print-level . count)
+    (:print-meta . boolean)
+    (:warn-on-reflection . boolean))
+  "The params a Clojure repl reports at every prompt, and what each takes.")
+
+(defconst replique-repl--cljs-params '(:warn-on-reflection)
+  "The params a ClojureScript repl does not have.
+
+Reflection is the JVM\='s, and a handshake naming it is refused.")
+
+(defun replique-repl--param-kinds-for (dialect)
+  "Return the params a repl of DIALECT has, as `replique-repl--param-kinds\='."
+  (if (eq dialect :cljs)
+      (seq-remove (lambda (each) (memq (car each) replique-repl--cljs-params))
+                  replique-repl--param-kinds)
+    replique-repl--param-kinds))
+
+(defun replique-repl--params-for (dialect params)
+  "Return PARAMS, a property list, with only what a repl of DIALECT has."
+  (let ((kinds (replique-repl--param-kinds-for dialect))
+        (kept nil))
+    (while params
+      (when (assq (car params) kinds)
+        (setq kept (append kept (list (car params) (cadr params)))))
+      (setq params (cddr params)))
+    kept))
+
+(defun replique-repl--param-var (param)
+  "Return the name of the var PARAM, a keyword, is the value of."
+  (format "*%s*" (substring (symbol-name param) 1)))
+
+(defun replique-repl--param-value (kind value)
+  "Print VALUE, a param of KIND, the way Clojure reads it."
+  (cond ((null value) (if (eq kind 'boolean) "false" "nil"))
+        ((eq value t) "true")
+        (t (format "%s" value))))
+
+(defun replique-repl--read-param-value (param kind current)
+  "Read a new value for PARAM, of KIND, whose value is CURRENT.
+
+A count is a natural number, or nothing for no limit.  A boolean is
+offered the other way round from what it is, which is the one somebody
+asking to change it most likely wants."
+  (let ((var (replique-repl--param-var param)))
+    (pcase kind
+      ('count
+       (let ((answer (string-trim
+                      (read-string (format-prompt "%s (empty for no limit)"
+                                                  (replique-repl--param-value kind current)
+                                                  var)
+                                   nil nil
+                                   (replique-repl--param-value kind current)))))
+         (cond ((member answer '("" "nil")) nil)
+               ((string-match-p "\\`[0-9]+\\'" answer) (string-to-number answer))
+               (t (user-error "%s is a count or nothing, and %S is neither" var answer)))))
+      ('boolean
+       (let ((default (if current "false" "true")))
+         (equal "true" (completing-read (format-prompt "%s" default var)
+                                        '("true" "false") nil t nil nil default)))))))
+
+(defun replique-set-param (param value)
+  "Set PARAM of the repl this buffer\='s code goes to to VALUE.
+
+PARAM is one of the printing params a repl reports at every prompt -
+`:print-length\=', `:print-level\=', `:print-meta\=' or, for a
+Clojure repl, `:warn-on-reflection\=' - and is asked for with what each
+one is now, or `?\=' before the repl has said.  It is set by evaluating
+a `set!\=' in the repl, written in its buffer like any other form, and
+the prompt after it says what it came to.
+
+It lasts as long as the repl and a `replique-restart\=' with it.  Where
+every repl is to start with it, `replique-repl-params\=' is the place.
+
+In a ClojureScript repl it is the RUNTIME\='s: every repl on that
+runtime prints the same way from then on, and a page that reloads is
+given it back."
+  (interactive
+   (let* ((repl (replique-repl-ensure-here))
+          (kinds (replique-repl--param-kinds-for (replique-repl-dialect repl)))
+          (params (replique-repl--params repl))
+          (choices (mapcar (lambda (each)
+                             (cons (format "%s (%s)"
+                                           (replique-repl--param-var (car each))
+                                           (if params
+                                               (replique-repl--param-value
+                                                (cdr each) (plist-get params (car each)))
+                                             "?"))
+                                   (car each)))
+                           kinds))
+          (param (cdr (assoc (completing-read "Param: " choices nil t) choices))))
+     (list param
+           (replique-repl--read-param-value
+            param (alist-get param kinds)
+            (plist-get params param)))))
+  (let* ((repl (replique-repl-ensure-here))
+         (dialect (replique-repl-dialect repl))
+         (kind (or (alist-get param (replique-repl--param-kinds-for dialect))
+                   (user-error "%S is not a param of a %s repl" param
+                               (if (eq dialect :cljs) "ClojureScript" "Clojure")))))
+    (replique-repl-send-code
+     repl
+     (format "(set! %s/%s %s)"
+             (if (eq dialect :cljs) "cljs.core" "clojure.core")
+             (replique-repl--param-var param)
+             (replique-repl--param-value kind value))
+     nil t)))
 
 (defun replique-repl--browser-repl ()
   "Return the repl whose page `replique-browser\=' opens, or nil.

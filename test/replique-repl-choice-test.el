@@ -403,6 +403,57 @@ there is no page to open."
     (should (equal "No browser repl - M-x replique-cljs"
                    (replique-repl-choice-test--opened)))))
 
+;;; Printing params
+
+(ert-deftest replique-repl-choice-test-a-param-is-set-in-the-language-of-the-repl ()
+  "cljs.core's var in a ClojureScript repl and clojure.core's in a Clojure
+one - and reflection, which is the JVM's, is a param only the second has."
+  (replique-repl-choice-test--with-repls ((clj nil nil) (cljs "cljs" "browser"))
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'replique-repl-send-code)
+                 (lambda (repl code &rest _) (push (cons repl code) sent))))
+        (with-temp-buffer
+          (setq-local replique--buffer-repl cljs)
+          (replique-set-param :print-length 3)
+          (should (equal (cons cljs "(set! cljs.core/*print-length* 3)") (car sent)))
+          (should-error (replique-set-param :warn-on-reflection t) :type 'user-error))
+        (with-temp-buffer
+          (setq-local replique--buffer-repl clj)
+          (replique-set-param :warn-on-reflection t)
+          (should (equal (cons clj "(set! clojure.core/*warn-on-reflection* true)")
+                         (car sent))))))))
+
+(ert-deftest replique-repl-choice-test-a-repl-is-started-with-the-params-it-has ()
+  "The handshake carries `replique-repl-params', or what the repl being
+replaced had in its place - and for a ClojureScript repl, only what
+ClojureScript has: a handshake naming reflection is refused."
+  (let* ((replique-repl-params '(:print-length 100 :warn-on-reflection t))
+         (process (replique-repl-choice-test--process "params"))
+         (hellos nil))
+    (cl-letf (((symbol-function 'replique-conn-open)
+               (lambda (_host _port _kind &rest keys)
+                 (push (plist-get keys :hello) hellos)
+                 (replique-repl-choice-test--conn)))
+              ((symbol-function 'pop-to-buffer) #'ignore))
+      (unwind-protect
+          (progn
+            (replique-repl--open process nil nil nil)
+            (should (equal '(:print-length 100 :warn-on-reflection t)
+                           (plist-get (car hellos) :params)))
+            (replique-repl--open process nil nil nil nil '(:print-length 5 :print-meta nil))
+            (should (equal '(:print-length 5 :print-meta nil)
+                           (plist-get (car hellos) :params)))
+            (replique-repl--open process :cljs :browser nil)
+            (should (equal '(:print-length 100) (plist-get (car hellos) :params)))
+            (let ((replique-repl-params '(:warn-on-reflection t)))
+              (replique-repl--open process :cljs :browser nil)
+              (should-not (plist-member (car hellos) :params))))
+        (dolist (repl (replique-process--repls process))
+          (kill-buffer (replique-repl--buffer repl)))
+        (dolist (proc replique-repl-choice-test--procs)
+          (when (process-live-p proc) (delete-process proc)))
+        (setq replique-repl-choice-test--procs nil)))))
+
 (provide 'replique-repl-choice-test)
 
 ;;; replique-repl-choice-test.el ends here
