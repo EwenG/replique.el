@@ -235,6 +235,31 @@ they were - and the one that was current is current again."
                (lambda (&rest _) (error "Started"))))
       (should-error (replique-restart process) :type 'user-error))))
 
+(ert-deftest replique-connect-test-stopping-asks-which-process-current-first ()
+  "Asked even when there is one: the commands that read a process this way
+stop it or let go of it.  The current one is the default, and RET takes it."
+  (replique-repl-choice-test--with-repls ()
+    (let* ((other (replique-repl-choice-test--process "other"))
+           (replique-processes (list other process))
+           (asked nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest args)
+                   (setq asked (cons (mapcar #'car collection) (nth 4 args)))
+                   (nth 4 args))))
+        (should (eq process (replique-repl--read-process "Kill process: "))))
+      (should (equal (list (replique-repl--process-label process)
+                           (replique-repl--process-label other))
+                     (car asked)))
+      (should (equal (replique-repl--process-label process) (cdr asked))))))
+
+(ert-deftest replique-connect-test-stopping-with-no-process-says-so ()
+  (let ((replique-processes nil)
+        (replique-current-process nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (error "Asked"))))
+      (should-error (replique-repl--read-process "Kill process: ")
+                    :type 'user-error))))
+
 (provide 'replique-connect-test)
 
 ;;; replique-connect-test.el ends here

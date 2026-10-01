@@ -1000,6 +1000,23 @@ one it replaces reported it, and `replique-repl-params\=' when it is nil."
           (replique-process--id process)
           (abbreviate-file-name (or (replique-process--directory process) "?"))))
 
+(defun replique-repl--read-process (prompt)
+  "Ask, with PROMPT, for one of the processes Emacs is connected to.
+
+The current one is the default, so RET is the usual answer - but it is
+asked even when there is only one: the commands that read a process this
+way stop it or let go of it, and which one is current is not always what
+anybody remembers.  Only processes Emacs is connected to are offered: a
+process only a port file names is one to `replique-connect' to first."
+  (let* ((current (replique-process-current))
+         (processes (delq nil (cons current (remq current (replique-processes-live)))))
+         (choices (mapcar (lambda (process)
+                            (cons (replique-repl--process-label process) process))
+                          processes)))
+    (unless choices (user-error "No replique process - M-x replique-connect"))
+    (cdr (assoc (completing-read prompt choices nil t nil nil (caar choices))
+                choices))))
+
 (defun replique-repl--process-choices ()
   "Return what `replique-connect' offers, each a label and what it means.
 
@@ -1621,8 +1638,9 @@ What to do with a process that is not yours to stop - one that belongs to
 a terminal, or to whoever is working on the machine it runs on.  It goes
 on running and its port file goes on saying where it is, so
 `replique-connect' finds it again.  Its buffers are killed - see
-`replique-process--buffers'."
-  (interactive (list (replique-process-ensure)))
+`replique-process--buffers'.  Interactively, which process is asked for -
+see `replique-repl--read-process'."
+  (interactive (list (replique-repl--read-process "Disconnect from process: ")))
   (replique-process--close process t)
   (message "replique: let go of %s" (replique-process--id process)))
 
@@ -1654,8 +1672,11 @@ it.  Silence there would be this command behaving the way
 `replique-disconnect' does, under the name that promises the opposite.
 
 To let go of a process without stopping it, see `replique-disconnect'.  To
-stop it and start it again, see `replique-restart'."
-  (interactive (list (replique-process-ensure)))
+stop it and start it again, see `replique-restart'.
+
+Interactively, which process is asked for, the current one by default -
+see `replique-repl--read-process'."
+  (interactive (list (replique-repl--read-process "Kill process: ")))
   (let ((id (replique-process--id process)))
     (if (replique-process--shut process t)
         (message "replique: stopped %s" id)
@@ -1679,8 +1700,11 @@ ran in, whoever started that one.  The output buffer of the old one goes:
 the new process has its own.
 
 A browser repl comes back with nothing running in it until the page is
-opened again - the page was talking to the process that stopped."
-  (interactive (list (replique-process-ensure)))
+opened again - the page was talking to the process that stopped.
+
+Interactively, which process is asked for, the current one by default -
+see `replique-repl--read-process'."
+  (interactive (list (replique-repl--read-process "Restart process: ")))
   (let* ((id (replique-process--id process))
          (directory (or (replique-process--directory process)
                         (user-error "%s does not say where it runs" id)))
