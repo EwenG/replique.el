@@ -27,6 +27,10 @@
 (require 'replique-test)
 (require 'replique-clojure-mode)
 
+;; Whatever cljfmt configuration the directory the suite runs in sits under
+;; is not what these are about: they are cljfmt's defaults
+(setq replique-cljfmt-read-project-config nil)
+
 (defun replique-clojure-test--face (text &optional level)
   "The face painted at | in TEXT, at LEVEL or at the default one.
 
@@ -474,13 +478,13 @@ be saying it needs one."
            "(-> x\n    inc\n    dec)\n"))
   (should (replique-clojure-test--reindents-to-itself
            "(->> xs\n     (map inc)\n     (filter odd?))\n"))
-  ;; Under the step before it rather than under the first of them, which
-  ;; is the same column until two steps are written on one line
-  (should (equal "(-> x\n    (foo) (baz)\n          (bar))\n"
+  ;; Under the first of them, as the arguments of any call are: a threading
+  ;; macro is a call to cljfmt, so two steps on one line do not move the
+  ;; next one under the second
+  (should (equal "(-> x\n    (foo) (baz)\n    (bar))\n"
                  (replique-clojure-test--reindent "(-> x\n(foo) (baz)\n(bar))\n")))
-  ;; and a threading macro is whatever ends like one
-  (should (replique-clojure-test--reindents-to-itself
-           "(some->> xs\n         (map inc))\n")))
+  (should (equal "(-> x (foo)\n    (bar))\n"
+                 (replique-clojure-test--reindent "(-> x (foo)\n(bar))\n"))))
 
 (ert-deftest replique-clojure-mode-test-an-ns-form-is-indented ()
   (should (replique-clojure-test--reindents-to-itself
@@ -494,9 +498,12 @@ be saying it needs one."
 
 (ert-deftest replique-clojure-mode-test-a-function-literal-is-a-form ()
   ;; Indented from where the form starts, which for a `#(' is the `#' and
-  ;; not the bracket after it - which is where cljfmt indents it from
+  ;; not the bracket after it - and a body three in from there, which is
+  ;; how far cljfmt puts one
   (should (replique-clojure-test--reindents-to-itself
-           "(map #(do\n       (inc %))\n     xs)\n")))
+           "(map #(do\n        (inc %))\n     xs)\n"))
+  (should (replique-clojure-test--reindents-to-itself
+           "(map #(foo\n       %) xs)\n")))
 
 (ert-deftest replique-clojure-mode-test-a-reader-conditional-is-indented ()
   ;; Its elements line up with one another.  They are platforms and what

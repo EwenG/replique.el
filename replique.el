@@ -55,6 +55,7 @@
 
 (require 'replique-common)
 (require 'replique-clojure-mode)
+(require 'replique-format)
 (require 'replique-edn)
 (require 'replique-conn)
 (require 'replique-exception)

@@ -20,8 +20,8 @@ endif
 # process.  Without it they are skipped.
 REPLIQUE_PROJECT ?=
 
-SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
-      replique-parse.el \
+SRC = replique-common.el replique-parse.el replique-cljfmt.el \
+      replique-clojure-mode.el replique-format.el replique-edn.el \
       replique-conn.el replique-exception.el replique-process.el \
       replique-repl.el replique-locals.el replique-deps.el replique-eval.el \
       replique-pprint.el replique-forms.el replique-name.el \
@@ -30,7 +30,8 @@ SRC = replique-common.el replique-clojure-mode.el replique-edn.el \
       replique-main-js.el replique-css.el replique-reload.el \
       replique-stale.el replique.el
 
-LINT = replique-common.el replique-parse.el replique-clojure-mode.el \
+LINT = replique-common.el replique-parse.el replique-cljfmt.el \
+       replique-clojure-mode.el replique-format.el \
        replique-edn.el replique-conn.el \
        replique-exception.el \
        replique-process.el replique-repl.el replique-locals.el replique-deps.el \
@@ -57,7 +58,8 @@ compile:
 	  test/replique-repl-choice-test.el \
 	  test/replique-connect-test.el \
 	  test/replique-name-fuzz-test.el \
-	  test/replique-lint-test.el
+	  test/replique-lint-test.el \
+	  test/replique-cljfmt-test.el
 
 # Natively compiled, into the eln cache this Emacs reads.
 #
@@ -99,6 +101,7 @@ test: compile
 	  -l replique-connect-test \
 	  -l replique-name-fuzz-test \
 	  -l replique-lint-test \
+	  -l replique-cljfmt-test \
 	  -f ert-run-tests-batch-and-exit
 
 lint:
