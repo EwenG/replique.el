@@ -374,6 +374,13 @@ The `analysis\=' event: something rewrote what the process\='s compilers
 recorded - a load, a reload, a var removed - so an answer read from it may
 be out of date.  See `replique-lint\='.")
 
+(defvar replique-process-event-functions nil
+  "Called with a process and the frame, for an event nothing here handles.
+
+Which is how a feature that asked the process to tell it something is
+told: an `inspect-changed\=' event belongs to whoever is inspecting - see
+`replique-inspect\='.")
+
 (defun replique-process--event (process frame)
   "Handle FRAME, an unsolicited frame from the control connection of PROCESS."
   (pcase (plist-get frame :event)
@@ -401,7 +408,7 @@ be out of date.  See `replique-lint\='.")
      ;; Written where the gap is: everything that survived came before it
      (replique-process--note process "... %s events were dropped ..."
                              (plist-get frame :count)))
-    (_ nil)))
+    (_ (run-hook-with-args 'replique-process-event-functions process frame))))
 
 (defun replique-process--frame (process frame)
   "Handle FRAME on the control connection of PROCESS."

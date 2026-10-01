@@ -28,7 +28,7 @@ SRC = replique-common.el replique-parse.el replique-cljfmt.el \
       replique-fresh.el \
       replique-completion.el replique-symbol.el replique-lint.el \
       replique-main-js.el replique-css.el replique-reload.el \
-      replique-stale.el replique.el
+      replique-stale.el replique-inspect.el replique.el
 
 LINT = replique-common.el replique-parse.el replique-cljfmt.el \
        replique-clojure-mode.el replique-format.el \
@@ -39,7 +39,7 @@ LINT = replique-common.el replique-parse.el replique-cljfmt.el \
        replique-fresh.el \
        replique-completion.el replique-symbol.el replique-lint.el \
        replique-main-js.el replique-css.el replique-reload.el \
-       replique-stale.el replique.el
+       replique-stale.el replique-inspect.el replique.el
 
 .PHONY: all compile native test lint clean
 
@@ -59,7 +59,8 @@ compile:
 	  test/replique-connect-test.el \
 	  test/replique-name-fuzz-test.el \
 	  test/replique-lint-test.el \
-	  test/replique-cljfmt-test.el
+	  test/replique-cljfmt-test.el \
+	  test/replique-inspect-test.el
 
 # Natively compiled, into the eln cache this Emacs reads.
 #
@@ -102,6 +103,7 @@ test: compile
 	  -l replique-name-fuzz-test \
 	  -l replique-lint-test \
 	  -l replique-cljfmt-test \
+	  -l replique-inspect-test \
 	  -f ert-run-tests-batch-and-exit
 
 lint:

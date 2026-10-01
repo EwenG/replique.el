@@ -48,6 +48,14 @@
 ;; parsing again is what keeps the answer the editor indents by and the answer
 ;; the repl is sent the same one.
 ;;
+;; A value of the process is looked at a piece at a time rather than printed
+;; whole, and a var holding an atom says when it changes - see
+;; `replique-inspect':
+;;
+;;   C-c C-w                     `replique-watch' a var
+;;   M-x replique-inspect-results  what the repl returned last
+;;   M-x replique-taps           what was given to `tap>'
+;;
 ;; That mode turns `replique-mode' on, so the commands below are bound in a
 ;; Clojure file without anything having to be turned on by hand.
 
@@ -72,6 +80,7 @@
 (require 'replique-css)
 (require 'replique-reload)
 (require 'replique-stale)
+(require 'replique-inspect)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.
@@ -101,6 +110,7 @@ happened to be current, which is a buffer of somebody else's.")
     (define-key map (kbd "C-c C-o") #'replique-show-process-output)
     (define-key map (kbd "C-c C-e") #'replique-show-last-exception)
     (define-key map (kbd "C-c C-p") #'replique-pprint)
+    (define-key map (kbd "C-c C-w") #'replique-watch)
     map)
   "Keymap of `replique-mode'.")
 

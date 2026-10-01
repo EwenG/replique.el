@@ -468,6 +468,7 @@ it better than anything here could."
 (declare-function replique-in-ns "replique-eval")
 (declare-function replique-remove-var "replique-symbol")
 (declare-function replique-reload-app "replique-reload")
+(declare-function replique-watch "replique-inspect")
 
 (defvar replique-repl-mode-map
   (let ((map (make-sparse-keymap)))
@@ -493,6 +494,9 @@ it better than anything here could."
     ;; the transcript and writes "*** output flushed ***" where it was - a
     ;; terminal habit, and not what this key means anywhere else in replique
     (define-key map (kbd "C-c C-o") #'replique-show-process-output)
+    ;; Autoloaded from replique-inspect, and the same key as in a Clojure
+    ;; buffer: a var is watched from wherever its name is written
+    (define-key map (kbd "C-c C-w") #'replique-watch)
     (define-key map (kbd "RET") #'replique-repl-return)
     ;; What comint keeps on these two is meant for a subprocess of a terminal,
     ;; and what this buffer holds is a socket.  `comint-stop-subjob' sends no
