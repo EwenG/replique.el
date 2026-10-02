@@ -144,8 +144,13 @@ started it, nil when Emacs only connected to it.
 DIRECTORY is where it runs, named the way the editor names it, which is
 not always the way the process does - see \"The name a path comes back
 under\" below.  RENAMING is how to write one of its paths the other way,
-and what says the two names are different at all."
-  id host port directory renaming info proc control repls output-buffer)
+and what says the two names are different at all.
+
+INPUTS is what its classpath was made of, as `replique-process-inputs'
+read it when the process was started - or, for one Emacs only connected
+to, when it was connected to.  See replique-classpath.el, which is what
+holds it up against the disk."
+  id host port directory renaming info proc control repls output-buffer inputs)
 
 (defvar replique-process-started-hook nil
   "Functions called with a process once it is connected.")
@@ -727,7 +732,10 @@ asked for.  What is yours rather than a project's goes in
   (let ((aliases (default-value 'replique-aliases)))
     (with-temp-buffer
       (setq-local replique-aliases aliases)
-      (setq-local default-directory directory)
+      ;; As a directory: without its slash it names a file in the parent,
+      ;; whose .dir-locals.el is the one that would be read - and a process
+      ;; says where it runs without one
+      (setq-local default-directory (file-name-as-directory (expand-file-name directory)))
       (hack-dir-local-variables-non-file-buffer)
       replique-aliases)))
 
@@ -752,15 +760,22 @@ the one process it was set in the way of."
         (concat "-M" (string-join aliases))
       "-M")))
 
-(defun replique-process--command (directory)
+(defun replique-process--command (directory &optional force)
   "Return the command starting a replique process in DIRECTORY.
 
 Under nohup where there is one: Emacs sends SIGHUP to what it started when
 it exits, and a process that is meant to be connected to again has to live
-through that.  Where there is none the process is Emacs's to lose."
+through that.  Where there is none the process is Emacs's to lose.
+
+FORCE has the cli compute the classpath again rather than read the one it
+kept in .cpcache.  It keeps one per deps files and aliases, and calls it
+stale only when one of those files is newer than it - a test that a file
+that is a link passes or fails by the date of the checkout behind it,
+which is not the question."
   (let ((id (replique-process--id-for directory)))
     (append (when (executable-find "nohup") (list "nohup"))
             (list replique-clojure-program)
+            (when force (list "-Sforce"))
             ;; -Sdeps is merged as the last deps file rather than replacing
             ;; any of them, so bringing replique along, and whatever else is
             ;; yours, costs the project nothing
@@ -768,6 +783,66 @@ through that.  Where there is none the process is Emacs's to lose."
               (list "-Sdeps" sdeps))
             (list (replique-process--main-opt) "-m" "replique.main")
             (when id (list (replique-edn-map (list :process-id id)))))))
+
+;;; What a classpath is made of
+
+(defun replique-process--user-deps-file ()
+  "The deps.edn of your own the clojure cli reads, as it finds it.
+
+$CLJ_CONFIG, then $XDG_CONFIG_HOME/clojure, then ~/.clojure - the order
+the cli looks in."
+  (expand-file-name
+   "deps.edn"
+   (cond ((getenv "CLJ_CONFIG"))
+         ((getenv "XDG_CONFIG_HOME")
+          (expand-file-name "clojure" (getenv "XDG_CONFIG_HOME")))
+         (t "~/.clojure"))))
+
+(defun replique-process--file-hash (file)
+  "What FILE holds, as a hash, or nil when there is no FILE.
+
+The content and not the time it was written, because what this is for is
+saying whether a classpath would come out differently - and a file that
+is a link, as a deps.edn in a directory that is pointed at one worktree
+or another is, is written at whatever time the checkout was made."
+  (when (file-readable-p file)
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally file)
+      (secure-hash 'md5 (current-buffer)))))
+
+(defun replique-process-launch (directory)
+  "What a process started in DIRECTORY now would be started with.
+
+A plist of `:aliases', the aliases as `replique-process--main-opt' names
+them but without their colons, and `:extra', the text of the deps -Sdeps
+is given, an empty string for none."
+  (let ((replique-aliases (replique-process--project-aliases directory)))
+    (list :aliases (mapcar (lambda (alias) (string-remove-prefix ":" alias))
+                           (split-string (string-remove-prefix
+                                          "-M" (replique-process--main-opt))
+                                         ":" t))
+          :extra (or (replique-process--sdeps directory) ""))))
+
+(defun replique-process-inputs (directory)
+  "What the classpath of a process started in DIRECTORY is made of, now.
+
+A plist of `:launch', what `replique-process-launch' answers, and
+`:files', an alist of the files the clojure cli reads to compute it and a
+hash of what each holds: the deps.edn of the project, the one of your own,
+and `replique-aliases-file'.
+
+NOT EVERYTHING IT IS MADE OF, and it does not have to be.  A `:local/root'
+library has a deps.edn of its own, and which libraries those are is the
+cli's to say - so a change there is not seen here.  What this is for is
+knowing cheaply when to ask the process the question that does see it -
+see `replique-classpath-check' - and the files named here are the ones
+somebody edits."
+  (list :launch (replique-process-launch directory)
+        :files (mapcar (lambda (file) (cons file (replique-process--file-hash file)))
+                       (list (expand-file-name "deps.edn" directory)
+                             (expand-file-name replique-aliases-file directory)
+                             (replique-process--user-deps-file)))))
 
 (defun replique-process--startup-buffer (proc)
   "Return the buffer holding what PROC wrote."
@@ -926,6 +1001,7 @@ of a jvm that died still reaches the buffer."
                         (replique-process--failed proc why)))))
         (when process
           (process-put proc 'replique-process process)
+          (setf (replique-process--inputs process) (process-get proc 'replique-inputs))
           ;; The buffer the startup output went to becomes the buffer of the
           ;; process: what it printed before it was up belongs with the rest
           (replique-process--adopt-buffer process proc))))
@@ -976,7 +1052,7 @@ of a jvm that died still reaches the buffer."
              'action (lambda (button) (find-file (button-label button)))
              'help-echo "RET: open the report clojure wrote")))))))
 
-(defun replique-process-start (directory &optional on-connected)
+(defun replique-process-start (directory &optional on-connected force)
   "Start a replique process in DIRECTORY and connect to it.
 
 ON-CONNECTED is called with the process once it is connected, outside of
@@ -984,6 +1060,9 @@ the filter that noticed - see `replique-process--then'.  A process that
 does not come up never calls it: what went wrong is said in its buffer.
 The command is `replique-connect', which offers a start alongside the
 processes already running.
+
+FORCE computes the classpath afresh rather than reading the one the cli
+kept - see `replique-process--command'.
 
 The project needs no change to be worked on: `replique-coordinates' is
 put on the classpath alongside its own dependencies, together with
@@ -1012,7 +1091,8 @@ where there is one."
     (replique-process--reap-directory directory)
     (let* ((default-directory directory)
            (replique-aliases (replique-process--project-aliases directory))
-           (command (replique-process--command directory))
+           (command (replique-process--command directory force))
+           (inputs (replique-process-inputs directory))
            (buffer (generate-new-buffer
                     (format "*replique-process: %s*"
                             (file-name-nondirectory (directory-file-name directory))))))
@@ -1035,6 +1115,7 @@ where there is one."
         (process-put proc 'replique-buffer buffer)
         (process-put proc 'replique-state 'starting)
         (process-put proc 'replique-directory directory)
+        (process-put proc 'replique-inputs inputs)
         (process-put proc 'replique-on-connected on-connected)
         proc))))
 
@@ -1063,6 +1144,13 @@ at once with the process Emacs already has, when it has it."
       (replique-process--connect
        info directory nil
        (lambda (process)
+         ;; Read now, which is the nearest this can get to when it was
+         ;; started: what it was started with is not anything this Emacs
+         ;; saw.  What is compared later is what changed SINCE, which is
+         ;; what was asked about anyway
+         (when directory
+           (setf (replique-process--inputs process)
+                 (replique-process-inputs directory)))
          (replique-process-buffer process)
          (message "replique: connected to %s" (replique-process--id process))
          (run-hook-with-args 'replique-process-started-hook process)

@@ -152,6 +152,8 @@ and the assertions read what a session would have seen."
            replique-reload-test--sent nil)
      (cl-letf (((symbol-function 'replique-reload--soon)
                 (lambda (function) (funcall function)))
+               ((symbol-function 'replique-classpath--soon)
+                (lambda (function) (funcall function)))
                ((symbol-function 'replique-repl-send-code-then)
                 (lambda (repl _code _display callback)
                   (push (replique-reload--label repl) replique-reload-test--asked)
@@ -169,6 +171,10 @@ and the assertions read what a session would have seen."
                   (setq replique-reload-test--sent
                         (append replique-reload-test--sent (list msg)))
                   (cond
+                   ;; The classpath, which is asked first and has nothing to
+                   ;; say here - replique-classpath-test is where it does
+                   ((eq :classpath-status (plist-get msg :op))
+                    (funcall callback '(:tag "reply" :frozen nil)))
                    ((eq :stale (plist-get msg :op))
                     (funcall callback
                              (funcall (or ,stale

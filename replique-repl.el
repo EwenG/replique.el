@@ -1701,7 +1701,9 @@ process that had none is given a Clojure repl, as a start is.
 
 What starts is a process of Emacs\='s own, in the directory the old one
 ran in, whoever started that one.  The output buffer of the old one goes:
-the new process has its own.
+the new process has its own.  Its classpath is computed again rather than
+read from what the cli kept, since a changed one is usually why a process
+is restarted.
 
 A browser repl comes back with nothing running in it until the page is
 opened again - the page was talking to the process that stopped.
@@ -1749,7 +1751,11 @@ see `replique-repl--read-process'."
              (setq replique-current-repl repl)
              (let ((repls (replique-process--repls process)))
                (setf (replique-process--repls process)
-                     (cons repl (delq repl repls)))))))))
+                     (cons repl (delq repl repls))))))))
+     ;; Computed afresh: a restart is what a changed classpath asks for,
+     ;; and the classpath the cli kept is the one it is changing from - see
+     ;; `replique-process--command'
+     t)
     (message "replique: restarting %s" id)))
 
 (defun replique-switch-to-repl ()

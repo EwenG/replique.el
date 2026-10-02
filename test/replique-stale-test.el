@@ -423,7 +423,9 @@ the buffer is written when the last of them has arrived."
       (replique-stale--ask-app (replique-process--make :directory "/p/")))
     ;; WITH THE UNREAD COUNT ASKED FOR, which this is the one place that does:
     ;; it is dear for the process to work out and this is where it is shown.
-    (should (equal '((:op :stale :unread t)
+    ;; And the classpath before any of it, which is what a reload asks first.
+    (should (equal '((:op :classpath-status)
+                     (:op :stale :unread t)
                      (:op :stale :unread t :dialect :cljs :target :browser))
                    (nreverse asked)))
     (should (buffer-live-p shown))

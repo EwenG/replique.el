@@ -639,6 +639,9 @@ read where the project is - not where the command was called from."
           (with-temp-file (expand-file-name ".dir-locals.el" dir)
             (insert "((nil . ((replique-aliases . (\"dev\")))))\n"))
           (should (equal '("dev") (replique-process--project-aliases dir)))
+          ;; named as a process names its directory, without the slash
+          (should (equal '("dev") (replique-process--project-aliases
+                                   (directory-file-name dir))))
           ;; and a project that asks for nothing leaves the caller alone
           (delete-file (expand-file-name ".dir-locals.el" dir))
           (should (equal '("whatever-the-caller-had")

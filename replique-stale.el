@@ -79,6 +79,7 @@
 
 ;;; Code:
 
+(require 'replique-classpath)
 (require 'replique-css)
 (require 'replique-process)
 (require 'replique-reload)
@@ -110,6 +111,9 @@ As `replique-css-stale-in\=' answers them.
 Worked out here rather than asked, because the process has never heard of
 a .scss.  Which is also why it is kept apart from the answers: see
 `replique-stale--sections\='.")
+
+(defvar-local replique-stale--classpath nil
+  "What `replique-classpath-check' found, asked without acting on it.")
 
 ;;; Rendering
 
@@ -336,6 +340,22 @@ which is which."
                  (integerp unread) (> unread 0))
         (replique-stale--insert-unread unread)))))
 
+(defun replique-stale--classpath-lines (report)
+  "What REPORT says about the classpath, as lines, nil when it says nothing."
+  (append
+   (when (plist-get report :reading-due)
+     (list "The process's list of what is on it is out of date - links under it moved.  A reload rebuilds it first."))
+   (mapcar (lambda (reason) (concat "Needs a restart: " reason))
+           (replique-classpath--restart-reasons report))
+   (mapcar (lambda (addition) (concat "Not on it yet: " addition))
+           (replique-classpath--additions report))
+   (mapcar (lambda (removal) (concat "Left deps.edn, still loaded: " removal))
+           (replique-classpath--removals report))
+   (when-let* ((unplanned (replique-classpath--unplanned report)))
+     (list (concat (upcase (substring unplanned 0 1)) (substring unplanned 1))))
+   (mapcar (lambda (problem) (concat "npm: " problem))
+           (plist-get report :npm))))
+
 (defun replique-stale--render ()
   "Write what the process answered into the current buffer."
   (let* ((inhibit-read-only t)
@@ -348,6 +368,12 @@ which is which."
                     (plist-get (car sections) :dialect-keys)
                     replique-stale--stylesheets)))
     (erase-buffer)
+    ;; Above the languages, because a reload brings it up to date before
+    ;; any of them - see `replique-reload--classpath'
+    (when-let* ((lines (replique-stale--classpath-lines replique-stale--classpath)))
+      (insert "Classpath\n\n")
+      (dolist (line lines) (insert "  " line "\n"))
+      (insert "\n"))
     (dolist (section sections)
       (unless (eq section (car sections)) (insert "\n"))
       (replique-stale--render-section section directory named))
@@ -377,18 +403,20 @@ which is which."
 
 ;;; Asking
 
-(defun replique-stale--show (process sections stylesheets)
+(defun replique-stale--show (process sections stylesheets &optional classpath)
   "Show what PROCESS said in SECTIONS, with STYLESHEETS under them.
 
-Returns the buffer.  PROCESS is kept for `replique-stale-refresh' and
-`replique-stale-reload' - see `replique-stale--process'."
+CLASSPATH, what was found about it, goes above them.  Returns the buffer.
+PROCESS is kept for `replique-stale-refresh' and `replique-stale-reload' -
+see `replique-stale--process'."
   (let ((buffer (get-buffer-create "*replique-stale*")))
     (with-current-buffer buffer
       ;; Before anything buffer local is set: the mode kills them
       (replique-stale-mode)
       (setq replique-stale--process process
             replique-stale--sections sections
-            replique-stale--stylesheets stylesheets)
+            replique-stale--stylesheets stylesheets
+            replique-stale--classpath classpath)
       (replique-stale--render))
     (pop-to-buffer buffer)
     buffer))
@@ -415,27 +443,33 @@ nobody - see `replique-css-stale-in'."
     (let ((answers (make-hash-table :test #'eq))
           (left (length repls))
           (root (or (replique-process--directory process) default-directory)))
-      (dolist (repl repls)
-        (replique-process-request
-         ;; WITH THE UNREAD COUNT, which is asked for rather than always
-         ;; answered: it costs the process a walk of every var it holds, and
-         ;; this is the one place that shows it - see
-         ;; `replique-stale--insert-unread'.  What asks before a find-usages
-         ;; reads the two lists and nothing else, and does not ask for it.
-         process (append (list :op :stale :unread t)
-                         (replique-reload--dialect-keys repl))
-         (lambda (frame)
-           (puthash repl frame answers)
-           (setq left (1- left))
-           (when (zerop left)
-             (replique-stale--show
-              process
-              (mapcar (lambda (repl)
-                        (list :label (replique-reload--label repl)
-                              :dialect-keys (replique-reload--dialect-keys repl)
-                              :found (gethash repl answers)))
-                      repls)
-              (replique-css-stale-in root)))))))))
+      ;; The classpath first and without acting on it: this is the question
+      ;; the reload asks before anything else, asked and not done
+      (replique-classpath-check
+       process
+       (lambda (report)
+         (dolist (repl repls)
+           (replique-process-request
+            ;; WITH THE UNREAD COUNT, which is asked for rather than always
+            ;; answered: it costs the process a walk of every var it holds, and
+            ;; this is the one place that shows it - see
+            ;; `replique-stale--insert-unread'.  What asks before a find-usages
+            ;; reads the two lists and nothing else, and does not ask for it.
+            process (append (list :op :stale :unread t)
+                            (replique-reload--dialect-keys repl))
+            (lambda (frame)
+              (puthash repl frame answers)
+              (setq left (1- left))
+              (when (zerop left)
+                (replique-stale--show
+                 process
+                 (mapcar (lambda (repl)
+                           (list :label (replique-reload--label repl)
+                                 :dialect-keys (replique-reload--dialect-keys repl)
+                                 :found (gethash repl answers)))
+                         repls)
+                 (replique-css-stale-in root)
+                 report))))))))))
 
 (defun replique-stale-refresh ()
   "Ask again, of the process this buffer was written from.

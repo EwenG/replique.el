@@ -86,6 +86,7 @@
 
 (require 'seq)
 (require 'subr-x)
+(require 'replique-classpath)
 (require 'replique-css)
 (require 'replique-eval)
 (require 'replique-process)
@@ -266,6 +267,33 @@ in."
                     (mapcar (lambda (repl) (cons repl (gethash repl answers)))
                             repls))))))))
 
+;;; The classpath, before anything is asked of it
+
+(defun replique-reload--classpath (process then)
+  "Bring the classpath of PROCESS up to date, then call THEN with a sentence.
+
+THE FIRST STEP, AND IT IS BEFORE THE PLAN.  A branch switched can be a
+classpath changed - a library added, a worktree pointed at under a
+process reading it through links - and every step after this one reads
+the classpath: what is stale is answered out of the files on it, and a
+reload compiles against it.  So a reading that is due is done, and what
+the deps files would add is asked about, before anything else is asked.
+See replique-classpath.el.
+
+THEN is not called where the process is being restarted instead: the
+repls this would reload are on their way out, and the process that comes
+back loads the application fresh."
+  (replique-classpath-check
+   process
+   (lambda (report)
+     (replique-classpath-act
+      process report
+      (lambda (sentence go-on)
+        (if go-on
+            (funcall then sentence)
+          (message "replique: %s" sentence)))))
+   nil t))
+
 ;;; Doing it
 
 (defun replique-reload--soon (function)
@@ -349,7 +377,8 @@ the last one.
 WHAT STOPPED IS NAMED AND NOT REPEATED.  The exception is in the repl that
 threw it, whole and triaged, which is where it is read - saying it again
 here would be the first line of it, in an echo area, with the rest cut."
-  (let* ((loaded (plist-get languages :loaded))
+  (let* ((classpath (plist-get languages :classpath))
+         (loaded (plist-get languages :loaded))
          (quiet (plist-get languages :quiet))
          (unread (plist-get languages :unread))
          (blocked (plist-get languages :blocked))
@@ -357,6 +386,9 @@ here would be the first line of it, in an echo area, with the rest cut."
          (busy (plist-get languages :busy))
          (gone (plist-get languages :gone))
          (parts (append
+                 ;; First, because it happened first, and because what is
+                 ;; loaded after it was loaded against it
+                 (when classpath (list classpath))
                  (when loaded
                    (list (format "loaded %s" (string-join loaded ", "))))
                  (when blocked
@@ -461,7 +493,13 @@ both, and nothing outside the directory the process was started in.
 Every repl is asked whether it is ready before any of them is sent
 anything, and again before each of them is sent anything, so that a repl
 somebody started using while this was running is left alone rather than
-sent a reload whose answer would be their form\\='s."
+sent a reload whose answer would be their form\\='s.
+
+AND THE CLASSPATH BEFORE ANY OF IT.  A checkout can change what is on it
+as well as what is in it, and everything after reads it - so a reading the
+process owes is done, what the deps files would add is offered, and what
+it cannot follow without a restart offers one.  See
+\\[replique-sync-classpath], which is that on its own."
   (interactive)
   (let* ((process (replique-process-ensure))
          ;; Where the build runs and what its paths are relative to - the
@@ -474,28 +512,31 @@ sent a reload whose answer would be their form\\='s."
       (user-error "The %s repl is busy with something else"
                   (replique-reload--label busy)))
     (save-some-buffers nil (lambda () (replique-reload--source-p root)))
-    (replique-reload--plan
-     process repls
-     (lambda (plans)
-       (replique-reload--soon
-        (lambda ()
-          (let ((state nil))
-            (dolist (plan plans)
-              (let ((key (pcase (cdr plan)
-                           (:nothing :quiet)
-                           (:unread :unread)
-                           (:blocked :blocked))))
-                (when key
-                  (setq state
-                        (plist-put state key
-                                   (append (plist-get state key)
-                                           (list (replique-reload--label
-                                                  (car plan)))))))))
-            (replique-reload--step
-             (seq-filter (lambda (plan) (memq (cdr plan) '(:load :ask))) plans)
-             state
-             (lambda (languages)
-               (replique-reload--stylesheets process root languages))))))))))
+    (replique-reload--classpath
+     process
+     (lambda (classpath)
+       (replique-reload--plan
+        process repls
+        (lambda (plans)
+          (replique-reload--soon
+           (lambda ()
+             (let ((state (when classpath (list :classpath classpath))))
+               (dolist (plan plans)
+                 (let ((key (pcase (cdr plan)
+                              (:nothing :quiet)
+                              (:unread :unread)
+                              (:blocked :blocked))))
+                   (when key
+                     (setq state
+                           (plist-put state key
+                                      (append (plist-get state key)
+                                              (list (replique-reload--label
+                                                     (car plan)))))))))
+               (replique-reload--step
+                (seq-filter (lambda (plan) (memq (cdr plan) '(:load :ask))) plans)
+                state
+                (lambda (languages)
+                  (replique-reload--stylesheets process root languages))))))))))))
 
 (provide 'replique-reload)
 

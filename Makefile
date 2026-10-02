@@ -27,7 +27,8 @@ SRC = replique-common.el replique-parse.el replique-cljfmt.el \
       replique-pprint.el replique-forms.el replique-name.el \
       replique-fresh.el \
       replique-completion.el replique-symbol.el replique-lint.el \
-      replique-main-js.el replique-css.el replique-reload.el \
+      replique-main-js.el replique-css.el replique-classpath.el \
+      replique-reload.el \
       replique-stale.el replique-inspect.el replique.el
 
 LINT = replique-common.el replique-parse.el replique-cljfmt.el \
@@ -38,7 +39,8 @@ LINT = replique-common.el replique-parse.el replique-cljfmt.el \
        replique-eval.el replique-pprint.el replique-forms.el replique-name.el \
        replique-fresh.el \
        replique-completion.el replique-symbol.el replique-lint.el \
-       replique-main-js.el replique-css.el replique-reload.el \
+       replique-main-js.el replique-css.el replique-classpath.el \
+       replique-reload.el \
        replique-stale.el replique-inspect.el replique.el
 
 .PHONY: all compile native test lint clean
@@ -54,6 +56,7 @@ compile:
 	  test/replique-fresh-test.el test/replique-stale-test.el \
 	  test/replique-main-js-test.el test/replique-css-test.el \
 	  test/replique-reload-test.el \
+	  test/replique-classpath-test.el \
 	  test/replique-dialect-test.el \
 	  test/replique-repl-choice-test.el \
 	  test/replique-connect-test.el \
@@ -97,6 +100,7 @@ test: compile
 	  -l replique-fresh-test -l replique-stale-test \
 	  -l replique-main-js-test -l replique-css-test \
 	  -l replique-reload-test \
+	  -l replique-classpath-test \
 	  -l replique-dialect-test \
 	  -l replique-repl-choice-test \
 	  -l replique-connect-test \

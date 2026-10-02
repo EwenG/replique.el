@@ -78,6 +78,7 @@
 (require 'replique-lint)
 (require 'replique-main-js)
 (require 'replique-css)
+(require 'replique-classpath)
 (require 'replique-reload)
 (require 'replique-stale)
 (require 'replique-inspect)
