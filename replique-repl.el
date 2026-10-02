@@ -1027,8 +1027,11 @@ process only a port file names is one to `replique-connect' to first."
 What Emacs is connected to first, the current process at the head of
 them; then what the port files around the buffer name that Emacs is not
 connected to; then a start where the buffer is, when nothing is running
-there; and last, somewhere else.  Each is `(process PROCESS)',
-`(connect DESCRIPTION DIRECTORY)', `(start DIRECTORY)' or `(other)'.
+there, with the debugger and without; and last, somewhere else.  Each is
+`(process PROCESS)', `(connect DESCRIPTION DIRECTORY)', `(start DIRECTORY
+AGENT)' or `(other)' - AGENT saying whether the JDWP agent is asked for,
+see `replique-debugger'.  Where every process is started with it, there
+is one start to offer and not two.
 
 The port files are those of the directory a connect is proposed and the
 one a start is, which are only usually the same.  They are reaped before
@@ -1058,31 +1061,39 @@ choosing it is how anybody would find out."
      found
      (unless (or (replique-process-in start)
                  (replique-process-descriptions start))
-       (list (list (format "Start a process in %s" (abbreviate-file-name start))
-                   'start start)))
+       (cons (list (format "Start a process in %s" (abbreviate-file-name start))
+                   'start start nil)
+             (unless replique-debugger
+               (list (list (format "Start a process in %s, with the debugger"
+                                   (abbreviate-file-name start))
+                           'start start t)))))
      (list (list "Start or connect in another directory..." 'other)))))
 
-(defun replique-repl--in-directory (directory then)
+(defun replique-repl--in-directory (directory then &optional agent)
   "Call THEN with the process of DIRECTORY, connecting to it or starting it.
 
 The one Emacs has there, the one a port file there names, or a new one,
 in that order - a directory has one process, and which of the three it is
-is what is there rather than what was asked for."
+is what is there rather than what was asked for.  AGENT is what a new one
+is started with - see `replique-process-start'."
   (let ((directory (file-name-as-directory (expand-file-name directory))))
     (if-let* ((process (replique-process-in directory)))
         (funcall then process)
       (replique-process--reap-directory directory)
       (if (replique-process-descriptions directory)
           (replique-process-connect directory then)
-        (replique-process-start directory then)))))
+        (replique-process-start directory then nil agent)))))
 
-(defun replique-repl--choose-process (then)
+(defun replique-repl--choose-process (then &optional agent)
   "Ask for a process and call THEN with it, connecting or starting it first.
 
 A process Emacs is connected to is answered at once and made the current
 one.  One that has to be connected to or started is answered once it is
 up, and never when it does not come up - what went wrong is said where it
-happened."
+happened.
+
+AGENT starts whatever is started with the debugger, the start chosen
+saying so or not."
   (let* ((choices (replique-repl--process-choices))
          (choice (cdr (assoc (completing-read "Process: " choices nil t nil nil
                                               (caar choices))
@@ -1093,13 +1104,13 @@ happened."
        (funcall then process))
       (`(connect ,description ,directory)
        (replique-process-connect-to description directory then))
-      (`(start ,directory)
-       (replique-process-start directory then))
+      (`(start ,directory ,with-agent)
+       (replique-process-start directory then nil (or with-agent agent)))
       (`(other)
        (replique-repl--in-directory
         (read-directory-name "Project directory: "
                              (replique-process--directory-to-start) nil t)
-        then)))))
+        then agent)))))
 
 (defun replique-repl--show (process)
   "Show the most recent repl of PROCESS, opening a Clojure repl if it has none."
@@ -1110,7 +1121,7 @@ happened."
     (replique-repl--open process nil nil nil)))
 
 ;;;###autoload
-(defun replique-connect ()
+(defun replique-connect (&optional agent)
   "Choose a process to work with, connecting to it or starting it.
 
 What is offered is every process Emacs is connected to, every process a
@@ -1121,9 +1132,14 @@ nothing is running there, and a start or a connect somewhere else - see
 The process chosen becomes the current one and its most recent repl is
 shown.  A process with none - one just started, or just connected to - is
 given a Clojure repl: `replique-cljs' is the command for a process that is
-to have a ClojureScript one instead."
-  (interactive)
-  (replique-repl--choose-process #'replique-repl--show))
+to have a ClojureScript one instead.
+
+A process is started with the debugger where the start chosen says so,
+and with AGENT - interactively, the prefix argument - whichever start is
+chosen: a thread of it can then be stopped, see `replique-debug'.  A
+process that runs cannot be given one."
+  (interactive "P")
+  (replique-repl--choose-process #'replique-repl--show agent))
 
 ;;;###autoload
 (defun replique-cljs (&optional process target main)
@@ -1689,6 +1705,16 @@ see `replique-repl--read-process'."
                        " naming it")
                id))))
 
+(defun replique-repl--started-with-agent (process)
+  "Return non-nil when PROCESS was started with the JDWP agent.
+
+Asked of the process, since it is a flag of the jvm and only the jvm can
+say - whoever started it.  A process that cannot answer is one whose
+restart starts it the way every process is started."
+  (eq t (plist-get (ignore-errors
+                     (replique-process-request-sync process (list :op :process-info)))
+                   :debugger)))
+
 (defun replique-restart (process)
   "Stop PROCESS and start it again, with the repls it had.
 
@@ -1700,7 +1726,8 @@ their input history, and the repl that was current is current again.  A
 process that had none is given a Clojure repl, as a start is.
 
 What starts is a process of Emacs\='s own, in the directory the old one
-ran in, whoever started that one.  The output buffer of the old one goes:
+ran in, whoever started that one - with the debugger where the old one
+had it, see `replique-debugger\='.  The output buffer of the old one goes:
 the new process has its own.  Its classpath is computed again rather than
 read from what the cli kept, since a changed one is usually why a process
 is restarted.
@@ -1727,7 +1754,11 @@ see `replique-repl--read-process'."
                                 (replique-repl--main repl)
                                 (replique-repl--params repl)))
                         repls))
-         (output (replique-process--output-buffer process)))
+         (output (replique-process--output-buffer process))
+         ;; Started again the way it was: a process stopped by the debugger
+         ;; is the one somebody restarts to fix it.  Asked before it stops,
+         ;; since this is a flag of the jvm only the jvm can say
+         (agent (replique-repl--started-with-agent process)))
     (unless (replique-process--shut process nil)
       (user-error "%s would not stop - Emacs did not start it, so there is nothing to signal"
                   id))
@@ -1755,7 +1786,8 @@ see `replique-repl--read-process'."
      ;; Computed afresh: a restart is what a changed classpath asks for,
      ;; and the classpath the cli kept is the one it is changing from - see
      ;; `replique-process--command'
-     t)
+     t
+     agent)
     (message "replique: restarting %s" id)))
 
 (defun replique-switch-to-repl ()

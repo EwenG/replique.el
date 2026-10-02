@@ -132,6 +132,33 @@ the global value being the one that is read comes to: see
   :risky t
   :group 'replique)
 
+(defcustom replique-debugger nil
+  "Whether every process is started so that a thread of it can be stopped.
+
+A thread stops at `(replique.debug/break!)\=' only in a jvm started with
+the JDWP agent, which is what a debugger attaches to - and an agent is a
+flag of the jvm, so a process started without it has to be started again
+to get one.  Nil starts a process with it where asked to - see
+`replique-connect' - and a restart starts a process the way it was.
+
+The agent listens on the loopback interface only, on a port of its own
+choosing, and nothing but the process itself is told which: what reaches
+it is a debugger the process starts.  It costs the jvm little while
+nothing is stopped.
+
+Locals are cleared all the same, as Clojure does by default: starting a
+stopped call over needs them kept, and keeping them is something a
+process that runs is asked to do - see `replique-debug-keep-locals'."
+  :type 'boolean
+  :group 'replique)
+
+(defun replique-process--jvm-opts (agent)
+  "Return the options of the jvm a process is started with, as -J flags.
+
+AGENT, or `replique-debugger', starts it with the JDWP agent."
+  (when (or agent replique-debugger)
+    (list "-J-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:0")))
+
 (cl-defstruct (replique-process
                (:constructor replique-process--make)
                (:conc-name replique-process--))
@@ -760,7 +787,7 @@ the one process it was set in the way of."
         (concat "-M" (string-join aliases))
       "-M")))
 
-(defun replique-process--command (directory &optional force)
+(defun replique-process--command (directory &optional force agent)
   "Return the command starting a replique process in DIRECTORY.
 
 Under nohup where there is one: Emacs sends SIGHUP to what it started when
@@ -771,11 +798,14 @@ FORCE has the cli compute the classpath again rather than read the one it
 kept in .cpcache.  It keeps one per deps files and aliases, and calls it
 stale only when one of those files is newer than it - a test that a file
 that is a link passes or fails by the date of the checkout behind it,
-which is not the question."
+which is not the question.
+
+AGENT starts it with the JDWP agent - see `replique-debugger'."
   (let ((id (replique-process--id-for directory)))
     (append (when (executable-find "nohup") (list "nohup"))
             (list replique-clojure-program)
             (when force (list "-Sforce"))
+            (replique-process--jvm-opts agent)
             ;; -Sdeps is merged as the last deps file rather than replacing
             ;; any of them, so bringing replique along, and whatever else is
             ;; yours, costs the project nothing
@@ -970,6 +1000,10 @@ of a jvm that died still reaches the buffer."
                                (replique-process--id process))
                        t)))))
 
+(defconst replique-process--agent-line
+  "\\`Listening for transport dt_socket at address: [0-9]+\\'"
+  "What the JDWP agent writes on standard output once it listens.")
+
 (defun replique-process--started (proc line)
   "Act on LINE, the startup line PROC wrote."
   (let ((info (condition-case nil
@@ -1011,6 +1045,14 @@ of a jvm that died still reaches the buffer."
        (format "The process could not start: %s" (plist-get info :message))
        (plist-get info :exception)
        (plist-get info :message)))
+     ((string-match-p replique-process--agent-line line)
+      ;; The JDWP agent of a process started for `replique-debugger', which
+      ;; says where it listens before the jvm runs anything - so before the
+      ;; startup line, on the stream the startup line is read from.  Not the
+      ;; process saying it is something else: the line it is waited for
+      ;; comes next
+      (replique-insert-output (replique-process--startup-buffer proc)
+                              (concat line "\n")))
      (t
       ;; Not protocol at all.  The line belongs in the buffer with whatever
       ;; else the process is about to say
@@ -1052,7 +1094,7 @@ of a jvm that died still reaches the buffer."
              'action (lambda (button) (find-file (button-label button)))
              'help-echo "RET: open the report clojure wrote")))))))
 
-(defun replique-process-start (directory &optional on-connected force)
+(defun replique-process-start (directory &optional on-connected force agent)
   "Start a replique process in DIRECTORY and connect to it.
 
 ON-CONNECTED is called with the process once it is connected, outside of
@@ -1068,6 +1110,9 @@ The project needs no change to be worked on: `replique-coordinates' is
 put on the classpath alongside its own dependencies, together with
 whatever `replique-aliases-file' defines, under the aliases
 `replique-aliases' and `replique-user-aliases' name.
+
+AGENT starts it so that a thread of it can be stopped, whatever
+`replique-debugger' says - see `replique-debug'.
 
 A directory that already has a process is refused - see
 `replique-kill-process'.  The port file of a process that is gone is
@@ -1091,7 +1136,7 @@ where there is one."
     (replique-process--reap-directory directory)
     (let* ((default-directory directory)
            (replique-aliases (replique-process--project-aliases directory))
-           (command (replique-process--command directory force))
+           (command (replique-process--command directory force agent))
            (inputs (replique-process-inputs directory))
            (buffer (generate-new-buffer
                     (format "*replique-process: %s*"

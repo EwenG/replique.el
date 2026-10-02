@@ -56,6 +56,15 @@
 ;;   M-x replique-inspect-results  what the repl returned last
 ;;   M-x replique-taps           what was given to `tap>'
 ;;
+;; A thread that reaches (replique.debug/break!) stops there, and its
+;; frames, their locals and the place it stopped at are shown - see
+;; `replique-debug'.  It needs a process started for it - a start with the
+;; debugger, offered by `replique-connect', or `replique-debugger'.
+;;
+;;   M-x replique-debug          show a thread that is stopped
+;;   M-x replique-debug-keep-locals  compile code that keeps its locals,
+;;                               which starting a stopped call over needs
+;;
 ;; That mode turns `replique-mode' on, so the commands below are bound in a
 ;; Clojure file without anything having to be turned on by hand.
 
@@ -82,6 +91,7 @@
 (require 'replique-reload)
 (require 'replique-stale)
 (require 'replique-inspect)
+(require 'replique-debug)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.

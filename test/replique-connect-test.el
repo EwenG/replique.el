@@ -33,9 +33,38 @@
 
 (ert-deftest replique-connect-test-a-start-is-offered-where-nothing-runs ()
   (replique-connect-test--in-project dir
-    (should (equal (list (format "Start a process in %s" (abbreviate-file-name dir))
-                         "Start or connect in another directory...")
-                   (replique-connect-test--labels)))))
+    (let ((replique-debugger nil))
+      (should (equal (list (format "Start a process in %s" (abbreviate-file-name dir))
+                           (format "Start a process in %s, with the debugger"
+                                   (abbreviate-file-name dir))
+                           "Start or connect in another directory...")
+                     (replique-connect-test--labels))))
+    ;; where every process is started with it, there is one start to offer
+    (let ((replique-debugger t))
+      (should (equal (list (format "Start a process in %s" (abbreviate-file-name dir))
+                           "Start or connect in another directory...")
+                     (replique-connect-test--labels))))))
+
+(ert-deftest replique-connect-test-a-start-with-the-debugger-is-asked-for ()
+  "Where the start chosen says so, and whichever start is chosen where the
+command was given a prefix argument."
+  (replique-connect-test--in-project dir
+    (let ((replique-debugger nil)
+          (started nil))
+      (cl-letf (((symbol-function 'replique-process-start)
+                 (lambda (directory _then &optional _force agent)
+                   (setq started (list directory agent)))))
+        (dolist (case `((,(format "Start a process in %s, with the debugger"
+                                  (abbreviate-file-name dir))
+                         nil t)
+                        (,(format "Start a process in %s" (abbreviate-file-name dir))
+                         nil nil)
+                        (,(format "Start a process in %s" (abbreviate-file-name dir))
+                         t t)))
+          (setq started nil)
+          (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) (car case))))
+            (replique-connect (nth 1 case)))
+          (should (equal (list dir (nth 2 case)) started)))))))
 
 (ert-deftest replique-connect-test-a-running-process-is-offered-instead-of-a-start ()
   "A directory has one process, so a port file that something answers for
@@ -206,12 +235,17 @@ they were - and the one that was current is current again."
     (let* ((new (replique-process--make :id "choice-test" :repls nil))
            (started-in nil)
            (forced nil)
+           (with-agent nil)
            (opened nil))
       (cl-letf (((symbol-function 'replique-process--shut) (lambda (&rest _) t))
                 ((symbol-function 'replique-process-start)
-                 (lambda (directory then &optional force)
-                   (setq started-in directory forced force)
+                 (lambda (directory then &optional force agent)
+                   (setq started-in directory forced force with-agent agent)
                    (funcall then new)))
+                ((symbol-function 'replique-process-request-sync)
+                 (lambda (_process msg &rest _)
+                   (when (eq :process-info (plist-get msg :op))
+                     '(:tag "reply" :debugger t))))
                 ((symbol-function 'replique-repl--open)
                  (lambda (process dialect target main buffer params)
                    (let ((repl (replique-repl--make :process process :buffer buffer)))
@@ -224,6 +258,8 @@ they were - and the one that was current is current again."
       ;; With the classpath computed again rather than read from what the
       ;; cli kept, since a changed classpath is what a restart is usually for
       (should forced)
+      ;; and with the debugger, which the process says it was started with
+      (should with-agent)
       (should (equal (list (list nil nil nil (replique-repl--buffer clj)
                                  '(:print-length 5 :print-level nil))
                            (list :cljs :node "my.app" (replique-repl--buffer cljs) nil))
