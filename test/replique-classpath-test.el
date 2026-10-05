@@ -394,6 +394,23 @@ about first, and without a restart."
                 (replique-kill-process process))))
         (delete-directory lib t)))))
 
+(ert-deftest replique-classpath-test-directories-are-paths-and-the-aliases-started-with ()
+  (replique-test-with-project dir
+    (replique-classpath-test--write
+     (expand-file-name "deps.edn" dir)
+     (concat "{:paths [\"src\" \"resources\"]\n"
+             " :aliases {:dev {:extra-paths [\"dev-src\" \"src\"]}\n"
+             "           :test {:replace-paths [\"test\"]}\n"
+             "           :other {:extra-paths [\"other\"]}}}"))
+    (should (equal '("src" "resources" "dev-src" "test")
+                   (replique-classpath-directories dir '(":dev" "test"))))
+    (should (equal '("src" "resources")
+                   (replique-classpath-directories dir '("none"))))))
+
+(ert-deftest replique-classpath-test-directories-of-no-deps-edn-are-none ()
+  (replique-test-with-project dir
+    (should-not (replique-classpath-directories dir '("dev")))))
+
 (provide 'replique-classpath-test)
 
 ;;; replique-classpath-test.el ends here

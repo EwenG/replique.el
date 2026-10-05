@@ -632,6 +632,53 @@ each about one file and they are handed it."
                   (setq buffer-file-name "/p/notes.org")
                   (funcall pred)))))
 
+(ert-deftest replique-reload-test-relinked-saves-the-checkout-then-reloads ()
+  "The buffers are open on the checkout the links point into, not under
+the process, so those are the ones offered - and the process is told what
+did not change before the reload asks what did."
+  (let* ((process (replique-process--make :id "relinked" :directory "/stage/"))
+         (calls nil)
+         (pred nil))
+    (cl-letf (((symbol-function 'save-some-buffers)
+               (lambda (_arg p) (setq pred p) (push 'save calls)))
+              ((symbol-function 'replique-refresh-main-js)
+               (lambda (p) (should (eq p process)) (push 'main-js calls)))
+              ((symbol-function 'replique-process-request-sync)
+               (lambda (_p msg &optional _timeout)
+                 (should (eq :rebaseline (plist-get msg :op)))
+                 (should (equal "/stage" (plist-get msg :root)))
+                 (should (equal "/from" (plist-get msg :from)))
+                 (should (equal ["src/a.clj"] (plist-get msg :unchanged)))
+                 (push 'rebaseline calls)
+                 '(:tag "ok" :clojure 1 :clojurescript 0)))
+              ((symbol-function 'replique-reload-app)
+               (lambda () (push 'reload calls)))
+              (replique-current-process nil)
+              (inhibit-message t))
+      (replique-relinked process "/to/" "/from/" '("src/a.clj"))
+      (should (eq replique-current-process process)))
+    (should (equal '(save main-js rebaseline reload) (nreverse calls)))
+    (should (with-temp-buffer
+              (setq buffer-file-name "/to/src/a.clj")
+              (replique-clojure-mode)
+              (funcall pred)))
+    (should-not (with-temp-buffer
+                  (setq buffer-file-name "/stage/src/a.clj")
+                  (replique-clojure-mode)
+                  (funcall pred)))))
+
+(ert-deftest replique-reload-test-relinked-from-nowhere-tells-nothing-unchanged ()
+  (let ((process (replique-process--make :id "relinked" :directory "/stage/"))
+        (asked nil))
+    (cl-letf (((symbol-function 'save-some-buffers) #'ignore)
+              ((symbol-function 'replique-refresh-main-js) #'ignore)
+              ((symbol-function 'replique-process-request-sync)
+               (lambda (&rest _) (setq asked t)))
+              ((symbol-function 'replique-reload-app) #'ignore)
+              (replique-current-process nil))
+      (replique-relinked process "/to/"))
+    (should-not asked)))
+
 (provide 'replique-reload-test)
 
 ;;; replique-reload-test.el ends here

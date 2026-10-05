@@ -89,6 +89,7 @@
 (require 'replique-classpath)
 (require 'replique-css)
 (require 'replique-eval)
+(require 'replique-main-js)
 (require 'replique-process)
 (require 'replique-repl)
 
@@ -537,6 +538,54 @@ it cannot follow without a restart offers one.  See
                 state
                 (lambda (languages)
                   (replique-reload--stylesheets process root languages))))))))))))
+
+;;; After the links under a process moved
+
+(defun replique-reload--rebaseline (process from unchanged)
+  "Tell PROCESS that UNCHANGED, under its directory, hold what they did under FROM.
+UNCHANGED are paths relative to the process\='s directory.  The process
+takes those as loaded where what it loaded is what FROM holds, so a reload
+after this loads what changed rather than everything whose modification
+time did.  A process too old to know the op answers with an error, which
+is said and changes nothing."
+  (let* ((root (replique-process--directory process))
+         (frame (replique-process-request-sync
+                 process
+                 (list :op :rebaseline
+                       :root (directory-file-name (expand-file-name root))
+                       :from (directory-file-name (expand-file-name from))
+                       :unchanged (vconcat unchanged)))))
+    (if (equal "error" (plist-get frame :tag))
+        (message "replique: could not tell %s what is unchanged: %s"
+                 (replique-process--id process) (plist-get frame :message))
+      (message "replique: %d Clojure and %d ClojureScript files are the same in %s"
+               (or (plist-get frame :clojure) 0)
+               (or (plist-get frame :clojurescript) 0)
+               (file-name-nondirectory (directory-file-name from))))))
+
+;;;###autoload
+(defun replique-relinked (process to &optional from unchanged)
+  "Bring PROCESS up to date after the links under its directory moved to TO.
+
+For a process whose directory is a tree of links into a checkout, once
+those links point into another one: TO is the checkout they point into
+now, FROM the one they pointed into before, and UNCHANGED the files,
+relative to either, whose content the two have in common.  Whatever moved
+the links knows all three and the process knows none of them.
+
+In order: PROCESS becomes the current one, the modified buffers under TO
+are offered to be saved - `replique-reload-app' offers the ones under the
+process\='s own directory, and the buffers are open on the checkout - the
+main modules are moved to the process\='s port, since each checkout has its
+own naming whichever port last wrote it, the process is told what did not
+change where FROM and UNCHANGED are given, and the application is
+reloaded, which reads the classpath again first."
+  (setq replique-current-process process)
+  (save-some-buffers nil (lambda () (replique-reload--source-p to)))
+  (replique-refresh-main-js process)
+  (when (and from unchanged)
+    (replique-reload--rebaseline process from unchanged))
+  (replique-reload-app))
 
 (provide 'replique-reload)
 

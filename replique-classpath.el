@@ -69,6 +69,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'replique-completion)
+(require 'replique-parse)
 (require 'replique-process)
 (require 'replique-repl)
 
@@ -500,6 +501,64 @@ the classpath is made of changed since the process started."
         (message "replique: %s" sentence)))))
 
 (add-hook 'after-save-hook #'replique-classpath--after-save)
+
+;;; The directories a deps.edn declares
+
+;; A project's own classpath directories, read off its deps.edn without the
+;; deps tool: :paths, and the :extra-paths and :replace-paths of the aliases it
+;; is started with.  No libraries and nothing resolved - what a tool laying the
+;; project out on disk has to know before any process runs.
+
+(defun replique-classpath--entries (node)
+  "The entries of the map NODE, as (KEY-TEXT . VALUE-NODE).
+Nil for anything that is not a map, so a deps.edn in a shape this does
+not expect answers nothing rather than signalling."
+  (when (and node (eq 'map (replique-parse-type node)))
+    (let (found)
+      (dolist (child (replique-parse-forms node))
+        (when (eq 'pair (replique-parse-type child))
+          (let ((forms (replique-parse-forms child)))
+            (push (cons (replique-parse-text (car forms)) (cadr forms)) found))))
+      (nreverse found))))
+
+(defun replique-classpath--strings (node)
+  "The strings written in the vector or list NODE, without their quotes.
+Substring rather than a reader: right for the directory names a :paths
+holds, wrong for a string with an escape in it."
+  (when (and node (memq (replique-parse-type node) '(vector list)))
+    (seq-keep (lambda (child)
+                (when (eq 'string (replique-parse-type child))
+                  (let ((text (replique-parse-text child)))
+                    (substring text 1 (1- (length text))))))
+              (replique-parse-forms node))))
+
+(defun replique-classpath-directories (directory &optional aliases)
+  "The classpath directories the deps.edn of DIRECTORY declares.
+Its :paths, and the :extra-paths and :replace-paths of each of ALIASES,
+relative to DIRECTORY as written.  ALIASES defaults to the ones a process
+started in DIRECTORY is started with - see
+`replique-process--project-aliases'."
+  (let ((file (expand-file-name "deps.edn" directory)))
+    (when (file-readable-p file)
+      (let ((aliases (mapcar (lambda (alias) (string-remove-prefix ":" alias))
+                             (or aliases
+                                 (replique-process--project-aliases directory)))))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (let* ((entries (replique-classpath--entries
+                           (car (replique-parse-forms (replique-parse-buffer)))))
+                 (paths (replique-classpath--strings
+                         (cdr (assoc ":paths" entries)))))
+            (dolist (alias (replique-classpath--entries
+                            (cdr (assoc ":aliases" entries))))
+              (when (member (string-remove-prefix ":" (car alias)) aliases)
+                (dolist (key '(":extra-paths" ":replace-paths"))
+                  (setq paths
+                        (append paths
+                                (replique-classpath--strings
+                                 (cdr (assoc key (replique-classpath--entries
+                                                  (cdr alias))))))))))
+            (delete-dups paths)))))))
 
 (provide 'replique-classpath)
 

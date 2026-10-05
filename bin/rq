@@ -1,0 +1,6 @@
+#!/bin/sh
+# The replique process that reads this project, from a shell - see
+# ../replique-cli.el.  A batch Emacs, so that the protocol is spoken by
+# replique.el's own code.
+here=$(dirname "$(dirname "$(readlink -f "$0")")")
+exec emacs --batch -Q -L "$here" -l replique-cli -f replique-cli-main -- "$@"

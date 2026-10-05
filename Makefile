@@ -29,7 +29,7 @@ SRC = replique-common.el replique-parse.el replique-cljfmt.el \
       replique-completion.el replique-symbol.el replique-lint.el \
       replique-main-js.el replique-css.el replique-classpath.el \
       replique-reload.el \
-      replique-stale.el replique-inspect.el replique-debug.el replique.el
+      replique-stale.el replique-inspect.el replique-debug.el replique-cli.el replique.el
 
 LINT = replique-common.el replique-parse.el replique-cljfmt.el \
        replique-clojure-mode.el replique-format.el \
@@ -41,7 +41,7 @@ LINT = replique-common.el replique-parse.el replique-cljfmt.el \
        replique-completion.el replique-symbol.el replique-lint.el \
        replique-main-js.el replique-css.el replique-classpath.el \
        replique-reload.el \
-       replique-stale.el replique-inspect.el replique-debug.el replique.el
+       replique-stale.el replique-inspect.el replique-debug.el replique-cli.el replique.el
 
 .PHONY: all compile native test lint clean
 
