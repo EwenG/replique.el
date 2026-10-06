@@ -248,11 +248,17 @@ first one refusing it, from somewhere the message does not point at."
   (setq replique-current-process process)
   process)
 
+(defvar replique-process-forgotten-functions nil
+  "Functions called with a process once it is dropped from the registry.
+
+Which is once it is gone: what is shown of it can go with it.")
+
 (defun replique-process--forget (process)
   "Drop PROCESS from the registry."
   (setq replique-processes (delq process replique-processes))
   (when (eq replique-current-process process)
-    (setq replique-current-process (car (replique-processes-live)))))
+    (setq replique-current-process (car (replique-processes-live))))
+  (run-hook-with-args 'replique-process-forgotten-functions process))
 
 (defun replique-process-current ()
   "Return the process the commands act on, or nil.

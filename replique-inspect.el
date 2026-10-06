@@ -764,21 +764,27 @@ works for as long as the view is open."
 
 ;;; Opening a view
 
-(defun replique-inspect-show (process keys source title)
+(defun replique-inspect-show (process keys source title &optional buffer)
   "Show the value SOURCE names, in PROCESS, in a buffer of its own.
 
 KEYS are the dialect keys - see `replique-dialect-keys'.  TITLE is what the
 buffer is a view of, in a few words.  A view of the same thing already
-shown is shown again, and refreshed."
+shown is shown again, and refreshed.
+
+With BUFFER, the view is that buffer, made a view of SOURCE whatever it
+was a view of before: one buffer that follows something, the way the
+view of the locals of a stopped thread follows the frame looked at."
   (let* ((name (format "*replique-inspect %s*" title))
-         (existing (seq-find (lambda (buffer)
-                               (with-current-buffer buffer
-                                 (and (derived-mode-p 'replique-inspect-mode)
-                                      (equal source replique-inspect--source)
-                                      (equal keys replique-inspect--keys)
-                                      (eq process replique-inspect--process))))
-                             (buffer-list)))
-         (buffer (or existing (generate-new-buffer name))))
+         (same (lambda (buffer)
+                 (with-current-buffer buffer
+                   (and (derived-mode-p 'replique-inspect-mode)
+                        (equal source replique-inspect--source)
+                        (equal keys replique-inspect--keys)
+                        (eq process replique-inspect--process)))))
+         (existing (if buffer
+                       (and (funcall same buffer) buffer)
+                     (seq-find same (buffer-list))))
+         (buffer (or existing buffer (generate-new-buffer name))))
     (with-current-buffer buffer
       (if existing
           (replique-inspect-refresh)

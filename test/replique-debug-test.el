@@ -32,6 +32,9 @@
                   nil)))
        (unwind-protect (save-window-excursion ,@body)
          (replique-debug--forget-arrow)
+         (maphash (lambda (_ timer) (cancel-timer timer)) replique-debug--leaving)
+         (clrhash replique-debug--leaving)
+         (clrhash replique-debug--opened)
          (dolist (buffer (buffer-list))
            (with-current-buffer buffer
              (when (derived-mode-p 'replique-debug-mode 'replique-inspect-mode)
@@ -165,6 +168,53 @@ that stopped."
         (should (string-match-p "Running" (replique-debug-test--text)))
         (should (string-match-p "running" (replique-debug--header)))
         (should-error (replique-debug-continue) :type 'user-error)))))
+
+(defun replique-debug-test--views (process)
+  "Return the views of the locals of thread 41 of PROCESS."
+  (replique-debug--views-of process 41))
+
+(ert-deftest replique-debug-test-a-thread-has-one-view-of-locals ()
+  "Visiting a frame shows its locals in the view the thread has."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (replique-debug-test--stop process)
+      (with-current-buffer (replique-debug--buffer-of process 41)
+        (replique-debug-test--answer :debug-frames (replique-debug-test--frames))
+        (goto-char (point-min))
+        (search-forward "user/g")
+        (replique-debug-visit-frame))
+      (let ((views (replique-debug-test--views process)))
+        (should (= 1 (length views)))
+        (should (equal "*replique-debug worker locals*" (buffer-name (car views))))
+        (with-current-buffer (car views)
+          (should (equal '(:debug (:thread 41 :frame 2)) replique-inspect--source)))))))
+
+(ert-deftest replique-debug-test-what-is-shown-goes-with-the-thread ()
+  "Once the thread goes on: its buffer, its view, and the file opened to show
+where it stopped - unless it stops again first, or the file was written in."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (should-not (find-buffer-visiting replique-debug-test--file))
+      (replique-debug-test--stop process)
+      (let ((source (find-buffer-visiting replique-debug-test--file)))
+        (should source)
+        (replique-debug--event process '(:tag "event" :event "debug-resumed" :thread 41))
+        (should (gethash (cons process 41) replique-debug--leaving))
+        ;; stopped again in time: nothing goes
+        (replique-debug-test--stop process)
+        (should-not (gethash (cons process 41) replique-debug--leaving))
+        (replique-debug--event process '(:tag "event" :event "debug-resumed" :thread 41))
+        (replique-debug--clear process 41)
+        (should-not (replique-debug--buffer-of process 41))
+        (should-not (replique-debug-test--views process))
+        (should-not (buffer-live-p source)))
+      ;; written in, it is somebody's
+      (replique-debug-test--stop process)
+      (let ((source (find-buffer-visiting replique-debug-test--file)))
+        (with-current-buffer source (insert ";; fixed\n") (save-buffer))
+        (replique-debug--forgotten process)
+        (should-not (replique-debug--buffer-of process 41))
+        (should (buffer-live-p source))))))
 
 (ert-deftest replique-debug-test-a-thread-that-is-not-stopped-any-more-says-so ()
   "The process is the one that knows: an answer saying the thread is not

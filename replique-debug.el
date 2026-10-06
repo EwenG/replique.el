@@ -35,9 +35,12 @@
 ;; answering, and the other repls go on evaluating.  A repl whose form
 ;; stopped waits for it, the way it waits for anything slow.
 ;;
-;; A view of the locals of a frame is a view of that frame of that thread,
-;; whichever time it stopped: the next stop refreshes it, and what changed
-;; since the last one is highlighted.
+;; A thread has two buffers: its frames, and the locals of the frame looked
+;; at - one view, which follows the frame visited.  Once the thread goes on
+;; they go, with the files opened only to show where it was, unless it stops
+;; again within `replique-debug-linger' seconds - as a loop does, or a call
+;; started over: then they stay, and what changed in the locals since the
+;; last stop is highlighted.
 ;;
 ;; The process has to be started for it: `replique-connect' offers a start
 ;; with the debugger, and `replique-debugger' starts every process with it.
@@ -56,6 +59,14 @@
 (require 'replique-pprint)
 (require 'replique-symbol)
 (require 'replique-inspect)
+
+(defcustom replique-debug-linger 1.5
+  "How long what is shown of a thread stays once it goes on, in seconds.
+
+A thread that stops again by then is shown in the same buffers, the locals
+highlighted where they changed; otherwise the buffers go."
+  :type 'number
+  :group 'replique)
 
 (defface replique-debug-stopped-line
   '((t :inherit secondary-selection :extend t))
@@ -88,12 +99,24 @@
     (delete-overlay replique-debug--line))
   (setq replique-debug--line nil))
 
-(defun replique-debug--locate (found)
+(defvar replique-debug--opened (make-hash-table :test #'equal)
+  "The buffers opened to show where a thread is, by (PROCESS . THREAD).
+
+Each as (BUFFER . TICK), TICK its `buffer-chars-modified-tick' once opened:
+one written in since is not the debugger's any more.")
+
+(defun replique-debug--locate (found &optional for)
   "Return a marker at where FOUND says, or nil where its file cannot be had.
 
 FOUND carries `:file', and `:entry' for a file inside a jar, `:line' and
-`:column' - what the process answers a place in a source with."
-  (when-let* ((buffer (replique-symbol-visit found)))
+`:column' - what the process answers a place in a source with.  A buffer
+opened for it is one of the thread FOR, (PROCESS . THREAD), and goes with
+what is shown of the thread."
+  (when-let* ((before (buffer-list))
+              (buffer (replique-symbol-visit found)))
+    (when (and for (not (memq buffer before)))
+      (push (cons buffer (buffer-chars-modified-tick buffer))
+            (gethash for replique-debug--opened)))
     (with-current-buffer buffer
       (save-restriction
         (widen)
@@ -105,12 +128,12 @@ FOUND carries `:file', and `:entry' for a file inside a jar, `:line' and
               (forward-char (min (1- column) (- (line-end-position) (point))))))
           (point-marker))))))
 
-(defun replique-debug--show-place (found &optional arrow)
+(defun replique-debug--show-place (found for &optional arrow)
   "Show where FOUND says in a window, and return the marker there.
 
-With ARROW, the fringe arrow and the highlight are put there, as where a
-thread stopped."
-  (when-let* ((marker (replique-debug--locate found)))
+FOR is the thread it is shown for, (PROCESS . THREAD).  With ARROW, the
+fringe arrow and the highlight are put there, as where it stopped."
+  (when-let* ((marker (replique-debug--locate found for)))
     (when arrow
       (replique-debug--forget-arrow)
       (with-current-buffer (marker-buffer marker)
@@ -251,7 +274,8 @@ thread stopped."
   (when (equal "not-paused" (plist-get frame :error))
     (setq replique-debug--pause nil
           replique-debug--frames nil)
-    (replique-debug--render))
+    (replique-debug--render)
+    (replique-debug--leave replique-debug--process replique-debug--thread))
   (message "replique: %s" (plist-get frame :message)))
 
 ;;; Being told
@@ -259,7 +283,9 @@ thread stopped."
 (defun replique-debug--stopped (process pause)
   "Show that a thread of PROCESS stopped, as PAUSE says."
   (let* ((thread (plist-get pause :thread))
-         (buffer (or (replique-debug--buffer-of process thread)
+         (for (cons process thread))
+         (buffer (or (progn (replique-debug--stay process thread)
+                            (replique-debug--buffer-of process thread))
                      (generate-new-buffer (format "*replique-debug %s*"
                                                   (plist-get pause :name))))))
     (with-current-buffer buffer
@@ -271,9 +297,9 @@ thread stopped."
             replique-debug--frames nil)
       (replique-debug--render)
       (replique-debug--ask-frames))
-    (replique-debug--locals process thread 0 "stopped" t)
-    (replique-debug--show-place pause t)
-    (setq replique-debug--arrow-thread (cons process thread))
+    (replique-debug--locals process thread 0 "stopped")
+    (replique-debug--show-place pause for t)
+    (setq replique-debug--arrow-thread for)
     (pop-to-buffer buffer)
     (message "replique: thread %s stopped at %s - c continues"
              (plist-get pause :name) (replique-debug--place pause))))
@@ -286,7 +312,79 @@ thread stopped."
     (with-current-buffer buffer
       (setq replique-debug--pause nil
             replique-debug--frames nil)
-      (replique-debug--render))))
+      (replique-debug--render)))
+  (replique-debug--leave process thread))
+
+;;; What goes once a thread goes on
+
+(defvar replique-debug--leaving (make-hash-table :test #'equal)
+  "The timers taking away what is shown of a thread, by (PROCESS . THREAD).")
+
+(defun replique-debug--stay (process thread)
+  "Keep what is shown of the thread THREAD of PROCESS, which stopped again."
+  (when-let* ((timer (gethash (cons process thread) replique-debug--leaving)))
+    (cancel-timer timer)
+    (remhash (cons process thread) replique-debug--leaving)))
+
+(defun replique-debug--leave (process thread)
+  "Take away what is shown of the thread THREAD of PROCESS, which went on.
+
+In `replique-debug-linger' seconds, unless it stops again by then."
+  (replique-debug--stay process thread)
+  (puthash (cons process thread)
+           (run-at-time replique-debug-linger nil #'replique-debug--clear process thread)
+           replique-debug--leaving))
+
+(defun replique-debug--kill (buffer)
+  "Kill BUFFER, giving the windows it was in back to what they showed."
+  (when (buffer-live-p buffer)
+    (dolist (window (get-buffer-window-list buffer nil t))
+      (when (and (window-live-p window) (eq buffer (window-buffer window)))
+        (quit-restore-window window 'bury)))
+    (let ((kill-buffer-query-functions nil))
+      (kill-buffer buffer))))
+
+(defun replique-debug--stopped-buffers ()
+  "Return the buffers of the threads that are stopped."
+  (seq-filter (lambda (buffer)
+                (with-current-buffer buffer
+                  (and (derived-mode-p 'replique-debug-mode) replique-debug--pause)))
+              (buffer-list)))
+
+(defun replique-debug--clear (process thread)
+  "Take away what is shown of the thread THREAD of PROCESS, now.
+
+Its buffer, the view of its locals, and the buffers opened only to show
+where it was - where they were not written in since."
+  (let ((for (cons process thread)))
+    (replique-debug--stay process thread)
+    (when (equal replique-debug--arrow-thread for)
+      (replique-debug--forget-arrow))
+    (dolist (opened (gethash for replique-debug--opened))
+      (let ((buffer (car opened)))
+        (when (and (buffer-live-p buffer)
+                   (not (buffer-modified-p buffer))
+                   (= (cdr opened) (buffer-chars-modified-tick buffer)))
+          (replique-debug--kill buffer))))
+    (remhash for replique-debug--opened)
+    (mapc #'replique-debug--kill (replique-debug--views-of process thread))
+    (replique-debug--kill (replique-debug--buffer-of process thread))
+    (unless (replique-debug--stopped-buffers)
+      (replique-debug--kill (get-buffer "*replique-value*")))))
+
+(defun replique-debug--forgotten (process)
+  "Take away what is shown of the threads of PROCESS, which is gone."
+  (let ((threads nil))
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and (derived-mode-p 'replique-debug-mode) (eq process replique-debug--process))
+          (push replique-debug--thread threads))))
+    (maphash (lambda (for _) (when (eq process (car for)) (push (cdr for) threads)))
+             replique-debug--opened)
+    (dolist (thread (delete-dups threads))
+      (replique-debug--clear process thread))))
+
+(add-hook 'replique-process-forgotten-functions #'replique-debug--forgotten)
 
 (defvar replique-debug--evaluations (make-hash-table :test #'equal)
   "What to do with what comes of code run in a frame, by (PROCESS . NUMBER).
@@ -321,18 +419,21 @@ the event saying what came of it carries.")
                                                 :thread)))))
               (buffer-list)))
 
-(defun replique-debug--locals (process thread index what &optional all)
+(defun replique-debug--locals (process thread index what)
   "Show the locals of the frame INDEX of THREAD of PROCESS, called WHAT.
 
-With ALL, every view of a frame of that thread is refreshed as well, since
-the thread stopped again and each of them may show something else now."
-  (when all
-    (dolist (buffer (replique-debug--views-of process thread))
-      (with-current-buffer buffer (replique-inspect-refresh))))
-  (save-selected-window
-    (replique-inspect-show process nil
-                           (list :debug (list :thread thread :frame index))
-                           (format "locals of %s" what))))
+In the one view of the locals the thread has: a view of another frame is
+made a view of this one."
+  (let ((view (or (car (replique-debug--views-of process thread))
+                  (generate-new-buffer
+                   (if-let* ((buffer (replique-debug--buffer-of process thread)))
+                       (format "%s locals*" (string-remove-suffix "*" (buffer-name buffer)))
+                     "*replique-debug locals*")))))
+    (save-selected-window
+      (replique-inspect-show process nil
+                             (list :debug (list :thread thread :frame index))
+                             (format "locals of %s" what)
+                             view))))
 
 ;;; Commands
 
@@ -490,7 +591,8 @@ sees is what the frame sees, the bindings of the thread included.  A
     (let ((index (plist-get frame :index)))
       (replique-debug--locals replique-debug--process replique-debug--thread index
                               (replique-debug--frame-name index))
-      (unless (replique-debug--show-place frame)
+      (unless (replique-debug--show-place
+               frame (cons replique-debug--process replique-debug--thread))
         (message "replique: %s is not a file to open"
                  (or (plist-get frame :source) (plist-get frame :class)))))))
 
