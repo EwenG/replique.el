@@ -262,17 +262,34 @@ inside a string or behind a semicolon is a namespace nobody asked for."
 
 ;;; Sending them
 
-(defun replique-src-directive (file line)
+(defvar replique-eval-evaluated-functions nil
+  "Functions called with what was just sent to be evaluated.
+
+Each is called in the buffer the code came from, with the REPL it was
+sent to, the START and END of a form - or of the whole buffer, for a load
+of its file - and INSTRUMENT, whether it was compiled to be stepped
+through.")
+
+(defun replique-src-directive (file line &optional instrument column)
   "Return the directive saying that what follows was taken from FILE at LINE.
 
 A repl reads from a socket, so the file and the line numbers the compiler
 records mean nothing to an editor unless the client says where the code
 came from.  It applies to the next form only, and it is in band rather
 than a process wide setting: it cannot race with another repl, and it
-stays in order with the code it describes."
+stays in order with the code it describes.
+
+With INSTRUMENT the form is compiled to be stepped through - see
+`replique-debug-defun' - and COLUMN says where on LINE it starts, counted
+from 1: a step shows where a form is by the columns the reader counted.
+INSTRUMENT `break' has it stop at its breakpoints only, rather than on
+entry - see `replique-debug-break'."
   (format "#replique/src %s"
           (replique-edn-map (append (when file (list :file file))
-                                    (when line (list :line line))))))
+                                    (when line (list :line line))
+                                    (when instrument (list :instrument t))
+                                    (when (eq instrument 'break) (list :entry 'false))
+                                    (when column (list :column column))))))
 
 (defun replique-ns-directive (ns)
   "Return the directive saying that what follows is read in namespace NS.
@@ -366,8 +383,12 @@ everything a load is - see `replique-load-directive'."
       (format "#replique/reload {:timeout %d}" replique-reload-timeout)
     "#replique/reload {}"))
 
-(defun replique-eval--send (nodes)
+(defun replique-eval--send (nodes &optional instrument)
   "Evaluate NODES, forms of the current buffer, in this buffer\\='s repl.
+
+With INSTRUMENT they are compiled to be stepped through - see
+`replique-debug-defun' - and with INSTRUMENT `break', to stop at their
+breakpoints only - see `replique-debug-break'.
 
 WHICH REPL THAT IS, IS THE BUFFER\\='S TO SAY and not the selection\\='s - a
 .clj file goes to a Clojure repl and a .cljs file to a ClojureScript one,
@@ -405,7 +426,15 @@ recorded where the buffer said this one was."
             (concat (replique-ns-directive ns) "\n"))
           (mapconcat (lambda (node)
                        (concat (replique-src-directive
-                                file (line-number-at-pos (replique-parse-start node) t))
+                                file (line-number-at-pos (replique-parse-start node) t)
+                                instrument
+                                (when instrument
+                                  ;; in characters, as the reader counts
+                                  ;; them, rather than in columns a tab
+                                  ;; stretches
+                                  (save-excursion
+                                    (goto-char (replique-parse-start node))
+                                    (1+ (- (point) (line-beginning-position))))))
                                "\n"
                                (replique-parse-text node)))
                      nodes
@@ -414,7 +443,11 @@ recorded where the buffer said this one was."
          ;; protocol, not something anybody wrote
          (mapconcat (lambda (node) (replique-parse-text node)) nodes "\n")
          ;; Only one form has one result to show
-         (null (cdr nodes)))))))
+         (null (cdr nodes)))
+        (dolist (node nodes)
+          (run-hook-with-args 'replique-eval-evaluated-functions
+                              repl (replique-parse-start node) (replique-parse-end node)
+                              instrument))))))
 
 ;;; Commands
 
@@ -442,13 +475,17 @@ Point just after a form counts as being on it, which is where point is
 left by having typed it.  Point on a comment is on no form: what is
 behind the comment was not what was asked for."
   (interactive)
+  (replique-eval--send (list (replique-eval--defun-at-point))))
+
+(defun replique-eval--defun-at-point ()
+  "Return the top level form around point, as `replique-eval-defun' finds it."
   (let* ((back (replique-eval--back-over-space (point)))
          (covering (or (replique-eval--covering (point))
                        (and (> back (point-min))
                             (replique-eval--covering (1- back)))))
          (node (replique-eval--discarded covering)))
     (unless node (user-error "No form at point"))
-    (replique-eval--send (list node))))
+    node))
 
 (defconst replique-ns-name-regexp
   (rx bos (one-or-more (not (any "()[]{}\"@^`~\\#;'," "/" space "\n"))) eos)
@@ -582,13 +619,20 @@ was written in the first place."
                   (user-error "This buffer holds no file to load"))))
     (unless (file-exists-p (plist-get what :file))
       (user-error "There is no %s to load" (plist-get what :file)))
-    (replique-repl-send-code
-     (replique-repl-ensure-here)
-     ;; Shown in the repl buffer, where a source directive is not.  That one
-     ;; describes a form written underneath it and the form is what there is
-     ;; to show; this one is the whole of what was asked for, and the output
-     ;; and the result about to arrive would otherwise stand under nothing
-     (replique-load-directive what))))
+    (let ((repl (replique-repl-ensure-here)))
+      (replique-repl-send-code
+       repl
+       ;; Shown in the repl buffer, where a source directive is not.  That
+       ;; one describes a form written underneath it and the form is what
+       ;; there is to show; this one is the whole of what was asked for, and
+       ;; the output and the result about to arrive would otherwise stand
+       ;; under nothing
+       (replique-load-directive what))
+      (run-hook-with-args 'replique-eval-evaluated-functions
+                          repl
+                          (save-restriction (widen) (point-min))
+                          (save-restriction (widen) (point-max))
+                          nil))))
 
 ;;;###autoload
 (defun replique-reload-all (&optional waiting dialect)

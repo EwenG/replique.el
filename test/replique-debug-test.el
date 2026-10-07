@@ -35,6 +35,8 @@
          (maphash (lambda (_ timer) (cancel-timer timer)) replique-debug--leaving)
          (clrhash replique-debug--leaving)
          (clrhash replique-debug--opened)
+         (maphash (lambda (_ o) (delete-overlay o)) replique-debug--units)
+         (clrhash replique-debug--units)
          (dolist (buffer (buffer-list))
            (with-current-buffer buffer
              (when (derived-mode-p 'replique-debug-mode 'replique-inspect-mode)
@@ -278,6 +280,268 @@ stopped is a thread shown running."
                        (:op :locals-clearing :clear t))
                      (reverse asked))))))
 
+;;; Stepping
+
+(defun replique-debug-test--step-stop (process line column end-line end-column value)
+  "Tell PROCESS's editor that thread 41 stopped after a form valued VALUE."
+  (replique-debug--event process
+                         (list :tag "event" :event "debug-paused" :thread 41
+                               :name "worker" :ns "user" :kind "value"
+                               :file replique-debug-test--file
+                               :line line :column column :end-line end-line
+                               :end-column end-column :value value)))
+
+(defun replique-debug-test--after-strings (buffer)
+  "Return the values shown in BUFFER, as (TEXT . FACE), in the order of the buffer."
+  (with-current-buffer buffer
+    (mapcar (lambda (o)
+              (let ((text (overlay-get o 'after-string)))
+                (cons (substring-no-properties text) (get-text-property 0 'face text))))
+            (sort (seq-filter (lambda (o) (overlay-get o 'after-string))
+                              (overlays-in (point-min) (point-max)))
+                  (lambda (a b) (< (overlay-start a) (overlay-start b)))))))
+
+(ert-deftest replique-debug-test-a-step-shows-the-form-and-its-value ()
+  "The form the thread stopped after, and what it evaluated to after it; the
+values before it stay, dimmed, and go with the thread."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      ;; (inc n), on line 3
+      (replique-debug-test--step-stop process 3 11 3 18 "2")
+      (let ((source (find-buffer-visiting replique-debug-test--file)))
+        (with-current-buffer source
+          (should (equal "(inc n)"
+                         (buffer-substring-no-properties (overlay-start replique-debug--line)
+                                                         (overlay-end replique-debug--line)))))
+        (should (equal '((" ⇒ 2" . replique-debug-value))
+                       (replique-debug-test--after-strings source)))
+        (with-current-buffer (replique-debug--buffer-of process 41)
+          (should (string-match-p "⇒ 2" (replique-debug--header))))
+        ;; on to the let, which ends on line 5
+        (replique-debug--event process '(:tag "event" :event "debug-resumed" :thread 41))
+        (replique-debug-test--step-stop process 3 3 5 7 "2")
+        (should (equal '((" ⇒ 2" . replique-debug-old-value) (" ⇒ 2" . replique-debug-value))
+                       (replique-debug-test--after-strings source)))
+        ;; the same form again, as in a loop: its value is the last one
+        (replique-debug-test--step-stop process 3 11 3 18 "7")
+        (should (equal '((" ⇒ 7" . replique-debug-value) (" ⇒ 2" . replique-debug-old-value))
+                       (replique-debug-test--after-strings source)))
+        (replique-debug--clear process 41)
+        (should-not (and (buffer-live-p source) (replique-debug-test--after-strings source)))))))
+
+(ert-deftest replique-debug-test-a-value-shown-is-one-line-and-short ()
+  (let ((replique-debug-value-width 10))
+    (should (equal "{:a 1, :b…" (replique-debug--value-text "{:a 1,\n :b 2}")))
+    (should (equal "1" (replique-debug--value-text "1")))))
+
+(ert-deftest replique-debug-test-the-steps-name-the-thread ()
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (replique-debug-test--step-stop process 3 11 3 18 "2")
+      (with-current-buffer (replique-debug--buffer-of process 41)
+        (replique-debug-next)
+        (replique-debug-in)
+        (replique-debug-out))
+      (should (equal '((:op :debug-step :thread 41 :mode "next")
+                       (:op :debug-step :thread 41 :mode "in")
+                       (:op :debug-step :thread 41 :mode "out"))
+                     (mapcar #'car (seq-filter (lambda (cell)
+                                                 (eq :debug-step (plist-get (car cell) :op)))
+                                               replique-debug-test--asked)))))))
+
+(ert-deftest replique-debug-test-a-defun-is-sent-to-be-stepped-through ()
+  "With the directive asking for it, and the column the form starts at."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'replique-repl-ensure-here) (lambda () 'repl))
+              ((symbol-function 'replique-repl-send-code)
+               (lambda (_repl code &rest _) (setq sent code))))
+      (with-temp-buffer
+        (replique-clojure-mode)
+        (insert "(ns user)\n\n  (defn f [n]\n    (inc n))\n")
+        (goto-char (point-min))
+        (search-forward "inc")
+        (replique-debug-defun)))
+    (should (string-match-p
+             (regexp-quote "#replique/src {:line 3 :instrument true :column 3}\n(defn f [n]")
+             sent))))
+
+(ert-deftest replique-debug-test-the-value-stepped-to-is-browsed ()
+  "In a view of its own, which follows the stops - and goes at a stop after
+no form."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (replique-debug-test--step-stop process 3 11 3 18 "2")
+      (with-current-buffer (replique-debug--buffer-of process 41)
+        (replique-debug-inspect-value))
+      (let ((view (replique-debug--view-of process 41 t)))
+        (should (equal "*replique-debug worker value*" (buffer-name view)))
+        (should (equal '(:debug (:thread 41 :value t))
+                       (buffer-local-value 'replique-inspect--source view)))
+        ;; and the locals have theirs
+        (should-not (eq view (replique-debug--view-of process 41 nil)))
+        (replique-debug--event process '(:tag "event" :event "debug-resumed" :thread 41))
+        (replique-debug-test--step-stop process 3 3 5 7 "2")
+        (should (eq view (replique-debug--view-of process 41 t)))
+        (replique-debug--event process '(:tag "event" :event "debug-resumed" :thread 41))
+        (replique-debug-test--stop process)
+        (should-not (buffer-live-p view)))
+      (with-current-buffer (replique-debug--buffer-of process 41)
+        (should-error (replique-debug-inspect-value) :type 'user-error)))))
+
+(defun replique-debug-test--instrumented (process unit &optional line)
+  "Tell PROCESS's editor that it steps through the defn of the source, as UNIT.
+
+Read from LINE, 2 unless said."
+  (let ((line (or line 2)))
+    (replique-debug--event process
+                           (list :tag "event" :event "debug-instrumented" :unit unit
+                                 :ns "user" :file replique-debug-test--file
+                                 :line line :column 1 :end-line (+ line 3) :end-column 8))))
+
+(defun replique-debug-test--marks (buffer)
+  "Return the units marked in BUFFER, with the text they mark."
+  (with-current-buffer buffer
+    (mapcar (lambda (o)
+              (cons (overlay-get o 'replique-debug-unit)
+                    (buffer-substring-no-properties (overlay-start o) (overlay-end o))))
+            (replique-debug--marks-in (point-min) (point-max)))))
+
+(ert-deftest replique-debug-test-what-is-stepped-through-is-marked ()
+  "Until it is not, as the process says - or as it answers being asked."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let ((source (find-file-noselect replique-debug-test--file)))
+        (with-current-buffer source (replique-clojure-mode))
+        (replique-debug-test--instrumented process 7)
+        (should (equal '((7 . "(defn f [n]\n  (let [a (inc n)]\n    (replique.debug/break!)\n    a))"))
+                       (replique-debug-test--marks source)))
+        (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
+        (should-not (replique-debug-test--marks source))
+        (replique-debug-test--instrumented process 8)
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "inc")
+          (replique-debug-uninstrument))
+        (should (equal '(:op :debug-uninstrument :unit 8)
+                       (replique-debug-test--answer :debug-uninstrument
+                                                    '(:tag "reply" :uninstrumented (8)))))
+        (should-not (replique-debug-test--marks source))
+        (with-current-buffer source
+          (should-error (replique-debug-uninstrument) :type 'user-error))
+        ;; all of them
+        (cl-letf (((symbol-function 'replique-process-ensure) (lambda () process)))
+          (replique-debug-uninstrument t))
+        (should (equal '(:op :debug-uninstrument)
+                       (car (replique-debug-test--asked :debug-uninstrument))))))))
+
+(ert-deftest replique-debug-test-what-is-evaluated-again-is-not-stepped-through ()
+  "By the process it is evaluated in - and not by another."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let ((source (find-file-noselect replique-debug-test--file))
+            (other (replique-repl--make :process (replique-process--make :id "other"
+                                                                         :directory "/tmp/")))
+            (repl (replique-repl--make :process process)))
+        (replique-debug-test--instrumented process 7)
+        (with-current-buffer source
+          (replique-debug--evaluated-again other (point-min) (point-max) nil)
+          (should-not (replique-debug-test--asked :debug-uninstrument))
+          (replique-debug--evaluated-again repl (point-min) (point-max) nil))
+        (should (equal '(:op :debug-uninstrument :unit 7)
+                       (replique-debug-test--answer :debug-uninstrument
+                                                    '(:tag "reply" :uninstrumented (7)))))
+        (should-not (replique-debug-test--marks source))
+        ;; and a process that goes takes its marks with it
+        (replique-debug-test--instrumented process 9)
+        (replique-debug--forgotten process)
+        (should-not (replique-debug-test--marks source))))))
+
+(defun replique-debug-test--breaks (buffer)
+  "Return the breakpoints of BUFFER, as (TEXT . SITE)."
+  (with-current-buffer buffer
+    (mapcar (lambda (o)
+              (cons (buffer-substring-no-properties (overlay-start o) (overlay-end o))
+                    (overlay-get o 'replique-debug-site)))
+            (replique-debug--breaks-in (point-min) (point-max)))))
+
+(defmacro replique-debug-test--with-sent (&rest body)
+  "Run BODY with the code sent to a repl kept in `sent'."
+  (declare (indent 0))
+  `(let ((sent nil))
+     (cl-letf (((symbol-function 'replique-repl-ensure-here) (lambda () 'repl))
+               ((symbol-function 'replique-repl-send-code)
+                (lambda (_repl code &rest _) (setq sent code))))
+       (ignore sent)
+       ,@body)))
+
+(ert-deftest replique-debug-test-a-breakpoint-is-on-the-form-at-point ()
+  "Its definition is evaluated to stop at it, and it is set once the process
+says it is stepped through: by where it was read from."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (replique-debug-test--with-sent
+        (let ((source (find-file-noselect replique-debug-test--file)))
+          (with-current-buffer source
+            (replique-clojure-mode)
+            (goto-char (point-min))
+            (search-forward "inc")
+            (replique-debug-break))
+          (should (string-match-p
+                   (regexp-quote " :line 2 :instrument true :entry false :column 1}\n(defn f [n]")
+                   sent))
+          (should (equal '(("(inc n)" . nil)) (replique-debug-test--breaks source)))
+          (replique-debug-test--instrumented process 7)
+          (should (equal '(:op :debug-break :unit 7 :line 3 :column 11)
+                         (replique-debug-test--answer :debug-break '(:tag "reply" :site 30))))
+          (should (equal '(("(inc n)" . 30)) (replique-debug-test--breaks source)))
+          ;; a line above it, written since: the process has it where it was read
+          (with-current-buffer source
+            (goto-char (point-min))
+            (insert "\n"))
+          (with-current-buffer source
+            (should (eq 'replique-debug-breakpoint
+                        (overlay-get (car (replique-debug--breaks-in (point-min) (point-max)))
+                                     'face)))
+            (goto-char (point-min))
+            (search-forward "inc")
+            ;; again: taken away
+            (replique-debug-break))
+          (should (equal '(:op :debug-unbreak :site 30)
+                         (replique-debug-test--answer :debug-unbreak '(:tag "reply" :unbroken t))))
+          (should-not (replique-debug-test--breaks source))
+          ;; with a condition, in a definition stepped through already
+          (with-current-buffer source
+            (replique-debug-break "(> a 1)"))
+          (should (equal '(:op :debug-break :unit 7 :line 3 :column 11 :condition "(> a 1)")
+                         (replique-debug-test--answer :debug-break '(:tag "reply" :site 31))))
+          ;; not stepped through any more: it stays, to be set again
+          (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
+          (should (equal '(("(inc n)" . nil)) (replique-debug-test--breaks source)))
+          ;; evaluated again where it is now, a line lower
+          (replique-debug-test--instrumented process 8 3)
+          (should (equal '(:op :debug-break :unit 8 :line 4 :column 11 :condition "(> a 1)")
+                         (car (replique-debug-test--asked :debug-break))))
+          ;; refused: there is none
+          (replique-debug-test--answer :debug-break
+                                       '(:tag "error" :error "no-form" :message "No form"))
+          (should-not (replique-debug-test--breaks source)))))))
+
+(ert-deftest replique-debug-test-a-breakpoint-goes-with-the-ordinary-evaluation ()
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (replique-debug-test--with-sent
+        (let ((source (find-file-noselect replique-debug-test--file))
+              (repl (replique-repl--make :process process)))
+          (with-current-buffer source
+            (replique-clojure-mode)
+            (search-forward "inc")
+            (replique-debug-break)
+            ;; evaluated to be stepped through, it stays
+            (replique-debug--evaluated-again repl (point-min) (point-max) t)
+            (should (replique-debug-test--breaks source))
+            (replique-debug--evaluated-again repl (point-min) (point-max) nil)
+            (should-not (replique-debug-test--breaks source))))))))
+
 ;;; Against a process
 
 (defun replique-debug-test--locals-text (thread)
@@ -358,6 +622,145 @@ started over, and let go of - the repl gets the value of the fixed code."
           (replique-conn-close (replique-repl--conn repl))
           (kill-buffer (replique-repl--buffer repl)))
         (replique-kill-process process)))))
+
+(defun replique-debug-test--compiler ()
+  "Return the jar of the compiler of replique-clj beside the project, or skip."
+  (let ((jar (expand-file-name "../replique-clj/target/clojure-1.12.5-r1.jar"
+                               (replique-test-project))))
+    (unless (file-exists-p jar)
+      (ert-skip (format "No compiler to step with at %s" jar)))
+    jar))
+
+(ert-deftest replique-debug-test-a-defun-is-stepped-through ()
+  "Two definitions evaluated to be stepped through, the outer one called: it
+stops on entering, goes form by form with each value after its form, into
+the inner one and out of it, and the repl gets the value."
+  (let ((jar (replique-debug-test--compiler)))
+    (replique-test-with-project dir
+      (with-temp-file (expand-file-name "deps.edn" dir)
+        (insert (format "{:paths [\"src\"] :deps {org.clojure/clojure {:local/root %S}}}" jar)))
+      (make-directory (expand-file-name "src" dir))
+      (let ((file (expand-file-name "src/stepped.clj" dir)))
+        (with-temp-file file
+          (insert "(ns stepped)\n\n(defn sg [y]\n  (* y 10))\n\n"
+                  "(defn sf [m]\n  (let [x (inc (:a m))]\n    (+ x (sg x))))\n"))
+        (let* ((replique-coordinates (format "{:local/root %S}" (replique-test-project)))
+               (replique-debugger nil)
+               (process (let ((known replique-processes))
+                          (replique-process-start dir nil nil t)
+                          (unless (replique-test-wait-for
+                                   (lambda () (seq-difference replique-processes known)) 120)
+                            (error "The process did not start"))
+                          (replique-test--note-process
+                           (car (seq-difference replique-processes known)))))
+               (repl nil)
+               (source nil))
+          (unwind-protect
+              (save-window-excursion
+                (setq repl (replique-repl process))
+                (should (replique-test-wait-for (lambda () (replique-repl--ns repl)) 60))
+                (setq source (find-file-noselect file))
+                (with-current-buffer source
+                  (replique-eval-defun)       ; the ns
+                  (replique-test-settle 1)
+                  (goto-char (point-min))
+                  (search-forward "(defn sg")
+                  (replique-debug-defun)
+                  (search-forward "(defn sf")
+                  (replique-debug-defun))
+                (replique-test-settle 2)
+                (should (replique-test-wait-for
+                         (lambda () (= 2 (length (replique-debug-test--marks source)))) 30))
+                (replique-repl-send-code repl "(stepped/sf {:a 1})")
+                (let* ((buffer nil)
+                       (kind (lambda ()
+                               (and (buffer-live-p buffer)
+                                    (plist-get (buffer-local-value 'replique-debug--pause buffer)
+                                               :kind)))))
+                  (should (replique-test-wait-for
+                           (lambda ()
+                             (setq buffer (seq-find (lambda (b)
+                                                      (with-current-buffer b
+                                                        (and (derived-mode-p 'replique-debug-mode)
+                                                             replique-debug--pause)))
+                                                    (buffer-list))))
+                           120))
+                  (should (equal "enter" (funcall kind)))
+                  (cl-flet ((step (command value)
+                              ;; a stop of its own: the one before may have
+                              ;; said the same value
+                              (let ((before (buffer-local-value 'replique-debug--pause buffer)))
+                                (with-current-buffer buffer (funcall command))
+                                (should (replique-test-wait-for
+                                         (lambda ()
+                                           (and (buffer-live-p buffer)
+                                                (let ((pause (buffer-local-value
+                                                              'replique-debug--pause buffer)))
+                                                  (and pause (not (eq pause before))
+                                                       (equal value (plist-get pause :value))))))
+                                         30)))))
+                    (step #'replique-debug-next "1")
+                    (step #'replique-debug-next "2")
+                    (should (equal '((" ⇒ 1" . replique-debug-old-value)
+                                     (" ⇒ 2" . replique-debug-value))
+                                   (replique-debug-test--after-strings source)))
+                    (let ((before (buffer-local-value 'replique-debug--pause buffer)))
+                      (with-current-buffer buffer (replique-debug-in))
+                      (should (replique-test-wait-for
+                               (lambda () (and (not (eq before (buffer-local-value
+                                                               'replique-debug--pause buffer)))
+                                               (equal "enter" (funcall kind))))
+                               30)))
+                    (step #'replique-debug-next "20")
+                    (step #'replique-debug-out "20")
+                    (with-current-buffer buffer (replique-debug-continue))
+                    (should (replique-test-wait-for
+                             (lambda () (string-match-p "^22$" (replique-test-text repl)))
+                             30))
+                    ;; evaluated the ordinary way, sf is not stepped through
+                    (with-current-buffer source
+                      (goto-char (point-min))
+                      (search-forward "(defn sf")
+                      (replique-eval-defun))
+                    (should (replique-test-wait-for
+                             (lambda () (= 1 (length (replique-debug-test--marks source)))) 30))
+                    ;; and sg, asked
+                    (with-current-buffer source
+                      (goto-char (point-min))
+                      (search-forward "(defn sg")
+                      (replique-debug-uninstrument))
+                    (should (replique-test-wait-for
+                             (lambda () (null (replique-debug-test--marks source))) 30))
+                    ;; a breakpoint: sf is evaluated to stop there, and only there
+                    (with-current-buffer source
+                      (goto-char (point-min))
+                      ;; in (:a m), which is the form point is in
+                      (search-forward "(inc (:a")
+                      (replique-debug-break))
+                    (should (replique-test-wait-for
+                             (lambda () (cdar (replique-debug-test--breaks source))) 30))
+                    (replique-repl-send-code repl "(stepped/sf {:a 2})")
+                    ;; in a buffer of its own, the one before having gone
+                    (should (replique-test-wait-for
+                             (lambda ()
+                               (setq buffer
+                                     (seq-find (lambda (b)
+                                                 (with-current-buffer b
+                                                   (and (derived-mode-p 'replique-debug-mode)
+                                                        (plist-get replique-debug--pause :break)
+                                                        (equal "2" (plist-get replique-debug--pause
+                                                                              :value)))))
+                                               (buffer-list))))
+                             30))
+                    (with-current-buffer buffer (replique-debug-continue))
+                    (should (replique-test-wait-for
+                             (lambda () (string-match-p "^33$" (replique-test-text repl)))
+                             30)))))
+            (when (buffer-live-p source) (kill-buffer source))
+            (when repl
+              (replique-conn-close (replique-repl--conn repl))
+              (kill-buffer (replique-repl--buffer repl)))
+            (replique-kill-process process)))))))
 
 (provide 'replique-debug-test)
 

@@ -30,6 +30,31 @@
 ;;       it is now: redefine, then restart
 ;;   e   evaluate in the frame at point, with its locals bound, on the
 ;;       thread that stopped
+;;   n   step to the next form       i  step into a call   o  step out
+;;   v   the value the form stepped to evaluated to, as a value to browse
+;;
+;; Stepping is through code evaluated with `replique-debug-defun': it stops
+;; each time it is called, and from there goes form by form, each form shown
+;; in the source as it is evaluated, with what it evaluated to after it.  The
+;; values stay, dimmed, as the thread goes on - the way the data went
+;; through the function, written over its code.  A value is shown without
+;; realizing what of it is lazy and not realized yet, which printing it
+;; would do - on another thread, before the code got to it.
+;;
+;; A definition stepped through is marked in the fringe, and stops each
+;; time it is called until `replique-debug-uninstrument' - or until it is
+;; evaluated again, the ordinary way.  It needs the compiler of
+;; replique-clj.
+;;
+;; A breakpoint - `replique-debug-break', on a form - stops the thread once
+;; that form has its value, where a condition holds if it was given one.
+;; Its definition is evaluated to stop at its breakpoints only, rather than
+;; on entry, where it is not stepped through already; and it keeps its
+;; breakpoints when it is evaluated to be stepped through again.  Evaluated
+;; the ordinary way, it has none.
+;;
+;;   C-c C-d d  `replique-debug-defun'      C-c C-d b  `replique-debug-break'
+;;   C-c C-d u  `replique-debug-uninstrument'
 ;;
 ;; What stopped is the thread and nothing else: the process goes on
 ;; answering, and the other repls go on evaluating.  A repl whose form
@@ -59,6 +84,7 @@
 (require 'replique-pprint)
 (require 'replique-symbol)
 (require 'replique-inspect)
+(require 'replique-eval)
 
 (defcustom replique-debug-linger 1.5
   "How long what is shown of a thread stays once it goes on, in seconds.
@@ -71,6 +97,38 @@ highlighted where they changed; otherwise the buffers go."
 (defface replique-debug-stopped-line
   '((t :inherit secondary-selection :extend t))
   "Face for the line a thread stopped on."
+  :group 'replique)
+
+(defcustom replique-debug-value-width 60
+  "How much of a value a step shows after the form, in characters."
+  :type 'natnum
+  :group 'replique)
+
+(defface replique-debug-value
+  '((t :inherit success :weight bold))
+  "Face for what the form a thread stopped after evaluated to."
+  :group 'replique)
+
+(defface replique-debug-old-value
+  '((t :inherit shadow))
+  "Face for what a form evaluated to, before the thread went on."
+  :group 'replique)
+
+(defface replique-debug-instrumented
+  '((t :inherit warning))
+  "Face for the fringe mark of a definition that is stepped through."
+  :group 'replique)
+
+(defface replique-debug-breakpoint
+  '((((class color)) :underline (:color "red3"))
+    (t :underline t))
+  "Face for a form a breakpoint is on, and its mark in the fringe."
+  :group 'replique)
+
+(defface replique-debug-breakpoint-inactive
+  '((((class color)) :underline (:color "gray50" :style wave))
+    (t :underline t))
+  "Face for a breakpoint whose definition is not stepped through yet."
   :group 'replique)
 
 (defface replique-debug-host-frame
@@ -140,8 +198,20 @@ fringe arrow and the highlight are put there, as where it stopped."
         (save-excursion
           (goto-char marker)
           (setq replique-debug--arrow (copy-marker (line-beginning-position)))
-          (setq replique-debug--line
-                (make-overlay (line-beginning-position) (1+ (line-end-position))))
+          ;; The form, where it has a span - which is where a step stopped -
+          ;; and otherwise the line
+          (let ((end (and (plist-get found :end-line)
+                          (replique-debug--locate (list :file (plist-get found :file)
+                                                        :entry (plist-get found :entry)
+                                                        :line (plist-get found :end-line)
+                                                        :column (plist-get found :end-column))))))
+            (unless (and end (eq (marker-buffer end) (current-buffer)) (> end marker))
+              (setq end nil))
+            (setq replique-debug--line
+                  (if end
+                      (make-overlay marker end)
+                    (make-overlay (line-beginning-position) (1+ (line-end-position)))))
+            (replique-debug--show-step-value for end (plist-get found :value)))
           (overlay-put replique-debug--line 'face 'replique-debug-stopped-line)
           (overlay-put replique-debug--line 'priority 10))))
     (let ((window (display-buffer (marker-buffer marker)
@@ -151,6 +221,271 @@ fringe arrow and the highlight are put there, as where it stopped."
       (when window
         (set-window-point window marker)))
     marker))
+
+;;; What the forms evaluated to
+
+(defvar replique-debug--values (make-hash-table :test #'equal)
+  "The values shown after the forms a thread stepped through.
+
+By (PROCESS . THREAD), as overlays: the last one is the value of the form
+the thread is stopped after.")
+
+(defun replique-debug--value-text (value)
+  "Return VALUE, a value printed, as it is shown after its form."
+  (let ((text (replace-regexp-in-string "[ \t\n]+" " " value)))
+    (if (> (length text) replique-debug-value-width)
+        (concat (string-trim-right (substring text 0 replique-debug-value-width)) "…")
+      text)))
+
+(defun replique-debug--show-step-value (for end value)
+  "Show VALUE after the form ending at END, for the thread FOR.
+
+What was shown for the thread before is dimmed, and a value shown at END
+before - the form evaluated again, in a loop - goes."
+  (let ((overlays (seq-filter #'overlay-buffer (gethash for replique-debug--values))))
+    (dolist (o overlays)
+      (if (and end (= (overlay-start o) end))
+          (progn (delete-overlay o) (setq overlays (delq o overlays)))
+        (overlay-put o 'after-string
+                     (propertize (overlay-get o 'replique-debug-text)
+                                 'face 'replique-debug-old-value))))
+    (when (and end value)
+      (let ((o (make-overlay end end nil t))
+            (text (concat " ⇒ " (replique-debug--value-text value))))
+        (overlay-put o 'replique-debug-text text)
+        (overlay-put o 'after-string (propertize text 'face 'replique-debug-value))
+        (push o overlays)))
+    (puthash for overlays replique-debug--values)))
+
+(defun replique-debug--forget-values (for)
+  "Take away the values shown for the thread FOR."
+  (mapc #'delete-overlay (gethash for replique-debug--values))
+  (remhash for replique-debug--values))
+
+;;; What is stepped through
+
+(defvar replique-debug--units (make-hash-table :test #'equal)
+  "The marks of the definitions stepped through, by (PROCESS . UNIT).
+
+UNIT is the number the process gave what it evaluated to be stepped
+through.  Each mark is an overlay over the definition.")
+
+(defun replique-debug--position (line column)
+  "Return where LINE and COLUMN, counted from 1, are in the current buffer."
+  (save-restriction
+    (widen)
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line (1- line))
+      (forward-char (min (1- (or column 1)) (- (line-end-position) (point))))
+      (point))))
+
+(defun replique-debug--instrumented (process unit)
+  "Mark UNIT, what PROCESS steps through, as the process said it.
+
+In the buffer visiting its file, where there is one: a file is not opened
+to be marked."
+  (when-let* ((n (plist-get unit :unit))
+              (file (plist-get unit :file))
+              ((not (plist-get unit :entry)))
+              (line (plist-get unit :line))
+              (buffer (find-buffer-visiting file)))
+    (replique-debug--uninstrumented process n)
+    (with-current-buffer buffer
+      (let* ((start (replique-debug--position line (plist-get unit :column)))
+             (end (if (plist-get unit :end-line)
+                      (replique-debug--position (plist-get unit :end-line)
+                                                (plist-get unit :end-column))
+                    (save-excursion (goto-char start) (line-end-position))))
+             (o (make-overlay start (max start end))))
+        (overlay-put o 'replique-debug-unit n)
+        (overlay-put o 'replique-debug-process process)
+        ;; where the unit was read from, which its forms are found by
+        (overlay-put o 'replique-debug-origin (cons line (or (plist-get unit :column) 1)))
+        (overlay-put o 'evaporate t)
+        (overlay-put o 'before-string
+                     (propertize "*" 'display
+                                 '(left-fringe filled-square replique-debug-instrumented)))
+        (overlay-put o 'help-echo (if (plist-get unit :breaks-only)
+                                      "Stops at its breakpoints - M-x replique-debug-uninstrument"
+                                    "Stepped through - M-x replique-debug-uninstrument"))
+        (puthash (cons process n) o replique-debug--units)
+        (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
+          (replique-debug--set-break b o))))))
+
+(defun replique-debug--unmark (o)
+  "Take away the mark O, of a unit not stepped through any more.
+
+Its breakpoints stay, not set: a unit stepped through there again sets
+them."
+  (when-let* ((buffer (overlay-buffer o)))
+    (with-current-buffer buffer
+      (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
+        (replique-debug--break-set b nil nil))))
+  (delete-overlay o))
+
+(defun replique-debug--uninstrumented (process n)
+  "Take away the mark of the unit N of PROCESS, which is not stepped through."
+  (when-let* ((o (gethash (cons process n) replique-debug--units)))
+    (replique-debug--unmark o)
+    (remhash (cons process n) replique-debug--units)))
+
+(defun replique-debug--marks-in (start end)
+  "Return the marks of what is stepped through between START and END."
+  (seq-filter (lambda (o) (overlay-get o 'replique-debug-unit)) (overlays-in start end)))
+
+(defun replique-debug--uninstrument (process n &optional quiet)
+  "Ask PROCESS to stop stepping through its unit N - or every one, N nil.
+
+Saying how many it stopped stepping through, unless QUIET."
+  (replique-process-request
+   process (append (list :op :debug-uninstrument) (when n (list :unit n)))
+   (lambda (frame)
+     (if (equal "error" (plist-get frame :tag))
+         (message "replique: %s" (plist-get frame :message))
+       (let ((units (plist-get frame :uninstrumented)))
+         ;; the events said so too, but an answer is never lost
+         (dolist (unit units) (replique-debug--uninstrumented process unit))
+         (unless quiet
+           (message "replique: %s"
+                    (pcase (length units)
+                      (0 "nothing was stepped through")
+                      (1 "no longer stepped through")
+                      (count (format "%s definitions no longer stepped through" count))))))))))
+
+(defun replique-debug--evaluated-again (repl start end instrument)
+  "Stop stepping through what was between START and END, evaluated again.
+
+In the process of REPL, which it was sent to: what it is now is what was
+sent, which was compiled to be stepped through or not - a new unit, if it
+was, which its breakpoints are set in once the process says it is there.
+Evaluated the ordinary way, as INSTRUMENT says, it has none."
+  (dolist (o (replique-debug--marks-in start end))
+    (let ((process (overlay-get o 'replique-debug-process)))
+      (when (eq process (replique-repl--process repl))
+        (replique-debug--uninstrument process (overlay-get o 'replique-debug-unit) t))))
+  (unless instrument
+    (mapc #'delete-overlay (replique-debug--breaks-in start end))))
+
+;;; Breakpoints
+
+(defvar replique-debug--condition-history nil
+  "The conditions breakpoints were given.")
+
+(defun replique-debug--breaks-in (start end)
+  "Return the breakpoints on the forms between START and END."
+  (seq-filter (lambda (o) (overlay-get o 'replique-debug-break)) (overlays-in start end)))
+
+(defun replique-debug--break-set (o process site)
+  "Say that the breakpoint O is the one numbered SITE in PROCESS - or none."
+  (overlay-put o 'replique-debug-process process)
+  (overlay-put o 'replique-debug-site site)
+  (let ((face (if site 'replique-debug-breakpoint 'replique-debug-breakpoint-inactive)))
+    (overlay-put o 'face face)
+    (overlay-put o 'before-string
+                 (propertize "*" 'display `(left-fringe filled-rectangle ,face)))))
+
+(defun replique-debug--line-column (pos)
+  "Return where POS is, as (LINE . COLUMN), both counted from 1."
+  (save-restriction
+    (widen)
+    (save-excursion
+      (goto-char pos)
+      (cons (line-number-at-pos pos t) (1+ (- pos (line-beginning-position)))))))
+
+(defun replique-debug--set-break (o mark)
+  "Set the breakpoint O in the unit MARK marks, as the process has it.
+
+The form is named by where it was when the unit was read, which is where
+it is now with the lines and columns the unit moved since."
+  (let* ((process (overlay-get mark 'replique-debug-process))
+         (origin (overlay-get mark 'replique-debug-origin))
+         (now (replique-debug--line-column (overlay-start mark)))
+         (here (replique-debug--line-column (overlay-start o)))
+         (line (+ (car origin) (- (car here) (car now))))
+         (column (if (= (car here) (car now))
+                     (+ (cdr origin) (- (cdr here) (cdr now)))
+                   (cdr here))))
+    (replique-process-request
+     process
+     (append (list :op :debug-break :unit (overlay-get mark 'replique-debug-unit)
+                   :line line :column column)
+             (when-let* ((condition (overlay-get o 'replique-debug-condition)))
+               (list :condition condition)))
+     (lambda (frame)
+       (cond
+        ((not (overlay-buffer o)))
+        ((equal "error" (plist-get frame :tag))
+         (delete-overlay o)
+         (message "replique: no breakpoint - %s" (plist-get frame :message)))
+        (t (replique-debug--break-set o process (plist-get frame :site))))))))
+
+(defun replique-debug--form-at-point ()
+  "Return the bounds of the form point is in or on, as (START . END).
+
+A list: what a breakpoint can be on is a call, a macro or a special form."
+  (save-excursion
+    (let ((start (if (eq (char-after) ?\()
+                     (point)
+                   (condition-case nil
+                       (progn (backward-up-list 1 t t)
+                              (while (not (eq (char-after) ?\())
+                                (backward-up-list 1 t t))
+                              (point))
+                     (scan-error nil)))))
+      (unless start (user-error "No form at point"))
+      (cons start (scan-sexps start 1)))))
+
+(defun replique-debug--remove-break (o)
+  "Take the breakpoint O away, in the process too where it is set there."
+  (when-let* ((site (overlay-get o 'replique-debug-site)))
+    (replique-process-request (overlay-get o 'replique-debug-process)
+                              (list :op :debug-unbreak :site site)
+                              #'ignore))
+  (delete-overlay o))
+
+;;;###autoload
+(defun replique-debug-break (&optional condition)
+  "Put a breakpoint on the form around point, or take it away.
+
+A thread stops there once the form has its value - showing it, as a step
+does - and is then stepped through from there.  With CONDITION, code
+asked for interactively with a prefix argument, only where it holds: it is
+run in the frame, with the locals of the form bound, each time the thread
+gets there.
+
+The definition the form is in is evaluated to stop at its breakpoints,
+where it is not stepped through already: not on entry, and not until it
+is called.  It needs the compiler of replique-clj, and the process started
+with the debugger - see `replique-connect'."
+  (interactive
+   (list (when current-prefix-arg
+           (read-from-minibuffer "Stop where: " nil read-expression-map nil
+                                 'replique-debug--condition-history))))
+  (let* ((form (replique-debug--form-at-point))
+         (there (seq-find (lambda (o) (= (car form) (overlay-start o)))
+                          (replique-debug--breaks-in (car form) (cdr form)))))
+    (when there (replique-debug--remove-break there))
+    (if (and there (not condition))
+        (message "replique: breakpoint taken away")
+      (let ((o (make-overlay (car form) (cdr form)))
+            (mark (seq-find (lambda (m) (<= (overlay-start m) (car form) (overlay-end m)))
+                            (replique-debug--marks-in (car form) (cdr form)))))
+        (overlay-put o 'replique-debug-break t)
+        (overlay-put o 'evaporate t)
+        (overlay-put o 'help-echo (if condition
+                                      (format "Breakpoint, where %s" condition)
+                                    "Breakpoint"))
+        (when (and condition (not (string-blank-p condition)))
+          (overlay-put o 'replique-debug-condition condition))
+        (replique-debug--break-set o nil nil)
+        (if mark
+            (replique-debug--set-break o mark)
+          ;; set once the process says it steps through it - see
+          ;; `replique-debug--instrumented'
+          (replique-eval--send (list (replique-eval--defun-at-point)) 'break))))))
+
+(add-hook 'replique-eval-evaluated-functions #'replique-debug--evaluated-again)
 
 ;;; A buffer per stopped thread
 
@@ -244,9 +579,13 @@ fringe arrow and the highlight are put there, as where it stopped."
                                      (or (plist-get pause :name) replique-debug--thread))
                              'face 'bold)
                  (if pause
-                     (propertize (format "stopped at %s" (replique-debug--place pause))
+                     (propertize (format "stopped at %s%s" (replique-debug--place pause)
+                                         (if (plist-get pause :break) ", a breakpoint" ""))
                                  'face 'replique-exception)
                    "running")
+                 (when-let* ((value (plist-get pause :value)))
+                   (propertize (concat "⇒ " (replique-debug--value-text value))
+                               'face 'replique-debug-value))
                  (when repl
                    (format "evaluating for %s" (buffer-name (replique-repl--buffer repl))))))
      "  ·  ")))
@@ -298,11 +637,25 @@ fringe arrow and the highlight are put there, as where it stopped."
       (replique-debug--render)
       (replique-debug--ask-frames))
     (replique-debug--locals process thread 0 "stopped")
+    ;; the value looked at is the value of the stop, where it has one
+    (when-let* ((view (replique-debug--view-of process thread t)))
+      (if (plist-member pause :value)
+          (save-selected-window (replique-debug--value process thread))
+        (replique-debug--kill view)))
     (replique-debug--show-place pause for t)
     (setq replique-debug--arrow-thread for)
     (pop-to-buffer buffer)
-    (message "replique: thread %s stopped at %s - c continues"
-             (plist-get pause :name) (replique-debug--place pause))))
+    (message "%s%s"
+             (if-let* ((error (plist-get pause :condition-error)))
+                 (format "replique: the condition of the breakpoint failed - %s\n" error)
+               "")
+             (pcase (plist-get pause :kind)
+               ("value" (format "replique: ⇒ %s  - n next, i in, o out, c continue"
+                                (replique-debug--value-text (plist-get pause :value))))
+               ("enter" (format "replique: thread %s called %s - n steps, c continues"
+                                (plist-get pause :name) (replique-debug--place pause)))
+               (_ (format "replique: thread %s stopped at %s - c continues"
+                          (plist-get pause :name) (replique-debug--place pause)))))))
 
 (defun replique-debug--resumed (process thread)
   "Show that the thread THREAD of PROCESS runs again."
@@ -360,6 +713,7 @@ where it was - where they were not written in since."
     (replique-debug--stay process thread)
     (when (equal replique-debug--arrow-thread for)
       (replique-debug--forget-arrow))
+    (replique-debug--forget-values for)
     (dolist (opened (gethash for replique-debug--opened))
       (let ((buffer (car opened)))
         (when (and (buffer-live-p buffer)
@@ -382,7 +736,12 @@ where it was - where they were not written in since."
     (maphash (lambda (for _) (when (eq process (car for)) (push (cdr for) threads)))
              replique-debug--opened)
     (dolist (thread (delete-dups threads))
-      (replique-debug--clear process thread))))
+      (replique-debug--clear process thread))
+    (maphash (lambda (for o)
+               (when (eq process (car for))
+                 (replique-debug--unmark o)
+                 (remhash for replique-debug--units)))
+             replique-debug--units)))
 
 (add-hook 'replique-process-forgotten-functions #'replique-debug--forgotten)
 
@@ -399,6 +758,10 @@ the event saying what came of it carries.")
      (replique-debug--stopped process (replique-process--renamed-frame process frame)))
     ("debug-resumed"
      (replique-debug--resumed process (plist-get frame :thread)))
+    ("debug-instrumented"
+     (replique-debug--instrumented process (replique-process--renamed-frame process frame)))
+    ("debug-uninstrumented"
+     (replique-debug--uninstrumented process (plist-get frame :unit)))
     ("debug-evaluated"
      (let ((key (cons process (plist-get frame :evaluation))))
        (when-let* ((then (gethash key replique-debug--evaluations)))
@@ -410,7 +773,9 @@ the event saying what came of it carries.")
 ;;; The locals of a frame
 
 (defun replique-debug--views-of (process thread)
-  "Return the buffers showing the locals of a frame of THREAD of PROCESS."
+  "Return the buffers showing something of the thread THREAD of PROCESS.
+
+The locals of one of its frames, and the value it stopped after."
   (seq-filter (lambda (buffer)
                 (with-current-buffer buffer
                   (and (derived-mode-p 'replique-inspect-mode)
@@ -424,16 +789,39 @@ the event saying what came of it carries.")
 
 In the one view of the locals the thread has: a view of another frame is
 made a view of this one."
-  (let ((view (or (car (replique-debug--views-of process thread))
-                  (generate-new-buffer
-                   (if-let* ((buffer (replique-debug--buffer-of process thread)))
-                       (format "%s locals*" (string-remove-suffix "*" (buffer-name buffer)))
-                     "*replique-debug locals*")))))
+  (let ((view (or (replique-debug--view-of process thread nil)
+                  (replique-debug--new-view process thread "locals"))))
     (save-selected-window
       (replique-inspect-show process nil
                              (list :debug (list :thread thread :frame index))
                              (format "locals of %s" what)
                              view))))
+
+(defun replique-debug--view-of (process thread value)
+  "Return the view of the locals of THREAD of PROCESS - of its VALUE, with it."
+  (seq-find (lambda (buffer)
+              (eq (not value)
+                  (not (plist-get (plist-get (buffer-local-value 'replique-inspect--source buffer)
+                                             :debug)
+                                  :value))))
+            (replique-debug--views-of process thread)))
+
+(defun replique-debug--new-view (process thread what)
+  "Return a new buffer for a view of WHAT of the thread THREAD of PROCESS."
+  (generate-new-buffer
+   (if-let* ((buffer (replique-debug--buffer-of process thread)))
+       (format "%s %s*" (string-remove-suffix "*" (buffer-name buffer)) what)
+     (format "*replique-debug %s*" what))))
+
+(defun replique-debug--value (process thread)
+  "Show the value the thread THREAD of PROCESS stopped after, to browse.
+
+In the one view of it the thread has, which follows the stops."
+  (replique-inspect-show process nil
+                         (list :debug (list :thread thread :value t))
+                         "value of the form"
+                         (or (replique-debug--view-of process thread t)
+                             (replique-debug--new-view process thread "value"))))
 
 ;;; Commands
 
@@ -498,6 +886,95 @@ which ends what the thread was doing the way an exception would."
      (append (list :op :debug-continue :thread replique-debug--thread)
              (when abort (list :abort t)))
      (lambda (_) (message (if abort "replique: aborted" "replique: continued"))))))
+
+(defun replique-debug--step (mode)
+  "Let the stopped thread go on to where MODE, a step, says."
+  (replique-debug--in-this
+    (replique-debug--request
+     (list :op :debug-step :thread replique-debug--thread :mode mode)
+     #'ignore)))
+
+(defun replique-debug-next ()
+  "Let the stopped thread go on to the next form of the call it is in.
+
+Over the calls that form makes, and to the call it returns to once this
+one is done.  Stops where code compiled to be stepped through is - see
+`replique-debug-defun'."
+  (interactive)
+  (replique-debug--step "next"))
+
+(defun replique-debug-in ()
+  "Let the stopped thread go on to the next form, inside a call or not.
+
+Which is into the call the form makes, where what it calls was compiled to
+be stepped through - see `replique-debug-defun'."
+  (interactive)
+  (replique-debug--step "in"))
+
+(defun replique-debug-out ()
+  "Let the stopped thread go on to the form that called the one it is in."
+  (interactive)
+  (replique-debug--step "out"))
+
+;;;###autoload
+(defun replique-debug-defun ()
+  "Evaluate the top level form around point, to be stepped through.
+
+A definition stops the thread that calls it, each time it is called; any
+other form stops the repl as it starts evaluating it.  From there, \\`n'
+goes to the next form, \\`i' into a call and \\`o' out of it, each form
+shown as it is evaluated, with its value after it.  Its locals are kept,
+for stepping to show them and a restart to have them.
+
+A definition is marked in the fringe while it is stepped through, which
+is until `replique-debug-uninstrument', or until it is evaluated again
+the ordinary way - `replique-eval-defun'.
+
+The process has to run the compiler of replique-clj, and to have been
+started with the debugger - see `replique-connect'."
+  (interactive)
+  (replique-eval--send (list (replique-eval--defun-at-point)) t))
+
+(defun replique-debug-inspect-value ()
+  "Browse what the form the thread stopped after evaluated to.
+
+The value itself, rather than its printing: what of it is lazy is realized
+as it is looked at, a page at a time."
+  (interactive)
+  (replique-debug--in-this
+    (unless (plist-member replique-debug--pause :value)
+      (user-error "The thread did not stop after a form"))
+    (replique-debug--value replique-debug--process replique-debug--thread)))
+
+;;;###autoload
+(defun replique-debug-uninstrument (&optional all)
+  "Stop stepping through the definition around point.
+
+It stops the threads that call it no more, and its mark in the fringe
+goes, with its breakpoints.  Its code stays what it was compiled to -
+calling the debugger for every form, which costs - until it is evaluated
+again.
+
+With ALL, interactively the prefix argument, every definition the process
+steps through."
+  (interactive "P")
+  (if all
+      (let ((process (replique-process-ensure)))
+        (maphash (lambda (for o)
+                   (when (and (eq process (car for)) (overlay-buffer o))
+                     (with-current-buffer (overlay-buffer o)
+                       (mapc #'delete-overlay
+                             (replique-debug--breaks-in (overlay-start o) (overlay-end o))))))
+                 replique-debug--units)
+        (replique-debug--uninstrument process nil))
+    (let* ((node (replique-eval--defun-at-point))
+           (marks (replique-debug--marks-in (replique-parse-start node)
+                                            (replique-parse-end node))))
+      (unless marks (user-error "Nothing here is stepped through"))
+      (dolist (o marks)
+        (mapc #'delete-overlay (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
+        (replique-debug--uninstrument (overlay-get o 'replique-debug-process)
+                                      (overlay-get o 'replique-debug-unit))))))
 
 (defun replique-debug-abort ()
   "Let the stopped thread go on by throwing from where it stopped."
@@ -614,11 +1091,13 @@ sees is what the frame sees, the bindings of the thread included.  A
     (define-key map (kbd "a") #'replique-debug-abort)
     (define-key map (kbd "r") #'replique-debug-restart)
     (define-key map (kbd "e") #'replique-debug-eval)
+    (define-key map (kbd "n") #'replique-debug-next)
+    (define-key map (kbd "i") #'replique-debug-in)
+    (define-key map (kbd "o") #'replique-debug-out)
+    (define-key map (kbd "v") #'replique-debug-inspect-value)
     (define-key map (kbd "RET") #'replique-debug-visit-frame)
     (define-key map (kbd "g") #'replique-debug-refresh)
     (define-key map (kbd "j") #'replique-debug-toggle-host-frames)
-    (define-key map (kbd "n") #'next-line)
-    (define-key map (kbd "p") #'previous-line)
     map)
   "Keymap of a buffer of a stopped thread.")
 
