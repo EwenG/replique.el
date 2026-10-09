@@ -283,12 +283,15 @@ With INSTRUMENT the form is compiled to be stepped through - see
 `replique-debug-defun' - and COLUMN says where on LINE it starts, counted
 from 1: a step shows where a form is by the columns the reader counted.
 INSTRUMENT `break' has it stop at its breakpoints only, rather than on
-entry - see `replique-debug-break'."
+entry - see `replique-debug-break' - and `record' has it stop nowhere,
+keeping what its forms evaluate to - see `replique-debug-record'."
   (format "#replique/src %s"
           (replique-edn-map (append (when file (list :file file))
                                     (when line (list :line line))
                                     (when instrument (list :instrument t))
-                                    (when (eq instrument 'break) (list :entry 'false))
+                                    (when (memq instrument '(break record))
+                                      (list :entry 'false))
+                                    (when (eq instrument 'record) (list :record t))
                                     (when column (list :column column))))))
 
 (defun replique-ns-directive (ns)
@@ -388,7 +391,8 @@ everything a load is - see `replique-load-directive'."
 
 With INSTRUMENT they are compiled to be stepped through - see
 `replique-debug-defun' - and with INSTRUMENT `break', to stop at their
-breakpoints only - see `replique-debug-break'.
+breakpoints only - see `replique-debug-break' - or `record', to keep what
+their forms evaluate to - see `replique-debug-record'.
 
 WHICH REPL THAT IS, IS THE BUFFER\\='S TO SAY and not the selection\\='s - a
 .clj file goes to a Clojure repl and a .cljs file to a ClojureScript one,

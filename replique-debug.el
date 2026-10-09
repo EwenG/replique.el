@@ -53,7 +53,16 @@
 ;; breakpoints when it is evaluated to be stepped through again.  Evaluated
 ;; the ordinary way, it has none.
 ;;
+;; A definition evaluated with `replique-debug-record' stops nothing, but
+;; keeps what each of its forms evaluates to, call by call: the values of
+;; the last call are written after its forms, as they come, and the calls
+;; before it are gone back to - each value one to browse.  An example of
+;; everything the function was handed and made, written over its code.  It
+;; does not need the debugger.
+;;
 ;;   C-c C-d d  `replique-debug-defun'      C-c C-d b  `replique-debug-break'
+;;   C-c C-d r  `replique-debug-record'     C-c C-d v  the value recorded
+;;   C-c C-d p  the call before             C-c C-d n  the call after
 ;;   C-c C-d u  `replique-debug-uninstrument'
 ;;
 ;; What stopped is the thread and nothing else: the process goes on
@@ -129,6 +138,21 @@ highlighted where they changed; otherwise the buffers go."
   '((((class color)) :underline (:color "gray50" :style wave))
     (t :underline t))
   "Face for a breakpoint whose definition is not stepped through yet."
+  :group 'replique)
+
+(defcustom replique-debug-recorded-width 40
+  "How much of a value recorded is shown after its form, in characters."
+  :type 'natnum
+  :group 'replique)
+
+(defface replique-debug-recorded
+  '((t :inherit shadow :slant italic))
+  "Face for what a form of a definition that records evaluated to."
+  :group 'replique)
+
+(defface replique-debug-recorded-call
+  '((t :inherit replique-note))
+  "Face for which call of a definition that records is shown."
   :group 'replique)
 
 (defface replique-debug-host-frame
@@ -306,12 +330,18 @@ to be marked."
         (overlay-put o 'before-string
                      (propertize "*" 'display
                                  '(left-fringe filled-square replique-debug-instrumented)))
-        (overlay-put o 'help-echo (if (plist-get unit :breaks-only)
-                                      "Stops at its breakpoints - M-x replique-debug-uninstrument"
-                                    "Stepped through - M-x replique-debug-uninstrument"))
+        (overlay-put o 'help-echo
+                     (cond
+                      ((plist-get unit :record) "Recorded - M-x replique-debug-uninstrument")
+                      ((plist-get unit :breaks-only)
+                       "Stops at its breakpoints - M-x replique-debug-uninstrument")
+                      (t "Stepped through - M-x replique-debug-uninstrument")))
+        (overlay-put o 'replique-debug-record (plist-get unit :record))
         (puthash (cons process n) o replique-debug--units)
         (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
-          (replique-debug--set-break b o))))))
+          (replique-debug--set-break b o))
+        (when (plist-get unit :record)
+          (replique-debug--ask-recorded o))))))
 
 (defun replique-debug--unmark (o)
   "Take away the mark O, of a unit not stepped through any more.
@@ -322,6 +352,7 @@ them."
     (with-current-buffer buffer
       (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
         (replique-debug--break-set b nil nil))))
+  (replique-debug--forget-recorded o)
   (delete-overlay o))
 
 (defun replique-debug--uninstrumented (process n)
@@ -486,6 +517,180 @@ with the debugger - see `replique-connect'."
           (replique-eval--send (list (replique-eval--defun-at-point)) 'break))))))
 
 (add-hook 'replique-eval-evaluated-functions #'replique-debug--evaluated-again)
+
+;;; Recording
+
+(defun replique-debug--here (mark line column)
+  "Return where LINE and COLUMN of the unit MARK marks are now.
+
+As the unit was read, from where it was written: where that is now is
+where it was with the lines and columns the unit moved since."
+  (let* ((origin (overlay-get mark 'replique-debug-origin))
+         (now (replique-debug--line-column (overlay-start mark))))
+    (replique-debug--position (+ line (- (car now) (car origin)))
+                              (if (= line (car origin))
+                                  (+ column (- (cdr now) (cdr origin)))
+                                column))))
+
+(defun replique-debug--forget-recorded (mark)
+  "Take away what is shown of what the unit MARK marks recorded."
+  (mapc #'delete-overlay (overlay-get mark 'replique-debug-shown))
+  (overlay-put mark 'replique-debug-shown nil))
+
+(defun replique-debug--ask-recorded (mark &optional call)
+  "Show what the unit MARK marks recorded in the call CALL - the last one.
+
+Without CALL the last call is followed: shown again as the process says
+there are more."
+  (let ((process (overlay-get mark 'replique-debug-process)))
+    (overlay-put mark 'replique-debug-call call)
+    (replique-process-request
+     process
+     (append (list :op :debug-recorded :unit (overlay-get mark 'replique-debug-unit))
+             (when call (list :call call)))
+     (lambda (frame)
+       (cond
+        ((not (overlay-buffer mark)))
+        ((equal "error" (plist-get frame :tag))
+         (message "replique: %s" (plist-get frame :message)))
+        ;; another call was asked for since
+        ((not (eql call (overlay-get mark 'replique-debug-call))))
+        (t (replique-debug--show-recorded mark frame)))))))
+
+(defun replique-debug--recorded-text (value times)
+  "Return VALUE, printed, as it is shown after its form, evaluated TIMES."
+  (concat " ⇒ "
+          (let ((replique-debug-value-width replique-debug-recorded-width))
+            (replique-debug--value-text value))
+          (if (and times (> times 1)) (format " ×%s" times) "")))
+
+(defun replique-debug--show-recorded (mark recorded)
+  "Show RECORDED, what the process said the unit MARK marks recorded."
+  (replique-debug--forget-recorded mark)
+  (overlay-put mark 'replique-debug-calls (plist-get recorded :calls))
+  (overlay-put mark 'replique-debug-shown-call (plist-get recorded :call))
+  (with-current-buffer (overlay-buffer mark)
+    (let ((shown nil)
+          (calls (plist-get recorded :calls))
+          (call (plist-get recorded :call)))
+      (dolist (value (plist-get recorded :values))
+        (when (plist-get value :end-line)
+          (let ((start (replique-debug--here mark (plist-get value :line)
+                                             (plist-get value :column)))
+                (end (replique-debug--here mark (plist-get value :end-line)
+                                           (plist-get value :end-column))))
+            (when (<= (overlay-start mark) start end (overlay-end mark))
+              (let ((o (make-overlay start end nil t)))
+                (overlay-put o 'replique-debug-recorded value)
+                (overlay-put o 'after-string
+                             (propertize (replique-debug--recorded-text
+                                          (plist-get value :value) (plist-get value :times))
+                                         'face 'replique-debug-recorded))
+                (push o shown))))))
+      (when call
+        (let* ((index (seq-position calls call
+                                    (lambda (c n) (eql n (plist-get c :call)))))
+               (about (nth (or index 0) calls))
+               (eol (save-excursion (goto-char (overlay-start mark)) (line-end-position)))
+               (o (make-overlay eol eol nil t)))
+          (overlay-put o 'after-string
+                       (propertize
+                        (format "  ◂ call %s of %s%s · %s%s"
+                                (1+ (or index 0)) (length calls)
+                                (if (overlay-get mark 'replique-debug-call) "" ", the last")
+                                (or (plist-get about :thread) "?")
+                                (if-let* ((at (plist-get about :at)))
+                                    (format-time-string " · %T" (/ at 1000.0))
+                                  ""))
+                        'face 'replique-debug-recorded-call))
+          (push o shown)))
+      (overlay-put mark 'replique-debug-shown shown))))
+
+(defun replique-debug--recorded (process unit)
+  "Show again what the unit UNIT of PROCESS recorded, which it says changed.
+
+Where the last call is shown: a call gone back to stays."
+  (when-let* ((mark (gethash (cons process unit) replique-debug--units)))
+    (unless (overlay-get mark 'replique-debug-call)
+      (replique-debug--ask-recorded mark))))
+
+;;;###autoload
+(defun replique-debug-record ()
+  "Evaluate the top level form around point, to record what it does.
+
+What each of its forms evaluates to is kept, call by call - the last ones
+- and written after the form: the values of the last call, as calls come,
+or of the one gone back to with \[replique-debug-recorded-before].  Each
+is a value to browse - \[replique-debug-inspect-recorded].  Nothing stops,
+and the process does not need the debugger, only the compiler of
+replique-clj.
+
+Recorded until `replique-debug-uninstrument', or until it is evaluated
+again the ordinary way."
+  (interactive)
+  (replique-eval--send (list (replique-eval--defun-at-point)) 'record))
+
+(defun replique-debug--recording-at-point ()
+  "Return the mark of the unit around point that records, or nil."
+  (seq-find (lambda (o) (overlay-get o 'replique-debug-record))
+            (replique-debug--marks-in (point) (1+ (point)))))
+
+(defun replique-debug--go-to-call (offset)
+  "Show the call OFFSET calls after the one shown, of the unit at point."
+  (let* ((mark (or (replique-debug--recording-at-point)
+                   (user-error "Nothing here is recorded")))
+         (calls (overlay-get mark 'replique-debug-calls))
+         (shown (overlay-get mark 'replique-debug-shown-call))
+         (index (+ offset (or (seq-position calls shown
+                                            (lambda (c n) (eql n (plist-get c :call))))
+                              (1- (length calls))))))
+    (cond
+     ((null calls) (user-error "Not called yet"))
+     ((< index 0) (user-error "No call before this one is kept"))
+     ((>= index (length calls)) (user-error "This is the last call"))
+     ;; the last call is followed
+     ((= index (1- (length calls))) (replique-debug--ask-recorded mark))
+     (t (replique-debug--ask-recorded mark (plist-get (nth index calls) :call))))))
+
+;;;###autoload
+(defun replique-debug-recorded-before (&optional n)
+  "Show what the definition at point recorded in the call before - N before."
+  (interactive "p")
+  (replique-debug--go-to-call (- (or n 1))))
+
+;;;###autoload
+(defun replique-debug-recorded-after (&optional n)
+  "Show what the definition at point recorded in the call after - N after.
+
+The last call is followed: shown as the next calls come."
+  (interactive "p")
+  (replique-debug--go-to-call (or n 1)))
+
+;;;###autoload
+(defun replique-debug-inspect-recorded (&optional every-call)
+  "Browse what the form at point evaluated to, in the call shown.
+
+The value itself, rather than its printing.  With EVERY-CALL,
+interactively the prefix argument, what it evaluated to in each call kept,
+one value per call."
+  (interactive "P")
+  (let* ((mark (or (replique-debug--recording-at-point)
+                   (user-error "Nothing here is recorded")))
+         (at (seq-filter (lambda (o) (overlay-get o 'replique-debug-recorded))
+                         (overlays-at (point))))
+         ;; the innermost form point is in
+         (o (car (sort at (lambda (a b) (> (overlay-start a) (overlay-start b))))))
+         (value (or (and o (overlay-get o 'replique-debug-recorded))
+                    (user-error "No form recorded at point")))
+         (text (buffer-substring-no-properties (overlay-start o) (overlay-end o))))
+    (replique-inspect-show
+     (overlay-get mark 'replique-debug-process) nil
+     (list :debug (append (list :site (plist-get value :site))
+                          (unless every-call
+                            (list :call (overlay-get mark 'replique-debug-shown-call)))))
+     (format "%s%s" (truncate-string-to-width (replace-regexp-in-string "[ \t\n]+" " " text)
+                                              30 nil nil "…")
+             (if every-call ", every call" "")))))
 
 ;;; A buffer per stopped thread
 
@@ -762,6 +967,8 @@ the event saying what came of it carries.")
      (replique-debug--instrumented process (replique-process--renamed-frame process frame)))
     ("debug-uninstrumented"
      (replique-debug--uninstrumented process (plist-get frame :unit)))
+    ("debug-recorded"
+     (replique-debug--recorded process (plist-get frame :unit)))
     ("debug-evaluated"
      (let ((key (cons process (plist-get frame :evaluation))))
        (when-let* ((then (gethash key replique-debug--evaluations)))
