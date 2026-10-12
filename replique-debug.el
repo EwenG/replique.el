@@ -60,6 +60,12 @@
 ;; everything the function was handed and made, written over its code.  It
 ;; does not need the debugger.
 ;;
+;; ClojureScript is recorded too, and only recorded: a page or a node
+;; program cannot be stopped from here, so stepping and breakpoints are
+;; Clojure's.  A .cljs definition is recorded in the runtime of the repl it
+;; is sent to, which keeps its values; it is let go of when that page is
+;; reloaded, or its namespace is compiled again.
+;;
 ;;   C-c C-d d  `replique-debug-defun'      C-c C-d b  `replique-debug-break'
 ;;   C-c C-d r  `replique-debug-record'     C-c C-d v  the value recorded
 ;;   C-c C-d p  the call before             C-c C-d n  the call after
@@ -314,11 +320,23 @@ through.  Each mark is an overlay over the definition.")
       (forward-char (min (1- (or column 1)) (- (line-end-position) (point))))
       (point))))
 
+(defun replique-debug--unit-keys (unit)
+  "Return the dialect keys of what UNIT is asked about, nil for Clojure.
+
+Those of the runtime its code is in, which the event says - see
+`replique-dialect-keys'."
+  (when (equal "cljs" (plist-get unit :dialect))
+    (append (list :dialect :cljs)
+            (when-let* ((target (plist-get unit :target)))
+              (list :target (intern (concat ":" target)))))))
+
 (defun replique-debug--instrumented (process unit)
   "Mark UNIT, what PROCESS steps through, as the process said it.
 
 In the buffer visiting its file, where there is one: a file is not opened
-to be marked."
+to be marked.  A mark of the same process starting where it starts is of
+the unit it replaces, let go of: the process says so too, but of
+ClojureScript only after it says this."
   (when-let* ((n (plist-get unit :unit))
               (file (plist-get unit :file))
               ((not (plist-get unit :entry)))
@@ -332,6 +350,10 @@ to be marked."
                                                 (plist-get unit :end-column))
                     (save-excursion (goto-char start) (line-end-position))))
              (o (make-overlay start (max start end))))
+        (dolist (old (replique-debug--marks-in start (1+ start)))
+          (when (and (= start (overlay-start old))
+                     (eq process (overlay-get old 'replique-debug-process)))
+            (replique-debug--uninstrumented process (overlay-get old 'replique-debug-unit))))
         (overlay-put o 'replique-debug-unit n)
         (overlay-put o 'replique-debug-process process)
         ;; where the unit was read from, which its forms are found by
@@ -347,6 +369,7 @@ to be marked."
                        "Stops at its breakpoints - M-x replique-debug-uninstrument")
                       (t "Stepped through - M-x replique-debug-uninstrument")))
         (overlay-put o 'replique-debug-record (plist-get unit :record))
+        (overlay-put o 'replique-debug-keys (replique-debug--unit-keys unit))
         (puthash (cons process n) o replique-debug--units)
         (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
           (replique-debug--set-break b o))
@@ -409,6 +432,14 @@ Evaluated the ordinary way, as INSTRUMENT says, it has none."
     (mapc #'delete-overlay (replique-debug--breaks-in start end))))
 
 ;;; Breakpoints
+
+(defun replique-debug--stepped-here ()
+  "Refuse to stop the code of the current buffer where it is ClojureScript.
+
+Which a page or a node program cannot be, from here: it is recorded."
+  (when (eq :cljs (replique-dialect))
+    (user-error "%s" (substitute-command-keys
+                      "ClojureScript is recorded, and not stepped through - \[replique-debug-record]"))))
 
 (defvar replique-debug--condition-history nil
   "The conditions breakpoints were given.")
@@ -500,9 +531,12 @@ where it is not stepped through already: not on entry, and not until it
 is called.  It needs the compiler of replique-clj, and the process started
 with the debugger - see `replique-connect'."
   (interactive
-   (list (when current-prefix-arg
-           (read-from-minibuffer "Stop where: " nil read-expression-map nil
-                                 'replique-debug--condition-history))))
+   (progn
+     (replique-debug--stepped-here)
+     (list (when current-prefix-arg
+             (read-from-minibuffer "Stop where: " nil read-expression-map nil
+                                   'replique-debug--condition-history)))))
+  (replique-debug--stepped-here)
   (let* ((form (replique-debug--form-at-point))
          (there (seq-find (lambda (o) (= (car form) (overlay-start o)))
                           (replique-debug--breaks-in (car form) (cdr form)))))
@@ -638,6 +672,10 @@ is a value to browse - \[replique-debug-inspect-recorded].  Nothing stops,
 and the process does not need the debugger, only the compiler of
 replique-clj.
 
+In a ClojureScript buffer it is recorded in the runtime of the repl it is
+sent to - the node program, or the page - and let go of when that page
+is reloaded, or its namespace compiled again.
+
 Recorded until `replique-debug-uninstrument', or until it is evaluated
 again the ordinary way."
   (interactive)
@@ -697,7 +735,7 @@ one value per call."
                     (user-error "No form recorded at point")))
          (text (buffer-substring-no-properties (overlay-start o) (overlay-end o))))
     (replique-inspect-show
-     (overlay-get mark 'replique-debug-process) nil
+     (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
      (list :debug (append (list :site (plist-get value :site))
                           (unless every-call
                             (list :call (overlay-get mark 'replique-debug-shown-call)))))
@@ -1151,8 +1189,10 @@ is until `replique-debug-uninstrument', or until it is evaluated again
 the ordinary way - `replique-eval-defun'.
 
 The process has to run the compiler of replique-clj, and to have been
-started with the debugger - see `replique-connect'."
+started with the debugger - see `replique-connect'.  ClojureScript is
+not stepped through, but recorded - see `replique-debug-record'."
   (interactive)
+  (replique-debug--stepped-here)
   (replique-eval--send (list (replique-eval--defun-at-point)) t))
 
 (defun replique-debug-inspect-value ()

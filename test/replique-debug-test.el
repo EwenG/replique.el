@@ -641,6 +641,72 @@ which stays - each a value to browse."
         (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
         (should-not (replique-debug-test--after-strings source))))))
 
+;;; Recording ClojureScript
+
+(ert-deftest replique-debug-test-clojurescript-is-recorded-and-not-stepped-through ()
+  "A .cljs definition is sent to be recorded; to be stepped through, or to
+stop at a breakpoint, it is refused before anything is sent."
+  (replique-debug-test--with-sent
+    (with-temp-buffer
+      (replique-clojure-clojurescript-mode)
+      (insert "(ns app)\n(defn f [n]\n  (inc n))\n")
+      (search-backward "inc")
+      (replique-debug-record)
+      (should (string-match-p
+               (regexp-quote ":line 2 :instrument true :entry false :record true :column 1}")
+               sent))
+      (setq sent nil)
+      (should-error (replique-debug-defun) :type 'user-error)
+      (should-error (replique-debug-break) :type 'user-error)
+      (should-not sent)
+      (should-not (replique-debug--breaks-in (point-min) (point-max))))))
+
+(defun replique-debug-test--cljs-instrumented (process n)
+  "Tell PROCESS's editor that it records the definition of the source as N,
+in the node program of a ClojureScript repl."
+  (replique-debug--event process
+                         (list :tag "event" :event "debug-instrumented" :unit n
+                               :ns "user" :file replique-debug-test--file :line 2
+                               :column 1 :end-line 5 :end-column 8 :record t
+                               :breaks-only t :dialect "cljs" :target "node")))
+
+(ert-deftest replique-debug-test-a-clojurescript-unit-is-asked-about-in-its-runtime ()
+  "What it recorded is asked of the process by its number, and its values are
+browsed in the runtime the event named - and a unit replacing it is said to
+be there before it is said to be gone, which is the order the process tells
+a ClojureScript one in."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let ((source (find-file-noselect replique-debug-test--file))
+            (inspected nil))
+        (replique-debug-test--cljs-instrumented process 8)
+        (should (equal '(:op :debug-recorded :unit 8)
+                       (replique-debug-test--answer
+                        :debug-recorded
+                        (list :tag "reply" :call 3
+                              :calls '((:call 3 :thread "node" :at 0))
+                              :values '((:site 1 :line 3 :column 11 :end-line 3
+                                               :end-column 18 :value "2" :times 1))))))
+        (should (seq-find (lambda (s) (string-match-p "◂ call 1 of 1, the last · node" (car s)))
+                          (replique-debug-test--after-strings source)))
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "(inc")
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process keys src &rest _) (setq inspected (list keys src)))))
+            (replique-debug-inspect-recorded))
+          (should (equal '((:dialect :cljs :target :node) (:debug (:site 1 :call 3)))
+                         inspected)))
+        ;; evaluated to be recorded again: the new unit first
+        (replique-debug-test--cljs-instrumented process 9)
+        (should (equal '(9) (mapcar #'car (replique-debug-test--marks source))))
+        (should-not (seq-remove (lambda (s) (string-match-p "◂" (car s)))
+                                (replique-debug-test--after-strings source)))
+        (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 8))
+        (should (equal '(9) (mapcar #'car (replique-debug-test--marks source))))
+        (should (equal '(:op :debug-recorded :unit 9)
+                       (car (replique-debug-test--asked :debug-recorded))))))))
+
 ;;; Against a process
 
 (defun replique-debug-test--locals-text (thread)
@@ -936,6 +1002,102 @@ written after them, the call before is gone back to, and a value browsed."
                 ;; let go of, it shows nothing
                 (with-current-buffer source (replique-debug-uninstrument))
                 (should (replique-test-wait-for (lambda () (null (funcall shown))) 30)))
+            (when (buffer-live-p source) (kill-buffer source))
+            (dolist (b (buffer-list))
+              (when (with-current-buffer b (derived-mode-p 'replique-inspect-mode))
+                (kill-buffer b)))
+            (when repl
+              (replique-conn-close (replique-repl--conn repl))
+              (kill-buffer (replique-repl--buffer repl)))
+            (replique-kill-process process)))))))
+
+(ert-deftest replique-debug-test-a-clojurescript-defun-is-recorded ()
+  "A .cljs definition evaluated to record in a node repl, called twice: what
+its forms evaluated to in the last call is written after them, the call
+before is gone back to, and a value browsed in the node program."
+  (let ((jar (replique-debug-test--compiler))
+        (cljs (expand-file-name "../replique-cljs" (replique-test-project))))
+    (unless (file-directory-p cljs) (ert-skip (format "No ClojureScript compiler at %s" cljs)))
+    (unless (executable-find "node") (ert-skip "No node"))
+    (replique-test-with-project dir
+      (with-temp-file (expand-file-name "deps.edn" dir)
+        (insert (format (concat "{:paths [\"src\"] :deps {org.clojure/clojure {:local/root %S}"
+                                " replique/replique-cljs {:local/root %S}}}")
+                        jar cljs)))
+      (make-directory (expand-file-name "src" dir))
+      (let ((file (expand-file-name "src/recorded.cljs" dir)))
+        (with-temp-file file
+          (insert "(ns recorded)\n\n(defn rf [m]\n  (let [x (inc (:a m))]\n"
+                  "    (mapv (fn [y] (* x y)) (range 3))))\n"))
+        (let* ((replique-coordinates (format "{:local/root %S}" (replique-test-project)))
+               (replique-debugger nil)
+               (process (let ((known replique-processes))
+                          (replique-process-start dir nil nil nil)
+                          (unless (replique-test-wait-for
+                                   (lambda () (seq-difference replique-processes known)) 120)
+                            (error "The process did not start"))
+                          (replique-test--note-process
+                           (car (seq-difference replique-processes known)))))
+               (repl nil)
+               (source nil)
+               (shown (lambda ()
+                        (seq-remove (lambda (s) (string-match-p "◂" (car s)))
+                                    (replique-debug-test--after-strings source)))))
+          (unwind-protect
+              (save-window-excursion
+                (setq repl (replique-repl process :cljs :node))
+                (should (replique-test-wait-for (lambda () (replique-repl--ns repl)) 120))
+                (setq source (find-file-noselect file))
+                (with-current-buffer source
+                  (replique-eval-defun)       ; the ns
+                  (replique-test-settle 2)
+                  (search-forward "(defn rf")
+                  (replique-debug-record))
+                (should (replique-test-wait-for
+                         (lambda () (replique-debug-test--marks source)) 60))
+                (replique-repl-send-code repl "(recorded/rf {:a 1})")
+                (should (replique-test-wait-for
+                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
+                                            (funcall shown)))
+                         30))
+                (should (member '(" ⇒ [0 2 4]" . replique-debug-recorded) (funcall shown)))
+                (should (seq-find (lambda (s) (string-match-p "· node" (car s)))
+                                  (replique-debug-test--after-strings source)))
+                (replique-repl-send-code repl "(recorded/rf {:a 2})")
+                (should (replique-test-wait-for
+                         (lambda () (member '(" ⇒ 6 ×3" . replique-debug-recorded)
+                                            (funcall shown)))
+                         30))
+                (with-current-buffer source
+                  (goto-char (point-min))
+                  (search-forward "(inc (:a")
+                  (replique-debug-recorded-before))
+                (should (replique-test-wait-for
+                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
+                                            (funcall shown)))
+                         30))
+                (with-current-buffer source
+                  (replique-debug-inspect-recorded))
+                (should (replique-test-wait-for
+                         (lambda ()
+                           (seq-find (lambda (b)
+                                       (with-current-buffer b
+                                         (and (derived-mode-p 'replique-inspect-mode)
+                                              (equal :cljs (plist-get replique-inspect--keys
+                                                                      :dialect))
+                                              (string-match-p "\\_<1\\_>"
+                                                              (replique-debug-test--text)))))
+                                     (buffer-list)))
+                         30))
+                ;; evaluated again the ordinary way, it is let go of
+                (with-current-buffer source
+                  (goto-char (point-min))
+                  (search-forward "(defn rf")
+                  (replique-eval-defun))
+                (should (replique-test-wait-for
+                         (lambda () (and (null (replique-debug-test--marks source))
+                                         (null (funcall shown))))
+                         30)))
             (when (buffer-live-p source) (kill-buffer source))
             (dolist (b (buffer-list))
               (when (with-current-buffer b (derived-mode-p 'replique-inspect-mode))
