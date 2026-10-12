@@ -28,8 +28,10 @@
 ;;   a   abort - throw from break!      its locals
 ;;   r   start the call of the frame at point over, running the code as
 ;;       it is now: redefine, then restart
-;;   e   evaluate in the frame at point, with its locals bound, on the
-;;       thread that stopped
+;;   e   a repl evaluating in the frame at point, with its locals bound,
+;;       on the thread that stopped - and the code of the Clojure
+;;       buffers with it, see `replique-debug-eval-in-frame'
+;;   d   in the view of the locals: keep the local at point as a var
 ;;   n   step to the next form       i  step into a call   o  step out
 ;;   v   the value the form stepped to evaluated to, as a value to browse
 ;;
@@ -79,6 +81,7 @@
 ;;   C-c C-d p  the call before             C-c C-d n  the call after
 ;;   C-c C-d u  `replique-debug-uninstrument'
 ;;   C-c C-d t  `replique-debug-cycle-recorded'
+;;   C-c C-d e  `replique-debug-eval-in-frame'
 ;;
 ;; What stopped is the thread and nothing else: the process goes on
 ;; answering, and the other repls go on evaluating.  A repl whose form
@@ -1172,8 +1175,9 @@ In `replique-debug-linger' seconds, unless it stops again by then."
 (defun replique-debug--clear (process thread)
   "Take away what is shown of the thread THREAD of PROCESS, now.
 
-Its buffer, the view of its locals, and the buffers opened only to show
-where it was - where they were not written in since."
+Its buffer, the view of its locals, the repl evaluating in it, and the
+buffers opened only to show where it was - where they were not written in
+since."
   (let ((for (cons process thread)))
     (replique-debug--stay process thread)
     (when (equal replique-debug--arrow-thread for)
@@ -1187,6 +1191,7 @@ where it was - where they were not written in since."
           (replique-debug--kill buffer))))
     (remhash for replique-debug--opened)
     (mapc #'replique-debug--kill (replique-debug--views-of process thread))
+    (replique-debug--kill (replique-debug--frame-repl-buffer process thread))
     (replique-debug--kill (replique-debug--buffer-of process thread))
     (unless (replique-debug--stopped-buffers)
       (replique-debug--kill (get-buffer "*replique-value*")))))
@@ -1210,12 +1215,6 @@ where it was - where they were not written in since."
 
 (add-hook 'replique-process-forgotten-functions #'replique-debug--forgotten)
 
-(defvar replique-debug--evaluations (make-hash-table :test #'equal)
-  "What to do with what comes of code run in a frame, by (PROCESS . NUMBER).
-
-The number is the one the reply to `:debug-eval' gave the evaluation, and
-the event saying what came of it carries.")
-
 (defun replique-debug--event (process frame)
   "Handle FRAME, an event of PROCESS, where it is about a thread stopping."
   (pcase (plist-get frame :event)
@@ -1228,12 +1227,7 @@ the event saying what came of it carries.")
     ("debug-uninstrumented"
      (replique-debug--uninstrumented process (plist-get frame :unit)))
     ("debug-recorded"
-     (replique-debug--recorded process (plist-get frame :unit)))
-    ("debug-evaluated"
-     (let ((key (cons process (plist-get frame :evaluation))))
-       (when-let* ((then (gethash key replique-debug--evaluations)))
-         (remhash key replique-debug--evaluations)
-         (funcall then frame))))))
+     (replique-debug--recorded process (plist-get frame :unit)))))
 
 (add-hook 'replique-process-event-functions #'replique-debug--event)
 
@@ -1476,57 +1470,61 @@ Where the code that stopped clears them, the restart is asked for again."
        (list :op :debug-restart :thread replique-debug--thread :frame index)
        (lambda (_) (message "replique: restarted"))))))
 
-(defvar replique-debug--eval-history nil
-  "What was evaluated in a frame.")
+;;; Evaluating in a frame
 
-(defun replique-debug--show-value (text)
-  "Say TEXT, a value printed, laid out where it does not fit a line."
-  (if (and (< (length text) (- (frame-width) 20))
-           (not (string-search "\n" text)))
-      (message "%s" text)
-    (let ((buffer (get-buffer-create "*replique-value*")))
-      (with-current-buffer buffer
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert (condition-case nil (replique-pprint-string text) (error text)))
-          (goto-char (point-min)))
-        (unless (derived-mode-p 'special-mode) (special-mode))
-        (setq header-line-format "evaluated in a frame"))
-      (display-buffer buffer))))
+(defvar-local replique-debug--evaluating-in nil
+  "The (PROCESS . THREAD) a repl buffer evaluates in a frame of.")
 
-(defun replique-debug-eval (code)
-  "Evaluate CODE in the frame at point, on the thread that stopped.
+(defun replique-debug--frame-repl-buffer (process thread)
+  "Return the buffer of the repl evaluating in THREAD of PROCESS, or nil."
+  (seq-find (lambda (buffer)
+              (equal (cons process thread)
+                     (buffer-local-value 'replique-debug--evaluating-in buffer)))
+            (buffer-list)))
 
-With the locals of the frame bound, and in its namespace: what the code
-sees is what the frame sees, the bindings of the thread included.  A
-`def' made here is a `def' of the process like any other."
-  (interactive
-   (list (read-from-minibuffer "Evaluate in frame: " nil read-expression-map nil
-                               'replique-debug--eval-history)))
+;;;###autoload
+(defun replique-debug-eval-in-frame ()
+  "Evaluate in the frame at point, from a repl of its own.
+
+What the repl reads runs on the thread that stopped, with the locals of
+the frame bound, in the namespace of its code - printing to the repl, and
+with its *1 and *e.  The repl the thread was started from is usually
+waiting for it, and this one is not.
+
+It is the repl the commands act on while it is there, so what a Clojure
+buffer sends goes to it too: `\[replique-eval-last-sexp]' on a form of
+the code that stopped evaluates it with the values it has there.  Loading
+a file, or evaluating a definition to step through or to record, is done
+as anywhere else.
+
+Its prompt says which frame, counted from where the thread stopped: a
+thread stepped on is evaluated in where it got to.  Asked from another
+frame, the repl moves there.  It goes with the buffer of the thread once
+the thread goes on - or when it is killed."
+  (interactive)
   (let ((index (replique-debug--frame-at-point)))
     (replique-debug--in-this
-      (let ((process replique-debug--process)
-            (thread replique-debug--thread))
-        (replique-debug--request
-         (list :op :debug-eval :thread thread :frame index :code code)
-         (lambda (frame)
-           ;; What came of it is said later, by an event carrying the number
-           ;; this reply gave it - which arrives after this, on the same
-           ;; connection
-           (puthash (cons process (plist-get frame :evaluation))
-                    (lambda (said) (replique-debug--evaluated process thread said))
-                    replique-debug--evaluations)))))))
-
-(defun replique-debug--evaluated (process thread said)
-  "Show SAID, what came of code run in a frame of THREAD of PROCESS."
-  (cond
-   ((plist-get said :exception)
-    (replique-exception-show (plist-get said :exception) nil nil "evaluated in a frame"))
-   ((plist-get said :error) (message "replique: %s" (plist-get said :message)))
-   (t (replique-debug--show-value (plist-get said :value))))
-  ;; what it ran may have changed what the locals hold
-  (dolist (buffer (replique-debug--views-of process thread))
-    (with-current-buffer buffer (replique-inspect-refresh))))
+      (let* ((process replique-debug--process)
+             (thread replique-debug--thread)
+             (frame (list :thread thread :frame index))
+             (buffer (replique-debug--frame-repl-buffer process thread))
+             (repl (and buffer (buffer-local-value 'replique--buffer-repl buffer))))
+        (if (replique-repl-live-p repl)
+            (progn
+              (unless (equal frame (replique-repl--in-frame repl))
+                (replique-repl-send-directive
+                 repl (format "#replique/frame {:thread %s :frame %s}" thread index)))
+              (setq replique-current-repl repl)
+              (pop-to-buffer buffer))
+          (when buffer (replique-debug--kill buffer))
+          (let ((name (format "%s repl*" (string-remove-suffix "*" (buffer-name)))))
+            ;; Renamed after it is opened, and so kept: what the handshake
+            ;; says names a buffer only where it is still named as opened -
+            ;; see `replique-repl--rename'
+            (with-current-buffer (replique-repl--buffer
+                                  (replique-repl--open process nil nil nil nil nil frame))
+              (rename-buffer name t)
+              (setq replique-debug--evaluating-in (cons process thread)))))))))
 
 (defun replique-debug-visit-frame ()
   "Show the source of the frame at point, and its locals."
@@ -1559,7 +1557,7 @@ sees is what the frame sees, the bindings of the thread included.  A
     (define-key map (kbd "c") #'replique-debug-continue)
     (define-key map (kbd "a") #'replique-debug-abort)
     (define-key map (kbd "r") #'replique-debug-restart)
-    (define-key map (kbd "e") #'replique-debug-eval)
+    (define-key map (kbd "e") #'replique-debug-eval-in-frame)
     (define-key map (kbd "n") #'replique-debug-next)
     (define-key map (kbd "i") #'replique-debug-in)
     (define-key map (kbd "o") #'replique-debug-out)

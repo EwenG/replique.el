@@ -130,6 +130,7 @@ happened to be current, which is a buffer of somebody else's.")
     (define-key map (kbd "C-c C-d p") #'replique-debug-recorded-before)
     (define-key map (kbd "C-c C-d n") #'replique-debug-recorded-after)
     (define-key map (kbd "C-c C-d t") #'replique-debug-cycle-recorded)
+    (define-key map (kbd "C-c C-d e") #'replique-debug-eval-in-frame)
     map)
   "Keymap of `replique-mode'.")
 

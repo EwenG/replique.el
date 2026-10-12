@@ -705,6 +705,43 @@ works for as long as the view is open."
            (kill-new code)
            (message "replique: copied %s" code))))))))
 
+(defun replique-inspect--default-name (id)
+  "Return the name a var holding the node ID would be called, or nil.
+
+What its parent calls it, where that reads as a name: a local of a
+frame, an entry of a map whose keys are symbols."
+  (let ((key (plist-get (plist-get (replique-inspect--node id) :line) :key)))
+    (when (and key (string-match-p "\\`[^][(){}\"#:;@^`~\\', 0-9][^][(){}\"@^`~\\', ]*\\'" key))
+      key)))
+
+(defun replique-inspect-def (name)
+  "Define the var NAME, holding what the node point is on holds.
+
+A value looked at, kept to work with at the repl - a local of a stopped
+thread in particular, which is gone once the thread goes on.  Defined in
+the namespace of the frame\='s code, for the locals of a frame, and in the
+namespace of the Clojure repl otherwise.  Interactively, the name is
+asked for, what the node is called being the default."
+  (interactive
+   (let ((default (replique-inspect--default-name (replique-inspect--node-at-point))))
+     (list (read-string (format-prompt "Define var" default) nil nil default))))
+  (when (plist-get replique-inspect--keys :dialect)
+    (user-error "A value of a ClojureScript runtime is not defined in the process"))
+  (when (string-blank-p name) (user-error "A var needs a name"))
+  (let ((id (replique-inspect--node-at-point))
+        (ns (unless (plist-get replique-inspect--source :debug)
+              (or (when-let* ((repl (replique-repl-for-dialect :clj)))
+                    (replique-repl--ns repl))
+                  (user-error "No Clojure repl to say which namespace")))))
+    (replique-inspect--ask
+     (append (list :op :inspect-def :view replique-inspect--view :node id :name name)
+             (when ns (list :ns ns)))
+     (lambda (frame)
+       (cond
+        ((replique-inspect--gone-p frame) (replique-inspect--open))
+        ((equal "error" (plist-get frame :tag)) (replique-inspect--failed frame))
+        (t (message "replique: defined %s" (plist-get frame :var))))))))
+
 (defun replique-inspect--go (at)
   "Show the value the history holds at AT, the live one where it is nil."
   (unless replique-inspect--history
@@ -777,6 +814,7 @@ of the way, and the process keeps the value."
     (define-key map (kbd ".") #'replique-inspect-live)
     (define-key map (kbd "P") #'replique-inspect-print)
     (define-key map (kbd "w") #'replique-inspect-copy)
+    (define-key map (kbd "d") #'replique-inspect-def)
     (define-key map (kbd "m") #'replique-inspect-toggle-meta)
     (define-key map (kbd "q") #'replique-inspect-quit)
     map)

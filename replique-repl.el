@@ -146,9 +146,11 @@ from one somebody else chose.  MAIN is the namespace it was started on,
 which is what `replique-restart\=' starts it on again.  URL is the page
 its browser runtime is served on, as its `runtime\=' event gave it - nil
 for any repl that is not on the browser, and for one whose runtime has
-not started yet."
+not started yet.  IN-FRAME is the frame of a stopped thread what is read is
+evaluated in, as (:thread ID :frame INDEX), as the last prompt gave it -
+see `replique-debug-eval-in-frame'."
   process conn buffer given-name ns params at-prompt to-echo echoed queued
-  last-exception on-end main url)
+  last-exception on-end main url in-frame)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -317,6 +319,12 @@ better."
       (setf (replique-repl--url repl) url)
       (replique-repl--insert repl (format "Open %s\n" url) 'replique-note)))))
 
+(defun replique-repl--frame-label (repl)
+  "Return what the prompt of REPL says of the frame it evaluates in, or \"\"."
+  (if-let* ((frame (replique-repl--in-frame repl)))
+      (format " [frame %s]" (plist-get frame :frame))
+    ""))
+
 (defun replique-repl--frame (repl frame)
   "Render FRAME in the buffer of REPL."
   (pcase (plist-get frame :tag)
@@ -351,8 +359,10 @@ better."
        (replique-repl--echo repl message))
      (replique-repl--ended repl frame))
     ("prompt"
-     (let ((moved (not (equal (replique-repl--ns repl) (plist-get frame :ns)))))
+     (let ((moved (not (and (equal (replique-repl--ns repl) (plist-get frame :ns))
+                            (equal (replique-repl--in-frame repl) (plist-get frame :frame))))))
        (setf (replique-repl--ns repl) (plist-get frame :ns))
+       (setf (replique-repl--in-frame repl) (plist-get frame :frame))
        (setf (replique-repl--params repl) (plist-get frame :params))
        ;; A form is not what produces a prompt - a read error and a comment
        ;; produce one too - so the buffer is what says whether one is needed.
@@ -372,7 +382,8 @@ better."
          ;; without this the prompt is a form, and the form before point
          ;; everywhere point usually is.  See `replique-prompt-text'
          (replique-repl--insert
-          repl (replique-prompt-text (format "%s=> " (plist-get frame :ns))))
+          repl (replique-prompt-text (format "%s%s=> " (plist-get frame :ns)
+                                             (replique-repl--frame-label repl))))
          (setf (replique-repl--at-prompt repl) t)))
      ;; What was sent while the repl was busy is written now: the transcript
      ;; reads in the order the repl answered, not the order the editor asked
@@ -522,7 +533,9 @@ and the parse `replique-clojure-mode' reads Clojure with - see
 
 \\{replique-repl-mode-map}"
   :syntax-table replique-clojure-mode-syntax-table
-  (setq-local comint-prompt-regexp "^[^ \n]*=> *")
+  ;; a namespace, and the frame evaluated in where there is one - see
+  ;; `replique-repl--frame-label'
+  (setq-local comint-prompt-regexp "^[^ \n]*\\(?: \\[frame [0-9]+\\]\\)?=> *")
   (setq-local comint-prompt-read-only replique-prompt-read-only)
   (setq-local comint-input-sender #'replique-repl--input-sender)
   (setq-local comint-process-echoes nil)
@@ -558,7 +571,8 @@ a large buffer being reparsed, which is worth knowing when one is slow."
     (cond
      ((null repl) "")
      ((not (replique-conn-live-p (replique-repl--conn repl))) ":closed")
-     (t (format ":%s" (or (replique-repl--ns repl) "?"))))))
+     (t (format ":%s%s" (or (replique-repl--ns repl) "?")
+                (replique-repl--frame-label repl))))))
 
 (defun replique-repl--input-sender (proc string)
   "Send STRING, typed at the prompt, to PROC."
@@ -856,7 +870,7 @@ area."
                 (list dialect target main)))))
     nil))
 
-(defun replique-repl--open (process dialect target main &optional buffer params)
+(defun replique-repl--open (process dialect target main &optional buffer params frame)
   "Open a repl on PROCESS, as `replique-repl' describes, and return it.
 
 DIALECT, TARGET and MAIN are what `replique-repl' takes.  BUFFER is a
@@ -864,7 +878,10 @@ buffer to open it in again - one whose repl was closed by
 `replique-restart' - and is nil for a new one.  What it holds is kept,
 the input history with it, and it is not popped to: it is where it was.
 PARAMS is the printing a Clojure repl starts with, as the prompts of the
-one it replaces reported it, and `replique-repl-params\=' when it is nil."
+one it replaces reported it, and `replique-repl-params\=' when it is nil.
+FRAME, (:thread ID :frame INDEX), is a frame of a stopped thread a Clojure
+repl evaluates in from its first prompt - see
+`replique-debug-eval-in-frame'."
   (let* ((reused buffer)
          ;; Named from what is being asked for, and named again from the
          ;; reply - see `replique-repl--rename'.  The buffer has to exist
@@ -905,7 +922,8 @@ one it replaces reported it, and `replique-repl-params\=' when it is nil."
                          ;; otherwise
                          (when-let* ((params (replique-repl--params-for
                                               dialect (or params replique-repl-params))))
-                           (list :params params)))
+                           (list :params params))
+                         (when frame (list :frame frame)))
           :on-ready (lambda (conn)
                       (let ((proc (replique-conn--proc conn))
                             (cljs (equal "cljs" (plist-get (replique-conn--info conn)

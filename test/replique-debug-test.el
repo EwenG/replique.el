@@ -133,9 +133,6 @@ that stopped."
         (replique-debug-restart)
         (should (equal '(:op :debug-restart :thread 41 :frame 2)
                        (car (replique-debug-test--asked :debug-restart))))
-        (replique-debug-eval "(+ a 1)")
-        (should (equal '(:op :debug-eval :thread 41 :frame 2 :code "(+ a 1)")
-                       (car (replique-debug-test--asked :debug-eval))))
         (replique-debug-continue)
         (should (equal '(:op :debug-continue :thread 41)
                        (car (replique-debug-test--asked :debug-continue))))
@@ -145,22 +142,50 @@ that stopped."
                                                 (eq :debug-continue (plist-get (car cell) :op)))
                                               replique-debug-test--asked))))))))))
 
-(ert-deftest replique-debug-test-a-value-is-said ()
+(ert-deftest replique-debug-test-a-repl-evaluates-in-the-frame-at-point ()
+  "Opened on the frame, named after the thread, made the repl the commands
+act on - pointed at another frame, rather than opened again - and gone with
+the thread."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (replique-debug-test--stop process)
-      (with-current-buffer (replique-debug--buffer-of process 41)
-        (replique-debug-eval "(+ a 1)")
-        (replique-debug-test--answer :debug-eval '(:tag "reply" :evaluation 7))
-        (should (equal "2" (replique-test-message
-                             (replique-debug--event
-                              process '(:tag "event" :event "debug-evaluated"
-                                             :thread 41 :evaluation 7 :value "2")))))
-        ;; an evaluation is answered once
-        (should-not (replique-test-message
-                       (replique-debug--event
-                        process '(:tag "event" :event "debug-evaluated"
-                                       :thread 41 :evaluation 7 :value "2"))))))))
+      (let* ((opened nil)
+             (directives nil)
+             (replique-current-repl nil)
+             (buffer (generate-new-buffer "*replique: debug-test clj*"))
+             (repl (replique-repl--make :process process :buffer buffer)))
+        (cl-letf (((symbol-function 'replique-repl--open)
+                   (lambda (&rest args)
+                     (setq opened args)
+                     (with-current-buffer buffer (setq-local replique--buffer-repl repl))
+                     (setq replique-current-repl repl)
+                     repl))
+                  ((symbol-function 'replique-repl-live-p) (lambda (r) (eq r repl)))
+                  ((symbol-function 'replique-repl-send-directive)
+                   (lambda (_repl directive) (push directive directives))))
+          (with-current-buffer (replique-debug--buffer-of process 41)
+            (replique-debug-test--answer :debug-frames (replique-debug-test--frames))
+            (goto-char (point-min))
+            (search-forward "user/g")
+            (replique-debug-eval-in-frame)
+            (should (equal (list process nil nil nil nil nil '(:thread 41 :frame 2)) opened))
+            (should (equal "*replique-debug worker repl*" (buffer-name buffer)))
+            (should (eq buffer (replique-debug--frame-repl-buffer process 41)))
+            ;; asked again, from another frame: the repl moves there
+            (setq opened nil)
+            (setf (replique-repl--in-frame repl) '(:thread 41 :frame 2))
+            (setq replique-current-repl nil)
+            (goto-char (point-min))
+            (replique-debug-eval-in-frame)
+            (should-not opened)
+            (should (equal '("#replique/frame {:thread 41 :frame 0}") directives))
+            (should (eq repl replique-current-repl))
+            ;; and from the frame it is in already, nothing is said
+            (setf (replique-repl--in-frame repl) '(:thread 41 :frame 0))
+            (replique-debug-eval-in-frame)
+            (should (= 1 (length directives)))))
+        (replique-debug--clear process 41)
+        (should-not (buffer-live-p buffer))))))
 
 (ert-deftest replique-debug-test-a-thread-that-goes-on-is-shown-running ()
   (replique-debug-test--with-source
@@ -940,17 +965,22 @@ started over, and let go of - the repl gets the value of the fixed code."
                   (should (replique-test-wait-for
                            (lambda () (string-match-p "b  20" (or (replique-debug-test--locals-text thread) "")))
                            30))
-                  (should (equal "1022"
-                                 (let ((said nil))
-                                   (cl-letf (((symbol-function 'message)
-                                              (lambda (format &rest args)
-                                                (setq said (apply #'format format args)))))
-                                     (replique-debug-eval "(+ a b 1000)")
-                                     (replique-test-wait-for (lambda () (equal said "1022")) 30))
-                                   said)))
-                  (replique-debug-eval "(defn g [x] (* 100 x))")
-                  (replique-test-settle 1)
                   (goto-char (point-min))
+                  (save-selected-window (replique-debug-eval-in-frame))
+                  (let ((in-frame replique-current-repl))
+                    (should-not (eq repl in-frame))
+                    (should (replique-test-wait-for
+                             (lambda () (equal (list :thread thread :frame 0)
+                                               (replique-repl--in-frame in-frame)))
+                             60))
+                    (should (string-match-p "user \\[frame 0\\]=> "
+                                            (replique-test-text in-frame)))
+                    (should (string-match-p "1022" (replique-test-eval in-frame "(+ a b 1000)")))
+                    ;; what a Clojure buffer sends goes there too
+                    (with-temp-buffer
+                      (replique-clojure-mode)
+                      (should (eq in-frame (replique-repl-for-dialect :clj))))
+                    (replique-test-eval in-frame "(defn g [x] (* 100 x))"))
                   (replique-debug-restart)
                   (should (replique-test-wait-for
                            (lambda () (string-match-p "b  200" (or (replique-debug-test--locals-text thread) "")))
@@ -959,7 +989,13 @@ started over, and let go of - the repl gets the value of the fixed code."
                   (should (replique-test-wait-for
                            (lambda () (string-match-p "202" (replique-test-text repl)))
                            30))
-                  (should (replique-test-wait-for (lambda () (null replique-debug--pause)) 10))))))
+                  (should (replique-test-wait-for (lambda () (null replique-debug--pause)) 10))
+                  ;; and the repl that evaluated in it goes with the thread
+                  (should (replique-test-wait-for
+                           (lambda () (null (replique-debug--frame-repl-buffer process thread)))
+                           10))
+                  (should-not (and replique-current-repl
+                                   (replique-repl--in-frame replique-current-repl)))))))
         (when repl
           (replique-conn-close (replique-repl--conn repl))
           (kill-buffer (replique-repl--buffer repl)))

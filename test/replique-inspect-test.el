@@ -285,6 +285,33 @@ that what it says is what is read."
                                          :value "(replique.inspect/value 7 2)"))
     (should (equal "(replique.inspect/value 7 2)" (current-kill 0)))))
 
+(ert-deftest replique-inspect-test-a-value-is-kept-as-a-var ()
+  "In the namespace of the Clojure repl, and in the frame's for the locals
+of a frame - which the process knows, and which is left to it."
+  (replique-inspect-test--in-view
+    (replique-inspect-test--goto ":b  ")
+    (should-not (replique-inspect--default-name (replique-inspect--node-at-point)))
+    (cl-letf (((symbol-function 'replique-repl-for-dialect)
+               (lambda (_) (replique-repl--make :ns "user"))))
+      (replique-inspect-def "kept"))
+    (should (equal '(:op :inspect-def :view 7 :node 2 :name "kept" :ns "user")
+                   (replique-inspect-test--answer '(:tag "reply" :var "user/kept"))))
+    (should-error (replique-inspect-def " ") :type 'user-error))
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:debug (:thread 41 :frame 1))
+                                                "locals of user/g")
+      (replique-inspect-test--answer
+       (list :tag "reply" :view 8
+             :root (list :node 0 :value "{a 2, b 20}" :kind "map" :count 2 :expandable t)
+             :children (list (replique-inspect-test--line 1 "2" :via "key" :key "a")
+                             (replique-inspect-test--line 2 "20" :via "key" :key "b"))
+             :total 2 :more nil))
+      (replique-inspect-test--goto "b  ")
+      (should (equal "b" (replique-inspect--default-name (replique-inspect--node-at-point))))
+      (replique-inspect-def "b")
+      (should (equal '(:op :inspect-def :view 8 :node 2 :name "b")
+                     (replique-inspect-test--asked))))))
+
 (ert-deftest replique-inspect-test-a-view-is-let-go-of-with-its-buffer ()
   (replique-inspect-test--in-view
     (kill-buffer (current-buffer))
