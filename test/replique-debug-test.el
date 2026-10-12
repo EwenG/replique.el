@@ -39,7 +39,9 @@
          (clrhash replique-debug--units)
          (dolist (buffer (buffer-list))
            (with-current-buffer buffer
-             (when (derived-mode-p 'replique-debug-mode 'replique-inspect-mode)
+             ;; or made for a view, by a test that does not show one
+             (when (or (derived-mode-p 'replique-debug-mode 'replique-inspect-mode)
+                       (string-prefix-p "*replique-recorded " (buffer-name)))
                (let ((kill-buffer-hook nil)) (kill-buffer buffer)))))))))
 
 (defun replique-debug-test--asked (op)
@@ -564,6 +566,7 @@ says it is stepped through: by where it was read from."
 (ert-deftest replique-debug-test-what-is-recorded-is-written-after-its-forms ()
   "The values of the last call, as calls come - or of a call gone back to,
 which stays - each a value to browse."
+  (let ((replique-debug-recorded-shown 'every))
   (replique-debug-test--with-source
     (replique-debug-test--with
       (let ((source (find-file-noselect replique-debug-test--file))
@@ -639,7 +642,181 @@ which stays - each a value to browse."
                                                             :debug-recorded))))
         ;; let go of, it shows nothing
         (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
-        (should-not (replique-debug-test--after-strings source))))))
+        (should-not (replique-debug-test--after-strings source)))))))
+
+(ert-deftest replique-debug-test-a-definition-recorded-has-one-view ()
+  "Each value browsed is browsed in the same buffer, named after the
+definition, which goes when the definition records no more."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let ((source (find-file-noselect replique-debug-test--file))
+            (shown nil))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 5 :end-column 8 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (replique-debug-test--recorded
+          5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)
+              (:site 2 :line 3 :column 3 :end-line 5 :end-column 7 :value "2" :times 3))))
+        (cl-letf (((symbol-function 'replique-inspect-show)
+                   (lambda (_process _keys src _title buffer)
+                     (push (cons src buffer) shown)
+                     buffer)))
+          (with-current-buffer source
+            (goto-char (point-min))
+            (search-forward "(inc")
+            (replique-debug-inspect-recorded)
+            (search-backward "(let")
+            (replique-debug-inspect-recorded)))
+        (let ((view (cdr (car shown))))
+          (should (equal "*replique-recorded f*" (buffer-name view)))
+          (should (equal '(((:debug (:site 2 :call 5)) . t) ((:debug (:site 1 :call 5)) . t))
+                         (mapcar (lambda (s) (cons (car s) (eq view (cdr s)))) shown)))
+          (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
+          (should-not (buffer-live-p view)))))))
+
+(ert-deftest replique-debug-test-a-definition-edited-shows-nothing-it-recorded ()
+  "What was recorded is of the code as it was sent: once it is edited, it
+goes with the mark, and is not asked for again - but the definition is
+still let go of the ordinary way."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let ((source (find-file-noselect replique-debug-test--file))
+            (mark nil))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 5 :end-column 8 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (replique-debug-test--recorded
+          5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1))))
+        (setq mark (gethash (cons process 7) replique-debug--units))
+        (should (replique-debug-test--after-strings source))
+        ;; the cursor is put against the form, before the value
+        (with-current-buffer source
+          (should (seq-every-p (lambda (o) (get-text-property 0 'cursor (overlay-get o 'after-string)))
+                               (seq-filter (lambda (o) (overlay-get o 'after-string))
+                                           (overlays-in (point-min) (point-max))))))
+        ;; written above it: the values move with it
+        (with-current-buffer source
+          (goto-char (point-min))
+          (insert ";; above\n"))
+        (should (replique-debug-test--after-strings source))
+        (should (overlay-get mark 'before-string))
+        ;; written in it
+        (with-current-buffer source
+          (search-forward "(inc n")
+          (insert " 1"))
+        (should-not (replique-debug-test--after-strings source))
+        (should-not (overlay-get mark 'before-string))
+        (replique-debug--event process '(:tag "event" :event "debug-recorded" :unit 7))
+        (should-not (replique-debug-test--asked :debug-recorded))
+        (with-current-buffer source
+          (should-error (replique-debug-recorded-before) :type 'user-error)
+          (should-error (replique-debug-inspect-recorded) :type 'user-error)
+          (replique-debug-uninstrument))
+        (should (equal '(:op :debug-uninstrument :unit 7)
+                       (car (replique-debug-test--asked :debug-uninstrument))))))))
+
+;;; What is written of a recording
+
+(defun replique-debug-test--recording (process)
+  "Have PROCESS record the definition of a source with forms on lines of
+their own, a literal, and a form over two lines; return its buffer."
+  (with-temp-file replique-debug-test--file
+    (insert "(ns user)\n(defn f [n]\n  (let [a (inc n) b 10]\n    (+ a\n       b)))\n"))
+  (let ((source (find-file-noselect replique-debug-test--file)))
+    (replique-debug--event process
+                           (list :tag "event" :event "debug-instrumented" :unit 7
+                                 :ns "user" :file replique-debug-test--file :line 2
+                                 :column 1 :end-line 5 :end-column 12 :record t
+                                 :breaks-only t))
+    (replique-debug-test--answer
+     :debug-recorded
+     (replique-debug-test--recorded
+      5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)
+          (:site 2 :line 3 :column 16 :end-line 3 :end-column 17 :value "1" :times 1)
+          (:site 3 :line 3 :column 21 :end-line 3 :end-column 23 :value "10" :times 1)
+          (:site 4 :line 4 :column 8 :end-line 4 :end-column 9 :value "2" :times 1)
+          (:site 5 :line 5 :column 8 :end-line 5 :end-column 9 :value "10" :times 1)
+          (:site 6 :line 4 :column 5 :end-line 5 :end-column 10 :value "12" :times 1)
+          (:site 7 :line 3 :column 3 :end-line 5 :end-column 11 :value "12" :times 3))))
+    source))
+
+(ert-deftest replique-debug-test-a-value-is-written-per-line ()
+  "At the end of a line, what its outermost forms evaluated to - a form over
+two lines is no line's, and a literal is nobody's; \\[replique-debug-cycle-recorded]
+goes to a value after every form, and to none."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let* ((replique-debug-recorded-shown 'line)
+             (source (replique-debug-test--recording process))
+             (shown (lambda ()
+                      ;; the call said, whatever the time zone
+                      (mapcar (lambda (s) (if (string-prefix-p "  ◂ call 2 of 2, the last · worker"
+                                                               (car s))
+                                              "◂"
+                                            (car s)))
+                              (replique-debug-test--after-strings source)))))
+        (should (equal '("◂" " ⇒ 2" " ⇒ 2" " ⇒ 10")
+                       (funcall shown)))
+        ;; at the ends of the lines, where the cursor stays before them
+        (with-current-buffer source
+          (dolist (o (overlays-in (point-min) (point-max)))
+            (when-let* ((text (overlay-get o 'after-string)))
+              (should (= (overlay-start o) (save-excursion (goto-char (overlay-start o))
+                                                           (line-end-position))))
+              (should (get-text-property 0 'cursor text)))))
+        (replique-debug-cycle-recorded)
+        (should (eq 'every replique-debug-recorded-shown))
+        (should (equal '(" ⇒ 12 ×3" " ⇒ 2" " ⇒ 1" " ⇒ 12" " ⇒ 2" " ⇒ 10"
+                         "◂")
+                       (seq-sort-by (lambda (text) (if (string-match-p "◂" text) 1 0)) #'<
+                                    (funcall shown))))
+        (replique-debug-cycle-recorded)
+        (should (eq 'none replique-debug-recorded-shown))
+        (should (equal '("◂") (funcall shown)))
+        (replique-debug-cycle-recorded)
+        (should (equal 4 (length (funcall shown))))))))
+
+(ert-deftest replique-debug-test-eldoc-says-the-value-of-the-form-at-point ()
+  "Before what a call takes, whatever is written: the form just written, or
+the innermost point is in - highlighted, and the one browsed."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let* ((replique-debug-recorded-shown 'none)
+             (source (replique-debug-test--recording process))
+             (inspected nil))
+        (with-current-buffer source
+          (should (eq #'replique-debug-eldoc (car eldoc-documentation-functions)))
+          (goto-char (point-min))
+          (search-forward "(+")
+          (should (equal "⇒ 12" (substring-no-properties (replique-debug-eldoc))))
+          (search-backward "(inc n)")
+          (forward-sexp)
+          (should (equal "⇒ 2" (substring-no-properties (replique-debug-eldoc))))
+          (replique-debug--follow-point)
+          (should (equal "(inc n)" (buffer-substring-no-properties
+                                    (overlay-start replique-debug--at-point)
+                                    (overlay-end replique-debug--at-point))))
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process _keys src &rest _) (setq inspected src))))
+            (replique-debug-inspect-recorded))
+          (should (equal '(:debug (:site 1 :call 5)) inspected))
+          ;; the literal is not one: the let it is in
+          (search-forward "10")
+          (backward-char)
+          (should (equal "⇒ 12 ×3" (substring-no-properties (replique-debug-eldoc))))
+          ;; outside, nothing to say: what a call takes is said
+          (goto-char (point-min))
+          (should-not (replique-debug-eldoc))
+          (replique-debug--follow-point)
+          (should-not (overlay-buffer replique-debug--at-point)))))))
 
 ;;; Recording ClojureScript
 
@@ -931,7 +1108,8 @@ the inner one and out of it, and the repl gets the value."
   "A definition evaluated to record, called twice in a process started
 without the debugger: what its forms evaluated to in the last call is
 written after them, the call before is gone back to, and a value browsed."
-  (let ((jar (replique-debug-test--compiler)))
+  (let ((replique-debug-recorded-shown 'every)
+        (jar (replique-debug-test--compiler)))
     (replique-test-with-project dir
       (with-temp-file (expand-file-name "deps.edn" dir)
         (insert (format "{:paths [\"src\"] :deps {org.clojure/clojure {:local/root %S}}}" jar)))
@@ -1015,7 +1193,8 @@ written after them, the call before is gone back to, and a value browsed."
   "A .cljs definition evaluated to record in a node repl, called twice: what
 its forms evaluated to in the last call is written after them, the call
 before is gone back to, and a value browsed in the node program."
-  (let ((jar (replique-debug-test--compiler))
+  (let ((replique-debug-recorded-shown 'every)
+        (jar (replique-debug-test--compiler))
         (cljs (expand-file-name "../replique-cljs" (replique-test-project))))
     (unless (file-directory-p cljs) (ert-skip (format "No ClojureScript compiler at %s" cljs)))
     (unless (executable-find "node") (ert-skip "No node"))

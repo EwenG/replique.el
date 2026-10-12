@@ -298,6 +298,30 @@ that what it says is what is read."
       (should (eq buffer (replique-inspect-show process nil '(:var "user/state") "user/state")))
       (should (eq :inspect-refresh (plist-get (replique-inspect-test--asked) :op))))))
 
+(ert-deftest replique-inspect-test-q-lets-go-of-the-view ()
+  "\\`q' kills the buffer, and the process lets go of the value; with a
+prefix the buffer is only put out of the way."
+  (replique-inspect-test--in-view
+    (let ((buffer (current-buffer)))
+      (switch-to-buffer buffer)
+      (replique-inspect-quit t)
+      (should (buffer-live-p buffer))
+      (should-not replique-inspect-test--asked)
+      (switch-to-buffer buffer)
+      (replique-inspect-quit)
+      (should-not (buffer-live-p buffer))
+      (should (equal '(:op :inspect-close :view 7) (replique-inspect-test--asked))))))
+
+(ert-deftest replique-inspect-test-a-buffer-made-a-view-of-another-thing-lets-go-of-the-first ()
+  (replique-inspect-test--in-view
+    (let ((buffer (current-buffer)))
+      (should (eq buffer (replique-inspect-show process nil '(:var "user/other") "user/other"
+                                                buffer)))
+      (should (equal '(:op :inspect-close :view 7) (replique-inspect-test--answer nil)))
+      (should (eq :inspect (plist-get (replique-inspect-test--asked) :op)))
+      (should (equal '(:var "user/other") replique-inspect--source))
+      (should (equal "user/other" replique-inspect--title)))))
+
 ;;; Against a process
 
 (ert-deftest replique-inspect-test-an-atom-is-watched ()

@@ -754,6 +754,14 @@ works for as long as the view is open."
       (replique-process-request replique-inspect--process
                                 (list :op :inspect-close :view replique-inspect--view)))))
 
+(defun replique-inspect-quit (&optional bury)
+  "Kill the buffer, and let the process go of the value it shows.
+
+With BURY, interactively the prefix argument, the buffer is only put out
+of the way, and the process keeps the value."
+  (interactive "P")
+  (quit-window (not bury)))
+
 (defvar replique-inspect-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "TAB") #'replique-inspect-toggle)
@@ -770,6 +778,7 @@ works for as long as the view is open."
     (define-key map (kbd "P") #'replique-inspect-print)
     (define-key map (kbd "w") #'replique-inspect-copy)
     (define-key map (kbd "m") #'replique-inspect-toggle-meta)
+    (define-key map (kbd "q") #'replique-inspect-quit)
     map)
   "Keymap of a buffer showing an inspected value.")
 
@@ -808,7 +817,12 @@ view of the locals of a stopped thread follows the frame looked at."
     (with-current-buffer buffer
       (if existing
           (replique-inspect-refresh)
-        (replique-inspect-mode)
+        ;; what the buffer was a view of is let go of, and what answers it
+        ;; is not taken for what answers this
+        (let ((generation replique-inspect--generation))
+          (replique-inspect--close)
+          (replique-inspect-mode)
+          (setq replique-inspect--generation (1+ generation)))
         (setq replique-inspect--process process
               replique-inspect--keys keys
               replique-inspect--source source
