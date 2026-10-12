@@ -407,6 +407,23 @@ Then narrow to FOCUS, where it still leads somewhere."
 
 ;;; Showing it
 
+(defvar replique-inspect--painted (make-hash-table :test #'equal)
+  "The printings of values already painted, each to the copy painted.
+
+Shared by every view: a view is written again whole each time something
+in it changes, and most of what it shows was painted the time before.")
+
+(defun replique-inspect--painted (printing)
+  "Return a copy of PRINTING painted as Clojure, to be written in a view."
+  (or (when-let* ((painted (gethash printing replique-inspect--painted)))
+        (copy-sequence painted))
+      (progn
+        (when (> (hash-table-count replique-inspect--painted) 5000)
+          (clrhash replique-inspect--painted))
+        (let ((painted (replique-clojure-fontify-string printing)))
+          (puthash printing painted replique-inspect--painted)
+          (copy-sequence painted)))))
+
 (defun replique-inspect--annotation (line)
   "Return what LINE is said to be, beside its printing."
   (let ((kind (plist-get line :kind))
@@ -435,10 +452,13 @@ Then narrow to FOCUS, where it still leads somewhere."
                                         'replique-note
                                       'replique-inspect-key))
               "  "))
-    (insert (propertize (or (plist-get line :value) "")
-                        'face (cond (gone 'replique-inspect-gone)
-                                    ((eq t (plist-get line :changed))
-                                     'replique-inspect-changed))))
+    (let ((value (replique-inspect--painted (or (plist-get line :value) ""))))
+      (cond (gone (add-face-text-property 0 (length value) 'replique-inspect-gone
+                                          nil value))
+            ((eq t (plist-get line :changed))
+             (add-face-text-property 0 (length value) 'replique-inspect-changed
+                                     t value)))
+      (insert value))
     (when (eq t (plist-get line :truncated))
       (insert (propertize "…" 'face 'replique-note)))
     (when-let* ((said (replique-inspect--annotation line)))

@@ -1544,6 +1544,19 @@ that mode and holds Clojure all the same."
                replique-clojure-extra-def-forms))
   (font-lock-flush))
 
+(defun replique-clojure-fontify-string (string)
+  "Return STRING painted the way a Clojure buffer paints it.
+
+For Clojure shown somewhere that is not a Clojure buffer, a printed value
+in a view of its own.  The faces are `face' properties, which a buffer
+without font lock shows as they are."
+  (with-temp-buffer
+    (set-syntax-table replique-clojure-mode-syntax-table)
+    (replique-clojure-setup)
+    (insert string)
+    (replique-clojure-font-lock-region (point-min) (point-max))
+    (buffer-string)))
+
 ;;;###autoload
 (define-derived-mode replique-clojure-mode prog-mode "Replique[clj]"
   "Major mode for editing Clojure code.

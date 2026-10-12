@@ -171,7 +171,18 @@ that what it says is what is read."
     (should (string-match-p "^      0  9$" (replique-inspect-test--text)))
     (replique-inspect-test--goto ":a  ")
     (search-forward "2")
-    (should (eq 'replique-inspect-changed (get-text-property (1- (point)) 'face)))))
+    (let ((face (get-text-property (1- (point)) 'face)))
+      (should (memq 'replique-inspect-changed (ensure-list face)))
+      (should (memq 'font-lock-number-face (ensure-list face))))))
+
+(ert-deftest replique-inspect-test-a-value-is-painted-as-clojure ()
+  "What a node prints is painted the way a Clojure buffer paints it."
+  (replique-inspect-test--in-view
+    (replique-inspect-test--goto ":a  ")
+    (search-forward ":a")
+    (should (eq 'replique-inspect-key (get-text-property (match-beginning 0) 'face)))
+    (search-forward "1")
+    (should (eq 'font-lock-number-face (get-text-property (1- (point)) 'face)))))
 
 (ert-deftest replique-inspect-test-a-view-the-process-lost-is-opened-again ()
   "And what was open in it is opened again, by the keys that led to it."

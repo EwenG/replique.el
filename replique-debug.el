@@ -261,6 +261,15 @@ the thread is stopped after.")
         (concat (string-trim-right (substring text 0 replique-debug-value-width)) "…")
       text)))
 
+(defun replique-debug--painted (arrow value face)
+  "Return ARROW and VALUE, a value as shown, painted for after a form.
+
+VALUE is painted as Clojure, and FACE is put under its colours, and over
+the whole of ARROW."
+  (let ((value (replique-clojure-fontify-string value)))
+    (add-face-text-property 0 (length value) face t value)
+    (concat (propertize arrow 'face face) value)))
+
 (defun replique-debug--show-step-value (for end value)
   "Show VALUE after the form ending at END, for the thread FOR.
 
@@ -275,9 +284,10 @@ before - the form evaluated again, in a loop - goes."
                                  'face 'replique-debug-old-value))))
     (when (and end value)
       (let ((o (make-overlay end end nil t))
-            (text (concat " ⇒ " (replique-debug--value-text value))))
-        (overlay-put o 'replique-debug-text text)
-        (overlay-put o 'after-string (propertize text 'face 'replique-debug-value))
+            (text (replique-debug--value-text value)))
+        (overlay-put o 'replique-debug-text (concat " ⇒ " text))
+        (overlay-put o 'after-string
+                     (replique-debug--painted " ⇒ " text 'replique-debug-value))
         (push o overlays)))
     (puthash for overlays replique-debug--values)))
 
@@ -559,10 +569,14 @@ there are more."
 
 (defun replique-debug--recorded-text (value times)
   "Return VALUE, printed, as it is shown after its form, evaluated TIMES."
-  (concat " ⇒ "
-          (let ((replique-debug-value-width replique-debug-recorded-width))
-            (replique-debug--value-text value))
-          (if (and times (> times 1)) (format " ×%s" times) "")))
+  (concat (replique-debug--painted
+           " ⇒ "
+           (let ((replique-debug-value-width replique-debug-recorded-width))
+             (replique-debug--value-text value))
+           'replique-debug-recorded)
+          (if (and times (> times 1))
+              (propertize (format " ×%s" times) 'face 'replique-debug-recorded)
+            "")))
 
 (defun replique-debug--show-recorded (mark recorded)
   "Show RECORDED, what the process said the unit MARK marks recorded."
@@ -583,9 +597,8 @@ there are more."
               (let ((o (make-overlay start end nil t)))
                 (overlay-put o 'replique-debug-recorded value)
                 (overlay-put o 'after-string
-                             (propertize (replique-debug--recorded-text
-                                          (plist-get value :value) (plist-get value :times))
-                                         'face 'replique-debug-recorded))
+                             (replique-debug--recorded-text
+                              (plist-get value :value) (plist-get value :times)))
                 (push o shown))))))
       (when call
         (let* ((index (seq-position calls call
@@ -789,8 +802,8 @@ one value per call."
                                  'face 'replique-exception)
                    "running")
                  (when-let* ((value (plist-get pause :value)))
-                   (propertize (concat "⇒ " (replique-debug--value-text value))
-                               'face 'replique-debug-value))
+                   (replique-debug--painted "⇒ " (replique-debug--value-text value)
+                                            'replique-debug-value))
                  (when repl
                    (format "evaluating for %s" (buffer-name (replique-repl--buffer repl))))))
      "  ·  ")))

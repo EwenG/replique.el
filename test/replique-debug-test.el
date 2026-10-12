@@ -588,6 +588,13 @@ which stays - each a value to browse."
                                    (replique-debug-test--after-strings source))))
         (should (seq-find (lambda (s) (string-match-p "◂ call 2 of 2, the last · worker" (car s)))
                           (replique-debug-test--after-strings source)))
+        ;; the value painted as Clojure, over the face of what is recorded
+        (with-current-buffer source
+          (let* ((o (seq-find (lambda (o) (overlay-get o 'replique-debug-recorded))
+                              (overlays-in (point-min) (point-max))))
+                 (text (overlay-get o 'after-string)))
+            (should (equal '(font-lock-number-face replique-debug-recorded)
+                           (get-text-property (string-search "2" text) 'face text)))))
         ;; a line above it, written since: the forms are where they are now
         (with-current-buffer source
           (goto-char (point-min))
