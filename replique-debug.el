@@ -75,6 +75,12 @@
 ;; What a function was called with is shown on its params, as what it
 ;; was handed.
 ;;
+;; A call recorded is one to try things against, the way a frame of a
+;; stopped thread is, without anything stopped: C-c C-d e in a recorded
+;; definition opens a repl whose code is evaluated with the locals in scope
+;; at point bound to what they were in the call shown - see
+;; `replique-debug-eval-in-call'.  It follows the call shown.
+;;
 ;; ClojureScript is recorded too, and only recorded: a page or a node
 ;; program cannot be stopped from here, so stepping and breakpoints are
 ;; Clojure's.  A .cljs definition is recorded in the runtime of the repl it
@@ -86,7 +92,8 @@
 ;;   C-c C-d p  the call before             C-c C-d n  the call after
 ;;   C-c C-d u  `replique-debug-uninstrument'
 ;;   C-c C-d t  `replique-debug-cycle-recorded'
-;;   C-c C-d e  `replique-debug-eval-in-frame'
+;;   C-c C-d e  `replique-debug-eval-in-frame', or in a recorded
+;;              definition `replique-debug-eval-in-call'
 ;;
 ;; What stopped is the thread and nothing else: the process goes on
 ;; answering, and the other repls go on evaluating.  A repl whose form
@@ -396,6 +403,10 @@ ClojureScript only after it says this."
         (dolist (old (replique-debug--marks-in start (1+ start)))
           (when (and (= start (overlay-start old))
                      (eq process (overlay-get old 'replique-debug-process)))
+            ;; the repl evaluating in its calls goes on, in this one's
+            (when-let* ((repl (overlay-get old 'replique-debug-repl)))
+              (overlay-put old 'replique-debug-repl nil)
+              (overlay-put o 'replique-debug-repl repl))
             (replique-debug--uninstrumented process (overlay-get old 'replique-debug-unit))))
         (overlay-put o 'replique-debug-unit n)
         (overlay-put o 'replique-debug-process process)
@@ -420,7 +431,8 @@ ClojureScript only after it says this."
         (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
           (replique-debug--set-break b o))
         (when (plist-get unit :record)
-          (replique-debug--ask-recorded o))))))
+          (replique-debug--ask-recorded o)
+          (replique-debug--repl-follows o))))))
 
 (defun replique-debug--unmark (o)
   "Take away the mark O, of a unit not stepped through any more.
@@ -435,6 +447,8 @@ them."
   (when-let* ((view (overlay-get o 'replique-debug-view))
               ((buffer-live-p view)))
     (kill-buffer view))
+  (when-let* ((repl (overlay-get o 'replique-debug-repl)))
+    (replique-debug--kill (replique-repl--buffer repl)))
   (delete-overlay o))
 
 (defun replique-debug--uninstrumented (process n)
@@ -514,19 +528,27 @@ Which a page or a node program cannot be, from here: it is recorded."
       (goto-char pos)
       (cons (line-number-at-pos pos t) (1+ (- pos (line-beginning-position)))))))
 
+(defun replique-debug--origin-of (mark pos)
+  "Return where POS, in the unit MARK marks, was when the unit was read.
+As (LINE . COLUMN): where it is now with the lines and columns the unit
+moved since."
+  (let ((origin (overlay-get mark 'replique-debug-origin))
+        (now (replique-debug--line-column (overlay-start mark)))
+        (here (replique-debug--line-column pos)))
+    (cons (+ (car origin) (- (car here) (car now)))
+          (if (= (car here) (car now))
+              (+ (cdr origin) (- (cdr here) (cdr now)))
+            (cdr here)))))
+
 (defun replique-debug--set-break (o mark)
   "Set the breakpoint O in the unit MARK marks, as the process has it.
 
 The form is named by where it was when the unit was read, which is where
 it is now with the lines and columns the unit moved since."
   (let* ((process (overlay-get mark 'replique-debug-process))
-         (origin (overlay-get mark 'replique-debug-origin))
-         (now (replique-debug--line-column (overlay-start mark)))
-         (here (replique-debug--line-column (overlay-start o)))
-         (line (+ (car origin) (- (car here) (car now))))
-         (column (if (= (car here) (car now))
-                     (+ (cdr origin) (- (cdr here) (cdr now)))
-                   (cdr here))))
+         (place (replique-debug--origin-of mark (overlay-start o)))
+         (line (car place))
+         (column (cdr place)))
     (replique-process-request
      process
      (append (list :op :debug-break :unit (overlay-get mark 'replique-debug-unit)
@@ -756,7 +778,8 @@ Edited since, it says so."
   (overlay-put mark 'replique-debug-shown-call (plist-get recorded :call))
   (overlay-put mark 'replique-debug-recorded-said recorded)
   (replique-debug--draw-recorded mark)
-  (replique-debug--view-follows mark))
+  (replique-debug--view-follows mark)
+  (replique-debug--repl-follows mark))
 
 (defun replique-debug--view-source (mark)
   "Return what the view of MARK shows of the call shown, to browse."
@@ -1126,6 +1149,93 @@ form was not evaluated."
           view
         (generate-new-buffer (format "*replique-recorded %s*"
                                      (replique-debug--unit-name mark))))))))
+
+;;; A repl in a recorded call
+
+(defun replique-debug--call-label (process call)
+  "Return what the prompt of a repl of PROCESS evaluating in CALL says.
+CALL is (:unit N :call C ...), as the prompt said it: the definition, and
+the call - the last one, without C."
+  (let* ((mark (gethash (cons process (plist-get call :unit)) replique-debug--units))
+         (at (and mark (plist-get call :call)
+                  (plist-get (seq-find (lambda (c) (eql (plist-get c :call) (plist-get call :call)))
+                                       (overlay-get mark 'replique-debug-calls))
+                             :at))))
+    (format "%s, %s"
+            (if mark (replique-debug--unit-name mark) "gone")
+            (cond ((null (plist-get call :call)) "last call")
+                  (at (format-time-string "call %T" (/ at 1000.0)))
+                  (t "call")))))
+
+(defun replique-debug--call-directive (call)
+  "Return the directive that points a repl at CALL, (:unit N :call C ...)."
+  (format "#replique/call {:unit %s%s :line %s :column %s}"
+          (plist-get call :unit)
+          (if (plist-get call :call) (format " :call %s" (plist-get call :call)) "")
+          (plist-get call :line) (plist-get call :column)))
+
+(defun replique-debug--repl-follows (mark)
+  "Point the repl evaluating in a call of the unit MARK marks at the call shown.
+At the place of the code it was at.  Not a repl pointed elsewhere since."
+  (when-let* ((repl (overlay-get mark 'replique-debug-repl))
+              ((replique-repl-live-p repl))
+              (in (replique-repl--in-call repl))
+              (call (append (list :unit (overlay-get mark 'replique-debug-unit))
+                            (when-let* ((c (overlay-get mark 'replique-debug-call)))
+                              (list :call c))
+                            (list :line (plist-get in :line) :column (plist-get in :column)))))
+    (unless (equal call in)
+      (replique-repl-send-directive repl (replique-debug--call-directive call)))))
+
+;;;###autoload
+(defun replique-debug-eval-in-call ()
+  "Evaluate in the call shown of the recorded definition at point.
+
+From a repl of its own, with the locals in scope at point bound to what
+they were in that call: its params, to what it was called with, and the
+locals of its lets, to what they were bound to - recorded, not evaluated
+again.  A local whose value is not known is not bound: a form that was
+not evaluated in that call, or the local of a loop, a doseq or a for,
+which is another value each time round.  In the namespace of the code, on
+the repl's own thread, and the ordinary way otherwise: a recorded function
+called there records that call too.
+
+It is the repl the commands act on while it is there, so what a Clojure
+buffer sends goes to it too: `\[replique-eval-last-sexp]' on a form of the
+definition evaluates it with the values it had.
+
+It follows the call shown - see `replique-debug-recorded-before' - the last
+one while the last one is followed.  Asked from another place of the code,
+it moves there.  It goes when the definition records no more - and stays
+when it is recorded again, in the calls of the definition as it is now.
+
+Clojure's only."
+  (interactive)
+  (let* ((mark (replique-debug--recording-at-point))
+         (process (overlay-get mark 'replique-debug-process))
+         (place (replique-debug--origin-of mark (point)))
+         (call (append (list :unit (overlay-get mark 'replique-debug-unit))
+                       (when-let* ((c (overlay-get mark 'replique-debug-call)))
+                         (list :call c))
+                       (list :line (car place) :column (cdr place))))
+         (repl (overlay-get mark 'replique-debug-repl)))
+    (when (overlay-get mark 'replique-debug-keys)
+      (user-error "A ClojureScript call is not evaluated in, only Clojure's"))
+    (unless (overlay-get mark 'replique-debug-calls)
+      (user-error "Not called yet"))
+    (if (replique-repl-live-p repl)
+        (progn
+          (unless (equal call (replique-repl--in-call repl))
+            (replique-repl-send-directive repl (replique-debug--call-directive call)))
+          (setq replique-current-repl repl)
+          (pop-to-buffer (replique-repl--buffer repl)))
+      (let ((name (format "*replique-recorded %s repl*" (replique-debug--unit-name mark))))
+        (setq repl (replique-repl--open process nil nil nil nil nil call))
+        ;; Renamed after it is opened, and so kept - see
+        ;; `replique-debug-eval-in-frame'
+        (with-current-buffer (replique-repl--buffer repl)
+          (rename-buffer name t))
+        (overlay-put mark 'replique-debug-repl repl)))))
 
 ;;; A buffer per stopped thread
 
@@ -1672,31 +1782,38 @@ as anywhere else.
 Its prompt says which frame, counted from where the thread stopped: a
 thread stepped on is evaluated in where it got to.  Asked from another
 frame, the repl moves there.  It goes with the buffer of the thread once
-the thread goes on - or when it is killed."
+the thread goes on - or when it is killed.
+
+In a recorded definition, evaluate in the call shown instead - see
+`replique-debug-eval-in-call'."
   (interactive)
-  (let ((index (replique-debug--frame-at-point)))
-    (replique-debug--in-this
-      (let* ((process replique-debug--process)
-             (thread replique-debug--thread)
-             (frame (list :thread thread :frame index))
-             (buffer (replique-debug--frame-repl-buffer process thread))
-             (repl (and buffer (buffer-local-value 'replique--buffer-repl buffer))))
-        (if (replique-repl-live-p repl)
-            (progn
-              (unless (equal frame (replique-repl--in-frame repl))
-                (replique-repl-send-directive
-                 repl (format "#replique/frame {:thread %s :frame %s}" thread index)))
-              (setq replique-current-repl repl)
-              (pop-to-buffer buffer))
-          (when buffer (replique-debug--kill buffer))
-          (let ((name (format "%s repl*" (string-remove-suffix "*" (buffer-name)))))
-            ;; Renamed after it is opened, and so kept: what the handshake
-            ;; says names a buffer only where it is still named as opened -
-            ;; see `replique-repl--rename'
-            (with-current-buffer (replique-repl--buffer
-                                  (replique-repl--open process nil nil nil nil nil frame))
-              (rename-buffer name t)
-              (setq replique-debug--evaluating-in (cons process thread)))))))))
+  (if (and (not (derived-mode-p 'replique-debug-mode))
+           (seq-find (lambda (o) (overlay-get o 'replique-debug-record))
+                     (replique-debug--marks-in (point) (1+ (point)))))
+      (replique-debug-eval-in-call)
+    (let ((index (replique-debug--frame-at-point)))
+      (replique-debug--in-this
+       (let* ((process replique-debug--process)
+              (thread replique-debug--thread)
+              (frame (list :thread thread :frame index))
+              (buffer (replique-debug--frame-repl-buffer process thread))
+              (repl (and buffer (buffer-local-value 'replique--buffer-repl buffer))))
+         (if (replique-repl-live-p repl)
+             (progn
+               (unless (equal frame (replique-repl--in-frame repl))
+                 (replique-repl-send-directive
+                  repl (format "#replique/frame {:thread %s :frame %s}" thread index)))
+               (setq replique-current-repl repl)
+               (pop-to-buffer buffer))
+           (when buffer (replique-debug--kill buffer))
+           (let ((name (format "%s repl*" (string-remove-suffix "*" (buffer-name)))))
+             ;; Renamed after it is opened, and so kept: what the handshake
+             ;; says names a buffer only where it is still named as opened -
+             ;; see `replique-repl--rename'
+             (with-current-buffer (replique-repl--buffer
+                                   (replique-repl--open process nil nil nil nil nil frame))
+               (rename-buffer name t)
+               (setq replique-debug--evaluating-in (cons process thread))))))))))
 
 (defun replique-debug-visit-frame ()
   "Show the source of the frame at point, and its locals."

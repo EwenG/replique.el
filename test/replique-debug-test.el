@@ -724,6 +724,78 @@ records no more."
           (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
           (should-not (buffer-live-p view)))))))
 
+(ert-deftest replique-debug-test-a-repl-evaluates-in-a-recorded-call ()
+  "Opened on the call shown, at the place of point as the code was read,
+named after the definition - following the call shown, carried over to the
+definition recorded again, and gone with it."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (let* ((source (find-file-noselect replique-debug-test--file))
+             (opened nil)
+             (directives nil)
+             (replique-current-repl nil)
+             (buffer (generate-new-buffer "*replique: debug-test clj*"))
+             (repl (replique-repl--make :process process :buffer buffer)))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 5 :end-column 8 :record t
+                                     :breaks-only t))
+        (cl-letf (((symbol-function 'replique-repl--open)
+                   (lambda (&rest args)
+                     (setq opened args)
+                     (with-current-buffer buffer (setq-local replique--buffer-repl repl))
+                     (setq replique-current-repl repl)
+                     repl))
+                  ((symbol-function 'replique-repl-live-p) (lambda (r) (eq r repl)))
+                  ((symbol-function 'replique-repl-send-directive)
+                   (lambda (_repl directive) (push directive directives))))
+          (with-current-buffer source
+            (goto-char (point-min))
+            (search-forward "(inc")
+            (should-error (replique-debug-eval-in-call) :type 'user-error)
+            (replique-debug-test--answer
+             :debug-recorded
+             (replique-debug-test--recorded
+              5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1))))
+            ;; a line written above it since: where point was as it was read
+            (save-excursion (goto-char (point-min)) (insert "\n"))
+            (replique-debug-eval-in-frame)
+            (should (equal (list process nil nil nil nil nil '(:unit 7 :line 3 :column 15))
+                           opened))
+            (should (equal "*replique-recorded f repl*" (buffer-name buffer)))
+            (should (equal "f, last call"
+                           (replique-debug--call-label process '(:unit 7 :line 3 :column 15))))
+            ;; the call before: the repl goes there
+            (setf (replique-repl--in-call repl) '(:unit 7 :line 3 :column 15))
+            (replique-debug-recorded-before)
+            (replique-debug-test--answer
+             :debug-recorded
+             (replique-debug-test--recorded
+              4 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "1" :times 1))))
+            (should (equal '("#replique/call {:unit 7 :call 4 :line 3 :column 15}") directives))
+            (should (equal (format-time-string "f, call %T" 0)
+                           (replique-debug--call-label process '(:unit 7 :call 4))))
+            ;; asked again, from another place: it moves there, not opened again
+            (setq opened nil)
+            (setf (replique-repl--in-call repl) '(:unit 7 :call 4 :line 3 :column 15))
+            (search-forward "n)")
+            (replique-debug-eval-in-call)
+            (should-not opened)
+            (should (equal "#replique/call {:unit 7 :call 4 :line 3 :column 18}" (car directives)))
+            ;; recorded again, it evaluates in the calls of what is recorded now
+            (setf (replique-repl--in-call repl) '(:unit 7 :call 4 :line 3 :column 18))
+            (replique-debug--event process
+                                   (list :tag "event" :event "debug-instrumented" :unit 8
+                                         :ns "user" :file replique-debug-test--file :line 3
+                                         :column 1 :end-line 6 :end-column 8 :record t
+                                         :breaks-only t))
+            (should (equal "#replique/call {:unit 8 :line 3 :column 18}" (car directives)))
+            (should (buffer-live-p buffer))
+            ;; let go of, it goes
+            (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 8))
+            (should-not (buffer-live-p buffer))))))))
+
 (ert-deftest replique-debug-test-a-definition-edited-fades-what-it-recorded ()
   "What was recorded is of the code as it was sent: once it is edited, the
 values of the forms edited go and the others are faded, browsed still - and
@@ -1306,9 +1378,33 @@ written after them, the call before is gone back to, and a value browsed."
                                                               (replique-debug-test--text)))))
                                      (buffer-list)))
                          30))
-                ;; let go of, it shows nothing
-                (with-current-buffer source (replique-debug-uninstrument))
-                (should (replique-test-wait-for (lambda () (null (funcall shown))) 30)))
+                ;; evaluated in, with its locals
+                (with-current-buffer source
+                  (search-forward "(mapv")
+                  (replique-debug-eval-in-call))
+                (let ((in-call (with-current-buffer source
+                                 (overlay-get (replique-debug--recording-at-point)
+                                              'replique-debug-repl))))
+                  (should (replique-test-wait-for
+                           (lambda () (replique-repl--in-call in-call)) 60))
+                  (replique-repl-send-code in-call "[m (* x 10)]")
+                  (should (replique-test-wait-for
+                           (lambda () (string-match-p "^\\[{:a 1} 20\\]$"
+                                                      (replique-test-text in-call)))
+                           30))
+                  ;; the last call, followed
+                  (with-current-buffer source (replique-debug-recorded-after))
+                  (should (replique-test-wait-for
+                           (lambda () (null (plist-get (replique-repl--in-call in-call) :call)))
+                           30))
+                  (replique-repl-send-code in-call "(* x 10)")
+                  (should (replique-test-wait-for
+                           (lambda () (string-match-p "^30$" (replique-test-text in-call)))
+                           30))
+                  ;; let go of, it shows nothing, and the repl goes
+                  (with-current-buffer source (replique-debug-uninstrument))
+                  (should (replique-test-wait-for (lambda () (null (funcall shown))) 30))
+                  (should-not (buffer-live-p (replique-repl--buffer in-call)))))
             (when (buffer-live-p source) (kill-buffer source))
             (dolist (b (buffer-list))
               (when (with-current-buffer b (derived-mode-p 'replique-inspect-mode))

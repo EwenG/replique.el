@@ -148,9 +148,11 @@ its browser runtime is served on, as its `runtime\=' event gave it - nil
 for any repl that is not on the browser, and for one whose runtime has
 not started yet.  IN-FRAME is the frame of a stopped thread what is read is
 evaluated in, as (:thread ID :frame INDEX), as the last prompt gave it -
-see `replique-debug-eval-in-frame'."
+see `replique-debug-eval-in-frame'.  IN-CALL is the recorded call it is
+evaluated in instead, as (:unit N :call C :line L :column K) - see
+`replique-debug-eval-in-call'."
   process conn buffer given-name ns params at-prompt to-echo echoed queued
-  last-exception on-end main url in-frame)
+  last-exception on-end main url in-frame in-call)
 
 (defvar-local replique--buffer-repl nil
   "The repl a buffer is the buffer of.")
@@ -319,11 +321,20 @@ better."
       (setf (replique-repl--url repl) url)
       (replique-repl--insert repl (format "Open %s\n" url) 'replique-note)))))
 
+(declare-function replique-debug--call-label "replique-debug" (process call))
+
 (defun replique-repl--frame-label (repl)
-  "Return what the prompt of REPL says of the frame it evaluates in, or \"\"."
-  (if-let* ((frame (replique-repl--in-frame repl)))
-      (format " [frame %s]" (plist-get frame :frame))
-    ""))
+  "Return what the prompt of REPL says of the frame it evaluates in, or \"\".
+Or of the recorded call."
+  (cond
+   ((replique-repl--in-frame repl)
+    (format " [frame %s]" (plist-get (replique-repl--in-frame repl) :frame)))
+   ((replique-repl--in-call repl)
+    (format " [%s]" (if (fboundp 'replique-debug--call-label)
+                        (replique-debug--call-label (replique-repl--process repl)
+                                                    (replique-repl--in-call repl))
+                      "a recorded call")))
+   (t "")))
 
 (defun replique-repl--frame (repl frame)
   "Render FRAME in the buffer of REPL."
@@ -360,9 +371,11 @@ better."
      (replique-repl--ended repl frame))
     ("prompt"
      (let ((moved (not (and (equal (replique-repl--ns repl) (plist-get frame :ns))
-                            (equal (replique-repl--in-frame repl) (plist-get frame :frame))))))
+                            (equal (replique-repl--in-frame repl) (plist-get frame :frame))
+                            (equal (replique-repl--in-call repl) (plist-get frame :call))))))
        (setf (replique-repl--ns repl) (plist-get frame :ns))
        (setf (replique-repl--in-frame repl) (plist-get frame :frame))
+       (setf (replique-repl--in-call repl) (plist-get frame :call))
        (setf (replique-repl--params repl) (plist-get frame :params))
        ;; A form is not what produces a prompt - a read error and a comment
        ;; produce one too - so the buffer is what says whether one is needed.
@@ -533,9 +546,9 @@ and the parse `replique-clojure-mode' reads Clojure with - see
 
 \\{replique-repl-mode-map}"
   :syntax-table replique-clojure-mode-syntax-table
-  ;; a namespace, and the frame evaluated in where there is one - see
-  ;; `replique-repl--frame-label'
-  (setq-local comint-prompt-regexp "^[^ \n]*\\(?: \\[frame [0-9]+\\]\\)?=> *")
+  ;; a namespace, and the frame or the call evaluated in where there is
+  ;; one - see `replique-repl--frame-label'
+  (setq-local comint-prompt-regexp "^[^ \n]*\\(?: \\[[^]\n]*\\]\\)?=> *")
   (setq-local comint-prompt-read-only replique-prompt-read-only)
   (setq-local comint-input-sender #'replique-repl--input-sender)
   (setq-local comint-process-echoes nil)
@@ -881,7 +894,8 @@ PARAMS is the printing a Clojure repl starts with, as the prompts of the
 one it replaces reported it, and `replique-repl-params\=' when it is nil.
 FRAME, (:thread ID :frame INDEX), is a frame of a stopped thread a Clojure
 repl evaluates in from its first prompt - see
-`replique-debug-eval-in-frame'."
+`replique-debug-eval-in-frame' - or, (:unit N :call C :line L :column K),
+a recorded call - see `replique-debug-eval-in-call'."
   (let* ((reused buffer)
          ;; Named from what is being asked for, and named again from the
          ;; reply - see `replique-repl--rename'.  The buffer has to exist
@@ -923,7 +937,8 @@ repl evaluates in from its first prompt - see
                          (when-let* ((params (replique-repl--params-for
                                               dialect (or params replique-repl-params))))
                            (list :params params))
-                         (when frame (list :frame frame)))
+                         (when frame
+                           (list (if (plist-get frame :unit) :call :frame) frame)))
           :on-ready (lambda (conn)
                       (let ((proc (replique-conn--proc conn))
                             (cljs (equal "cljs" (plist-get (replique-conn--info conn)
