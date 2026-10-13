@@ -1011,7 +1011,7 @@ repl evaluates in from its first prompt - see
                     (or (nth 2 err) "the process is gone")))))
     (push repl (replique-process--repls process))
     (setq replique-current-repl repl)
-    (unless reused (pop-to-buffer buffer))
+    (unless reused (replique-repl--pop buffer))
     repl))
 
 ;;; Which process, connected to or started
@@ -1102,40 +1102,66 @@ is started with - see `replique-process-start'."
           (replique-process-connect directory then)
         (replique-process-start directory then nil agent)))))
 
+(defvar replique-repl--display-only nil
+  "Non-nil when a repl buffer is to be shown without being selected.
+
+Bound while a process that had to be connected to or started is answered:
+by then, the user may be typing elsewhere, and what they type is not to
+end up in the repl.")
+
+(defun replique-repl--pop (buffer)
+  "Show BUFFER, selecting its window unless `replique-repl--display-only'."
+  (if replique-repl--display-only
+      (display-buffer buffer)
+    (pop-to-buffer buffer)))
+
 (defun replique-repl--choose-process (then &optional agent)
   "Ask for a process and call THEN with it, connecting or starting it first.
 
 A process Emacs is connected to is answered at once and made the current
 one.  One that has to be connected to or started is answered once it is
 up, and never when it does not come up - what went wrong is said where it
-happened.
+happened.  THEN is then called with `replique-repl--display-only' bound:
+the command that asked has long returned.
 
 AGENT starts whatever is started with the debugger, the start chosen
 saying so or not."
   (let* ((choices (replique-repl--process-choices))
          (choice (cdr (assoc (completing-read "Process: " choices nil t nil nil
                                               (caar choices))
-                             choices))))
-    (pcase choice
-      (`(process ,process)
-       (setq replique-current-process process)
-       (funcall then process))
-      (`(connect ,description ,directory)
-       (replique-process-connect-to description directory then))
-      (`(start ,directory ,with-agent)
-       (replique-process-start directory then nil (or with-agent agent)))
-      (`(other)
-       (replique-repl--in-directory
-        (read-directory-name "Project directory: "
-                             (replique-process--directory-to-start) nil t)
-        then agent)))))
+                             choices)))
+         (asking t)
+         (given then)
+         (then (lambda (process)
+                 (let ((replique-repl--display-only
+                        (or replique-repl--display-only (not asking))))
+                   (funcall given process)))))
+    (unwind-protect
+        (replique-repl--answer-choice choice then agent)
+      (setq asking nil))))
+
+(defun replique-repl--answer-choice (choice then agent)
+  "Call THEN with the process CHOICE names - see `replique-repl--choose-process'."
+  (pcase choice
+    (`(process ,process)
+     (setq replique-current-process process)
+     (funcall then process))
+    (`(connect ,description ,directory)
+     (replique-process-connect-to description directory then))
+    (`(start ,directory ,with-agent)
+     (replique-process-start directory then nil (or with-agent agent)))
+    (`(other)
+     (replique-repl--in-directory
+      (read-directory-name "Project directory: "
+                           (replique-process--directory-to-start) nil t)
+      then agent))))
 
 (defun replique-repl--show (process)
   "Show the most recent repl of PROCESS, opening a Clojure repl if it has none."
   (if-let* ((repl (seq-find #'replique-repl-live-p (replique-process--repls process))))
       (progn
         (setq replique-current-repl repl)
-        (pop-to-buffer (replique-repl--buffer repl)))
+        (replique-repl--pop (replique-repl--buffer repl)))
     (replique-repl--open process nil nil nil)))
 
 ;;;###autoload
