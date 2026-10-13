@@ -180,7 +180,10 @@ that what it says is what is read."
   (replique-inspect-test--in-view
     (replique-inspect-test--goto ":a  ")
     (search-forward ":a")
-    (should (eq 'replique-inspect-key (get-text-property (match-beginning 0) 'face)))
+    ;; the key of a map too, a keyword the way a keyword is
+    (should (equal (get-text-property 0 'face (replique-clojure-fontify-string ":a"))
+                   (get-text-property (match-beginning 0) 'face)))
+    (should-not (eq 'replique-inspect-key (get-text-property (match-beginning 0) 'face)))
     (search-forward "1")
     (should (eq 'font-lock-number-face (get-text-property (1- (point)) 'face)))))
 

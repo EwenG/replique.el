@@ -80,7 +80,9 @@ Each change is one more, and the oldest goes.  Zero keeps none."
 
 (defface replique-inspect-key
   '((t :inherit font-lock-constant-face))
-  "Face for the key a line of an inspected value is under."
+  "Face for what a line of an inspected value is under, other than a key.
+A property of an object, @ for what a reference holds and ^ for metadata:
+the key of a map is painted as the value it is, and an index as a note."
   :group 'replique)
 
 (defface replique-inspect-gone
@@ -448,9 +450,11 @@ in it changes, and most of what it shows was painted the time before.")
                   ((plist-get node :open) "▾ ")
                   (t "▸ ")))
     (when key
-      (insert (propertize key 'face (if (equal "index" (plist-get line :via))
-                                        'replique-note
-                                      'replique-inspect-key))
+      (insert (pcase (plist-get line :via)
+                ;; a key of a map is a value, painted as one
+                ("key" (replique-inspect--painted key))
+                ("index" (propertize key 'face 'replique-note))
+                (_ (propertize key 'face 'replique-inspect-key)))
               "  "))
     (let ((value (replique-inspect--painted (or (plist-get line :value) ""))))
       (cond (gone (add-face-text-property 0 (length value) 'replique-inspect-gone
