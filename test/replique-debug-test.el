@@ -671,7 +671,8 @@ which stays - each a value to browse."
 
 (ert-deftest replique-debug-test-a-definition-recorded-has-one-view ()
   "Each value browsed is browsed in the same buffer, named after the
-definition, which goes when the definition records no more."
+definition, which follows the call shown and goes when the definition
+records no more."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (let ((source (find-file-noselect replique-debug-test--file))
@@ -687,19 +688,39 @@ definition, which goes when the definition records no more."
           5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)
               (:site 2 :line 3 :column 3 :end-line 5 :end-column 7 :value "2" :times 3))))
         (cl-letf (((symbol-function 'replique-inspect-show)
-                   (lambda (_process _keys src _title buffer)
-                     (push (cons src buffer) shown)
+                   (lambda (_process _keys src title buffer &optional quiet)
+                     (push (list src title buffer quiet) shown)
                      buffer)))
           (with-current-buffer source
             (goto-char (point-min))
             (search-forward "(inc")
             (replique-debug-inspect-recorded)
             (search-backward "(let")
-            (replique-debug-inspect-recorded)))
-        (let ((view (cdr (car shown))))
+            (replique-debug-inspect-recorded)
+            ;; the call before: the view shows it too, not shown if it was not
+            (replique-debug-recorded-before))
+          (replique-debug-test--answer
+           :debug-recorded
+           (replique-debug-test--recorded
+            4 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "1" :times 1))))
+          ;; a view of every call stays as it is
+          (with-current-buffer source
+            (goto-char (point-min))
+            (search-forward "(inc")
+            (replique-debug-inspect-recorded t)
+            (replique-debug-recorded-after))
+          (replique-debug-test--answer
+           :debug-recorded
+           (replique-debug-test--recorded
+            5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)))))
+        (let ((view (nth 2 (car shown))))
           (should (equal "*replique-recorded f*" (buffer-name view)))
-          (should (equal '(((:debug (:site 2 :call 5)) . t) ((:debug (:site 1 :call 5)) . t))
-                         (mapcar (lambda (s) (cons (car s) (eq view (cdr s)))) shown)))
+          (should (equal '(((:debug (:site 1)) "(inc n), every call" t nil)
+                           ((:debug (:site 2 :call 4)) "(let [a (inc n)] (replique.de…, call 1 of 2" t t)
+                           ((:debug (:site 2 :call 5)) "(let [a (inc n)] (replique.de…, call 2 of 2" t nil)
+                           ((:debug (:site 1 :call 5)) "(inc n), call 2 of 2" t nil))
+                         (mapcar (lambda (s) (list (nth 0 s) (nth 1 s) (eq view (nth 2 s)) (nth 3 s)))
+                                 shown)))
           (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
           (should-not (buffer-live-p view)))))))
 

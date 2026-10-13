@@ -834,7 +834,7 @@ of the way, and the process keeps the value."
 
 ;;; Opening a view
 
-(defun replique-inspect-show (process keys source title &optional buffer)
+(defun replique-inspect-show (process keys source title &optional buffer quiet)
   "Show the value SOURCE names, in PROCESS, in a buffer of its own.
 
 KEYS are the dialect keys - see `replique-dialect-keys'.  TITLE is what the
@@ -843,7 +843,8 @@ shown is shown again, and refreshed.
 
 With BUFFER, the view is that buffer, made a view of SOURCE whatever it
 was a view of before: one buffer that follows something, the way the
-view of the locals of a stopped thread follows the frame looked at."
+view of the locals of a stopped thread follows the frame looked at.
+With QUIET, the buffer is not shown: what is shown stays as it is."
   (let* ((name (format "*replique-inspect %s*" title))
          (same (lambda (buffer)
                  (with-current-buffer buffer
@@ -870,7 +871,7 @@ view of the locals of a stopped thread follows the frame looked at."
               replique-inspect--title title)
         (replique-inspect--render)
         (replique-inspect--open)))
-    (pop-to-buffer buffer)
+    (unless quiet (pop-to-buffer buffer))
     buffer))
 
 (defun replique-inspect--var-at-point ()

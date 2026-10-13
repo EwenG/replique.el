@@ -755,7 +755,35 @@ Edited since, it says so."
   (overlay-put mark 'replique-debug-calls (plist-get recorded :calls))
   (overlay-put mark 'replique-debug-shown-call (plist-get recorded :call))
   (overlay-put mark 'replique-debug-recorded-said recorded)
-  (replique-debug--draw-recorded mark))
+  (replique-debug--draw-recorded mark)
+  (replique-debug--view-follows mark))
+
+(defun replique-debug--view-source (mark)
+  "Return what the view of MARK shows of the call shown, to browse."
+  (when-let* ((of (overlay-get mark 'replique-debug-view-of)))
+    (list :debug (append (plist-get of :form)
+                         (list :call (overlay-get mark 'replique-debug-shown-call))))))
+
+(defun replique-debug--view-title (mark)
+  "Return the title of the view of MARK, of the call shown."
+  (let ((call (overlay-get mark 'replique-debug-shown-call))
+        (calls (overlay-get mark 'replique-debug-calls)))
+    (format "%s, call %s of %s"
+            (plist-get (overlay-get mark 'replique-debug-view-of) :text)
+            (1+ (or (seq-position calls call (lambda (c n) (eql n (plist-get c :call))))
+                    (1- (length calls))))
+            (length calls))))
+
+(defun replique-debug--view-follows (mark)
+  "Make the view of a value MARK recorded show it in the call shown now.
+A view of every call stays as it is.  Not shown if it was not."
+  (when-let* ((view (overlay-get mark 'replique-debug-view))
+              ((buffer-live-p view))
+              (source (replique-debug--view-source mark))
+              ((not (equal source (buffer-local-value 'replique-inspect--source view)))))
+    (replique-inspect-show
+     (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
+     source (replique-debug--view-title mark) view t)))
 
 (defun replique-debug--draw-recorded (mark)
   "Show what the unit MARK marks recorded, as `replique-debug-recorded-shown' says.
@@ -1070,25 +1098,30 @@ interactively the prefix argument, what it evaluated to in each call kept,
 one value per call.
 
 In the one view the definition has, made a view of this value whatever
-it showed before, and killed when the definition records no more."
+it showed before, and killed when the definition records no more.  It
+follows the call shown: the call before or after, or the last as calls
+come, shows the value in that call there too - `:not-recorded' where the
+form was not evaluated."
   (interactive "P")
   (let* ((mark (replique-debug--recording-at-point t))
          (o (replique-debug--recorded-form-at (point)))
          (value (or (and o (overlay-get o 'replique-debug-recorded))
                     (user-error "No form recorded at point")))
-         (text (buffer-substring-no-properties (overlay-start o) (overlay-end o)))
+         (text (truncate-string-to-width
+                (replace-regexp-in-string
+                 "[ \t\n]+" " " (buffer-substring-no-properties (overlay-start o) (overlay-end o)))
+                30 nil nil "…"))
+         (form (append (list :site (plist-get value :site))
+                       (when-let* ((arg (plist-get value :arg))) (list :arg arg))))
          (view (overlay-get mark 'replique-debug-view)))
+    (overlay-put mark 'replique-debug-view-of
+                 (unless every-call (list :form form :text text)))
     (overlay-put
      mark 'replique-debug-view
      (replique-inspect-show
       (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
-      (list :debug (append (list :site (plist-get value :site))
-                           (when-let* ((arg (plist-get value :arg))) (list :arg arg))
-                           (unless every-call
-                             (list :call (overlay-get mark 'replique-debug-shown-call)))))
-      (format "%s%s" (truncate-string-to-width (replace-regexp-in-string "[ \t\n]+" " " text)
-                                               30 nil nil "…")
-              (if every-call ", every call" ""))
+      (if every-call (list :debug form) (replique-debug--view-source mark))
+      (if every-call (format "%s, every call" text) (replique-debug--view-title mark))
       (if (buffer-live-p view)
           view
         (generate-new-buffer (format "*replique-recorded %s*"
