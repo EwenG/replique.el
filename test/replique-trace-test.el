@@ -101,9 +101,17 @@ namespace of the file - not a macro, nor what is not a definition."
       (delete-directory root t))))
 
 (ert-deftest replique-trace-test-what-is-traced-is-asked-for ()
-  "The function at point, it and what is around it, its namespace."
+  "The function at point, it and what is around it, its namespace - each
+after what changed on disk was offered to be loaded."
   (replique-trace-test--with
-    (with-temp-buffer
+    (cl-letf* ((offered 0)
+               ((symbol-function 'replique-fresh-ensure)
+                (lambda (what)
+                  (should (equal "tracing" what))
+                  (should-not (assq :trace (mapcar (lambda (c) (cons (plist-get (car c) :op) c))
+                                                    replique-trace-test--asked)))
+                  (setq offered (1+ offered)))))
+     (with-temp-buffer
       (replique-clojure-mode)
       (insert "(ns app.core)\n(defn f [n]\n  (inc n))\n")
       (search-backward "inc")
@@ -115,8 +123,30 @@ namespace of the file - not a macro, nor what is not a definition."
                      (replique-trace-test--answer :trace '(:tag "reply" :traced ("app.core/f")))))
       (replique-trace ?n)
       (should (equal '(:op :trace :ns "app.core")
-                     (replique-trace-test--answer :trace '(:tag "reply" :traced ("app.core/f"))))))
+                     (replique-trace-test--answer :trace '(:tag "reply" :traced ("app.core/f")))))
+      (should (= 3 offered))))
     (should (replique-trace--buffer-of process nil))))
+
+(ert-deftest replique-trace-test-what-is-not-traced-is-said ()
+  "How many were traced, and why the others were not, by reason."
+  (let ((said (lambda (frame)
+                (let ((text nil))
+                  (cl-letf (((symbol-function 'message)
+                             (lambda (fmt &rest args) (setq text (apply #'format fmt args)))))
+                    (replique-trace--said frame "6 functions changed since 57711eb"))
+                  text))))
+    (should (string-prefix-p "replique: 6 functions changed since 57711eb: 6 traced - "
+                             (funcall said '(:tag "reply" :asked 6 :traced ("a/f")))))
+    (should (string-prefix-p
+             (concat "replique: 6 functions changed since 57711eb: 1 traced, 5 not - "
+                     "no such var, its file not loaded? (4): a/f, a/g, a/h, …; "
+                     "not a function (1): a/x - ")
+             (funcall said '(:tag "reply" :asked 6
+                                  :skipped ((:var "a/f" :why "no such var")
+                                            (:var "a/x" :why "not a function")
+                                            (:var "a/g" :why "no such var")
+                                            (:var "a/h" :why "no such var")
+                                            (:var "a/i" :why "no such var"))))))))
 
 ;;; The calls
 
@@ -170,6 +200,55 @@ made; what it returned and was called with browsed."
         (replique-trace-clear)
         (replique-trace-test--answer :trace-clear '(:tag "reply" :cleared 4))
         (should (equal '(:op :trace-calls) (car (car replique-trace-test--asked))))))))
+
+(ert-deftest replique-trace-test-the-tree-does-not-jump ()
+  "Written again, the window shows the call at point on the line it was."
+  (replique-trace-test--with
+    (let ((buffer (replique-trace--show process nil))
+          (calls (cl-loop for n from 1 to 60
+                          collect (list :call n :var "app/f" :args (list (number-to-string n))
+                                        :state "returned" :value "1"
+                                        :made (if (= n 30) 1 0) :kept (if (= n 30) 1 0)))))
+      (replique-trace-test--answer
+       :trace-calls (list :tag "reply" :traced ["app/f"] :kept 60 :calls calls))
+      (switch-to-buffer buffer)
+      (goto-char (point-min))
+      (forward-line 25)
+      (set-window-start nil (point))
+      (search-forward "(app/f 30)")
+      (replique-trace-toggle)
+      (replique-trace-test--answer
+       :trace-calls (list :tag "reply" :traced ["app/f"] :kept 61 :calls calls))
+      (replique-trace-test--answer
+       :trace-calls '(:tag "reply" :calls ((:call 61 :var "app/g" :args ("2") :state "returned"
+                                                  :value "3" :made 0 :kept 0 :parent 30))))
+      (should (string-match-p "^▾ (app/f 30)" (buffer-substring-no-properties
+                                               (line-beginning-position) (line-end-position))))
+      (should (= 26 (line-number-at-pos (window-start))))
+      (should (= (point) (window-point))))))
+
+(ert-deftest replique-trace-test-tracing-is-stopped ()
+  "The calls stay, or with a prefix argument are forgotten with the buffer."
+  (replique-trace-test--with
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t)))
+      (let ((buffer (replique-trace--show process nil)))
+        (replique-trace-test--answer :trace-calls (replique-trace-test--calls))
+        (switch-to-buffer buffer)
+        (replique-trace-untrace-all)
+        (replique-trace-test--answer :untrace '(:tag "reply" :untraced ["app/f"]))
+        (should (buffer-live-p buffer))
+        (should (equal '(:op :trace-calls) (car (car replique-trace-test--asked))))
+        ;; traced no more, the calls kept are shown still
+        (replique-trace-test--answer
+         :trace-calls (plist-put (copy-sequence (replique-trace-test--calls)) :traced nil))
+        (let ((text (replique-trace-test--text buffer)))
+          (should (string-match-p "^0 functions traced · 4 calls kept" text))
+          (should (string-match-p "(app/handle {:n 1}) ⇒ 13" text))
+          (should-not (string-match-p "Nothing is traced" text)))
+        (replique-trace-untrace-all '(4))
+        (should-not (buffer-live-p buffer))
+        (replique-trace-test--answer :untrace '(:tag "reply" :untraced []))
+        (should (equal '(:op :trace-clear) (car (car replique-trace-test--asked))))))))
 
 (ert-deftest replique-trace-test-the-calls-are-shown-again-as-they-come ()
   "Once for many calls, and only where the buffer is shown."

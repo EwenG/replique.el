@@ -312,6 +312,20 @@ of a frame - which the process knows, and which is left to it."
       (should (equal '(:op :inspect-def :view 8 :node 2 :name "b")
                      (replique-inspect-test--asked))))))
 
+(ert-deftest replique-inspect-test-a-value-recorded-or-traced-is-defined-where-its-code-is ()
+  "The process knows the namespace of the code: none is said."
+  (dolist (source '((:debug (:site 12 :call 3)) (:trace (:call 4 :arg 0))))
+    (replique-inspect-test--with
+      (with-current-buffer (replique-inspect-show process nil source "a value")
+        (replique-inspect-test--answer
+         (list :tag "reply" :view 9
+               :root (list :node 0 :value "{:n 1}" :kind "map" :count 1 :expandable t)
+               :children (list (replique-inspect-test--line 1 "1" :via "key" :key ":n"))
+               :total 1 :more nil))
+        (replique-inspect-def "kept")
+        (should (equal '(:op :inspect-def :view 9 :node 0 :name "kept")
+                       (replique-inspect-test--asked)))))))
+
 (ert-deftest replique-inspect-test-a-view-is-let-go-of-with-its-buffer ()
   (replique-inspect-test--in-view
     (kill-buffer (current-buffer))

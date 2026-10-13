@@ -719,9 +719,11 @@ frame, an entry of a map whose keys are symbols."
 
 A value looked at, kept to work with at the repl - a local of a stopped
 thread in particular, which is gone once the thread goes on.  Defined in
-the namespace of the frame\='s code, for the locals of a frame, and in the
-namespace of the Clojure repl otherwise.  Interactively, the name is
-asked for, what the node is called being the default."
+the namespace of the code the value comes from - the frame\='s, for the
+locals of a frame, the code recorded\='s, for a value recorded, and the
+function\='s, for a traced call - and in the namespace of the Clojure repl
+otherwise.  Interactively, the name is asked for, what the node is called
+being the default."
   (interactive
    (let ((default (replique-inspect--default-name (replique-inspect--node-at-point))))
      (list (read-string (format-prompt "Define var" default) nil nil default))))
@@ -729,7 +731,8 @@ asked for, what the node is called being the default."
     (user-error "A value of a ClojureScript runtime is not defined in the process"))
   (when (string-blank-p name) (user-error "A var needs a name"))
   (let ((id (replique-inspect--node-at-point))
-        (ns (unless (plist-get replique-inspect--source :debug)
+        (ns (unless (or (plist-get replique-inspect--source :debug)
+                        (plist-get replique-inspect--source :trace))
               (or (when-let* ((repl (replique-repl-for-dialect :clj)))
                     (replique-repl--ns repl))
                   (user-error "No Clojure repl to say which namespace")))))

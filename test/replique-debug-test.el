@@ -703,14 +703,16 @@ definition, which goes when the definition records no more."
           (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
           (should-not (buffer-live-p view)))))))
 
-(ert-deftest replique-debug-test-a-definition-edited-shows-nothing-it-recorded ()
-  "What was recorded is of the code as it was sent: once it is edited, it
-goes with the mark, and is not asked for again - but the definition is
+(ert-deftest replique-debug-test-a-definition-edited-fades-what-it-recorded ()
+  "What was recorded is of the code as it was sent: once it is edited, the
+values of the forms edited go and the others are faded, browsed still - and
+not asked for again.  Edited back, they are as they were.  The definition is
 still let go of the ordinary way."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (let ((source (find-file-noselect replique-debug-test--file))
-            (mark nil))
+            (mark nil)
+            (inspected nil))
         (replique-debug--event process
                                (list :tag "event" :event "debug-instrumented" :unit 7
                                      :ns "user" :file replique-debug-test--file :line 2
@@ -719,9 +721,12 @@ still let go of the ordinary way."
         (replique-debug-test--answer
          :debug-recorded
          (replique-debug-test--recorded
-          5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1))))
+          5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)
+              (:site 3 :line 5 :column 5 :end-line 5 :end-column 6 :value "2" :times 1))))
         (setq mark (gethash (cons process 7) replique-debug--units))
-        (should (replique-debug-test--after-strings source))
+        (should (equal '((" ⇒ 2" . replique-debug-recorded) (" ⇒ 2" . replique-debug-recorded))
+                       (seq-remove (lambda (s) (string-match-p "◂" (car s)))
+                                   (replique-debug-test--after-strings source))))
         ;; the cursor is put against the form, before the value
         (with-current-buffer source
           (should (seq-every-p (lambda (o) (get-text-property 0 'cursor (overlay-get o 'after-string)))
@@ -731,19 +736,41 @@ still let go of the ordinary way."
         (with-current-buffer source
           (goto-char (point-min))
           (insert ";; above\n"))
-        (should (replique-debug-test--after-strings source))
-        (should (overlay-get mark 'before-string))
-        ;; written in it
+        (should (= 3 (length (replique-debug-test--after-strings source))))
+        (should-not (overlay-get mark 'replique-debug-edited))
+        ;; written in a form: its value goes, the other's is faded
         (with-current-buffer source
           (search-forward "(inc n")
           (insert " 1"))
-        (should-not (replique-debug-test--after-strings source))
-        (should-not (overlay-get mark 'before-string))
+        (should (overlay-get mark 'replique-debug-edited))
+        (should (overlay-get mark 'before-string))
+        (let ((shown (replique-debug-test--after-strings source)))
+          (should (equal '(" ⇒ 2" . replique-debug-recorded-edited)
+                         (seq-find (lambda (s) (equal " ⇒ 2" (car s))) shown)))
+          (should (= 1 (length (seq-filter (lambda (s) (string-match-p "⇒" (car s))) shown))))
+          (should (seq-find (lambda (s) (string-match-p "◂ call 2 of 2, before the edit" (car s)))
+                            shown)))
         (replique-debug--event process '(:tag "event" :event "debug-recorded" :unit 7))
         (should-not (replique-debug-test--asked :debug-recorded))
         (with-current-buffer source
           (should-error (replique-debug-recorded-before) :type 'user-error)
-          (should-error (replique-debug-inspect-recorded) :type 'user-error)
+          ;; the value faded is browsed still, and said as before the edit
+          (search-forward "    a")
+          (backward-char)
+          (should (string-match-p "before the edit" (replique-debug-eldoc)))
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process _keys src &rest _) (setq inspected src))))
+            (replique-debug-inspect-recorded))
+          (should (equal '(:debug (:site 3 :call 5)) inspected))
+          ;; written back to what was recorded: as it was
+          (goto-char (point-min))
+          (search-forward "(inc n 1")
+          (delete-char -2))
+        (should-not (overlay-get mark 'replique-debug-edited))
+        (should (equal '((" ⇒ 2" . replique-debug-recorded) (" ⇒ 2" . replique-debug-recorded))
+                       (seq-remove (lambda (s) (string-match-p "◂" (car s)))
+                                   (replique-debug-test--after-strings source))))
+        (with-current-buffer source
           (replique-debug-uninstrument))
         (should (equal '(:op :debug-uninstrument :unit 7)
                        (car (replique-debug-test--asked :debug-uninstrument))))))))

@@ -50,6 +50,8 @@
 ;;   c    forget the calls kept                u    trace nothing any more
 ;;   t    trace more                           g    ask again
 ;;
+;; C-u u traces nothing any more, forgets the calls and closes the buffer.
+;;
 ;; A call to look into is recorded and made again: r evaluates its
 ;; function again to record what each of its forms evaluates to, written
 ;; in its code - see `replique-debug-record' - and R calls it again in the
@@ -69,6 +71,7 @@
 (require 'replique-eval)
 (require 'replique-inspect)
 (require 'replique-debug)
+(require 'replique-fresh)
 
 (defcustom replique-trace-depth 1
   "How many calls around a function `replique-trace' traces with it, by default."
@@ -223,25 +226,43 @@ RANGES t, every one."
   "Return the dialect keys of a question about DIALECT's functions."
   (when (eq :cljs dialect) (replique-trace--cljs-keys)))
 
+(defun replique-trace--why-not (skipped)
+  "Say why the vars SKIPPED were not traced, those of each reason together."
+  (let ((by-why nil))
+    (dolist (s skipped)
+      (let* ((why (plist-get s :why))
+             (cell (or (assoc why by-why) (car (push (list why) by-why)))))
+        (setcdr cell (append (cdr cell) (list (plist-get s :var))))))
+    (mapconcat (lambda (cell)
+                 (let ((vars (cdr cell)))
+                   (format "%s%s (%s): %s%s"
+                           (car cell)
+                           (if (equal "no such var" (car cell))
+                               ", its file not loaded?" "")
+                           (length vars)
+                           (string-join (seq-take vars 3) ", ")
+                           (if (nthcdr 3 vars) ", …" ""))))
+               (nreverse by-why) "; ")))
+
 (defun replique-trace--said (frame what)
   "Say what came of tracing WHAT, as FRAME answers it, and return FRAME."
   (if (equal "error" (plist-get frame :tag))
       (message "replique: %s" (plist-get frame :message))
     (let* ((skipped (plist-get frame :skipped))
+           (asked (plist-get frame :asked))
            (callers (plist-get frame :callers))
            (callees (plist-get frame :callees)))
-      (message "replique: %s traced%s%s - %s"
+      (message "replique: %s%s: %s%s - %s"
                what
                (if (or callers callees)
                    (format " with %s caller%s and %s callee%s"
                            (length callers) (if (= 1 (length callers)) "" "s")
                            (length callees) (if (= 1 (length callees)) "" "s"))
                  "")
+               (if asked (format "%s traced" (- asked (length skipped))) "traced")
                (if skipped
-                   (format ", %s not: %s" (length skipped)
-                           (mapconcat (lambda (s) (format "%s (%s)" (plist-get s :var)
-                                                          (plist-get s :why)))
-                                      (seq-take skipped 3) ", "))
+                   (format ", %s not - %s" (length skipped)
+                           (replique-trace--why-not skipped))
                  "")
                (substitute-command-keys "\\[replique-trace-calls] shows the calls"))))
   frame)
@@ -263,7 +284,10 @@ SCOPE, asked: the function at point, `f'; it with the functions around
 it, `a' - DEPTH calls away, the prefix argument, `replique-trace-depth'
 without; every function of the namespace, `n'; or those a branch
 changed, `d', against a revision asked for.  See `replique-trace-calls'
-for the calls, as a tree."
+for the calls, as a tree.
+
+What changed on disk since the process read it is offered to be loaded
+first - see `replique-fresh-ensure'."
   (interactive
    (list (car (read-multiple-choice
                "Trace"
@@ -275,9 +299,13 @@ for the calls, as a tree."
   (let ((process (replique-process-ensure))
         (keys (replique-dialect-keys)))
     (pcase scope
+      ;; what changed on disk loaded first: a var traced is the function
+      ;; the process holds, and a file edited since is not that
       (?f (let ((name (replique-trace--at-point)))
+            (replique-fresh-ensure "tracing")
             (replique-trace--send process keys (list :op :trace :vars (vector name)) name)))
       (?a (let ((name (replique-trace--at-point)))
+            (replique-fresh-ensure "tracing")
             (replique-trace--send process keys
                                   (list :op :trace :around name
                                         :depth (or depth replique-trace-depth))
@@ -285,12 +313,15 @@ for the calls, as a tree."
       ;; above the ns form, the buffer's
       (?n (let ((ns (or (replique-eval--ns-at (point)) (replique-eval--ns-at (point-max))
                         (user-error "This buffer names no namespace"))))
+            (replique-fresh-ensure "tracing")
             (replique-trace--send process keys (list :op :trace :ns ns) ns)))
       (?d (let* ((root (or (locate-dominating-file default-directory ".git")
                            (user-error "Not in a git repository")))
                  (base (read-string "Changed since: " (replique-trace--base root)))
                  (changed (replique-trace--changed root base))
                  (any nil))
+            (when (or (cdr (assq :clj changed)) (cdr (assq :cljs changed)))
+              (replique-fresh-ensure "tracing"))
             (dolist (dialect '(:clj :cljs))
               (when-let* ((names (delete-dups (cdr (assq dialect changed)))))
                 (setq any t)
@@ -298,7 +329,9 @@ for the calls, as a tree."
                                       (list :op :trace :vars (vconcat names))
                                       (format "%s function%s changed since %s"
                                               (length names) (if (cdr names) "s" "")
-                                              base))))
+                                              (if (string-match-p "\\`[0-9a-f]\\{40\\}\\'" base)
+                                                  (substring base 0 7)
+                                                base)))))
             (unless any (message "replique: no function changed since %s" base)))))))
 
 ;;;###autoload
@@ -399,12 +432,43 @@ for the calls, as a tree."
                             'face 'shadow)
                 "\n")))))
 
+(defun replique-trace--where (pos)
+  "Return where POS is: its call, line and column.
+To find it again once the tree is written again."
+  (save-excursion
+    (goto-char pos)
+    (list (plist-get (get-text-property (point) 'replique-trace-call) :call)
+          (line-number-at-pos)
+          (current-column))))
+
+(defun replique-trace--back-to (where)
+  "Go back to WHERE, from `replique-trace--where', and return point.
+On its call if still shown, else on its line."
+  (pcase-let ((`(,here ,line ,column) where))
+    (goto-char (point-min))
+    (let ((found (and here (text-property-search-forward
+                            'replique-trace-call here
+                            (lambda (n call) (eql n (plist-get call :call)))))))
+      (if found
+          (goto-char (prop-match-beginning found))
+        (forward-line (1- line))))
+    (move-to-column column)
+    (point)))
+
 (defun replique-trace--render ()
-  "Write the tree of the calls, keeping point on the call it was on."
+  "Write the tree of the calls, keeping point on the call it was on.
+In the windows showing it, that call stays on the line it was on."
   (let* ((inhibit-read-only t)
-         (here (plist-get (get-text-property (point) 'replique-trace-call) :call))
-         (column (current-column))
-         (line (line-number-at-pos))
+         (here (replique-trace--where (point)))
+         (windows (mapcar (lambda (window)
+                            (let ((at (window-point window)))
+                              (list window
+                                    (replique-trace--where at)
+                                    (count-lines (window-start window)
+                                                 (save-excursion
+                                                   (goto-char at)
+                                                   (line-beginning-position))))))
+                          (get-buffer-window-list nil nil t)))
          (said replique-trace--said)
          (traced (plist-get said :traced))
          (dropped (or (plist-get said :dropped) 0)))
@@ -421,21 +485,20 @@ for the calls, as a tree."
                       "\n"))
              'face 'shadow))
     (cond
+     ((plist-get said :calls)
+      (dolist (call (plist-get said :calls))
+        (replique-trace--insert call 0)))
      ((null traced)
       (insert (substitute-command-keys
-               "Nothing is traced - \\[replique-trace] in a Clojure buffer\n")))
-     ((null (plist-get said :calls))
-      (insert "No traced function was called yet\n"))
-     (t (dolist (call (plist-get said :calls))
-          (replique-trace--insert call 0))))
-    (goto-char (point-min))
-    (let ((found (and here (text-property-search-forward
-                            'replique-trace-call here
-                            (lambda (n call) (eql n (plist-get call :call)))))))
-      (if found
-          (goto-char (prop-match-beginning found))
-        (forward-line (1- line))))
-    (move-to-column column)))
+               "Nothing is traced - \\<replique-mode-map>\\[replique-trace] in a Clojure buffer traces functions\n")))
+     (t (insert "No traced function was called yet\n")))
+    ;; Written again, a window would start at the top and show point
+    ;; wherever it fits: the tree would jump.
+    (pcase-dolist (`(,window ,where ,above) windows)
+      (let ((at (replique-trace--back-to where)))
+        (set-window-point window at)
+        (set-window-start window (progn (forward-line (- above)) (point)) t)))
+    (replique-trace--back-to here)))
 
 (defun replique-trace-refresh ()
   "Ask the process for the calls again, and the calls made in the ones open."
@@ -553,16 +616,24 @@ called in a loop says so at every call."
            (clrhash replique-trace--open)
            (replique-trace-refresh)))))))
 
-(defun replique-trace-untrace-all ()
-  "Trace no function any more - the calls kept stay."
-  (interactive)
-  (when (y-or-n-p "Trace no function any more? ")
-    (let ((buffer (current-buffer)))
+(defun replique-trace-untrace-all (&optional done)
+  "Trace no function any more - the calls kept stay.
+With DONE, the prefix argument, forget the calls too and close the buffer."
+  (interactive "P")
+  (when (y-or-n-p (if done
+                      "Trace no function any more, forget the calls and close? "
+                    "Trace no function any more? "))
+    (let ((buffer (current-buffer))
+          (process replique-trace--process)
+          (keys replique-trace--keys))
       (replique-process-request
-       replique-trace--process (append (list :op :untrace) replique-trace--keys)
+       process (append (list :op :untrace) keys)
        (lambda (_frame)
-         (when (buffer-live-p buffer)
-           (with-current-buffer buffer (replique-trace-refresh))))))))
+         (if done
+             (replique-process-request process (append (list :op :trace-clear) keys))
+           (when (buffer-live-p buffer)
+             (with-current-buffer buffer (replique-trace-refresh))))))
+      (when done (quit-window t)))))
 
 (defun replique-trace--repl ()
   "Return the repl the calls of the buffer are made in, or say there is none."
