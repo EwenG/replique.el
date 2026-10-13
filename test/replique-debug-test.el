@@ -843,6 +843,51 @@ the innermost point is in - highlighted, and the one browsed."
           (replique-debug--follow-point)
           (should-not (overlay-buffer replique-debug--at-point)))))))
 
+;;; What a function was called with
+
+(ert-deftest replique-debug-test-the-args-are-written-on-the-params ()
+  "What the fn was called with is the value of its params: after each, or at
+the end of their line, named - said by eldoc, and browsed, each."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (with-temp-file replique-debug-test--file
+        (insert "(ns user)\n(defn f [n & {:keys [k]}]\n  (inc n))\n"))
+      (let* ((replique-debug-recorded-shown 'line)
+             (source (find-file-noselect replique-debug-test--file))
+             (inspected nil)
+             (shown (lambda ()
+                      ;; without the call shown, said on the first line
+                      (seq-remove #'string-empty-p
+                                  (mapcar (lambda (s) (replace-regexp-in-string "  ◂.*" "" (car s)))
+                                          (replique-debug-test--after-strings source))))))
+        (with-current-buffer source (replique-clojure-mode))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 3 :end-column 10 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (replique-debug-test--recorded
+          5 '((:site 1 :line 3 :column 3 :end-line 3 :end-column 10 :value "2" :times 1)
+              (:site 2 :kind "enter" :line 2 :column 1 :end-line 3 :end-column 10
+                     :value "[1 {:k 2}]" :times 1 :params ("n" "&" "p__1")
+                     :args ("1" "(:k 2)")))))
+        ;; a param destructured is named as it is written
+        (should (equal '(" n ⇒ 1 {:keys [k]} ⇒ (:k 2)" " ⇒ 2") (funcall shown)))
+        (replique-debug-cycle-recorded)
+        (should (equal '(" ⇒ 1" " ⇒ (:k 2)" " ⇒ 2") (funcall shown)))
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "[n")
+          (should (equal "⇒ 1" (substring-no-properties (replique-debug-eldoc))))
+          (search-forward "{:keys")
+          (should (equal "⇒ (:k 2)" (substring-no-properties (replique-debug-eldoc))))
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process _keys src &rest _) (setq inspected src))))
+            (replique-debug-inspect-recorded))
+          (should (equal '(:debug (:site 2 :arg 1 :call 5)) inspected)))))))
+
 ;;; Recording ClojureScript
 
 (ert-deftest replique-debug-test-clojurescript-is-recorded-and-not-stepped-through ()

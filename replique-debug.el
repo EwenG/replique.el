@@ -70,6 +70,9 @@
 ;; The value of the form at point is said by eldoc, before what a call
 ;; takes, and the form is highlighted.
 ;;
+;; What a function was called with is shown on its params, as what it
+;; was handed.
+;;
 ;; ClojureScript is recorded too, and only recorded: a page or a node
 ;; program cannot be stopped from here, so stepping and breakpoints are
 ;; Clojure's.  A .cljs definition is recorded in the runtime of the repl it
@@ -641,10 +644,13 @@ there are more."
         ((not (eql call (overlay-get mark 'replique-debug-call))))
         (t (replique-debug--show-recorded mark frame)))))))
 
-(defun replique-debug--recorded-text (value times)
-  "Return VALUE, printed, as it is shown after its form, evaluated TIMES."
+(defun replique-debug--recorded-text (value times &optional param)
+  "Return VALUE, printed, as it is shown after its form, evaluated TIMES.
+
+Or, with PARAM, what the param of that name was called with, said where
+the param itself is not."
   (concat (replique-debug--painted
-           " ⇒ "
+           (if param (format " %s ⇒ " param) " ⇒ ")
            (let ((replique-debug-value-width replique-debug-recorded-width))
              (replique-debug--value-text value))
            'replique-debug-recorded)
@@ -668,6 +674,45 @@ there are more."
       (when (or (null kept) (>= (overlay-start o) (overlay-end (car kept))))
         (push o kept)))
     (nreverse kept)))
+
+(defun replique-debug--params-at (start)
+  "Return the params of the fn whose form starts at START, as nodes.
+
+The first vector written in it, which is where `fn', `defn' and an arity
+have them - each param the form a value is for, the `&' left out."
+  (when-let* ((top (replique-parse-form-at start))
+              (form (seq-find (lambda (node)
+                                (and (= start (replique-parse-start node))
+                                     (eq 'list (replique-parse-type node))))
+                              (replique-parse-path top start)))
+              (params (seq-find (lambda (node) (eq 'vector (replique-parse-type node)))
+                                (mapcar #'replique-parse-unwrap-meta
+                                        (replique-parse-forms form)))))
+    (seq-remove (lambda (node)
+                  (and (eq 'symbol (replique-parse-type node))
+                       (equal "&" (replique-parse-text node))))
+                (replique-parse-forms params))))
+
+(defun replique-debug--entered (mark value)
+  "Return overlays over the params VALUE, the entry of a fn, says the args of.
+
+In the unit MARK marks: each with what its param was called with, as the
+value of a form is."
+  (let ((start (replique-debug--here mark (plist-get value :line) (plist-get value :column)))
+        (args (plist-get value :args))
+        (i 0)
+        (overlays nil))
+    (when (<= (overlay-start mark) start (overlay-end mark))
+      (dolist (node (replique-debug--params-at start))
+        (when (< i (length args))
+          (let ((o (make-overlay (replique-parse-start node) (replique-parse-end node)))
+                (param (replique-parse-text node)))
+            (overlay-put o 'replique-debug-recorded
+                         (list :site (plist-get value :site) :arg i :param param
+                               :value (nth i args) :times (plist-get value :times)))
+            (push o overlays)))
+        (setq i (1+ i))))
+    overlays))
 
 (defun replique-debug--call-text (mark)
   "Return which call the unit MARK marks shows, as it is said after its first line."
@@ -705,7 +750,16 @@ whatever is written."
            (lines (make-hash-table))
            (first-line (line-number-at-pos (overlay-start mark))))
       (dolist (value (plist-get recorded :values))
-        (when (plist-get value :end-line)
+        (when (equal "enter" (plist-get value :kind))
+          (dolist (o (replique-debug--entered mark value))
+            (when (eq 'every replique-debug-recorded-shown)
+              (let ((v (overlay-get o 'replique-debug-recorded)))
+                (overlay-put o 'after-string
+                             (replique-debug--recorded-text (plist-get v :value)
+                                                            (plist-get v :times)))))
+            (push o forms)))
+        (when (and (plist-get value :end-line)
+                   (not (equal "enter" (plist-get value :kind))))
           (let ((start (replique-debug--here mark (plist-get value :line)
                                              (plist-get value :column)))
                 (end (replique-debug--here mark (plist-get value :end-line)
@@ -731,7 +785,8 @@ whatever is written."
                           (mapconcat (lambda (o)
                                        (let ((value (overlay-get o 'replique-debug-recorded)))
                                          (replique-debug--recorded-text
-                                          (plist-get value :value) (plist-get value :times))))
+                                          (plist-get value :value) (plist-get value :times)
+                                          (plist-get value :param))))
                                      (replique-debug--outermost on-it)
                                      "")
                           lines))
@@ -945,6 +1000,7 @@ it showed before, and killed when the definition records no more."
      (replique-inspect-show
       (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
       (list :debug (append (list :site (plist-get value :site))
+                           (when-let* ((arg (plist-get value :arg))) (list :arg arg))
                            (unless every-call
                              (list :call (overlay-get mark 'replique-debug-shown-call)))))
       (format "%s%s" (truncate-string-to-width (replace-regexp-in-string "[ \t\n]+" " " text)

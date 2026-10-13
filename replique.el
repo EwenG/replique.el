@@ -65,6 +65,13 @@
 ;;   M-x replique-debug-keep-locals  compile code that keeps its locals,
 ;;                               which starting a stopped call over needs
 ;;
+;; A function traced says each time it is called what it was called with
+;; and returned, and its calls are a tree - see `replique-trace'.
+;;
+;;   C-c C-d T                   trace functions: at point, around it, of
+;;                               the namespace, or those a branch changed
+;;   C-c C-d c                   the calls traced, as a tree
+;;
 ;; That mode turns `replique-mode' on, so the commands below are bound in a
 ;; Clojure file without anything having to be turned on by hand.
 
@@ -92,6 +99,7 @@
 (require 'replique-stale)
 (require 'replique-inspect)
 (require 'replique-debug)
+(require 'replique-trace)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.
@@ -131,6 +139,8 @@ happened to be current, which is a buffer of somebody else's.")
     (define-key map (kbd "C-c C-d n") #'replique-debug-recorded-after)
     (define-key map (kbd "C-c C-d t") #'replique-debug-cycle-recorded)
     (define-key map (kbd "C-c C-d e") #'replique-debug-eval-in-frame)
+    (define-key map (kbd "C-c C-d T") #'replique-trace)
+    (define-key map (kbd "C-c C-d c") #'replique-trace-calls)
     map)
   "Keymap of `replique-mode'.")
 
