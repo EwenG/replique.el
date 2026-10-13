@@ -1493,6 +1493,22 @@ before is gone back to, and a value browsed in the node program."
                                                               (replique-debug-test--text)))))
                                      (buffer-list)))
                          30))
+                ;; evaluated in, in the node program, with its locals
+                (with-current-buffer source
+                  (search-forward "(mapv")
+                  (replique-debug-eval-in-call))
+                (let ((in-call (with-current-buffer source
+                                 (overlay-get (replique-debug--recording-at-point)
+                                              'replique-debug-repl))))
+                  (should (replique-test-wait-for
+                           (lambda () (replique-repl--in-call in-call)) 120))
+                  (replique-repl-send-code in-call "[m (* x 10)]")
+                  (should (replique-test-wait-for
+                           (lambda () (string-match-p "^\\[{:a 1} 20\\]$"
+                                                      (replique-test-text in-call)))
+                           30))
+                  (when (replique-repl-live-p in-call)
+                    (replique-conn-close (replique-repl--conn in-call))))
                 ;; evaluated again the ordinary way, it is let go of
                 (with-current-buffer source
                   (goto-char (point-min))

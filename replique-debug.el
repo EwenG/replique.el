@@ -1209,7 +1209,9 @@ one while the last one is followed.  Asked from another place of the code,
 it moves there.  It goes when the definition records no more - and stays
 when it is recorded again, in the calls of the definition as it is now.
 
-Clojure's only."
+A ClojureScript definition is evaluated in from a ClojureScript repl on the
+runtime it was recorded in, which keeps the values - and binds a local
+whose value is not known to :replique/not-recorded."
   (interactive)
   (let* ((mark (replique-debug--recording-at-point))
          (process (overlay-get mark 'replique-debug-process))
@@ -1218,9 +1220,8 @@ Clojure's only."
                        (when-let* ((c (overlay-get mark 'replique-debug-call)))
                          (list :call c))
                        (list :line (car place) :column (cdr place))))
+         (keys (overlay-get mark 'replique-debug-keys))
          (repl (overlay-get mark 'replique-debug-repl)))
-    (when (overlay-get mark 'replique-debug-keys)
-      (user-error "A ClojureScript call is not evaluated in, only Clojure's"))
     (unless (overlay-get mark 'replique-debug-calls)
       (user-error "Not called yet"))
     (if (replique-repl-live-p repl)
@@ -1230,7 +1231,8 @@ Clojure's only."
           (setq replique-current-repl repl)
           (pop-to-buffer (replique-repl--buffer repl)))
       (let ((name (format "*replique-recorded %s repl*" (replique-debug--unit-name mark))))
-        (setq repl (replique-repl--open process nil nil nil nil nil call))
+        (setq repl (replique-repl--open process (plist-get keys :dialect) (plist-get keys :target)
+                                        nil nil nil call))
         ;; Renamed after it is opened, and so kept - see
         ;; `replique-debug-eval-in-frame'
         (with-current-buffer (replique-repl--buffer repl)
