@@ -930,11 +930,14 @@ is not written in full is a var of the namespace this buffer is in."
 
 ;;;###autoload
 (defun replique-inspect-results ()
-  "Show what the current repl returned last: *1, *2 and *3.
+  "Show what the repl of this buffer returned last: *1, *2 and *3.
 
-Each value a form returns there is the next *1, and \\`g' shows it."
+The repl the buffer's code goes to - a .clj buffer's Clojure one, a .cljs
+buffer's ClojureScript one, a .cljc one's the repl in hand - or, in a
+repl buffer, that repl.  Each value a form returns there is the next *1,
+and \\`g' shows it."
   (interactive)
-  (let* ((repl (replique-repl-ensure))
+  (let* ((repl (replique-repl-ensure-here))
          (process (replique-repl-process repl))
          (keys (replique-repl-dialect-keys repl))
          (source (if keys
