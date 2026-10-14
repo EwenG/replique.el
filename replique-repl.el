@@ -1242,7 +1242,10 @@ live repl of the current process."
                 (seq-find #'replique-repl-live-p (replique-process--repls process)))))))
 
 (defun replique-select-repl ()
-  "Choose the repl the commands of a Clojure buffer act on."
+  "Choose the repl the commands of a Clojure buffer act on.
+
+Its process becomes the current one, which the commands that are not
+asked of a repl act on."
   (interactive)
   (let* ((repls (seq-mapcat (lambda (process)
                               (seq-filter #'replique-repl-live-p
@@ -1265,7 +1268,11 @@ live repl of the current process."
       (let* ((repl replique-current-repl)
              (process (replique-repl-process repl)))
         (setf (replique-process--repls process)
-              (cons repl (delq repl (replique-process--repls process)))))
+              (cons repl (delq repl (replique-process--repls process))))
+        ;; AND ITS PROCESS MADE THE CURRENT ONE: tracing, debugging, loading
+        ;; are asked of the process, and choosing a repl of another one would
+        ;; otherwise leave them asking the process chosen before
+        (setq replique-current-process process))
       (message "replique: %s" choice))))
 
 (defun replique-repl-process (repl)

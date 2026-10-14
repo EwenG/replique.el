@@ -195,6 +195,20 @@ this, which is what replique 1 does in `replique/switch-active-repl'."
     (replique-repl-choice-test--in-mode #'replique-clojure-mode
       (should (eq clj (replique-repl-ensure-here))))))
 
+;; Choosing a repl of another process
+(ert-deftest replique-repl-choice-test-choosing-a-repl-chooses-its-process ()
+  "Tracing and debugging are asked of the current process, not of a repl:
+a repl of another process chosen, they go to that process too, and not to
+the one the code evaluated is not sent to."
+  (replique-repl-choice-test--with-repls ((clj nil nil))
+    (let* ((other (replique-repl-choice-test--process "other"))
+           (replique-processes (list other process))
+           (theirs (replique-repl-choice-test--repl other)))
+      (replique-repl-choice-test--choose theirs)
+      (should (eq other (replique-process-current)))
+      (replique-repl-choice-test--choose clj)
+      (should (eq process (replique-process-current))))))
+
 (ert-deftest replique-repl-choice-test-nothing-of-that-dialect-is-said-as-the-buffer-would ()
   "The message names what the buffer needed and not what the lookup asked
 for.  A .cljc buffer with nothing open would have been looked up as
