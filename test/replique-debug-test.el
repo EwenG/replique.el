@@ -1040,6 +1040,82 @@ named as a param is at the end of its line."
           (backward-char)
           (should (equal "⇒ 3 ×2" (substring-no-properties (replique-debug-eldoc)))))))))
 
+(ert-deftest replique-debug-test-a-loop-is-gone-round-an-iteration-at-a-time ()
+  "With point in a loop, what it did in one iteration, the call shown
+staying; the iterations kept only, found by what holds in them, and every
+one browsed - and the whole call again."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (with-temp-file replique-debug-test--file
+        (insert "(ns user)\n(defn f [xs]\n  (doseq [x xs] (inc x)))\n"))
+      (let* ((replique-debug-recorded-shown 'line)
+             (source (find-file-noselect replique-debug-test--file))
+             (loops '((:site 1 :line 3 :column 3 :end-line 3 :end-column 25
+                             :iterations 25 :kept ((1 9) (16 25)))))
+             (answer (lambda (iteration x)
+                       (replique-debug-test--answer
+                        :debug-recorded
+                        (append (list :iteration iteration :loops loops)
+                                (replique-debug-test--recorded
+                                 5 `((:site 1 :kind "local" :line 3 :column 11 :end-line 3
+                                            :end-column 12 :value ,x :times 1)
+                                     (:site 2 :line 3 :column 17 :end-line 3 :end-column 24
+                                            :value "…" :not-kept t)))))))
+             (shown (lambda ()
+                      (mapconcat #'car (replique-debug-test--after-strings source) "")))
+             (inspected nil))
+        (with-current-buffer source (replique-clojure-mode))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 3 :end-column 26 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (append (list :loops loops)
+                 (replique-debug-test--recorded
+                  5 '((:site 1 :kind "local" :line 3 :column 11 :end-line 3 :end-column 12
+                             :value "24" :times 25)))))
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "(inc")
+          (should-error (replique-debug-whole-call) :type 'user-error)
+          (replique-debug-next-iteration)
+          (should (equal '(:op :debug-recorded :unit 7 :call 5 :iteration (:site 1 :index 1))
+                         (funcall answer '(:site 1 :index 1) "0")))
+          (should (string-match-p "call 2 of 2 · worker · .* · doseq x, iteration 1 of 25"
+                                  (funcall shown)))
+          (should (string-match-p (regexp-quote " x ⇒ 0 ⇒ …") (funcall shown)))
+          (should-error (replique-debug-previous-iteration) :type 'user-error)
+          (replique-debug-next-iteration 8)
+          (should (equal '(:site 1 :index 9) (plist-get (funcall answer '(:site 1 :index 9) "8")
+                                                        :iteration)))
+          ;; the iterations not kept are skipped
+          (replique-debug-next-iteration)
+          (should (equal '(:site 1 :index 16) (plist-get (funcall answer '(:site 1 :index 16) "15")
+                                                         :iteration)))
+          (replique-debug-find-iteration "(= x 3)")
+          (should (equal '(:op :debug-find-iteration :unit 7 :site 1 :line 3 :column 21
+                               :code "(= x 3)" :call 5 :from 16)
+                         (replique-debug-test--answer :debug-find-iteration
+                                                      '(:tag "reply" :index 4))))
+          (should (equal '(:site 1 :index 4) (plist-get (funcall answer '(:site 1 :index 4) "3")
+                                                        :iteration)))
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process _keys source title &rest _)
+                       (setq inspected (list source title)))))
+            (replique-debug-inspect-iterations))
+          ;; and the form at point, a column
+          (should (equal '((:debug (:loop 1 :call 5 :site 2)) "doseq x, every iteration, call 2 of 2")
+                         inspected))
+          (replique-debug-whole-call)
+          ;; the last call followed again, as it was before
+          (should (equal '(:op :debug-recorded :unit 7)
+                         (replique-debug-test--answer
+                          :debug-recorded
+                          (append (list :loops loops) (replique-debug-test--recorded 5 nil)))))
+          (should-not (string-match-p "iteration" (funcall shown))))))))
+
 ;;; Recording ClojureScript
 
 (ert-deftest replique-debug-test-clojurescript-is-recorded-and-not-stepped-through ()
@@ -1554,6 +1630,95 @@ before is gone back to, and a value browsed in the node program."
             (dolist (b (buffer-list))
               (when (with-current-buffer b (derived-mode-p 'replique-inspect-mode))
                 (kill-buffer b)))
+            (when repl
+              (replique-conn-close (replique-repl--conn repl))
+              (kill-buffer (replique-repl--buffer repl)))
+            (replique-kill-process process)))))))
+
+(ert-deftest replique-debug-test-a-clojurescript-loop-is-gone-round ()
+  "A loop of a .cljs definition recorded in a node repl, an iteration at a
+time: what its code evaluated then is written, a repl evaluates in it, and
+an iteration is found by what holds in it."
+  (let ((replique-debug-recorded-shown 'every)
+        (jar (replique-debug-test--compiler))
+        (cljs (expand-file-name "../replique-cljs" (replique-test-project))))
+    (unless (file-directory-p cljs) (ert-skip (format "No ClojureScript compiler at %s" cljs)))
+    (unless (executable-find "node") (ert-skip "No node"))
+    (replique-test-with-project dir
+      (with-temp-file (expand-file-name "deps.edn" dir)
+        (insert (format (concat "{:paths [\"src\"] :deps {org.clojure/clojure {:local/root %S}"
+                                " replique/replique-cljs {:local/root %S}}}")
+                        jar cljs)))
+      (make-directory (expand-file-name "src" dir))
+      (let ((file (expand-file-name "src/iterated.cljs" dir)))
+        (with-temp-file file
+          (insert "(ns iterated)\n\n(defn il [xs]\n  (doseq [x xs]\n    (inc x)))\n"))
+        (let* ((replique-coordinates (format "{:local/root %S}" (replique-test-project)))
+               (replique-debugger nil)
+               (process (let ((known replique-processes))
+                          (replique-process-start dir nil nil nil)
+                          (unless (replique-test-wait-for
+                                   (lambda () (seq-difference replique-processes known)) 120)
+                            (error "The process did not start"))
+                          (replique-test--note-process
+                           (car (seq-difference replique-processes known)))))
+               (repl nil)
+               (source nil)
+               (shown (lambda ()
+                        (mapconcat #'car (replique-debug-test--after-strings source) ""))))
+          (unwind-protect
+              (save-window-excursion
+                (setq repl (replique-repl process :cljs :node))
+                (should (replique-test-wait-for (lambda () (replique-repl--ns repl)) 120))
+                (setq source (find-file-noselect file))
+                (with-current-buffer source
+                  (replique-eval-defun)       ; the ns
+                  (replique-test-settle 2)
+                  (search-forward "(defn il")
+                  (replique-debug-record))
+                (should (replique-test-wait-for
+                         (lambda () (replique-debug-test--marks source)) 60))
+                (replique-repl-send-code repl "(iterated/il [1 2 3])")
+                (should (replique-test-wait-for
+                         (lambda () (string-match-p (regexp-quote " ⇒ 4 ×3") (funcall shown)))
+                         30))
+                (with-current-buffer source
+                  (goto-char (point-min))
+                  (search-forward "(inc")
+                  (replique-debug-next-iteration))
+                (should (replique-test-wait-for
+                         (lambda () (string-match-p "doseq x, iteration 1 of 3" (funcall shown)))
+                         30))
+                (should (string-match-p (regexp-quote " ⇒ 2") (funcall shown)))
+                (with-current-buffer source (replique-debug-next-iteration))
+                (should (replique-test-wait-for
+                         (lambda () (string-match-p "iteration 2 of 3" (funcall shown)))
+                         30))
+                (should (string-match-p (regexp-quote " ⇒ 3") (funcall shown)))
+                ;; evaluated in, in that iteration
+                (with-current-buffer source (replique-debug-eval-in-call))
+                (let ((in-call (with-current-buffer source
+                                 (overlay-get (replique-debug--recording-at-point)
+                                              'replique-debug-repl))))
+                  (should (replique-test-wait-for
+                           (lambda () (replique-repl--in-call in-call)) 120))
+                  (replique-repl-send-code in-call "(* x 10)")
+                  (should (replique-test-wait-for
+                           (lambda () (string-match-p "^20$" (replique-test-text in-call)))
+                           30))
+                  (when (replique-repl-live-p in-call)
+                    (replique-conn-close (replique-repl--conn in-call))))
+                ;; found by what holds in it
+                (with-current-buffer source (replique-debug-find-iteration "(= x 3)"))
+                (should (replique-test-wait-for
+                         (lambda () (string-match-p "iteration 3 of 3" (funcall shown)))
+                         60))
+                (with-current-buffer source (replique-debug-whole-call))
+                (should (replique-test-wait-for
+                         (lambda () (not (string-match-p "iteration" (funcall shown))))
+                         30))
+                (should (string-match-p (regexp-quote " ⇒ 4 ×3") (funcall shown))))
+            (when (buffer-live-p source) (kill-buffer source))
             (when repl
               (replique-conn-close (replique-repl--conn repl))
               (kill-buffer (replique-repl--buffer repl)))
