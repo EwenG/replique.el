@@ -127,6 +127,35 @@ after what changed on disk was offered to be loaded."
       (should (= 3 offered))))
     (should (replique-trace--buffer-of process nil))))
 
+(ert-deftest replique-trace-test-a-diff-is-traced-in-the-dialect-of-the-buffer ()
+  "A .clj buffer traces what changed of Clojure, a .cljs one of ClojureScript,
+a .cljc one of the dialect of the repl in hand."
+  (replique-trace-test--with
+    (cl-letf* ((repl-dialect :clj)
+               ((symbol-function 'replique-fresh-ensure) #'ignore)
+               ((symbol-function 'locate-dominating-file) (lambda (&rest _) "/tmp/"))
+               ((symbol-function 'replique-trace--base) (lambda (_) "master"))
+               ((symbol-function 'read-string) (lambda (_prompt initial) initial))
+               ((symbol-function 'replique-repl-for-dialect) #'ignore)
+               ((symbol-function 'replique-dialect--of-current-repl) (lambda () repl-dialect))
+               ((symbol-function 'replique-trace--changed)
+                (lambda (_root _base) '((:clj "a/g" "b/h") (:cljs "b/h" "c/k"))))
+               (traced (lambda (mode)
+                         (with-temp-buffer
+                           (funcall mode)
+                           (replique-trace ?d))
+                         (prog1 (mapcar #'car replique-trace-test--asked)
+                           (setq replique-trace-test--asked nil)))))
+      (should (equal '((:op :trace :vars ["a/g" "b/h"]))
+                     (funcall traced #'replique-clojure-mode)))
+      (should (equal '((:op :trace :vars ["b/h" "c/k"] :dialect :cljs))
+                     (funcall traced #'replique-clojure-clojurescript-mode)))
+      (should (equal '((:op :trace :vars ["a/g" "b/h"]))
+                     (funcall traced #'replique-clojure-clojurec-mode)))
+      (setq repl-dialect :cljs)
+      (should (equal '((:op :trace :vars ["b/h" "c/k"] :dialect :cljs))
+                     (funcall traced #'replique-clojure-clojurec-mode))))))
+
 (ert-deftest replique-trace-test-what-is-not-traced-is-said ()
   "How many were traced, and why the others were not, by reason."
   (let ((said (lambda (frame)

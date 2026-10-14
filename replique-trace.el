@@ -215,17 +215,6 @@ RANGES t, every one."
 
 ;;; Tracing
 
-(defun replique-trace--cljs-keys ()
-  "Return the dialect keys of the ClojureScript runtime the repl evaluates in."
-  (append (list :dialect :cljs)
-          (when-let* ((repl (replique-repl-for-dialect :cljs))
-                      (target (replique-repl-target repl)))
-            (list :target target))))
-
-(defun replique-trace--keys (dialect)
-  "Return the dialect keys of a question about DIALECT's functions."
-  (when (eq :cljs dialect) (replique-trace--cljs-keys)))
-
 (defun replique-trace--why-not (skipped)
   "Say why the vars SKIPPED were not traced, those of each reason together."
   (let ((by-why nil))
@@ -286,6 +275,10 @@ without; every function of the namespace, `n'; or those a branch
 changed, `d', against a revision asked for.  See `replique-trace-calls'
 for the calls, as a tree.
 
+Of the dialect of this buffer: a .clj buffer traces Clojure, a .cljs one
+ClojureScript, and a .cljc one - or a buffer of neither, as a diff -
+the dialect of the repl in hand.
+
 What changed on disk since the process read it is offered to be loaded
 first - see `replique-fresh-ensure'."
   (interactive
@@ -315,24 +308,26 @@ first - see `replique-fresh-ensure'."
                         (user-error "This buffer names no namespace"))))
             (replique-fresh-ensure "tracing")
             (replique-trace--send process keys (list :op :trace :ns ns) ns)))
+      ;; of the dialect of this buffer only, as the other scopes: a .cljc
+      ;; one's, that of the repl in hand
       (?d (let* ((root (or (locate-dominating-file default-directory ".git")
                            (user-error "Not in a git repository")))
                  (base (read-string "Changed since: " (replique-trace--base root)))
-                 (changed (replique-trace--changed root base))
-                 (any nil))
-            (when (or (cdr (assq :clj changed)) (cdr (assq :cljs changed)))
-              (replique-fresh-ensure "tracing"))
-            (dolist (dialect '(:clj :cljs))
-              (when-let* ((names (delete-dups (cdr (assq dialect changed)))))
-                (setq any t)
-                (replique-trace--send process (replique-trace--keys dialect)
-                                      (list :op :trace :vars (vconcat names))
-                                      (format "%s function%s changed since %s"
-                                              (length names) (if (cdr names) "s" "")
-                                              (if (string-match-p "\\`[0-9a-f]\\{40\\}\\'" base)
-                                                  (substring base 0 7)
-                                                base)))))
-            (unless any (message "replique: no function changed since %s" base)))))))
+                 (dialect (replique-dialect))
+                 (names (delete-dups
+                         (cdr (assq dialect (replique-trace--changed root base)))))
+                 (since (if (string-match-p "\\`[0-9a-f]\\{40\\}\\'" base)
+                            (substring base 0 7)
+                          base)))
+            (if (not names)
+                (message "replique: no %s function changed since %s"
+                         (if (eq :cljs dialect) "ClojureScript" "Clojure") since)
+              (replique-fresh-ensure "tracing")
+              (replique-trace--send process keys
+                                    (list :op :trace :vars (vconcat names))
+                                    (format "%s function%s changed since %s"
+                                            (length names) (if (cdr names) "s" "")
+                                            since))))))))
 
 ;;;###autoload
 (defun replique-untrace ()
