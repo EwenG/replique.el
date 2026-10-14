@@ -574,6 +574,14 @@ What is open in it is laid out the way it prints."
   (and (not replique-inspect--plain)
        (plist-get (replique-inspect--node id) :columns)))
 
+(defun replique-inspect--in-table-p (id)
+  "Return non-nil when the node ID is shown as a cell of a table.
+A cell is the child of its row by its key, the same node - which, the rows
+laid out the way they print, is a part like any other."
+  (when-let* ((row (and (plist-get (replique-inspect--node id) :cell)
+                        (plist-get (replique-inspect--node id) :parent))))
+    (replique-inspect--table-p (plist-get (replique-inspect--node row) :parent))))
+
 (defun replique-inspect--cell (text width id &optional last)
   "Return TEXT, part of a cell of the row ID, in WIDTH chars: cut, or padded.
 Not padded where it is the LAST cell of its row."
@@ -895,7 +903,7 @@ On the \"more\" line of a node, load more of it."
         ((not (plist-get (plist-get node :line) :expandable))
          (message "replique: there is nothing more in it than is shown"))
         ;; a cell of a table is opened on its own, the table staying a table
-        ((plist-get node :cell) (replique-inspect-focus))
+        ((replique-inspect--in-table-p id) (replique-inspect-focus))
         ((plist-get node :open)
          (replique-inspect--set id :open nil)
          (replique-inspect--render))

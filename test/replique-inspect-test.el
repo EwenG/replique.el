@@ -407,7 +407,23 @@ own, and the way it prints with T."
       (should (equal "{:deep [0 1 ...]}\n" (replique-inspect-test--text)))
       (replique-inspect-up)
       (replique-inspect-toggle-tables)
-      (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text))))))
+      (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text)))
+      ;; laid out the way it prints, a cell is opened in place, as anything is
+      (replique-inspect-test--goto "{:i 2")
+      (replique-inspect-toggle)
+      (replique-inspect-test--answer
+       (list :tag "reply"
+             :children (list (replique-inspect-test--line 5 "2" :via "key" :key ":i")
+                             (list :node 6 :value "{:deep [0 1 ...]}" :kind "map"
+                                   :count 1 :expandable t :truncated t
+                                   :via "key" :key ":y"))
+             :total 2 :more nil :open "{" :close "}"))
+      (replique-inspect-test--goto "{:deep")
+      ;; what is in it was loaded already, when it was browsed on its own
+      (replique-inspect-toggle)
+      (should-not replique-inspect--focus)
+      (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text)))
+      (should (string-match-p "{:deep \\[0 1 \\.\\.\\.\\]}" (replique-inspect-test--text))))))
 
 (ert-deftest replique-inspect-test-a-view-that-cannot-be-opened-says-why ()
   (replique-inspect-test--with
