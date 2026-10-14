@@ -383,10 +383,11 @@ that what it says is what is read."
         :total 2 :more nil :open "[" :close "]"))
 
 (ert-deftest replique-inspect-test-a-seq-of-maps-is-a-table ()
-  "A row per map, a column per key, the keys first - a cell browsed on its
-own, and the way it prints with T."
+  "Where tables are asked for: a row per map, a column per key, the keys
+first - a cell browsed on its own, and the way it prints with T."
   (replique-inspect-test--with
     (with-current-buffer (replique-inspect-show process nil '(:var "user/rows") "user/rows")
+      (setq replique-inspect--tables t)
       (replique-inspect-test--answer (replique-inspect-test--table))
       (should (equal (concat "[:i  :x   :y\n"
                              " 1   \"a\"\n"
@@ -403,10 +404,14 @@ own, and the way it prints with T."
                                               :via "key" :key ":deep"))
                         :total 1 :more nil :open "{" :close "}"))))
         (should (eq :inspect-children (plist-get msg :op)))
-        (should (eql 6 (plist-get msg :node))))
+        (should (eql 6 (plist-get msg :node)))
+        (should (eq t (plist-get msg :tables))))
       (should (equal "{:deep [0 1 ...]}\n" (replique-inspect-test--text)))
       (replique-inspect-up)
       (replique-inspect-toggle-tables)
+      ;; asked again, without its cells
+      (should-not (plist-get (replique-inspect-test--answer (replique-inspect-test--table))
+                             :tables))
       (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text)))
       ;; laid out the way it prints, a cell is opened in place, as anything is
       (replique-inspect-test--goto "{:i 2")
@@ -424,6 +429,65 @@ own, and the way it prints with T."
       (should-not replique-inspect--focus)
       (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text)))
       (should (string-match-p "{:deep \\[0 1 \\.\\.\\.\\]}" (replique-inspect-test--text))))))
+
+(ert-deftest replique-inspect-test-a-seq-of-maps-is-printed-by-default ()
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:var "user/rows") "user/rows")
+      (should-not (plist-get (replique-inspect-test--answer (replique-inspect-test--table))
+                             :tables))
+      (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text))))))
+
+;; iteration 1  acc 0  x 1
+;; iteration 12 acc {:a [0 1 ...]}  x 2
+(defun replique-inspect-test--outline ()
+  "The answer to opening a view of the iterations of a loop, an outline."
+  (list :tag "reply" :view 7
+        :root (list :node 0 :value "iteration 1 acc 0  x 1 · ..." :kind "outline" :count 2
+                    :expandable t :truncated t)
+        :children
+        (list (list :node 1 :value "acc 0  x 1" :kind "outline" :count 2
+                    :via "label" :key "iteration 1" :pad 12)
+              (list :node 2 :value "acc {:a [0 1 ...]}  x 2" :kind "outline" :count 2
+                    :expandable t :truncated t :via "label" :key "iteration 12" :pad 12))
+        :total 2 :more nil :open "" :close ""))
+
+(ert-deftest replique-inspect-test-what-is-not-data-is-an-outline ()
+  "A heading a line, its label apart from the value - and an outline in it
+opened under it, as magit opens a section."
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:debug (:loop 3)) "loop")
+      (replique-inspect-test--answer (replique-inspect-test--outline))
+      (should (equal (concat "iteration 1  acc 0  x 1\n"
+                             "iteration 12 acc {:a [0 1 ...]}  x 2\n")
+                     (replique-inspect-test--text)))
+      (replique-inspect-test--goto "iteration 1 ")
+      (should (eq 'replique-inspect-label (car (ensure-list (get-text-property (point) 'face)))))
+      (replique-inspect-test--goto "acc {")
+      (replique-inspect-toggle)
+      (let ((msg (replique-inspect-test--answer
+                  (list :tag "reply"
+                        :children (list (list :node 3 :value "{:a [0 1 ...]}" :kind "map"
+                                              :count 1 :expandable t :truncated t
+                                              :via "label" :key "acc" :pad 3)
+                                        (replique-inspect-test--line 4 "2" :via "label" :key "x"
+                                                                     :pad 3))
+                        :total 2 :more nil :open "" :close ""))))
+        ;; written under its label, indented
+        (should (eql 2 (plist-get msg :column))))
+      (should (equal (concat "iteration 1  acc 0  x 1\n"
+                             "iteration 12\n"
+                             "  acc {:a [0 1 ...]}\n"
+                             "  x   2\n")
+                     (replique-inspect-test--text)))
+      ;; what is under a label is written after it, padded
+      (replique-inspect-test--goto "{:a")
+      (replique-inspect-toggle)
+      (should (eql 6 (plist-get (replique-inspect-test--asked) :column)))
+      ;; closed, as a section is folded
+      (replique-inspect-test--goto "iteration 12")
+      (replique-inspect-toggle)
+      (should (string-match-p "^iteration 12 acc {:a \\[0 1 \\.\\.\\.\\]}  x 2$"
+                              (replique-inspect-test--text))))))
 
 (ert-deftest replique-inspect-test-a-view-that-cannot-be-opened-says-why ()
   (replique-inspect-test--with

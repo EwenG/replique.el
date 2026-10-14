@@ -1123,22 +1123,22 @@ one browsed - and the whole call again."
               (with-current-buffer view
                 (should replique-debug-view-mode)
                 ;; or every name, and the form a column
-                (replique-debug-view-table)
+                (replique-debug-view-locals)
                 (should (equal '((:debug (:loop 1 :call 5 :site 2))
                                  "doseq x, every iteration, call 2 of 2")
                                inspected))
-                (replique-debug-view-table)
-                ;; wider: every call, by call - or a row each
+                (replique-debug-view-locals)
+                ;; wider: every call, by call - with the params or not
                 (replique-debug-view-widen)
                 (should (equal '((:debug (:site 2)) "(inc x), every call of f") inspected))
-                (replique-debug-view-table)
+                (replique-debug-view-locals)
                 (should (equal '((:debug (:calls 7 :site 2)) "f, every call") inspected))
-                ;; and back to one value, which is no table
+                ;; and back to one value, which has no locals around it
                 (replique-debug-view-widen)
                 (should (equal '((:debug (:site 2 :call 5 :iteration (:site 1 :index 4)))
                                  "(inc x), call 2 of 2 · doseq x, iteration 4 of 25")
                                inspected))
-                (should-error (replique-debug-view-table) :type 'user-error)))
+                (should-error (replique-debug-view-locals) :type 'user-error)))
             ;; on a name, every name
             (search-backward "x xs")
             (replique-debug-inspect-recorded t))

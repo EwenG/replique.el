@@ -91,10 +91,13 @@
 ;;
 ;; C-c C-d v browses the value of the form at point, in the call shown -
 ;; with C-u, around it: in every iteration of the innermost loop it is in,
-;; {index value}, or in every call, {n value}, where it is in none.  The
-;; view follows the call shown; in it, c widens what it shows - one value,
-;; every iteration of each loop around, from the innermost, every call -
-;; and t toggles a table, a row per iteration, or per call.
+;; or in every call, where it is in none, a line each, under its label.
+;; What is not the value - which iteration, which call, which local - is
+;; not printed as if it were: it is an outline, its headings opened and
+;; folded with TAB.  The view follows the call shown; in it, c widens what
+;; it shows - one value, every iteration of each loop around, from the
+;; innermost, every call - and t shows the locals with it, or the form
+;; alone.
 ;;
 ;; ClojureScript is recorded too, and only recorded: a page or a node
 ;; program cannot be stopped from here, so stepping and breakpoints are
@@ -812,22 +815,21 @@ Edited since, it says so."
 ;;   value                  what F evaluated to in the call shown, or in
 ;;                          the iteration shown
 ;;   (:loop L :name N)      in each iteration of the loop L, as the process
-;;                          said it, called N, of the call shown: {index
-;;                          value} - or with :table, a row each, of the
-;;                          names it binds and a column of F
-;;   calls                  in each call, {n value} - or with :table, a row
-;;                          each, of the params of the definition and a
-;;                          column of F
+;;                          said it, called N, of the call shown, by
+;;                          iteration - or with :locals, of the names it
+;;                          binds as well as F
+;;   calls                  in each call, by call - or with :locals, of the
+;;                          params of the definition as well as F
 ;;
-;; as (:form F :text T :place P :scope S :table B), its
+;; as (:form F :text T :place P :scope S :locals B), its
 ;; `replique-debug-view-of', which `replique-debug--view-source' makes a
 ;; source of, as `replique-inspect-show' takes it.  In the view, c goes
-;; from one scope to the next, around point, and t toggles the table.
+;; from one scope to the next, around point, and t toggles the locals.
 
 (defun replique-debug--by-form-p (of)
-  "Return non-nil when the view OF can show its form by itself, not a table.
+  "Return non-nil when the view OF can show its form by itself, not the locals.
 Of a loop, a form in it: not the loop itself, nor a name it binds, which
-has a column, nor a param of a fn entered."
+is one of them, nor a param of a fn entered."
   (let ((form (plist-get of :form))
         (scope (plist-get of :scope))
         (place (plist-get of :place)))
@@ -840,10 +842,10 @@ has a column, nor a param of a fn entered."
                     (not (equal place (cons (plist-get loop :line)
                                             (plist-get loop :column))))))))))
 
-(defun replique-debug--table-p (of)
-  "Return non-nil when the view OF shows a table."
+(defun replique-debug--locals-p (of)
+  "Return non-nil when the view OF shows the locals of each iteration or call."
   (and (not (eq 'value (plist-get of :scope)))
-       (or (plist-get of :table) (not (replique-debug--by-form-p of)))))
+       (or (plist-get of :locals) (not (replique-debug--by-form-p of)))))
 
 (defun replique-debug--view-source (mark)
   "Return what the view of MARK shows of the call shown, to browse."
@@ -852,7 +854,7 @@ has a column, nor a param of a fn entered."
            (scope (plist-get of :scope))
            (form (plist-get of :form))
            (site (and form (not (plist-get form :arg)) (plist-get form :site)))
-           (table (replique-debug--table-p of)))
+           (locals (replique-debug--locals-p of)))
       (list :debug
             (cond
              ((eq 'value scope)
@@ -862,7 +864,7 @@ has a column, nor a param of a fn entered."
                       (when-let* ((it (overlay-get mark 'replique-debug-shown-iteration)))
                         (list :iteration it))))
              ((eq 'calls scope)
-              (if table
+              (if locals
                   (append (list :calls (overlay-get mark 'replique-debug-unit))
                           (when site (list :site site)))
                 (append (list :site (plist-get form :site))
@@ -871,7 +873,7 @@ has a column, nor a param of a fn entered."
              (t (append (list :loop (plist-get (plist-get scope :loop) :site))
                         (when call (list :call call))
                         (when (and site (not (plist-get form :local))) (list :site site))
-                        (unless table (list :only t)))))))))
+                        (unless locals (list :only t)))))))))
 
 (defun replique-debug--call-number (mark)
   "Return \"call N of M\", of the call MARK shows."
@@ -887,18 +889,18 @@ has a column, nor a param of a fn entered."
   (let* ((of (overlay-get mark 'replique-debug-view-of))
          (scope (plist-get of :scope))
          (text (plist-get of :text))
-         (table (replique-debug--table-p of)))
+         (locals (replique-debug--locals-p of)))
     (cond
      ((eq 'value scope)
       (format "%s, %s%s" text (replique-debug--call-number mark)
               (replique-debug--iteration-text mark)))
      ((eq 'calls scope)
-      (if table
+      (if locals
           (format "%s, every call" (replique-debug--unit-name mark))
         (format "%s, every call of %s" text (replique-debug--unit-name mark))))
      (t
       (let ((round (replique-debug--time-round (plist-get scope :loop))))
-        (if table
+        (if locals
             (format "%s, every %s, %s" (plist-get scope :name) round
                     (replique-debug--call-number mark))
           (format "%s, every %s of %s, %s" text round (plist-get scope :name)
@@ -915,7 +917,7 @@ has a column, nor a param of a fn entered."
 (defvar replique-debug-view-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "c") #'replique-debug-view-widen)
-    (define-key map (kbd "t") #'replique-debug-view-table)
+    (define-key map (kbd "t") #'replique-debug-view-locals)
     map)
   "Keymap of `replique-debug-view-mode'.")
 
@@ -924,7 +926,8 @@ has a column, nor a param of a fn entered."
 
 \\<replique-debug-view-mode-map>\\[replique-debug-view-widen] shows the form in the next scope around it - one
 value, every iteration of each loop it is in, from the innermost, every
-call - and \\[replique-debug-view-table] toggles a table, a row per iteration or per call."
+call - and \\[replique-debug-view-locals] shows the locals of each iteration or
+call with it, or the form alone."
   :lighter " Recorded"
   :keymap replique-debug-view-mode-map)
 (put 'replique-debug-view-mode 'permanent-local t)
@@ -1013,22 +1016,22 @@ loop around that one, then to every call - and back to one value."
     (replique-debug--view mark (plist-put (copy-sequence of) :scope next))
     (message "replique: %s" (replique-debug--view-title mark))))
 
-(defun replique-debug-view-table ()
-  "Toggle a table in the view: a row per iteration, or per call.
-Of a loop, the names it binds each time round and the ones bound in it,
-and a column of the form; of every call, the params the definition was
-called with, and a column of the form."
+(defun replique-debug-view-locals ()
+  "Show the locals in the view with the form, or the form alone.
+In each iteration of a loop, the names it binds each time round and the
+ones bound in it; in each call, the params the definition was called
+with."
   (interactive)
   (let* ((mark (replique-debug--viewed-mark))
          (of (overlay-get mark 'replique-debug-view-of)))
     (cond
      ((eq 'value (plist-get of :scope))
-      (user-error "One value is no table - %s shows it in every iteration or call"
+      (user-error "One value has no locals around it - %s shows it in every iteration or call"
                   (substitute-command-keys "\\<replique-debug-view-mode-map>\\[replique-debug-view-widen]")))
      ((not (replique-debug--by-form-p of))
-      (user-error "There is no form here to show by itself, only the table"))
-     (t (replique-debug--view mark (plist-put (copy-sequence of) :table
-                                              (not (plist-get of :table))))))))
+      (user-error "There is no form here to show by itself, only the locals"))
+     (t (replique-debug--view mark (plist-put (copy-sequence of) :locals
+                                              (not (plist-get of :locals))))))))
 
 (defun replique-debug--draw-recorded (mark)
   "Show what the unit MARK marks recorded, as `replique-debug-recorded-shown' says.
@@ -1568,12 +1571,11 @@ kept only."
 The value itself, rather than its printing - in the iteration shown,
 where one is.  With AROUND, interactively the prefix argument, what it
 evaluated to around it: in each iteration of the innermost loop it is in
-that went round in the call shown, {index value} by the index of the
-iteration - or in each call kept it was evaluated in, {n value} by the
-number of the call, where it is in no loop.  On a name a loop binds, a
-param of a fn that is one, or the loop itself, every iteration of the
-loop, a row each, of the names it binds each time round and the ones bound
-in it.
+that went round in the call shown, by iteration - or in each call kept
+it was evaluated in, by call, where it is in no loop: an outline, a line
+each, labelled.  On a name a loop binds, a param of a fn that is one, or
+the loop itself, every iteration of the loop, of the names it binds each
+time round and the ones bound in it.
 
 In the one view the definition has, made a view of this whatever it
 showed before, and killed when the definition records no more.  It
@@ -1581,9 +1583,9 @@ follows the call shown: the call before or after, or the last as calls
 come, shows the value in that call there too - `:not-recorded' where the
 form was not evaluated.  A view of every call shows the calls that come.
 In it, c shows the form in the next scope around - one value, every
-iteration of each loop around it, every call - and t toggles a table, a
-row per iteration, or per call, of the params the definition was called
-with: see `replique-debug-view-mode'."
+iteration of each loop around it, every call - and t shows the locals
+with it, or the params the definition was called with: see
+`replique-debug-view-mode'."
   (interactive "P")
   (let* ((mark (replique-debug--recording-at-point t))
          (o (replique-debug--recorded-form-at (point)))

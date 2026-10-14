@@ -48,10 +48,16 @@
 ;; changed since the last refresh is highlighted.  The last values of a watched var are kept, and [ and ] go
 ;; through them.
 ;;
-;; A seq of maps - rows from a database, the iterations of a loop recorded -
-;; is shown as a table: a row per map, a column per key, the keys first.  A
-;; cell is the thing its map holds, closed, and \`TAB' or \`RET' browses it
-;; on its own.  \`T' shows it the way it prints instead.
+;; What a debugger says of values - which iteration of a loop each is of,
+;; which call, which local - is not part of them, and is not printed as if
+;; it were: it is an outline, a heading a line, its label apart from the
+;; value after it.  A heading that holds others is opened under it, and
+;; \`TAB' folds it.
+;;
+;; A seq of maps - rows from a database - is shown as a table with \`T', or
+;; always with `replique-inspect-tables': a row per map, a column per key,
+;; the keys first.  A cell is the thing its map holds, closed, and \`TAB' or
+;; \`RET' browses it on its own.
 ;;
 ;; A node is a path, to the process: what was open stays open across a
 ;; refresh, and a node that is no longer there says so.  A view whose process
@@ -85,10 +91,16 @@ Each change is one more, and the oldest goes.  Zero keeps none."
   :type 'natnum
   :group 'replique)
 
+(defcustom replique-inspect-tables nil
+  "Whether a seq of maps is shown as a table, rather than the way it prints.
+A row per map and a column per key - each view toggles it with
+`replique-inspect-toggle-tables'."
+  :type 'boolean
+  :group 'replique)
+
 (defcustom replique-inspect-cell-width 30
   "How many chars a cell of a table is shown in, at most.
-A seq of maps is shown as a table, a row per map and a column per key - see
-`replique-inspect-toggle-tables'."
+See `replique-inspect-tables'."
   :type 'natnum
   :group 'replique)
 
@@ -109,6 +121,12 @@ the key of a map is painted as the value it is, and an index as a note."
 (defface replique-inspect-gone
   '((t :inherit shadow :strike-through t))
   "Face for a node of an inspected value that is no longer there."
+  :group 'replique)
+
+(defface replique-inspect-label
+  '((t :inherit font-lock-comment-face :weight bold))
+  "Face for the label of a line of an outline - what is not part of the value.
+Which iteration of a loop a value is of, which call, which local."
   :group 'replique)
 
 ;;; What a buffer is showing
@@ -141,8 +159,19 @@ A plist of the `:line' the process sent, whether it is `:open', its
   "Where the history of a watched var is: (:count N) live, (:count N :at I)
 showing an older value.  Nil where none is kept.")
 
-(defvar-local replique-inspect--plain nil
-  "Non-nil when a seq of maps is shown the way it prints, not as a table.")
+(defvar-local replique-inspect--tables 'default
+  "Whether a seq of maps is shown as a table: t or nil, toggled in the view,
+or `default', as `replique-inspect-tables' says.")
+
+(defun replique-inspect--tables-p ()
+  "Return non-nil when the view shows a seq of maps as a table."
+  (if (eq 'default replique-inspect--tables)
+      replique-inspect-tables
+    replique-inspect--tables))
+
+(defun replique-inspect--layout ()
+  "Return what the ops are asked for to lay out the view: whether as tables."
+  (when (replique-inspect--tables-p) (list :tables t)))
 
 (defvar-local replique-inspect--meta nil
   "Whether metadata is shown, as the first child of what has some.")
@@ -199,16 +228,29 @@ is opened again on it."
   "Return where the node ID is written once open, as the ops take it.
 
 Which is at the start of its entry's line, after its key: an open child
-breaks the line its parent was written on, where it was on one."
+breaks the line its parent was written on, where it was on one.  And how it
+is laid out - see `replique-inspect--layout'."
   (let* ((node (replique-inspect--node id))
          (parent (plist-get node :parent))
          (column (plist-get (replique-inspect--node parent) :column)))
-    (list :width (replique-inspect--width)
-          :column (if (and parent column (not (memql id replique-inspect--focus)))
-                      (+ column
-                         (length (car (plist-get (replique-inspect--node parent) :delimiters)))
-                         (length (replique-inspect--label id)))
-                    (or (plist-get node :column) 0)))))
+    (append
+     (list :width (replique-inspect--width)
+           :column (cond
+                    ((or (null parent) (memql id replique-inspect--focus))
+                     (or (plist-get node :column) 0))
+                    ;; under a label: what is written after it, or an
+                    ;; outline in it, under it
+                    ((replique-inspect--outline-p parent)
+                     (let ((indent (or (plist-get (replique-inspect--node parent) :indent) 0)))
+                       (if (replique-inspect--outline-p id)
+                           (+ indent 2)
+                         (+ indent (replique-inspect--pad parent) 1))))
+                    (column
+                     (+ column
+                        (length (car (plist-get (replique-inspect--node parent) :delimiters)))
+                        (length (replique-inspect--label id))))
+                    (t (or (plist-get node :column) 0))))
+     (replique-inspect--layout))))
 
 (defun replique-inspect--ask (msg callback)
   "Send MSG about the view of the current buffer, and call CALLBACK.
@@ -363,6 +405,7 @@ anew, where the ids are the new view's."
              ;; left after that
              (unless paths (list :expand (replique-inspect--budget)))
              (when replique-inspect--meta (list :meta t))
+             (replique-inspect--layout)
              (when (and (plist-get replique-inspect--source :var)
                         (> replique-inspect-history 0))
                (list :history replique-inspect-history))
@@ -439,7 +482,8 @@ Then narrow to FOCUS, where it still leads somewhere."
                      :limit (max replique-inspect-page-size loaded))
                (when-let* ((at (plist-get replique-inspect--history :at)))
                  (list :at at))
-               (when replique-inspect--meta (list :meta t)))
+               (when replique-inspect--meta (list :meta t))
+               (replique-inspect--layout))
        (lambda (frame)
          (cond
           ((replique-inspect--gone-p frame)
@@ -532,11 +576,36 @@ in it changes, and most of what it shows was painted the time before.")
       (setq value (concat value (propertize "…" 'face 'replique-note))))
     (replique-inspect--part value id)))
 
-(defun replique-inspect--label (id)
-  "Return what the node ID is written after: its key in a map, or nil."
+(defun replique-inspect--outline-p (id)
+  "Return non-nil when the node ID is an outline: a heading a line.
+What a debugger says of values, labelled with what is not part of them."
+  (equal "outline" (plist-get (plist-get (replique-inspect--node id) :line) :kind)))
+
+(defun replique-inspect--pad (id)
+  "Return how wide the labels of the children of ID, an outline, are written."
+  (apply #'max 0 (mapcar (lambda (child)
+                           (let ((line (plist-get (replique-inspect--node child) :line)))
+                             (max (string-width (or (plist-get line :key) ""))
+                                  (or (plist-get line :pad) 0))))
+                         (plist-get (replique-inspect--node id) :children))))
+
+(defun replique-inspect--label (id &optional alone)
+  "Return what the node ID is written after: its key in a map, or nil.
+The label of a line of an outline is padded to the others', and then a
+space - unless ALONE on its line."
   (let* ((line (plist-get (replique-inspect--node id) :line))
          (key (plist-get line :key)))
     (pcase (plist-get line :via)
+      ;; not part of the value, and not painted as Clojure
+      ("label" (replique-inspect--part
+                (concat (propertize key 'face 'replique-inspect-label)
+                        (if alone
+                            ""
+                          (make-string (- (1+ (replique-inspect--pad
+                                               (plist-get (replique-inspect--node id) :parent)))
+                                          (string-width key))
+                                       ?\s)))
+                id))
       ;; a key of a map is a value, painted as one
       ("key" (replique-inspect--part (concat (replique-inspect--painted key) " ") id))
       ;; a property of a JavaScript object, the way #js {} prints it
@@ -566,13 +635,47 @@ What is open in it is laid out the way it prints."
   (replique-inspect--set id :column (current-column) :at (point))
   (cond
    ((not (replique-inspect--open-p id)) (insert (replique-inspect--closed id)))
+   ((replique-inspect--outline-p id) (replique-inspect--insert-outline id))
    ((replique-inspect--table-p id) (replique-inspect--insert-table id))
    (t (replique-inspect--insert-open id))))
 
 (defun replique-inspect--table-p (id)
   "Return non-nil when the node ID, open, is written as a table."
-  (and (not replique-inspect--plain)
+  (and (replique-inspect--tables-p)
        (plist-get (replique-inspect--node id) :columns)))
+
+(defun replique-inspect--insert-outline (id)
+  "Write the node ID, an outline, open: a heading a line.
+
+Each its label, and what is under it after it - or, an outline itself, on
+the lines under it, indented.  Where it is shown on its own, from where it
+is written; under a label, from the line after it."
+  (let* ((node (replique-inspect--node id))
+         (parent (plist-get node :parent))
+         (nested (and parent (replique-inspect--outline-p parent)
+                      (not (eql id (car replique-inspect--focus)))))
+         (indent (if nested
+                     (+ 2 (or (plist-get (replique-inspect--node parent) :indent) 0))
+                   (current-column)))
+         (first (not nested)))
+    (replique-inspect--set id :indent indent)
+    (dolist (child (plist-get node :children))
+      (unless first
+        (insert (replique-inspect--part "\n" id)
+                (replique-inspect--part (make-string indent ?\s) child)))
+      (setq first nil)
+      (if (replique-inspect--open-p child)
+          (progn
+            (insert (replique-inspect--label child (replique-inspect--outline-p child)))
+            (replique-inspect--insert-value child))
+        (replique-inspect--insert-entry
+         (cons child (concat (replique-inspect--label child)
+                             (replique-inspect--closed child))))))
+    (when (plist-get node :more)
+      (unless first
+        (insert (replique-inspect--part "\n" id)
+                (replique-inspect--part (make-string indent ?\s) id)))
+      (insert (replique-inspect--more id)))))
 
 (defun replique-inspect--in-table-p (id)
   "Return non-nil when the node ID is shown as a cell of a table.
@@ -874,7 +977,8 @@ AT-EDGE, ID is to be written at the left edge, rather than where it is."
                  :offset offset :limit replique-inspect-page-size
                  :meta replique-inspect--meta)
            (if at-edge
-               (list :width (replique-inspect--width) :column 0)
+               (append (list :width (replique-inspect--width) :column 0)
+                       (replique-inspect--layout))
              (replique-inspect--where id))
            (when expand (list :expand expand)))
    (lambda (frame)
@@ -1084,13 +1188,15 @@ being the default."
   (replique-inspect--go nil))
 
 (defun replique-inspect-toggle-tables ()
-  "Show a seq of maps as a table, or the way it prints.
-As a table, a row per map and a column per key, the keys on the first line."
+  "Show a seq of maps as a table, or the way it prints, in this view.
+As a table, a row per map and a column per key, the keys on the first line.
+See `replique-inspect-tables'."
   (interactive)
-  (setq replique-inspect--plain (not replique-inspect--plain))
-  (replique-inspect--render)
+  (setq replique-inspect--tables (not (replique-inspect--tables-p)))
   (message "replique: a seq of maps is shown %s"
-           (if replique-inspect--plain "the way it prints" "as a table")))
+           (if (replique-inspect--tables-p) "as a table" "the way it prints"))
+  ;; what the cells are is asked for
+  (replique-inspect-refresh))
 
 (defun replique-inspect-toggle-meta ()
   "Show metadata as the first child of what has some, or stop showing it."
