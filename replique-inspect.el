@@ -48,6 +48,11 @@
 ;; changed since the last refresh is highlighted.  The last values of a watched var are kept, and [ and ] go
 ;; through them.
 ;;
+;; A seq of maps - rows from a database, the iterations of a loop recorded -
+;; is shown as a table: a row per map, a column per key, the keys first.  A
+;; cell is the thing its map holds, closed, and \`TAB' or \`RET' browses it
+;; on its own.  \`T' shows it the way it prints instead.
+;;
 ;; A node is a path, to the process: what was open stays open across a
 ;; refresh, and a node that is no longer there says so.  A view whose process
 ;; restarted, or whose page reloaded, is opened again by the next refresh, and
@@ -77,6 +82,13 @@
   "How many of the values a watched var held are kept, to go back through.
 
 Each change is one more, and the oldest goes.  Zero keeps none."
+  :type 'natnum
+  :group 'replique)
+
+(defcustom replique-inspect-cell-width 30
+  "How many chars a cell of a table is shown in, at most.
+A seq of maps is shown as a table, a row per map and a column per key - see
+`replique-inspect-toggle-tables'."
   :type 'natnum
   :group 'replique)
 
@@ -128,6 +140,9 @@ A plist of the `:line' the process sent, whether it is `:open', its
 (defvar-local replique-inspect--history nil
   "Where the history of a watched var is: (:count N) live, (:count N :at I)
 showing an older value.  Nil where none is kept.")
+
+(defvar-local replique-inspect--plain nil
+  "Non-nil when a seq of maps is shown the way it prints, not as a table.")
 
 (defvar-local replique-inspect--meta nil
   "Whether metadata is shown, as the first child of what has some.")
@@ -244,6 +259,16 @@ open."
                          (let ((id (plist-get line :node))
                                (page (plist-get line :page)))
                            (replique-inspect--set id :line line :parent parent :gone nil)
+                           ;; a row of a table: what it holds, by key
+                           (when-let* ((cells (plist-get line :cells)))
+                             (replique-inspect--set
+                              id :cells
+                              (mapcar (lambda (cell)
+                                        (let ((cell-id (plist-get cell :node)))
+                                          (replique-inspect--set cell-id :line cell :parent id
+                                                                 :gone nil :cell t)
+                                          (cons (plist-get cell :key) cell-id)))
+                                      cells)))
                            (when page
                              (replique-inspect--store id page 0)
                              (replique-inspect--set id :open t))
@@ -256,6 +281,11 @@ open."
                    ids)
        :more (eq t (plist-get frame :more))
        :total (plist-get frame :total)
+       ;; the keys of the rows of a table, of every page loaded
+       :columns (when-let* ((columns (append (plist-get frame :columns) nil)))
+                  (seq-uniq (append (when (> offset 0)
+                                      (plist-get (replique-inspect--node parent) :columns))
+                                    columns)))
        :delimiters (cons (or (plist-get frame :open) "") (or (plist-get frame :close) ""))
        :gone nil))))
 
@@ -303,11 +333,13 @@ anew, where the ids are the new view's."
 
 (defun replique-inspect--child-by-key (parent key)
   "Return the child of PARENT called KEY - see `replique-inspect--key-path'."
-  (seq-find (lambda (id)
-              (let ((line (plist-get (replique-inspect--node id) :line)))
-                (equal key (list (plist-get line :via)
-                                 (or (plist-get line :key) (plist-get line :value))))))
-            (plist-get (replique-inspect--node parent) :children)))
+  (let ((node (replique-inspect--node parent)))
+    (seq-find (lambda (id)
+                (let ((line (plist-get (replique-inspect--node id) :line)))
+                  (equal key (list (plist-get line :via)
+                                   (or (plist-get line :key) (plist-get line :value))))))
+              ;; a cell of a row of a table too
+              (append (plist-get node :children) (mapcar #'cdr (plist-get node :cells))))))
 
 ;;; Opening and refreshing
 
@@ -532,9 +564,89 @@ in it changes, and most of what it shows was painted the time before.")
 
 What is open in it is laid out the way it prints."
   (replique-inspect--set id :column (current-column) :at (point))
-  (if (replique-inspect--open-p id)
-      (replique-inspect--insert-open id)
-    (insert (replique-inspect--closed id))))
+  (cond
+   ((not (replique-inspect--open-p id)) (insert (replique-inspect--closed id)))
+   ((replique-inspect--table-p id) (replique-inspect--insert-table id))
+   (t (replique-inspect--insert-open id))))
+
+(defun replique-inspect--table-p (id)
+  "Return non-nil when the node ID, open, is written as a table."
+  (and (not replique-inspect--plain)
+       (plist-get (replique-inspect--node id) :columns)))
+
+(defun replique-inspect--cell (text width id &optional last)
+  "Return TEXT, part of a cell of the row ID, in WIDTH chars: cut, or padded.
+Not padded where it is the LAST cell of its row."
+  (let ((text (if (> (string-width text) width)
+                  (concat (truncate-string-to-width text (1- width))
+                          (replique-inspect--part (propertize "…" 'face 'replique-note) id))
+                text)))
+    (if last
+        text
+      (concat text (replique-inspect--part (make-string (- width (string-width text)) ?\s) id)))))
+
+(defun replique-inspect--insert-table (id)
+  "Write the node ID, a seq of maps, as a table between its delimiters.
+
+A row per map, and a column per key - the keys first, on the line of the
+opening delimiter.  Each cell is the thing the map holds under that key,
+closed, and a map that holds nothing under it has nothing there."
+  (let* ((node (replique-inspect--node id))
+         (delimiters (plist-get node :delimiters))
+         (face (when (eq t (plist-get (plist-get node :line) :changed))
+                 'replique-inspect-changed))
+         (columns (plist-get node :columns))
+         (rows (plist-get node :children))
+         (texts (mapcar (lambda (row)
+                          (let ((cells (plist-get (replique-inspect--node row) :cells)))
+                            (cons row (mapcar (lambda (column)
+                                                (when-let* ((cell (cdr (assoc column cells))))
+                                                  (cons cell (replique-inspect--closed cell))))
+                                              columns))))
+                        rows))
+         (widths (seq-map-indexed
+                  (lambda (column i)
+                    (min replique-inspect-cell-width
+                         (apply #'max (string-width column)
+                                (mapcar (lambda (row)
+                                          (if-let* ((cell (nth i (cdr row))))
+                                              (string-width (cdr cell))
+                                            0))
+                                        texts))))
+                  columns)))
+    (insert (replique-inspect--part (car delimiters) id face))
+    (let ((base (current-column))
+          (first t))
+      (cl-mapc (lambda (column width i)
+                 (unless first (insert (replique-inspect--part "  " id)))
+                 (setq first nil)
+                 (insert (replique-inspect--cell
+                          (replique-inspect--part (replique-inspect--painted column) id
+                                                  'bold)
+                          width id (= i (1- (length columns))))))
+               columns widths (number-sequence 0 (1- (length columns))))
+      (dolist (row texts)
+        (insert (replique-inspect--part "\n" (car row))
+                (replique-inspect--part (make-string base ?\s) (car row)))
+        (replique-inspect--set (car row) :column (current-column) :at (point))
+        (let ((first t))
+          ;; up to the last cell the row has, padded
+          (let ((cells (cdr row)))
+            (while (and cells (null (car (last cells))))
+              (setq cells (butlast cells)))
+            (cl-mapc (lambda (cell width i)
+                       (unless first (insert (replique-inspect--part "  " (car row))))
+                       (setq first nil)
+                       (when cell
+                         (replique-inspect--set (car cell) :column (current-column) :at (point)))
+                       (insert (replique-inspect--cell (if cell (cdr cell) "") width (car row)
+                                                       (= i (1- (length cells))))))
+                     cells widths (number-sequence 0 (1- (length cells)))))))
+      (when (plist-get node :more)
+        (insert (replique-inspect--part "\n" id)
+                (replique-inspect--part (make-string base ?\s) id)
+                (replique-inspect--more id))))
+    (insert (replique-inspect--part (cdr delimiters) id face))))
 
 (defun replique-inspect--insert-open (id)
   "Write the node ID open: its delimiters, and its children between them.
@@ -782,6 +894,8 @@ On the \"more\" line of a node, load more of it."
        (cond
         ((not (plist-get (plist-get node :line) :expandable))
          (message "replique: there is nothing more in it than is shown"))
+        ;; a cell of a table is opened on its own, the table staying a table
+        ((plist-get node :cell) (replique-inspect-focus))
         ((plist-get node :open)
          (replique-inspect--set id :open nil)
          (replique-inspect--render))
@@ -961,6 +1075,15 @@ being the default."
   (interactive)
   (replique-inspect--go nil))
 
+(defun replique-inspect-toggle-tables ()
+  "Show a seq of maps as a table, or the way it prints.
+As a table, a row per map and a column per key, the keys on the first line."
+  (interactive)
+  (setq replique-inspect--plain (not replique-inspect--plain))
+  (replique-inspect--render)
+  (message "replique: a seq of maps is shown %s"
+           (if replique-inspect--plain "the way it prints" "as a table")))
+
 (defun replique-inspect-toggle-meta ()
   "Show metadata as the first child of what has some, or stop showing it."
   (interactive)
@@ -1004,6 +1127,7 @@ of the way, and the process keeps the value."
     (define-key map (kbd "w") #'replique-inspect-copy)
     (define-key map (kbd "d") #'replique-inspect-def)
     (define-key map (kbd "m") #'replique-inspect-toggle-meta)
+    (define-key map (kbd "T") #'replique-inspect-toggle-tables)
     (define-key map (kbd "q") #'replique-inspect-quit)
     map)
   "Keymap of a buffer showing an inspected value.")

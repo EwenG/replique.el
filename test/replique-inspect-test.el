@@ -361,6 +361,54 @@ that what it says is what is read."
     (replique-inspect-up)
     (should (string-match-p ":a" (replique-inspect-test--text)))))
 
+;; [{:i 1, :x "a"} {:i 2, :y {:deep [...]}}]
+(defun replique-inspect-test--table ()
+  "The answer to opening a view of a vector of two maps, a table."
+  (list :tag "reply" :view 7
+        :root (list :node 0 :value "[{:i 1, :x \"a\"} {:i 2, :y {:deep [0 1 ...]}}]"
+                    :kind "vector" :count 2 :expandable t :truncated t)
+        :columns [":i" ":x" ":y"]
+        :children
+        (list (list :node 1 :value "{:i 1, :x \"a\"}" :kind "map" :count 2
+                    :via "index" :key "0"
+                    :cells (list (replique-inspect-test--line 3 "1" :via "key" :key ":i")
+                                 (list :node 4 :value "\"a\"" :kind "string"
+                                       :via "key" :key ":x")))
+              (list :node 2 :value "{:i 2, :y {:deep [0 1 ...]}}" :kind "map" :count 2
+                    :expandable t :truncated t :via "index" :key "1"
+                    :cells (list (replique-inspect-test--line 5 "2" :via "key" :key ":i")
+                                 (list :node 6 :value "{:deep [0 1 ...]}" :kind "map"
+                                       :count 1 :expandable t :truncated t
+                                       :via "key" :key ":y"))))
+        :total 2 :more nil :open "[" :close "]"))
+
+(ert-deftest replique-inspect-test-a-seq-of-maps-is-a-table ()
+  "A row per map, a column per key, the keys first - a cell browsed on its
+own, and the way it prints with T."
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:var "user/rows") "user/rows")
+      (replique-inspect-test--answer (replique-inspect-test--table))
+      (should (equal (concat "[:i  :x   :y\n"
+                             " 1   \"a\"\n"
+                             " 2        {:deep [0 1 ...]}]\n")
+                     (replique-inspect-test--text)))
+      ;; each cell is its node, and the rest of a row the row's
+      (replique-inspect-test--goto "{:deep")
+      (should (eql 6 (get-text-property (point) 'replique-inspect-node)))
+      (should (eql 2 (get-text-property (line-beginning-position) 'replique-inspect-node)))
+      (replique-inspect-toggle)
+      (let ((msg (replique-inspect-test--answer
+                  (list :tag "reply"
+                        :children (list (list :node 7 :value "[0 1 ...]" :kind "vector"
+                                              :via "key" :key ":deep"))
+                        :total 1 :more nil :open "{" :close "}"))))
+        (should (eq :inspect-children (plist-get msg :op)))
+        (should (eql 6 (plist-get msg :node))))
+      (should (equal "{:deep [0 1 ...]}\n" (replique-inspect-test--text)))
+      (replique-inspect-up)
+      (replique-inspect-toggle-tables)
+      (should (string-prefix-p "[{:i 1, :x \"a\"}" (replique-inspect-test--text))))))
+
 (ert-deftest replique-inspect-test-a-view-that-cannot-be-opened-says-why ()
   (replique-inspect-test--with
     (with-current-buffer (replique-inspect-show process nil '(:var "user/nope") "user/nope")
