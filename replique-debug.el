@@ -86,8 +86,9 @@
 ;; iteration, and nothing for what it did not evaluate then, C-c C-d [ in
 ;; the one before, C-c C-d s in the first where something holds, and
 ;; C-c C-d w the whole call again.  C-c C-d e and C-c C-d v follow it.
-;; C-c C-d i browses every iteration, a row each - with a column for the
-;; form at point.
+;; C-c C-d i browses what the form at point evaluated to in each iteration,
+;; or with C-u, or elsewhere in the loop, every iteration, a row each, with
+;; a column for the form at point.
 ;;
 ;; ClojureScript is recorded too, and only recorded: a page or a node
 ;; program cannot be stopped from here, so stepping and breakpoints are
@@ -1319,28 +1320,41 @@ kept only."
                       ""))))))))
 
 ;;;###autoload
-(defun replique-debug-inspect-iterations ()
+(defun replique-debug-inspect-iterations (&optional table)
   "Browse what each iteration of the loop at point did, in the call shown.
 
-A row per iteration kept, of the names it binds each time round and the
-ones bound in it - what each was bound to then.  And of the form at
-point, where it is evaluated again each time round, what it evaluated
-to last in each, a column named its code."
-  (interactive)
+On a form evaluated again each time round, what it evaluated to last in
+each iteration it was evaluated in, by the index of the iteration.
+Elsewhere in the loop, or with TABLE, interactively the prefix argument,
+a row per iteration kept, of the names it binds each time round and the
+ones bound in it - what each was bound to then - and a column of the
+form at point, named its code."
+  (interactive "P")
   (pcase-let* ((`(,mark . ,loop) (replique-debug--recorded-loop-at-point))
                (name (replique-debug--loop-name mark loop))
                (calls (overlay-get mark 'replique-debug-calls))
                (call (overlay-get mark 'replique-debug-shown-call))
-               (form (when-let* ((o (replique-debug--recorded-form-at (point))))
-                       (overlay-get o 'replique-debug-recorded))))
+               (o (replique-debug--recorded-form-at (point)))
+               (form (and o (overlay-get o 'replique-debug-recorded)))
+               ;; a form in the loop, not the loop itself, nor a name it
+               ;; binds, which has a column, nor a param of a fn entered
+               (place (and o (replique-debug--origin-of mark (overlay-start o))))
+               (in-loop (and form
+                             (not (plist-get form :arg))
+                             (not (equal "local" (plist-get form :kind)))
+                             (replique-debug--in-span-p loop (car place) (cdr place))
+                             (not (equal place (cons (plist-get loop :line)
+                                                     (plist-get loop :column))))))
+               (only (and in-loop (not table))))
     (replique-inspect-show
      (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
      (list :debug (append (list :loop (plist-get loop :site))
                           (when call (list :call call))
-                          ;; not a param of a fn entered, which is not in a loop
-                          (when (and form (not (plist-get form :arg)))
-                            (list :site (plist-get form :site)))))
-     (format "%s, every iteration, call %s of %s" name
+                          (when in-loop (list :site (plist-get form :site)))
+                          (when only (list :only t))))
+     (format "%s, every iteration%s, call %s of %s"
+             (if only (replique-debug--form-text o) name)
+             (if only (format " of %s" name) "")
              (1+ (or (seq-position calls call (lambda (c n) (eql n (plist-get c :call))))
                      (1- (length calls))))
              (length calls)))))
@@ -1356,6 +1370,13 @@ to last in each, a column named its code."
                               "\\(\\(?:\\sw\\|\\s_\\)+\\)"))
           (match-string-no-properties 1)
         (format "line %s" (line-number-at-pos))))))
+
+(defun replique-debug--form-text (o)
+  "Return the code of the recorded form O, on one line and shortened."
+  (truncate-string-to-width
+   (replace-regexp-in-string
+    "[ \t\n]+" " " (buffer-substring-no-properties (overlay-start o) (overlay-end o)))
+   30 nil nil "…"))
 
 (defun replique-debug-inspect-recorded (&optional every-call)
   "Browse what the form at point evaluated to, in the call shown.
@@ -1374,10 +1395,7 @@ form was not evaluated."
          (o (replique-debug--recorded-form-at (point)))
          (value (or (and o (overlay-get o 'replique-debug-recorded))
                     (user-error "No form recorded at point")))
-         (text (truncate-string-to-width
-                (replace-regexp-in-string
-                 "[ \t\n]+" " " (buffer-substring-no-properties (overlay-start o) (overlay-end o)))
-                30 nil nil "…"))
+         (text (replique-debug--form-text o))
          (form (append (list :site (plist-get value :site))
                        (when-let* ((arg (plist-get value :arg))) (list :arg arg))))
          (view (overlay-get mark 'replique-debug-view)))

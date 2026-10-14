@@ -1104,9 +1104,19 @@ one browsed - and the whole call again."
           (cl-letf (((symbol-function 'replique-inspect-show)
                      (lambda (_process _keys source title &rest _)
                        (setq inspected (list source title)))))
+            ;; the form at point, by iteration
+            (replique-debug-inspect-iterations)
+            (should (equal '((:debug (:loop 1 :call 5 :site 2 :only t))
+                             "(inc x), every iteration of doseq x, call 2 of 2")
+                           inspected))
+            ;; or every name, and the form a column
+            (replique-debug-inspect-iterations t)
+            (should (equal '((:debug (:loop 1 :call 5 :site 2)) "doseq x, every iteration, call 2 of 2")
+                           inspected))
+            ;; on a name, every name
+            (search-backward "x xs")
             (replique-debug-inspect-iterations))
-          ;; and the form at point, a column
-          (should (equal '((:debug (:loop 1 :call 5 :site 2)) "doseq x, every iteration, call 2 of 2")
+          (should (equal '((:debug (:loop 1 :call 5)) "doseq x, every iteration, call 2 of 2")
                          inspected))
           (replique-debug-whole-call)
           ;; the last call followed again, as it was before
