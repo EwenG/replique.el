@@ -213,7 +213,9 @@ which evaluate to themselves, are not shown."
 
 (defface replique-debug-recorded-at-point
   '((t :inherit highlight))
-  "Face for the recorded form point is at, which eldoc says the value of."
+  "Face for the recorded form point is at, which eldoc says the value of.
+Only its background is used, so that the code keeps its colors - a
+theme's `highlight' often has a foreground too."
   :group 'replique)
 
 (defface replique-debug-recorded-call
@@ -982,8 +984,10 @@ take - or else the innermost one POS is in."
       (if (and replique-debug--at-point (overlay-buffer replique-debug--at-point))
           (move-overlay replique-debug--at-point (overlay-start form) (overlay-end form))
         (setq replique-debug--at-point (make-overlay (overlay-start form) (overlay-end form)))
-        (overlay-put replique-debug--at-point 'face 'replique-debug-recorded-at-point)
-        (overlay-put replique-debug--at-point 'priority -50)))
+        (overlay-put replique-debug--at-point 'priority -50))
+      ;; the background alone, the theme's as it is now
+      (overlay-put replique-debug--at-point 'face
+                   (list :background (face-background 'replique-debug-recorded-at-point nil t))))
      (replique-debug--at-point
       (delete-overlay replique-debug--at-point)))))
 
