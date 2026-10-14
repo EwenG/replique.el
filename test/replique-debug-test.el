@@ -712,10 +712,19 @@ records no more."
           (replique-debug-test--answer
            :debug-recorded
            (replique-debug-test--recorded
-            5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)))))
+            5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1))))
+          ;; and shows the calls that come
+          (replique-debug--event process '(:tag "event" :event "debug-recorded" :unit 7))
+          (replique-debug-test--answer
+           :debug-recorded
+           (list :tag "reply" :call 6
+                 :calls '((:call 5 :thread "main" :at 0) (:call 6 :thread "main" :at 0))
+                 :values '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18
+                                  :value "3" :times 1)))))
         (let ((view (nth 2 (car shown))))
           (should (equal "*replique-recorded f*" (buffer-name view)))
-          (should (equal '(((:debug (:site 1)) "(inc n), every call" t nil)
+          (should (equal '(((:debug (:site 1)) "(inc n), every call of f" t t)
+                           ((:debug (:site 1)) "(inc n), every call of f" t nil)
                            ((:debug (:site 2 :call 4)) "(let [a (inc n)] (replique.de…, call 1 of 2" t t)
                            ((:debug (:site 2 :call 5)) "(let [a (inc n)] (replique.de…, call 2 of 2" t nil)
                            ((:debug (:site 1 :call 5)) "(inc n), call 2 of 2" t nil))
@@ -1125,6 +1134,64 @@ one browsed - and the whole call again."
                           :debug-recorded
                           (append (list :loops loops) (replique-debug-test--recorded 5 nil)))))
           (should-not (string-match-p "iteration" (funcall shown))))))))
+
+(ert-deftest replique-debug-test-a-fn-is-gone-round-a-call-at-a-time ()
+  "A fn the code wrote is a loop whose times round are its calls - named
+fn and its params."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (with-temp-file replique-debug-test--file
+        (insert "(ns user)\n(defn f [xs]\n  (reduce (fn [acc x] (+ acc x)) 0 xs))\n"))
+      (let* ((replique-debug-recorded-shown 'line)
+             (source (find-file-noselect replique-debug-test--file))
+             (loops '((:site 1 :fn t :line 3 :column 11 :end-line 3 :end-column 33
+                             :iterations 3 :kept ((1 3)))))
+             (sum '(:site 2 :line 3 :column 23 :end-line 3 :end-column 32 :value "1" :times 1))
+             (shown (lambda ()
+                      (mapconcat #'car (replique-debug-test--after-strings source) "")))
+             (inspected nil))
+        (with-current-buffer source (replique-clojure-mode))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 3 :end-column 39 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (append (list :loops loops) (replique-debug-test--recorded 5 (list sum))))
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "(+ acc")
+          (replique-debug-next-iteration)
+          (replique-debug-test--answer
+           :debug-recorded
+           (append (list :iteration '(:site 1 :index 1) :loops loops)
+                   (replique-debug-test--recorded 5 (list sum))))
+          (should (string-match-p "fn \\[acc x\\], call 1 of 3" (funcall shown)))
+          (should-error (replique-debug-previous-iteration) :type 'user-error)
+          (cl-letf (((symbol-function 'replique-inspect-show)
+                     (lambda (_process _keys source title buffer &optional quiet)
+                       (setq inspected (list source title quiet))
+                       buffer)))
+            (replique-debug-inspect-iterations)
+            (should (equal '((:debug (:loop 1 :call 5 :site 2 :only t))
+                             "(+ acc x), every call of fn [acc x], call 2 of 2" nil)
+                           inspected))
+            ;; in the view of the definition, which follows the call shown
+            (replique-debug-whole-call)
+            (replique-debug-test--answer
+             :debug-recorded
+             (append (list :loops loops) (replique-debug-test--recorded 5 (list sum))))
+            (replique-debug-recorded-before)
+            (replique-debug-test--answer
+             :debug-recorded
+             (append (list :loops loops) (replique-debug-test--recorded 4 (list sum))))
+            (should (equal '((:debug (:loop 1 :call 4 :site 2 :only t))
+                             "(+ acc x), every call of fn [acc x], call 1 of 2" t)
+                           inspected))
+            (should (equal "*replique-recorded f*"
+                           (buffer-name (overlay-get (replique-debug--recording-at-point)
+                                                     'replique-debug-view))))))))))
 
 ;;; Recording ClojureScript
 

@@ -88,7 +88,12 @@
 ;; C-c C-d w the whole call again.  C-c C-d e and C-c C-d v follow it.
 ;; C-c C-d i browses what the form at point evaluated to in each iteration,
 ;; or with C-u, or elsewhere in the loop, every iteration, a row each, with
-;; a column for the form at point.
+;; a column for the form at point.  A fn the code wrote is a loop too, which
+;; goes round once for each call of it - of a reduce, a map, a callback.
+;; C-u C-c C-d v browses what the form at point evaluated to in each call,
+;; {n value} by the number of the call, as C-c C-d i does by iteration.
+;; Both show in the one view the definition has, which follows the call
+;; shown.
 ;;
 ;; ClojureScript is recorded too, and only recorded: a page or a node
 ;; program cannot be stopped from here, so stepping and breakpoints are
@@ -800,37 +805,101 @@ Edited since, it says so."
   (replique-debug--view-follows mark)
   (replique-debug--repl-follows mark))
 
+;; The view of a definition recorded is of one of these, its
+;; `replique-debug-view-of':
+;;
+;;   (:form F :text T)                 what the form F, of code T, evaluated
+;;                                     to in the call shown - or in the
+;;                                     iteration shown
+;;   (:form F :text T :calls t)        in each call, {n value}
+;;   (:loop L :site S :only t :text T :name N :time-round R)
+;;                                     in each iteration of the loop L, N,
+;;                                     whose times round are each an R, of
+;;                                     the call shown: {index value} - or a
+;;                                     row each, without :only, and of every
+;;                                     name, without :site
+;;
+;; which `replique-debug--view-source' makes a source of, as
+;; `replique-inspect-show' takes it.
+
 (defun replique-debug--view-source (mark)
   "Return what the view of MARK shows of the call shown, to browse."
   (when-let* ((of (overlay-get mark 'replique-debug-view-of)))
-    (list :debug (append (plist-get of :form)
-                         (list :call (overlay-get mark 'replique-debug-shown-call))
-                         (when-let* ((it (overlay-get mark 'replique-debug-shown-iteration)))
-                           (list :iteration it))))))
+    (let ((call (overlay-get mark 'replique-debug-shown-call)))
+      (cond
+       ((plist-get of :calls) (list :debug (plist-get of :form)))
+       ((plist-get of :loop)
+        (list :debug (append (list :loop (plist-get of :loop))
+                             (when call (list :call call))
+                             (when-let* ((site (plist-get of :site))) (list :site site))
+                             (when (plist-get of :only) (list :only t)))))
+       (t (list :debug (append (plist-get of :form)
+                               (list :call call)
+                               (when-let* ((it (overlay-get mark 'replique-debug-shown-iteration)))
+                                 (list :iteration it)))))))))
+
+(defun replique-debug--call-number (mark)
+  "Return \"call N of M\", of the call MARK shows."
+  (let ((call (overlay-get mark 'replique-debug-shown-call))
+        (calls (overlay-get mark 'replique-debug-calls)))
+    (format "call %s of %s"
+            (1+ (or (seq-position calls call (lambda (c n) (eql n (plist-get c :call))))
+                    (1- (length calls))))
+            (length calls))))
 
 (defun replique-debug--view-title (mark)
   "Return the title of the view of MARK, of the call shown."
-  (let ((call (overlay-get mark 'replique-debug-shown-call))
-        (calls (overlay-get mark 'replique-debug-calls)))
-    (format "%s, call %s of %s%s"
-            (plist-get (overlay-get mark 'replique-debug-view-of) :text)
-            (1+ (or (seq-position calls call (lambda (c n) (eql n (plist-get c :call))))
-                    (1- (length calls))))
-            (length calls)
-            (if-let* ((it (overlay-get mark 'replique-debug-shown-iteration)))
-                (format ", iteration %s" (plist-get it :index))
-              ""))))
+  (let ((of (overlay-get mark 'replique-debug-view-of)))
+    (cond
+     ((plist-get of :calls)
+      (format "%s, every call of %s" (plist-get of :text) (replique-debug--unit-name mark)))
+     ((plist-get of :loop)
+      (format "%s, every %s%s, %s"
+              (if (plist-get of :only) (plist-get of :text) (plist-get of :name))
+              (plist-get of :time-round)
+              (if (plist-get of :only) (format " of %s" (plist-get of :name)) "")
+              (replique-debug--call-number mark)))
+     (t (format "%s, %s%s" (plist-get of :text) (replique-debug--call-number mark)
+                (replique-debug--iteration-text mark))))))
+
+(defun replique-debug--last-call (mark)
+  "Return the number of the last call MARK knows of, or nil."
+  (plist-get (car (last (overlay-get mark 'replique-debug-calls))) :call))
 
 (defun replique-debug--view-follows (mark)
   "Make the view of a value MARK recorded show it in the call shown now.
-A view of every call stays as it is.  Not shown if it was not."
+A view of every call shows the calls that came since.  Not shown if it was
+not."
   (when-let* ((view (overlay-get mark 'replique-debug-view))
               ((buffer-live-p view))
+              (of (overlay-get mark 'replique-debug-view-of))
               (source (replique-debug--view-source mark))
-              ((not (equal source (buffer-local-value 'replique-inspect--source view)))))
+              ((if (plist-get of :calls)
+                   (not (eql (plist-get of :last) (replique-debug--last-call mark)))
+                 (not (equal source (buffer-local-value 'replique-inspect--source view))))))
+    (overlay-put mark 'replique-debug-view-of
+                 (plist-put of :last (replique-debug--last-call mark)))
     (replique-inspect-show
      (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
      source (replique-debug--view-title mark) view t)))
+
+(defun replique-debug--view (mark of)
+  "Make the view of MARK one of OF, and show it - see `replique-debug-view-of'.
+The one view the definition has, whatever it showed before."
+  (let ((view (overlay-get mark 'replique-debug-view)))
+    (overlay-put mark 'replique-debug-view-of
+                 (if (plist-get of :calls)
+                     (append of (list :last (replique-debug--last-call mark)))
+                   of))
+    (overlay-put
+     mark 'replique-debug-view
+     (replique-inspect-show
+      (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
+      (replique-debug--view-source mark) (replique-debug--view-title mark)
+      (if (buffer-live-p view)
+          view
+        (generate-new-buffer (format "*replique-recorded %s*"
+                                     (replique-debug--unit-name mark))))))))
 
 (defun replique-debug--draw-recorded (mark)
   "Show what the unit MARK marks recorded, as `replique-debug-recorded-shown' says.
@@ -1171,9 +1240,32 @@ innermost one - as the process said it, see `:debug-recorded' - or nil."
   (seq-mapcat (lambda (range) (number-sequence (car range) (cadr range)))
               (plist-get loop :kept)))
 
+(defun replique-debug--time-round (loop)
+  "Return what one time round LOOP is called: a call, of a fn, or an iteration."
+  (if (plist-get loop :fn) "call" "iteration"))
+
+(defun replique-debug--fn-name (start)
+  "Return what the arity of a fn written at START is called: fn and its params.
+START is where the fn is, or the arity, of a fn of many."
+  (save-excursion
+    (goto-char (1+ start))
+    (skip-syntax-forward " ")
+    (unless (eq (char-after) ?\[)
+      ;; fn, and its name, where it has one
+      (forward-sexp)
+      (skip-syntax-forward " ")
+      (unless (eq (char-after) ?\[)
+        (forward-sexp)
+        (skip-syntax-forward " ")))
+    (let ((params (point)))
+      (forward-sexp)
+      (concat "fn " (replace-regexp-in-string
+                     "[ \t\n]+" " " (buffer-substring-no-properties params (point)))))))
+
 (defun replique-debug--loop-name (mark loop)
   "Return what LOOP, of the code the unit MARK marks, is called.
-Its head and the name it binds each time round, as written."
+Its head and the name it binds each time round, as written - or fn and its
+params, of a fn."
   (with-current-buffer (overlay-buffer mark)
     (let* ((start (replique-debug--here mark (plist-get loop :line) (plist-get loop :column)))
            (head (save-excursion
@@ -1186,14 +1278,16 @@ Its head and the name it binds each time round, as written."
                     (replique-debug--here mark (plist-get bound :line) (plist-get bound :column))
                     (replique-debug--here mark (plist-get bound :end-line)
                                           (plist-get bound :end-column))))))
-      (string-join (delq nil (list head name)) " "))))
+      (if (plist-get loop :fn)
+          (replique-debug--fn-name start)
+        (string-join (delq nil (list head name)) " ")))))
 
 (defun replique-debug--iteration-text (mark)
   "Return which iteration the unit MARK marks shows, as the call says it, or \"\"."
   (if-let* ((it (overlay-get mark 'replique-debug-shown-iteration))
             (loop (replique-debug--loop-of mark (plist-get it :site))))
-      (format " · %s, iteration %s of %s"
-              (replique-debug--loop-name mark loop)
+      (format " · %s, %s %s of %s"
+              (replique-debug--loop-name mark loop) (replique-debug--time-round loop)
               (plist-get it :index) (plist-get loop :iterations))
     ""))
 
@@ -1230,8 +1324,9 @@ From the first one, or the last, where none of it is shown."
                           ((> offset 0) (1- offset))
                           (t (+ (length indices) offset)))))
     (cond
-     ((< position 0) (user-error "This is the first iteration kept"))
-     ((>= position (length indices)) (user-error "This is the last iteration kept"))
+     ((< position 0) (user-error "This is the first %s kept" (replique-debug--time-round loop)))
+     ((>= position (length indices))
+      (user-error "This is the last %s kept" (replique-debug--time-round loop)))
      (t
       (let ((index (nth position indices)))
         (when (and current (> (abs (- index (nth current indices))) (abs offset)))
@@ -1328,12 +1423,12 @@ each iteration it was evaluated in, by the index of the iteration.
 Elsewhere in the loop, or with TABLE, interactively the prefix argument,
 a row per iteration kept, of the names it binds each time round and the
 ones bound in it - what each was bound to then - and a column of the
-form at point, named its code."
+form at point, named its code.
+
+In the view of the definition, which follows the call shown - see
+`replique-debug-inspect-recorded'."
   (interactive "P")
   (pcase-let* ((`(,mark . ,loop) (replique-debug--recorded-loop-at-point))
-               (name (replique-debug--loop-name mark loop))
-               (calls (overlay-get mark 'replique-debug-calls))
-               (call (overlay-get mark 'replique-debug-shown-call))
                (o (replique-debug--recorded-form-at (point)))
                (form (and o (overlay-get o 'replique-debug-recorded)))
                ;; a form in the loop, not the loop itself, nor a name it
@@ -1346,18 +1441,13 @@ form at point, named its code."
                              (not (equal place (cons (plist-get loop :line)
                                                      (plist-get loop :column))))))
                (only (and in-loop (not table))))
-    (replique-inspect-show
-     (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
-     (list :debug (append (list :loop (plist-get loop :site))
-                          (when call (list :call call))
-                          (when in-loop (list :site (plist-get form :site)))
-                          (when only (list :only t))))
-     (format "%s, every iteration%s, call %s of %s"
-             (if only (replique-debug--form-text o) name)
-             (if only (format " of %s" name) "")
-             (1+ (or (seq-position calls call (lambda (c n) (eql n (plist-get c :call))))
-                     (1- (length calls))))
-             (length calls)))))
+    (replique-debug--view
+     mark (append (list :loop (plist-get loop :site)
+                        :name (replique-debug--loop-name mark loop)
+                        :time-round (replique-debug--time-round loop))
+                  (when in-loop (list :site (plist-get form :site)
+                                      :text (replique-debug--form-text o)))
+                  (when only (list :only t))))))
 
 ;;;###autoload
 (defun replique-debug--unit-name (mark)
@@ -1382,35 +1472,26 @@ form at point, named its code."
   "Browse what the form at point evaluated to, in the call shown.
 
 The value itself, rather than its printing.  With EVERY-CALL,
-interactively the prefix argument, what it evaluated to in each call kept,
-one value per call.
+interactively the prefix argument, what it evaluated to in each call kept
+it was evaluated in, {n value} by the number of the call - as
+`replique-debug-inspect-iterations' browses it by iteration.
 
 In the one view the definition has, made a view of this value whatever
 it showed before, and killed when the definition records no more.  It
 follows the call shown: the call before or after, or the last as calls
 come, shows the value in that call there too - `:not-recorded' where the
-form was not evaluated."
+form was not evaluated.  A view of every call shows the calls that come."
   (interactive "P")
   (let* ((mark (replique-debug--recording-at-point t))
          (o (replique-debug--recorded-form-at (point)))
          (value (or (and o (overlay-get o 'replique-debug-recorded))
-                    (user-error "No form recorded at point")))
-         (text (replique-debug--form-text o))
-         (form (append (list :site (plist-get value :site))
-                       (when-let* ((arg (plist-get value :arg))) (list :arg arg))))
-         (view (overlay-get mark 'replique-debug-view)))
-    (overlay-put mark 'replique-debug-view-of
-                 (unless every-call (list :form form :text text)))
-    (overlay-put
-     mark 'replique-debug-view
-     (replique-inspect-show
-      (overlay-get mark 'replique-debug-process) (overlay-get mark 'replique-debug-keys)
-      (if every-call (list :debug form) (replique-debug--view-source mark))
-      (if every-call (format "%s, every call" text) (replique-debug--view-title mark))
-      (if (buffer-live-p view)
-          view
-        (generate-new-buffer (format "*replique-recorded %s*"
-                                     (replique-debug--unit-name mark))))))))
+                    (user-error "No form recorded at point"))))
+    (replique-debug--view
+     mark (append (list :form (append (list :site (plist-get value :site))
+                                      (when-let* ((arg (plist-get value :arg)))
+                                        (list :arg arg)))
+                        :text (replique-debug--form-text o))
+                  (when every-call (list :calls t))))))
 
 ;;; A repl in a recorded call
 
