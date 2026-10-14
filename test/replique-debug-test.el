@@ -1008,6 +1008,38 @@ the end of their line, named - said by eldoc, and browsed, each."
             (replique-debug-inspect-recorded))
           (should (equal '(:debug (:site 2 :arg 1 :call 5)) inspected)))))))
 
+(ert-deftest replique-debug-test-a-local-is-written-named ()
+  "What a name a loop or a let bound was bound to is a value of its own,
+named as a param is at the end of its line."
+  (replique-debug-test--with-source
+    (replique-debug-test--with
+      (with-temp-file replique-debug-test--file
+        (insert "(ns user)\n(defn f [xs]\n  (doseq [x xs] (inc x)))\n"))
+      (let* ((replique-debug-recorded-shown 'line)
+             (source (find-file-noselect replique-debug-test--file))
+             (shown (lambda ()
+                      (seq-remove #'string-empty-p
+                                  (mapcar (lambda (s) (replace-regexp-in-string "  ◂.*" "" (car s)))
+                                          (replique-debug-test--after-strings source))))))
+        (with-current-buffer source (replique-clojure-mode))
+        (replique-debug--event process
+                               (list :tag "event" :event "debug-instrumented" :unit 7
+                                     :ns "user" :file replique-debug-test--file :line 2
+                                     :column 1 :end-line 3 :end-column 26 :record t
+                                     :breaks-only t))
+        (replique-debug-test--answer
+         :debug-recorded
+         (replique-debug-test--recorded
+          5 '((:site 1 :kind "local" :line 3 :column 11 :end-line 3 :end-column 12
+                     :value "3" :times 2)
+              (:site 2 :line 3 :column 17 :end-line 3 :end-column 24 :value "4" :times 2))))
+        (should (equal '(" x ⇒ 3 ×2 ⇒ 4 ×2") (funcall shown)))
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "[x ")
+          (backward-char)
+          (should (equal "⇒ 3 ×2" (substring-no-properties (replique-debug-eldoc)))))))))
+
 ;;; Recording ClojureScript
 
 (ert-deftest replique-debug-test-clojurescript-is-recorded-and-not-stepped-through ()

@@ -831,7 +831,12 @@ whatever is written - and which an edit of its text takes away, see
                        (not (replique-debug--literal-p
                              (buffer-substring-no-properties start end))))
               (let ((o (make-overlay start end)))
-                (overlay-put o 'replique-debug-recorded value)
+                ;; a local is said by its name, as a param is
+                (overlay-put o 'replique-debug-recorded
+                             (if (equal "local" (plist-get value :kind))
+                                 (append (list :param (buffer-substring-no-properties start end))
+                                         value)
+                               value))
                 (push o forms))))))
       (dolist (o forms)
         (overlay-put o 'evaporate t)
