@@ -1128,7 +1128,7 @@ started over, and let go of - the repl gets the value of the fixed code."
                 (should (string-match-p "evaluating for" (replique-debug--header)))
                 (let ((thread replique-debug--thread))
                   (should (replique-test-wait-for
-                           (lambda () (string-match-p "b  20" (or (replique-debug-test--locals-text thread) "")))
+                           (lambda () (string-match-p "b 20\\_>" (or (replique-debug-test--locals-text thread) "")))
                            30))
                   (goto-char (point-min))
                   (save-selected-window (replique-debug-eval-in-frame))
@@ -1148,7 +1148,7 @@ started over, and let go of - the repl gets the value of the fixed code."
                     (replique-test-eval in-frame "(defn g [x] (* 100 x))"))
                   (replique-debug-restart)
                   (should (replique-test-wait-for
-                           (lambda () (string-match-p "b  200" (or (replique-debug-test--locals-text thread) "")))
+                           (lambda () (string-match-p "b 200\\_>" (or (replique-debug-test--locals-text thread) "")))
                            30))
                   (replique-debug-continue)
                   (should (replique-test-wait-for

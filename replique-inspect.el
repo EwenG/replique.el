@@ -19,12 +19,21 @@
 
 ;;; Commentary:
 
-;; A value of the process, shown as a tree that is opened a node at a time.
-;; What a repl prints of a value is cut by *print-length* and *print-level*
-;; all at once, and what was cut is gone; here nothing is cut, it is only not
-;; asked for yet.  The value stays in the process - in the runtime, for
-;; ClojureScript - and what comes over is a line per child, a page at a time:
-;; a short printing of it, what it is, how many things it holds.
+;; A value of the process, shown the way it prints - and opened and closed
+;; a part at a time.  What a repl prints of a value is cut by *print-length*
+;; and *print-level* all at once, and what was cut is gone; here nothing is
+;; cut, it is only not asked for yet.  The value stays in the process - in the
+;; runtime, for ClojureScript - and what comes over is a short printing of
+;; each child, a page at a time.
+;;
+;; Laid out as a pretty printer lays it out: an open map an entry a line,
+;; keys first, and what holds only what fits filled into as few lines as it
+;; takes.  A part that is closed is its printing, cut to fit on its line, and
+;; \`TAB' opens it in place, between the brackets it prints between.  What
+;; *print-length* would leave out is \`…N more', to load, and what
+;; *print-level* would is a part still closed.  A view is opened as far as a
+;; window shows, first levels first.  What a part is - its type, how many
+;; things it holds, where it is in the value - is said by \`i'.
 ;;
 ;; Three things can be looked at this way:
 ;;
@@ -111,9 +120,10 @@ the key of a map is painted as the value it is, and an index as a note."
   "What is known of each node, by id.
 
 A plist of the `:line' the process sent, whether it is `:open', its
-`:children' ids, whether there are `:more' and how many in `:total', its
-`:depth', and whether it is
-`:gone'.")
+`:children' ids, whether there are `:more' and how many in `:total', the
+`:delimiters' it is written between once open, as (OPEN . CLOSE), the
+`:column' and the position, `:at', its value was last written at, its
+`:parent', and whether it is `:gone'.")
 
 (defvar-local replique-inspect--history nil
   "Where the history of a watched var is: (:count N) live, (:count N :at I)
@@ -160,11 +170,30 @@ is opened again on it."
               replique-inspect--view nil)))
     replique-inspect--process))
 
-(defun replique-inspect--width (depth)
-  "Return how wide the printing of a line at DEPTH can be."
+(defun replique-inspect--width ()
+  "Return how wide a line of the buffer can be."
   (let ((window (get-buffer-window (current-buffer) t)))
-    (max 30 (- (if window (window-body-width window) 100)
-               (* 2 depth) 24))))
+    (max 40 (1- (if window (window-body-width window) 100)))))
+
+(defun replique-inspect--budget ()
+  "Return how many lines a view is opened as far as: a window of them."
+  (let ((window (get-buffer-window (current-buffer) t)))
+    (max 10 (- (if window (window-body-height window) 40) 2))))
+
+(defun replique-inspect--where (id)
+  "Return where the node ID is written once open, as the ops take it.
+
+Which is at the start of its entry's line, after its key: an open child
+breaks the line its parent was written on, where it was on one."
+  (let* ((node (replique-inspect--node id))
+         (parent (plist-get node :parent))
+         (column (plist-get (replique-inspect--node parent) :column)))
+    (list :width (replique-inspect--width)
+          :column (if (and parent column (not (memql id replique-inspect--focus)))
+                      (+ column
+                         (length (car (plist-get (replique-inspect--node parent) :delimiters)))
+                         (length (replique-inspect--label id)))
+                    (or (plist-get node :column) 0)))))
 
 (defun replique-inspect--ask (msg callback)
   "Send MSG about the view of the current buffer, and call CALLBACK.
@@ -195,7 +224,7 @@ buffer was killed or the view opened again in the meantime."
 
 (defun replique-inspect--node (id)
   "Return what is known of the node ID."
-  (gethash id replique-inspect--nodes))
+  (and replique-inspect--nodes (gethash id replique-inspect--nodes)))
 
 (defun replique-inspect--set (id &rest props)
   "Set PROPS on the node ID."
@@ -205,15 +234,21 @@ buffer was killed or the view opened again in the meantime."
     (puthash id node replique-inspect--nodes)))
 
 (defun replique-inspect--store (parent frame offset)
-  "Keep the children FRAME holds, the page of PARENT's from OFFSET."
+  "Keep the children FRAME holds, the page of PARENT's from OFFSET.
+
+A child the process opened has its page as `:page', kept as well, and is
+open."
   (if (plist-get frame :gone)
       (replique-inspect--set parent :gone t :children nil :open nil)
-    (let* ((depth (1+ (or (plist-get (replique-inspect--node parent) :depth) 0)))
-           (ids (mapcar (lambda (line)
-                          (let ((id (plist-get line :node)))
-                            (replique-inspect--set id :line line :depth depth :gone nil)
-                            id))
-                        (plist-get frame :children))))
+    (let ((ids (mapcar (lambda (line)
+                         (let ((id (plist-get line :node))
+                               (page (plist-get line :page)))
+                           (replique-inspect--set id :line line :parent parent :gone nil)
+                           (when page
+                             (replique-inspect--store id page 0)
+                             (replique-inspect--set id :open t))
+                           id))
+                       (plist-get frame :children))))
       (replique-inspect--set
        parent
        :children (if (> offset 0)
@@ -221,12 +256,13 @@ buffer was killed or the view opened again in the meantime."
                    ids)
        :more (eq t (plist-get frame :more))
        :total (plist-get frame :total)
+       :delimiters (cons (or (plist-get frame :open) "") (or (plist-get frame :close) ""))
        :gone nil))))
 
 (defun replique-inspect--shown (frame)
   "Keep what FRAME, the answer to an opening or a refresh, shows."
   (let ((root (plist-get frame :root)))
-    (replique-inspect--set 0 :line root :depth 0 :open t :gone nil)
+    (replique-inspect--set 0 :line root :open t :gone nil)
     (if (plist-get root :expandable)
         (replique-inspect--store 0 frame 0)
       (replique-inspect--set 0 :children nil :more nil :total nil))
@@ -257,11 +293,7 @@ anew, where the ids are the new view's."
   (let ((path nil)
         (found t))
     (while (and found (not (eql id 0)))
-      (setq found nil)
-      (maphash (lambda (parent node)
-                 (when (and (not found) (memql id (plist-get node :children)))
-                   (setq found parent)))
-               replique-inspect--nodes)
+      (setq found (plist-get (replique-inspect--node id) :parent))
       (when found
         (let ((line (plist-get (replique-inspect--node id) :line)))
           (push (list (plist-get line :via) (or (plist-get line :key) (plist-get line :value)))
@@ -292,8 +324,12 @@ anew, where the ids are the new view's."
     (replique-inspect--ask
      (append (list :op :inspect
                    :source replique-inspect--source
-                   :width (replique-inspect--width 1)
+                   :width (replique-inspect--width)
+                   :column 0
                    :limit replique-inspect-page-size)
+             ;; opened as far as a window goes the first time, and as it was
+             ;; left after that
+             (unless paths (list :expand (replique-inspect--budget)))
              (when replique-inspect--meta (list :meta t))
              (when (and (plist-get replique-inspect--source :var)
                         (> replique-inspect-history 0))
@@ -333,11 +369,10 @@ Then narrow to FOCUS, where it still leads somewhere."
       (if (null id)
           (replique-inspect--reopen (cdr paths) focus)
         (replique-inspect--ask
-         (list :op :inspect-children :view replique-inspect--view :node id
-               :limit replique-inspect-page-size
-               :width (replique-inspect--width
-                       (1+ (or (plist-get (replique-inspect--node id) :depth) 0)))
-               :meta replique-inspect--meta)
+         (append (list :op :inspect-children :view replique-inspect--view :node id
+                       :limit replique-inspect-page-size
+                       :meta replique-inspect--meta)
+                 (replique-inspect--where id))
          (lambda (frame)
            (unless (equal "error" (plist-get frame :tag))
              (replique-inspect--store id frame 0)
@@ -367,7 +402,8 @@ Then narrow to FOCUS, where it still leads somewhere."
           (loaded (length (plist-get (replique-inspect--node 0) :children))))
       (replique-inspect--ask
        (append (list :op :inspect-refresh :view replique-inspect--view
-                     :width (replique-inspect--width 1)
+                     :width (replique-inspect--width)
+                     :column 0
                      :limit (max replique-inspect-page-size loaded))
                (when-let* ((at (plist-get replique-inspect--history :at)))
                  (list :at at))
@@ -393,10 +429,10 @@ Then narrow to FOCUS, where it still leads somewhere."
     (let* ((id (car open))
            (node (replique-inspect--node id)))
       (replique-inspect--ask
-       (list :op :inspect-children :view replique-inspect--view :node id
-             :limit (max replique-inspect-page-size (length (plist-get node :children)))
-             :width (replique-inspect--width (1+ (or (plist-get node :depth) 0)))
-             :meta replique-inspect--meta)
+       (append (list :op :inspect-children :view replique-inspect--view :node id
+                     :limit (max replique-inspect-page-size (length (plist-get node :children)))
+                     :meta replique-inspect--meta)
+               (replique-inspect--where id))
        (lambda (frame)
          (cond
           ((replique-inspect--gone-p frame)
@@ -427,69 +463,163 @@ in it changes, and most of what it shows was painted the time before.")
           (copy-sequence painted)))))
 
 (defun replique-inspect--annotation (line)
-  "Return what LINE is said to be, beside its printing."
-  (let ((kind (plist-get line :kind))
-        (count (plist-get line :count)))
-    (when (member kind '("map" "set" "vector" "list" "seq" "array" "collection"
-                         "object" "ref" "record" "var"))
-      (string-join (delq nil (list (if (member kind '("object" "ref" "record"))
-                                       (plist-get line :type)
-                                     kind)
-                                   (when count (number-to-string count))))
-                   " · "))))
+  "Return what LINE is: its kind, its type and how many things it holds."
+  (string-join (delq nil (list (plist-get line :kind)
+                               (plist-get line :type)
+                               (when-let* ((count (plist-get line :count)))
+                                 (format "%s held" count))))
+               " · "))
 
-(defun replique-inspect--insert-line (id depth)
-  "Write the line of the node ID, at DEPTH."
+(defun replique-inspect--part (text id &optional face)
+  "Return TEXT as a part of the node ID, with FACE added where non-nil."
+  (let ((text (copy-sequence text)))
+    (when face (add-face-text-property 0 (length text) face t text))
+    (put-text-property 0 (length text) 'replique-inspect-node id text)
+    text))
+
+(defun replique-inspect--open-p (id)
+  "Return non-nil when the node ID is written open, between its delimiters."
+  (let ((node (replique-inspect--node id)))
+    (and (plist-get node :open)
+         (plist-get node :delimiters)
+         (not (plist-get node :gone))
+         (plist-get (plist-get node :line) :expandable))))
+
+(defun replique-inspect--closed (id)
+  "Return the node ID written closed: its printing, on one line."
   (let* ((node (replique-inspect--node id))
          (line (plist-get node :line))
-         (key (plist-get line :key))
-         (gone (plist-get node :gone))
-         (start (point)))
-    (insert (make-string (* 2 depth) ?\s))
-    (insert (cond ((not (plist-get line :expandable)) "  ")
-                  ((plist-get node :open) "▾ ")
-                  (t "▸ ")))
-    (when key
-      (insert (pcase (plist-get line :via)
-                ;; a key of a map is a value, painted as one
-                ("key" (replique-inspect--painted key))
-                ("index" (propertize key 'face 'replique-note))
-                (_ (propertize key 'face 'replique-inspect-key)))
-              "  "))
-    (let ((value (replique-inspect--painted (or (plist-get line :value) ""))))
-      (cond (gone (add-face-text-property 0 (length value) 'replique-inspect-gone
-                                          nil value))
-            ((eq t (plist-get line :changed))
-             (add-face-text-property 0 (length value) 'replique-inspect-changed
-                                     t value)))
-      (insert value))
-    (when (eq t (plist-get line :truncated))
-      (insert (propertize "…" 'face 'replique-note)))
-    (when-let* ((said (replique-inspect--annotation line)))
-      (insert "  " (propertize said 'face 'replique-note)))
-    (when gone
-      (insert "  " (propertize "no longer there" 'face 'replique-note)))
-    (insert "\n")
-    (put-text-property start (point) 'replique-inspect-node id)))
+         (value (replique-inspect--painted (or (plist-get line :value) ""))))
+    (cond ((plist-get node :gone)
+           (add-face-text-property 0 (length value) 'replique-inspect-gone nil value))
+          ((eq t (plist-get line :changed))
+           (add-face-text-property 0 (length value) 'replique-inspect-changed t value)))
+    ;; cut at the end of the line, rather than shortened the way a printing
+    ;; under *print-length* and *print-level* is
+    (when (eq t (plist-get line :cut))
+      (setq value (concat value (propertize "…" 'face 'replique-note))))
+    (replique-inspect--part value id)))
 
-(defun replique-inspect--insert-node (id depth)
-  "Write the node ID at DEPTH, and what is open below it."
-  (let ((node (replique-inspect--node id)))
-    (replique-inspect--insert-line id depth)
-    (when (plist-get node :open)
-      (dolist (child (plist-get node :children))
-        (replique-inspect--insert-node child (1+ depth)))
-      (when (plist-get node :more)
-        (let ((start (point))
-              (total (plist-get node :total))
-              (shown (length (plist-get node :children))))
-          (insert (make-string (* 2 (1+ depth)) ?\s) "  "
-                  (propertize (if total
-                                  (format "… %s more" (- total shown))
-                                "… more")
-                              'face 'replique-note)
-                  "\n")
-          (put-text-property start (point) 'replique-inspect-more id))))))
+(defun replique-inspect--label (id)
+  "Return what the node ID is written after: its key in a map, or nil."
+  (let* ((line (plist-get (replique-inspect--node id) :line))
+         (key (plist-get line :key)))
+    (pcase (plist-get line :via)
+      ;; a key of a map is a value, painted as one
+      ("key" (replique-inspect--part (concat (replique-inspect--painted key) " ") id))
+      ;; a property of a JavaScript object, the way #js {} prints it
+      ("prop" (replique-inspect--part
+               (concat (replique-inspect--painted
+                        (if (string-match-p "\\`[[:alpha:]_$*+!?<>=-][[:alnum:]_$*+!?<>=.-]*\\'" key)
+                            (concat ":" key)
+                          (prin1-to-string key)))
+                       " ")
+               id))
+      ("meta" (replique-inspect--part "^" id 'replique-inspect-key)))))
+
+(defun replique-inspect--more (id)
+  "Return the entry saying there are more children of the node ID, to load."
+  (let* ((node (replique-inspect--node id))
+         (total (plist-get node :total)))
+    (propertize (if total
+                    (format "…%s more" (- total (length (plist-get node :children))))
+                  "…more")
+                'face 'replique-note
+                'replique-inspect-more id)))
+
+(defun replique-inspect--insert-value (id)
+  "Write the node ID at point, open or closed.
+
+What is open in it is laid out the way it prints."
+  (replique-inspect--set id :column (current-column) :at (point))
+  (if (replique-inspect--open-p id)
+      (replique-inspect--insert-open id)
+    (insert (replique-inspect--closed id))))
+
+(defun replique-inspect--insert-open (id)
+  "Write the node ID open: its delimiters, and its children between them.
+
+On one line where they all fit on it.  Otherwise an entry a line, for a map
+and for what holds things - and filled into as few lines as they take, for
+what holds only things that hold nothing, numbers, strings."
+  (let* ((node (replique-inspect--node id))
+         (delimiters (plist-get node :delimiters))
+         (face (when (eq t (plist-get (plist-get node :line) :changed))
+                 'replique-inspect-changed))
+         (width (replique-inspect--width))
+         (keyed (seq-some (lambda (child)
+                            (member (plist-get (plist-get (replique-inspect--node child) :line) :via)
+                                    '("key" "prop")))
+                          (plist-get node :children)))
+         (flat (seq-every-p (lambda (child)
+                              (let ((line (plist-get (replique-inspect--node child) :line)))
+                                (not (or (plist-get line :count)
+                                         (plist-get line :expandable)))))
+                            (plist-get node :children)))
+         ;; (ID . TEXT), TEXT being the entry written closed, or nil where it
+         ;; is open; and (nil . TEXT) for saying there are more
+         (entries (append (mapcar (lambda (child)
+                                    (cons child (unless (replique-inspect--open-p child)
+                                                  (concat (replique-inspect--label child)
+                                                          (replique-inspect--closed child)))))
+                                  (plist-get node :children))
+                          (when (plist-get node :more)
+                            (list (cons nil (replique-inspect--more id))))))
+         (separator (if keyed ", " " ")))
+    (insert (replique-inspect--part (car delimiters) id face))
+    (let* ((base (current-column))
+           (break (lambda (before next)
+                    ;; a new line, indented as the first entry: the end of
+                    ;; the line a part of the entry it ends, and the
+                    ;; indentation of the one it starts
+                    (insert (replique-inspect--part "\n" (or before id))
+                            (replique-inspect--part (make-string base ?\s) (or next id)))))
+           (one-line (and (seq-every-p #'cdr entries)
+                          (<= (+ base
+                                 (apply #'+ (mapcar (lambda (entry) (length (cdr entry))) entries))
+                                 (* (length separator) (max 0 (1- (length entries))))
+                                 (length (cdr delimiters)))
+                              width))))
+      (cond
+       (one-line
+        (let ((first t))
+          (dolist (entry entries)
+            (unless first
+              (insert (replique-inspect--part separator (or (car entry) id))))
+            (setq first nil)
+            (replique-inspect--insert-entry entry))))
+       ((or keyed (not flat))
+        (let ((before nil))
+          (dolist (entry entries)
+            (when before
+              (when keyed (insert (replique-inspect--part "," (car before))))
+              (funcall break (car before) (car entry)))
+            (setq before entry)
+            (replique-inspect--insert-entry entry))))
+       (t
+        (let ((before nil))
+          (dolist (entry entries)
+            (when before
+              (if (> (+ (current-column) 1 (length (cdr entry))) (1- width))
+                  (funcall break (car before) (car entry))
+                (insert (replique-inspect--part " " (or (car entry) id)))))
+            (setq before entry)
+            (replique-inspect--insert-entry entry))))))
+    (insert (replique-inspect--part (cdr delimiters) id face))))
+
+(defun replique-inspect--insert-entry (entry)
+  "Write ENTRY of `replique-inspect--insert-open' at point."
+  (let ((id (car entry)))
+    (cond
+     ((null id) (insert (cdr entry)))
+     ((cdr entry)
+      (let ((label (length (replique-inspect--label id))))
+        (replique-inspect--set id :column (+ (current-column) label) :at (+ (point) label)))
+      (insert (cdr entry)))
+     (t
+      (when-let* ((label (replique-inspect--label id)))
+        (insert label))
+      (replique-inspect--insert-value id)))))
 
 (defun replique-inspect--at-point ()
   "Return what point is on: (node ID) or (more ID), or nil."
@@ -499,13 +629,42 @@ in it changes, and most of what it shows was painted the time before.")
    ((get-text-property (point) 'replique-inspect-node)
     (list 'node (get-text-property (point) 'replique-inspect-node)))))
 
-(defun replique-inspect--render ()
-  "Write what the buffer shows, leaving point on the line it was on."
+(defun replique-inspect--anchor (at)
+  "Return where AT, what `replique-inspect--at-point' returns, is written.
+
+The start of the value of a node, after its key, or of the entry saying
+there are more."
+  (pcase at
+    (`(node ,id) (plist-get (replique-inspect--node id) :at))
+    (`(more ,id) (save-excursion
+                   (goto-char (point-min))
+                   (when-let* ((found (text-property-search-forward
+                                       'replique-inspect-more id #'eql)))
+                     (prop-match-beginning found))))))
+
+(defun replique-inspect--on-p (pos at)
+  "Return non-nil when POS is on AT, what `replique-inspect--at-point' returns."
+  (and (<= (point-min) pos) (< pos (point-max))
+       (eql (cadr at) (get-text-property pos (if (eq 'more (car at))
+                                                  'replique-inspect-more
+                                                'replique-inspect-node)))))
+
+(defun replique-inspect--render (&optional on)
+  "Write what the buffer shows, keeping point where it was.
+
+On the part it was on: as far into it as it was, where that is still in
+it, and at its start otherwise.  And on the same row of the window, so that
+what is around it moves rather than it.  With ON, a node, at the start of
+that node instead."
   (let* ((inhibit-read-only t)
-         (at (replique-inspect--at-point))
-         (column (current-column))
          (window (get-buffer-window (current-buffer)))
-         (start (when window (window-start window))))
+         (_ (when window (goto-char (window-point window))))
+         (at (replique-inspect--at-point))
+         (anchor (replique-inspect--anchor at))
+         (offset (when anchor (- (point) anchor)))
+         (row (when (and window (>= (point) (window-start window)))
+                (let ((row (count-lines (window-start window) (line-beginning-position))))
+                  (when (< row (window-body-height window)) row)))))
     (erase-buffer)
     (cond
      (replique-inspect--error
@@ -513,18 +672,19 @@ in it changes, and most of what it shows was painted the time before.")
      ((null replique-inspect--nodes)
       (insert (propertize "…\n" 'face 'replique-note)))
      (t
-      (replique-inspect--insert-node (or (car replique-inspect--focus) 0) 0)))
-    (goto-char (point-min))
-    (when at
-      (let ((found (text-property-search-forward
-                    (if (eq 'more (car at)) 'replique-inspect-more 'replique-inspect-node)
-                    (cadr at) #'eql)))
-        (if found
-            (progn (goto-char (prop-match-beginning found))
-                   (move-to-column column))
-          (goto-char (point-min)))))
-    (when (and window start (window-live-p window))
-      (set-window-start window (min start (point-max)) t))
+      (replique-inspect--insert-value (or (car replique-inspect--focus) 0))
+      (insert "\n")))
+    (goto-char (or (if on
+                       (replique-inspect--anchor (list 'node on))
+                     (when-let* ((anchor (and at (replique-inspect--anchor at))))
+                       (if (replique-inspect--on-p (+ anchor offset) at)
+                           (+ anchor offset)
+                         anchor)))
+                   (point-min)))
+    (when (and window (window-live-p window))
+      (set-window-point window (point))
+      (when row
+        (set-window-start window (save-excursion (forward-line (- row)) (point)) t)))
     (force-mode-line-update)))
 
 (defun replique-inspect--header ()
@@ -582,16 +742,21 @@ it is asked for, with \\`g'."
 (defun replique-inspect--node-at-point ()
   "Return the node point is on, or signal that it is on none."
   (or (get-text-property (point) 'replique-inspect-node)
-      (user-error "Not on a line of the value")))
+      (user-error "Not on a part of the value")))
 
-(defun replique-inspect--load (id offset then)
-  "Ask for the children of ID from OFFSET, and call THEN once they are kept."
+(defun replique-inspect--load (id offset then &optional expand at-edge)
+  "Ask for the children of ID from OFFSET, and call THEN once they are kept.
+
+With EXPAND, the children are opened as far as that many lines.  With
+AT-EDGE, ID is to be written at the left edge, rather than where it is."
   (replique-inspect--ask
-   (list :op :inspect-children :view replique-inspect--view :node id
-         :offset offset :limit replique-inspect-page-size
-         :width (replique-inspect--width
-                 (1+ (or (plist-get (replique-inspect--node id) :depth) 0)))
-         :meta replique-inspect--meta)
+   (append (list :op :inspect-children :view replique-inspect--view :node id
+                 :offset offset :limit replique-inspect-page-size
+                 :meta replique-inspect--meta)
+           (if at-edge
+               (list :width (replique-inspect--width) :column 0)
+             (replique-inspect--where id))
+           (when expand (list :expand expand)))
    (lambda (frame)
      (cond
       ((replique-inspect--gone-p frame) (replique-inspect--open))
@@ -606,13 +771,17 @@ On the \"more\" line of a node, load more of it."
   (interactive)
   (pcase (replique-inspect--at-point)
     (`(more ,id)
-     (replique-inspect--load id (length (plist-get (replique-inspect--node id) :children))
-                             #'replique-inspect--render))
+     (let ((loaded (length (plist-get (replique-inspect--node id) :children))))
+       (replique-inspect--load id loaded
+                               (lambda ()
+                                 ;; on the first of what was loaded
+                                 (replique-inspect--render
+                                  (nth loaded (plist-get (replique-inspect--node id) :children)))))))
     (`(node ,id)
      (let ((node (replique-inspect--node id)))
        (cond
         ((not (plist-get (plist-get node :line) :expandable))
-         (message "replique: there is nothing more in it than this line"))
+         (message "replique: there is nothing more in it than is shown"))
         ((plist-get node :open)
          (replique-inspect--set id :open nil)
          (replique-inspect--render))
@@ -623,7 +792,7 @@ On the \"more\" line of a node, load more of it."
                                    (lambda ()
                                      (replique-inspect--set id :open t)
                                      (replique-inspect--render)))))))
-    (_ (user-error "Not on a line of the value"))))
+    (_ (user-error "Not on a part of the value"))))
 
 (defun replique-inspect-focus ()
   "Show only the node point is on, and what is in it.
@@ -644,20 +813,31 @@ see `replique-inspect-print'."
                        (goto-char (point-min)))))
            (if (plist-get node :children)
                (funcall show)
-             (replique-inspect--load id 0 show))))))
-    (_ (user-error "Not on a line of the value"))))
+             ;; written at the left edge, and opened as far as a window goes
+             (replique-inspect--load id 0 show (replique-inspect--budget) t))))))
+    (_ (user-error "Not on a part of the value"))))
 
 (defun replique-inspect-up ()
   "Show what the node shown was narrowed from."
   (interactive)
   (unless replique-inspect--focus
     (user-error "The whole value is shown"))
-  (let ((was (pop replique-inspect--focus)))
-    (replique-inspect--render)
-    (when-let* ((found (save-excursion
-                         (goto-char (point-min))
-                         (text-property-search-forward 'replique-inspect-node was #'eql))))
-      (goto-char (prop-match-beginning found)))))
+  (replique-inspect--render (pop replique-inspect--focus)))
+
+(defun replique-inspect-describe ()
+  "Say what the part point is on is, and where it is in the value."
+  (interactive)
+  (let* ((id (replique-inspect--node-at-point))
+         (node (replique-inspect--node id))
+         (path (replique-inspect--key-path id)))
+    (message "%s"
+             (string-join
+              (delq nil (list (replique-inspect--annotation (plist-get node :line))
+                              (when path
+                                (format "at %s" (mapconcat (lambda (key) (format "%s" (cadr key)))
+                                                           path " ")))
+                              (when (plist-get node :gone) "no longer there")))
+              "  ·  "))))
 
 (defun replique-inspect-print ()
   "Show the value of the node point is on, printed whole and laid out."
@@ -819,6 +999,7 @@ of the way, and the process keeps the value."
     (define-key map (kbd "[") #'replique-inspect-older)
     (define-key map (kbd "]") #'replique-inspect-newer)
     (define-key map (kbd ".") #'replique-inspect-live)
+    (define-key map (kbd "i") #'replique-inspect-describe)
     (define-key map (kbd "P") #'replique-inspect-print)
     (define-key map (kbd "w") #'replique-inspect-copy)
     (define-key map (kbd "d") #'replique-inspect-def)
@@ -832,6 +1013,8 @@ of the way, and the process keeps the value."
 
 \\{replique-inspect-mode-map}"
   (setq-local truncate-lines t)
+  ;; what is shown is Clojure, which sexp motion goes through
+  (set-syntax-table replique-clojure-mode-syntax-table)
   (setq-local revert-buffer-function (lambda (&rest _) (replique-inspect-refresh)))
   (setq-local header-line-format '(:eval (replique-inspect--header)))
   (add-hook 'kill-buffer-hook #'replique-inspect--close nil t))
@@ -860,6 +1043,8 @@ With QUIET, the buffer is not shown: what is shown stays as it is."
                        (and (funcall same buffer) buffer)
                      (seq-find same (buffer-list))))
          (buffer (or existing buffer (generate-new-buffer name))))
+    ;; shown first, so that what it asks for fits the window it is in
+    (unless quiet (pop-to-buffer buffer))
     (with-current-buffer buffer
       (if existing
           (replique-inspect-refresh)
@@ -875,7 +1060,6 @@ With QUIET, the buffer is not shown: what is shown stays as it is."
               replique-inspect--title title)
         (replique-inspect--render)
         (replique-inspect--open)))
-    (unless quiet (pop-to-buffer buffer))
     buffer))
 
 (defun replique-inspect--var-at-point ()

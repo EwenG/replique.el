@@ -61,17 +61,21 @@ that what it says is what is read."
          :children (list (replique-inspect-test--line 1 "1" :via "key" :key ":a")
                          (list :node 2 :value "[0 1 2 ...]" :kind "vector" :count 300
                                :expandable t :truncated t :via "key" :key ":b"))
-         :total 2 :more nil)))
+         :total 2 :more nil :open "{" :close "}")))
+
+(defun replique-inspect-test--page (&rest children)
+  "A page of the vector under :b, holding CHILDREN, of 300."
+  (list :tag "reply" :children children :total 300 :more t :open "[" :close "]"))
 
 (defun replique-inspect-test--text ()
   "Return what the current buffer shows."
   (buffer-substring-no-properties (point-min) (point-max)))
 
 (defun replique-inspect-test--goto (text)
-  "Put point at the start of the line showing TEXT."
+  "Put point on TEXT."
   (goto-char (point-min))
   (search-forward text)
-  (beginning-of-line))
+  (goto-char (match-beginning 0)))
 
 (defmacro replique-inspect-test--in-view (&rest body)
   "Run BODY in a buffer showing the view `replique-inspect-test--opened' answers."
@@ -100,76 +104,161 @@ that what it says is what is read."
     (should-not (plist-member (replique-inspect-test--asked) :history))))
 
 (ert-deftest replique-inspect-test-the-root-is-shown-open ()
+  "Between its delimiters, and on one line where its children fit on it."
   (replique-inspect-test--in-view
-    (let ((text (replique-inspect-test--text)))
-      (should (string-match-p "▾ {:a 1, :b \\[0 1 2 \\.\\.\\.\\]}…  map · 2" text))
-      (should (string-match-p "^    :a  1$" text))
-      (should (string-match-p "^  ▸ :b  \\[0 1 2 \\.\\.\\.\\]…  vector · 300$" text)))))
+    (should (equal "{:a 1, :b [0 1 2 ...]}\n" (replique-inspect-test--text)))))
+
+(ert-deftest replique-inspect-test-what-a-part-is-is-said-on-demand ()
+  (replique-inspect-test--in-view
+    (replique-inspect-test--goto "[0")
+    (let ((said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args) (setq said (apply #'format-message format args)))))
+        (replique-inspect-describe))
+      (should (string-match-p "vector · 300 held" said))
+      (should (string-match-p "at :b" said)))))
 
 (ert-deftest replique-inspect-test-a-node-is-opened-a-page-at-a-time ()
+  "In place, between the delimiters it prints between."
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (replique-inspect-toggle)
     (let ((msg (replique-inspect-test--answer
-                (list :tag "reply"
-                      :children (list (replique-inspect-test--line 3 "0" :via "index" :key "0")
-                                      (replique-inspect-test--line 4 "1" :via "index" :key "1"))
-                      :total 300 :more t))))
+                (replique-inspect-test--page
+                 (replique-inspect-test--line 3 "0" :via "index" :key "0")
+                 (replique-inspect-test--line 4 "1" :via "index" :key "1")))))
       (should (eq :inspect-children (plist-get msg :op)))
       (should (equal 2 (plist-get msg :node)))
-      (should (equal 7 (plist-get msg :view))))
-    (should (string-match-p "▾ :b" (replique-inspect-test--text)))
-    (should (string-match-p "^      0  0$" (replique-inspect-test--text)))
-    (should (string-match-p "… 298 more" (replique-inspect-test--text)))
+      (should (equal 7 (plist-get msg :view)))
+      ;; where it is written, after its key
+      (should (equal 4 (plist-get msg :column))))
+    (should (equal "{:a 1,\n :b [0 1 …298 more]}\n" (replique-inspect-test--text)))
     (progn ;; more
-     (replique-inspect-test--goto "… 298 more")
+     (replique-inspect-test--goto "…298 more")
      (replique-inspect-toggle)
      (let ((msg (replique-inspect-test--answer
-                 (list :tag "reply"
-                       :children (list (replique-inspect-test--line 5 "2" :via "index" :key "2"))
-                       :total 300 :more t))))
+                 (replique-inspect-test--page
+                  (replique-inspect-test--line 5 "2" :via "index" :key "2")))))
        (should (equal 2 (plist-get msg :offset))))
-     (should (string-match-p "^      2  2$" (replique-inspect-test--text)))
-     (should (string-match-p "… 297 more" (replique-inspect-test--text))))
-    (progn ;; closing
-     (replique-inspect-test--goto ":b  ")
+     (should (equal "{:a 1,\n :b [0 1 2 …297 more]}\n" (replique-inspect-test--text))))
+    (progn ;; closing, from anywhere in it
+     (replique-inspect-test--goto "[0")
      (replique-inspect-toggle)
      (should (null replique-inspect-test--asked))
-     (should-not (string-match-p "^      0  0$" (replique-inspect-test--text)))
-     (should (string-match-p "▸ :b" (replique-inspect-test--text))))))
+     (should (equal "{:a 1, :b [0 1 2 ...]}\n" (replique-inspect-test--text))))))
+
+(ert-deftest replique-inspect-test-point-stays-on-what-it-was-on ()
+  "Wherever opening and closing move it to."
+  (replique-inspect-test--in-view
+    (progn ;; on the key, opened: it moved to a line of its own
+     (replique-inspect-test--goto ":b ")
+     (replique-inspect-toggle)
+     (replique-inspect-test--answer
+      (replique-inspect-test--page (replique-inspect-test--line 3 "0" :via "index" :key "0")))
+     (should (looking-at ":b \\[0 …299 more\\]")))
+    (progn ;; on the opening delimiter, closed
+     (forward-char 3)
+     (replique-inspect-toggle)
+     (should (looking-at "\\[0 1 2 \\.\\.\\.\\]}")))
+    (progn ;; into the printing it opens from: at the start of what it opened to
+     (search-forward "2")
+     (replique-inspect-toggle)
+     (should (looking-at "\\[0 …299 more")))
+    (progn ;; more loaded: on the first of them
+     (search-forward "…")
+     (replique-inspect-toggle)
+     (replique-inspect-test--answer
+      (replique-inspect-test--page (replique-inspect-test--line 4 "1" :via "index" :key "1")))
+     (should (looking-at "1 …298 more")))))
+
+(ert-deftest replique-inspect-test-the-line-point-is-on-stays-where-it-is-in-the-window ()
+  (replique-inspect-test--in-view
+    (switch-to-buffer (current-buffer))
+    (let ((frame (replique-inspect-test--opened
+                  :children (cl-loop for i from 1 to 40
+                                     collect (list :node i :value (format "{:n %d}" i)
+                                                   :kind "map" :count 1 :expandable t
+                                                   :truncated t :via "key"
+                                                   :key (format ":k%02d" i))))))
+      (replique-inspect-refresh)
+      (replique-inspect-test--answer frame))
+    (replique-inspect-test--goto ":k20 ")
+    (recenter 5)
+    (redisplay)
+    (replique-inspect-test--goto ":k20 ")
+    (replique-inspect-toggle)
+    (replique-inspect-test--answer
+     (list :tag "reply" :open "{" :close "}" :total 3 :more nil
+           :children (list (replique-inspect-test--line 50 "1" :via "key" :key ":a")
+                           (replique-inspect-test--line 51 "2" :via "key" :key ":b")
+                           (replique-inspect-test--line 52 "3" :via "key" :key ":c"))))
+    (should (looking-at ":k20 {:a 1, :b 2, :c 3}"))
+    (should (= 5 (count-lines (window-start) (line-beginning-position))))))
+
+(ert-deftest replique-inspect-test-a-line-is-the-entry-it-starts ()
+  "What starts a line is what TAB opens, there."
+  (replique-inspect-test--in-view
+    (replique-inspect-test--goto ":b ")
+    (replique-inspect-toggle)
+    (replique-inspect-test--answer
+     (replique-inspect-test--page (replique-inspect-test--line 3 "0" :via "index" :key "0")))
+    (goto-char (point-min))
+    (forward-line 1)
+    (should (equal 2 (replique-inspect--node-at-point)))))
+
+(ert-deftest replique-inspect-test-what-the-process-opened-is-open ()
+  "The children of a child come with it, and are laid out an entry a line."
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:var "user/state") "user/state")
+      (should (plist-get (replique-inspect-test--asked) :expand))
+      (replique-inspect-test--answer
+       (replique-inspect-test--opened
+        :children (list (replique-inspect-test--line 1 "1" :via "key" :key ":a")
+                        (list :node 2 :value "[0 1 2 ...]" :kind "vector" :count 300
+                              :expandable t :truncated t :via "key" :key ":b"
+                              :page (replique-inspect-test--page
+                                     (list :node 3 :value "{:n 0}" :kind "map" :count 1
+                                           :via "index" :key "0")
+                                     (list :node 4 :value "{:n 1}" :kind "map" :count 1
+                                           :via "index" :key "1"))))))
+      (should (equal "{:a 1,\n :b [{:n 0} {:n 1} …298 more]}\n"
+                     (replique-inspect-test--text)))
+      (should (equal 4 (plist-get (replique-inspect--node 2) :column)))
+      (should (equal 5 (plist-get (replique-inspect--node 3) :column))))))
 
 (ert-deftest replique-inspect-test-a-line-with-nothing-more-in-it-does-not-open ()
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":a  ")
+    (replique-inspect-test--goto ":a ")
     (replique-inspect-toggle)
     (should (null replique-inspect-test--asked))))
 
 (ert-deftest replique-inspect-test-a-refresh-asks-again-for-what-is-open ()
   "And for nothing that is not, and shows what changed."
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (replique-inspect-toggle)
     (replique-inspect-test--answer
      (list :tag "reply"
            :children (list (replique-inspect-test--line 3 "0" :via "index" :key "0"))
-           :total 1 :more nil))
+           :total 1 :more nil :open "[" :close "]"))
     (replique-inspect-refresh)
     (let ((msg (replique-inspect-test--answer
                 (replique-inspect-test--opened
                  :children (list (replique-inspect-test--line 1 "2" :via "key" :key ":a" :changed t)
                                  (list :node 2 :value "[0 1 2 ...]" :kind "vector" :count 300
                                        :expandable t :truncated t :via "key" :key ":b"))))))
-      (should (eq :inspect-refresh (plist-get msg :op))))
+      (should (eq :inspect-refresh (plist-get msg :op)))
+      (should-not (plist-member msg :expand)))
     (let ((msg (replique-inspect-test--answer
                 (list :tag "reply"
                       :children (list (replique-inspect-test--line 3 "9" :via "index" :key "0"
                                                                    :changed t))
-                      :total 1 :more nil))))
+                      :total 1 :more nil :open "[" :close "]"))))
       (should (eq :inspect-children (plist-get msg :op)))
       (should (equal 2 (plist-get msg :node))))
     (should (null replique-inspect-test--asked))
-    (should (string-match-p "^      0  9$" (replique-inspect-test--text)))
-    (replique-inspect-test--goto ":a  ")
+    (should (equal "{:a 2,\n :b [9]}\n" (replique-inspect-test--text)))
+    (replique-inspect-test--goto ":a ")
     (search-forward "2")
     (let ((face (get-text-property (1- (point)) 'face)))
       (should (memq 'replique-inspect-changed (ensure-list face)))
@@ -178,7 +267,7 @@ that what it says is what is read."
 (ert-deftest replique-inspect-test-a-value-is-painted-as-clojure ()
   "What a node prints is painted the way a Clojure buffer paints it."
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":a  ")
+    (replique-inspect-test--goto ":a ")
     (search-forward ":a")
     ;; the key of a map too, a keyword the way a keyword is
     (should (equal (get-text-property 0 'face (replique-clojure-fontify-string ":a"))
@@ -190,16 +279,18 @@ that what it says is what is read."
 (ert-deftest replique-inspect-test-a-view-the-process-lost-is-opened-again ()
   "And what was open in it is opened again, by the keys that led to it."
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (replique-inspect-toggle)
     (replique-inspect-test--answer
      (list :tag "reply"
            :children (list (replique-inspect-test--line 3 "0" :via "index" :key "0"))
-           :total 1 :more nil))
+           :total 1 :more nil :open "[" :close "]"))
     (replique-inspect-refresh)
     (replique-inspect-test--answer (list :tag "error" :error "view-gone"
                                          :message "The page view 7 was in is gone"))
     (should (eq :inspect (plist-get (replique-inspect-test--asked) :op)))
+    ;; opened as it was left, and not as far as a window goes
+    (should-not (plist-member (replique-inspect-test--asked) :expand))
     ;; the new view numbers its nodes as it likes
     (replique-inspect-test--answer
      (replique-inspect-test--opened
@@ -210,12 +301,11 @@ that what it says is what is read."
     (let ((msg (replique-inspect-test--answer
                 (list :tag "reply"
                       :children (list (replique-inspect-test--line 13 "0" :via "index" :key "0"))
-                      :total 1 :more nil))))
+                      :total 1 :more nil :open "[" :close "]"))))
       (should (equal 8 (plist-get msg :view)))
       (should (equal 12 (plist-get msg :node))))
     (should (equal 8 replique-inspect--view))
-    (should (string-match-p "▾ :b" (replique-inspect-test--text)))
-    (should (string-match-p "^      0  0$" (replique-inspect-test--text)))))
+    (should (equal "{:a 1,\n :b [0]}\n" (replique-inspect-test--text)))))
 
 (ert-deftest replique-inspect-test-a-change-is-said-and-waits-for-g ()
   "Shown or not, nothing is asked until a refresh is."
@@ -256,13 +346,16 @@ that what it says is what is read."
 
 (ert-deftest replique-inspect-test-a-node-can-be-shown-on-its-own ()
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (replique-inspect-focus)
-    (replique-inspect-test--answer
-     (list :tag "reply"
-           :children (list (replique-inspect-test--line 3 "0" :via "index" :key "0"))
-           :total 1 :more nil))
-    (should (string-prefix-p "▾ :b" (replique-inspect-test--text)))
+    (let ((msg (replique-inspect-test--answer
+                (list :tag "reply"
+                      :children (list (replique-inspect-test--line 3 "0" :via "index" :key "0"))
+                      :total 1 :more nil :open "[" :close "]"))))
+      ;; written at the left edge, opened as far as a window goes
+      (should (equal 0 (plist-get msg :column)))
+      (should (plist-get msg :expand)))
+    (should (equal "[0]\n" (replique-inspect-test--text)))
     (should-not (string-match-p ":a" (replique-inspect-test--text)))
     (should (string-match-p "in :b" (replique-inspect--header)))
     (replique-inspect-up)
@@ -277,7 +370,7 @@ that what it says is what is read."
 
 (ert-deftest replique-inspect-test-the-path-is-copied ()
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (replique-inspect-copy)
     (should (eq :inspect-path (plist-get (replique-inspect-test--asked) :op)))
     (replique-inspect-test--answer (list :tag "reply" :code "(-> (deref user/state) :b)"
@@ -292,7 +385,7 @@ that what it says is what is read."
   "In the namespace of the Clojure repl, and in the frame's for the locals
 of a frame - which the process knows, and which is left to it."
   (replique-inspect-test--in-view
-    (replique-inspect-test--goto ":b  ")
+    (replique-inspect-test--goto ":b ")
     (should-not (replique-inspect--default-name (replique-inspect--node-at-point)))
     (cl-letf (((symbol-function 'replique-repl-for-dialect)
                (lambda (_) (replique-repl--make :ns "user"))))
@@ -308,8 +401,8 @@ of a frame - which the process knows, and which is left to it."
              :root (list :node 0 :value "{a 2, b 20}" :kind "map" :count 2 :expandable t)
              :children (list (replique-inspect-test--line 1 "2" :via "key" :key "a")
                              (replique-inspect-test--line 2 "20" :via "key" :key "b"))
-             :total 2 :more nil))
-      (replique-inspect-test--goto "b  ")
+             :total 2 :more nil :open "{" :close "}"))
+      (replique-inspect-test--goto "b 20")
       (should (equal "b" (replique-inspect--default-name (replique-inspect--node-at-point))))
       (replique-inspect-def "b")
       (should (equal '(:op :inspect-def :view 8 :node 2 :name "b")
@@ -324,7 +417,7 @@ of a frame - which the process knows, and which is left to it."
          (list :tag "reply" :view 9
                :root (list :node 0 :value "{:n 1}" :kind "map" :count 1 :expandable t)
                :children (list (replique-inspect-test--line 1 "1" :via "key" :key ":n"))
-               :total 1 :more nil))
+               :total 1 :more nil :open "{" :close "}"))
         (replique-inspect-def "kept")
         (should (equal '(:op :inspect-def :view 9 :node 0 :name "kept")
                        (replique-inspect-test--asked)))))))
@@ -378,21 +471,21 @@ prefix the buffer is only put out of the way."
       (unwind-protect
           (with-current-buffer buffer
             (should (replique-test-wait-for
-                     (lambda () (string-match-p ":n  0" (replique-inspect-test--text)))
+                     (lambda () (string-match-p ":n 0" (replique-inspect-test--text)))
                      10))
-            (should (string-match-p "vector · 500" (replique-inspect-test--text)))
+            (should (string-match-p ":big \\[0 1 2" (replique-inspect-test--text)))
             (replique-test-eval repl "(swap! watched assoc :n 1)")
             (should (replique-test-wait-for (lambda () replique-inspect--stale) 10))
-            (should (string-match-p ":n  0" (replique-inspect-test--text)))
+            (should (string-match-p ":n 0" (replique-inspect-test--text)))
             (replique-inspect-refresh)
             (should (replique-test-wait-for
-                     (lambda () (string-match-p ":n  1" (replique-inspect-test--text)))
+                     (lambda () (string-match-p ":n 1" (replique-inspect-test--text)))
                      10))
             (progn ;; older-value
              (replique-test-wait-for (lambda () (not replique-inspect--busy)) 5)
              (replique-inspect-older)
              (should (replique-test-wait-for
-                      (lambda () (string-match-p ":n  0" (replique-inspect-test--text)))
+                      (lambda () (string-match-p ":n 0" (replique-inspect-test--text)))
                       10))))
         (kill-buffer buffer)))))
 
@@ -405,13 +498,13 @@ prefix the buffer is only put out of the way."
       (unwind-protect
           (with-current-buffer buffer
             (should (replique-test-wait-for
-                     (lambda () (string-match-p "\\*1  :first" (replique-inspect-test--text)))
+                     (lambda () (string-match-p "\\*1 :first" (replique-inspect-test--text)))
                      10))
             (replique-test-eval repl ":second")
             (should (replique-test-wait-for (lambda () replique-inspect--stale) 10))
             (replique-inspect-refresh)
             (should (replique-test-wait-for
-                     (lambda () (string-match-p "\\*1  :second" (replique-inspect-test--text)))
+                     (lambda () (string-match-p "\\*1 :second" (replique-inspect-test--text)))
                      10)))
         (kill-buffer buffer)))))
 
