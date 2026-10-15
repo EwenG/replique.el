@@ -53,8 +53,8 @@
 ;; C-u u traces nothing any more, forgets the calls and closes the buffer.
 ;;
 ;; A call to look into is recorded and made again: r evaluates its
-;; function again to record what each of its forms evaluates to, written
-;; in its code - see `replique-debug-record' - and R calls it again in the
+;; function again to record what each of its forms evaluates to - see
+;; `replique-debug-record' - and R calls it again in the
 ;; repl, with the values it was called with.  The code edited, R again is
 ;; the same call through the new code.
 
@@ -75,6 +75,11 @@
 
 (defcustom replique-trace-depth 1
   "How many calls around a function `replique-trace' traces with it, by default."
+  :type 'natnum
+  :group 'replique)
+
+(defcustom replique-trace-value-width 40
+  "How much of a value a call shows on its line, in characters."
   :type 'natnum
   :group 'replique)
 
@@ -379,7 +384,7 @@ first - see `replique-fresh-ensure'."
 (defun replique-trace--value (text)
   "Return TEXT, a value printed, as a line shows it: its beginning, coloured."
   (replique-clojure-fontify-string
-   (let ((replique-debug-value-width replique-debug-recorded-width))
+   (let ((replique-debug-value-width replique-trace-value-width))
      (replique-debug--value-text text))))
 
 (defun replique-trace--insert (call depth)
@@ -667,8 +672,8 @@ with and not copies of them: what was mutated since is as it is now."
   "Record the function of the call at point, as `replique-debug-record' does.
 
 Its definition is evaluated again, from its buffer as it is now, to keep
-what each of its forms evaluates to, written in its code call after call -
-and is traced still.  \\<replique-trace-mode-map>\\[replique-trace-replay] calls it again with
+what each of its forms evaluates to, call after call - and is traced
+still.  \\<replique-trace-mode-map>\\[replique-trace-replay] calls it again with
 what the call at point was called with."
   (interactive)
   (let* ((call (replique-trace--at))

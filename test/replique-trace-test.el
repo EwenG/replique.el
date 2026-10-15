@@ -412,10 +412,9 @@ what it was called with."
 
 (ert-deftest replique-trace-test-a-call-is-recorded-and-made-again ()
   "A traced call's function recorded from the tree, and the call made again:
-what its forms evaluated to is written in its code, and the call made
-again is in the tree."
-  (let ((replique-debug-recorded-shown 'every)
-        (jar (expand-file-name "../replique-clj/target/clojure-1.12.5-r1.jar"
+what its forms evaluated to is said on its code, and the call made again
+is in the tree."
+  (let ((jar (expand-file-name "../replique-clj/target/clojure-1.12.5-r1.jar"
                                (replique-test-project))))
     (unless (file-exists-p jar) (ert-skip (format "No compiler to record with at %s" jar)))
     (replique-test-with-project dir
@@ -438,11 +437,14 @@ again is in the tree."
                (repl nil)
                (source nil)
                (calls nil)
-               (shown (lambda ()
-                        (with-current-buffer source
-                          (mapcar (lambda (o) (substring-no-properties (overlay-get o 'after-string)))
-                                  (seq-filter (lambda (o) (overlay-get o 'after-string))
-                                              (overlays-in (point-min) (point-max))))))))
+               (said (lambda ()
+                       (with-current-buffer source
+                         (save-excursion
+                           (goto-char (point-min))
+                           (search-forward "(ta (:n")
+                           (goto-char (match-beginning 0))
+                           (when-let* ((text (replique-debug-eldoc)))
+                             (substring-no-properties text)))))))
           (unwind-protect
               (save-window-excursion
                 (setq repl (replique-repl process))
@@ -478,7 +480,7 @@ again is in the tree."
                   (search-forward "again/tb")
                   (replique-trace-replay))
                 (should (replique-test-wait-for
-                         (lambda () (member " ⇒ 2" (funcall shown)))
+                         (lambda () (equal "⇒ 2" (funcall said)))
                          30))
                 (should (string-match-p "(apply #'again/tb (replique.trace/args-of [0-9]+))\n3\n"
                                         (replique-test-text repl)))

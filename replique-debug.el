@@ -56,36 +56,25 @@
 ;; the ordinary way, it has none.
 ;;
 ;; A definition evaluated with `replique-debug-record' stops nothing, but
-;; keeps what each of its forms evaluates to, call by call: the values of
-;; the last call are written after its forms, as they come, and the calls
-;; before it are gone back to - each value one to browse.  An example of
-;; everything the function was handed and made, written over its code.  It
-;; does not need the debugger.  Once its code is edited, what is written is
-;; of code that is not there any more: the values of the forms edited go,
-;; and the others are faded - what they were before the edit, browsed and
-;; said by eldoc still - until the definition is recorded again.  Edited
-;; back to what was recorded, undone, they are shown as they were.
-;;
-;; What is written is a value per line by default - what the outermost
-;; forms of the line evaluated to, at its end, where it is out of the way of
-;; the code - and C-c C-d t goes to a value after every form, and to none.
-;; The value of the form at point is said by eldoc, before what a call
-;; takes, and the form is highlighted.
-;;
-;; What a function was called with is shown on its params, as what it
-;; was handed.
-;;
-;; A call recorded is one to try things against, the way a frame of a
-;; stopped thread is, without anything stopped: C-c C-d e in a recorded
-;; definition opens a repl whose code is evaluated with the locals in scope
-;; at point bound to what they were in the call shown - see
-;; `replique-debug-eval-in-call'.  It follows the call shown.
+;; keeps what each of its forms evaluates to, call by call: the last call
+;; as they come, and the calls before it gone back to.  An example of
+;; everything the function was handed and made.  It does not need the
+;; debugger.  Nothing of it is written over the code but which call it is,
+;; after the first line of the definition - how many there are, on which
+;; thread, when: the value of the form at point is said by eldoc, before
+;; what a call takes, and the form is highlighted; a param says what it
+;; was called with.  Once its code is edited, what was recorded is of code
+;; that is not there any more: the values of the forms edited go, and the
+;; others are what they were before the edit, said and browsed still -
+;; until the definition is recorded again.  Edited back to what was
+;; recorded, undone, they are what they were.
 ;;
 ;; A loop of a call is gone round an iteration at a time: C-c C-d ] with
-;; point in it shows what the code it goes round evaluated in its next
-;; iteration, and nothing for what it did not evaluate then, C-c C-d [ in
-;; the one before, C-c C-d s in the first where something holds, and
-;; C-c C-d w the whole call again.  C-c C-d e and C-c C-d v follow it.
+;; point in it makes what the code it goes round evaluated in its next
+;; iteration the values said, and nothing for what it did not evaluate
+;; then, C-c C-d [ in the one before, C-c C-d s in the first where
+;; something holds, and C-c C-d w the whole call again.  C-c C-d v follows
+;; it.
 ;; A fn the code wrote is a loop too, which goes round once for each call
 ;; of it - of a reduce, a map, a callback.
 ;;
@@ -109,11 +98,9 @@
 ;;   C-c C-d r  `replique-debug-record'     C-c C-d v  the value recorded
 ;;   C-c C-d p  the call before             C-c C-d n  the call after
 ;;   C-c C-d u  `replique-debug-uninstrument'
-;;   C-c C-d t  `replique-debug-cycle-recorded'
 ;;   C-c C-d ]  the next iteration of a loop   C-c C-d [  the one before
 ;;   C-c C-d s  `replique-debug-find-iteration'  C-c C-d w  the whole call
-;;   C-c C-d e  `replique-debug-eval-in-frame', or in a recorded
-;;              definition `replique-debug-eval-in-call'
+;;   C-c C-d e  `replique-debug-eval-in-frame'
 ;;
 ;; What stopped is the thread and nothing else: the process goes on
 ;; answering, and the other repls go on evaluating.  A repl whose form
@@ -190,34 +177,16 @@ highlighted where they changed; otherwise the buffers go."
   "Face for a breakpoint whose definition is not stepped through yet."
   :group 'replique)
 
-(defcustom replique-debug-recorded-width 40
-  "How much of a value recorded is shown after its form, in characters."
-  :type 'natnum
-  :group 'replique)
-
-(defcustom replique-debug-recorded-shown 'line
-  "Which values recorded a definition that records shows over its code.
-
-`line', at the end of each line, what the outermost forms written on it
-evaluated to; `every', after every form; `none', no value.  Whichever it
-is, eldoc says what the form at point evaluated to, and
-\\[replique-debug-cycle-recorded] goes from one to the next.  Literals,
-which evaluate to themselves, are not shown."
-  :type '(choice (const :tag "One per line" line)
-                 (const :tag "After every form" every)
-                 (const :tag "None" none))
-  :group 'replique)
-
 (defface replique-debug-recorded
   '((t :inherit shadow :slant italic))
-  "Face for what a form of a definition that records evaluated to."
+  "Face for what eldoc says a form of a definition that records evaluated to."
   :group 'replique)
 
 (defface replique-debug-recorded-edited
   '((((class color) (background dark)) :foreground "gray35" :slant italic)
     (((class color) (background light)) :foreground "gray70" :slant italic)
     (t :inherit replique-debug-recorded))
-  "Face for what a form evaluated to, recorded before its definition was edited."
+  "Face for a definition recorded, and edited since: its mark, and its header."
   :group 'replique)
 
 (defface replique-debug-recorded-at-point
@@ -425,10 +394,6 @@ ClojureScript only after it says this."
         (dolist (old (replique-debug--marks-in start (1+ start)))
           (when (and (= start (overlay-start old))
                      (eq process (overlay-get old 'replique-debug-process)))
-            ;; the repl evaluating in its calls goes on, in this one's
-            (when-let* ((repl (overlay-get old 'replique-debug-repl)))
-              (overlay-put old 'replique-debug-repl nil)
-              (overlay-put o 'replique-debug-repl repl))
             (replique-debug--uninstrumented process (overlay-get old 'replique-debug-unit))))
         (overlay-put o 'replique-debug-unit n)
         (overlay-put o 'replique-debug-process process)
@@ -453,8 +418,7 @@ ClojureScript only after it says this."
         (dolist (b (replique-debug--breaks-in (overlay-start o) (overlay-end o)))
           (replique-debug--set-break b o))
         (when (plist-get unit :record)
-          (replique-debug--ask-recorded o)
-          (replique-debug--repl-follows o))))))
+          (replique-debug--ask-recorded o))))))
 
 (defun replique-debug--unmark (o)
   "Take away the mark O, of a unit not stepped through any more.
@@ -469,8 +433,6 @@ them."
   (when-let* ((view (overlay-get o 'replique-debug-view))
               ((buffer-live-p view)))
     (kill-buffer view))
-  (when-let* ((repl (overlay-get o 'replique-debug-repl)))
-    (replique-debug--kill (replique-repl--buffer repl)))
   (delete-overlay o))
 
 (defun replique-debug--uninstrumented (process n)
@@ -700,39 +662,11 @@ there are more."
                    (equal iteration (overlay-get mark 'replique-debug-iteration)))))
         (t (replique-debug--show-recorded mark frame)))))))
 
-(defun replique-debug--recorded-text (value times &optional param edited)
-  "Return VALUE, printed, as it is shown after its form, evaluated TIMES.
-
-Or, with PARAM, what the param of that name was called with, said where
-the param itself is not.  EDITED, its definition was edited since: faded,
-and not painted as Clojure."
-  (let ((arrow (if param (format " %s ⇒ " param) " ⇒ "))
-        (text (let ((replique-debug-value-width replique-debug-recorded-width))
-                (replique-debug--value-text value)))
-        (face (if edited 'replique-debug-recorded-edited 'replique-debug-recorded)))
-    (concat (if edited
-                (propertize (concat arrow text) 'face face 'cursor t)
-              (replique-debug--painted arrow text face))
-            (if (and times (> times 1))
-                (propertize (format " ×%s" times) 'face face)
-              ""))))
-
 (defun replique-debug--literal-p (text)
   "Return non-nil when TEXT, a form, is a literal: what it evaluates to."
   (string-match-p (rx bos (or (seq (? (any "+-")) digit) "\"" "#\"" ":" "\\"
                               (seq (or "nil" "true" "false") eos)))
                   text))
-
-(defun replique-debug--outermost (forms)
-  "Return the FORMS no other of FORMS is in, by where they start."
-  (let ((kept nil))
-    (dolist (o (sort (copy-sequence forms)
-                     (lambda (a b) (or (< (overlay-start a) (overlay-start b))
-                                       (and (= (overlay-start a) (overlay-start b))
-                                            (> (overlay-end a) (overlay-end b)))))))
-      (when (or (null kept) (>= (overlay-start o) (overlay-end (car kept))))
-        (push o kept)))
-    (nreverse kept)))
 
 (defun replique-debug--params-at (start)
   "Return the params of the fn whose form starts at START, as nodes.
@@ -805,8 +739,7 @@ Edited since, it says so."
   (overlay-put mark 'replique-debug-shown-iteration (plist-get recorded :iteration))
   (overlay-put mark 'replique-debug-recorded-said recorded)
   (replique-debug--draw-recorded mark)
-  (replique-debug--view-follows mark)
-  (replique-debug--repl-follows mark))
+  (replique-debug--view-follows mark))
 
 ;; The view of a definition recorded is of a form F, the code T at the
 ;; place P - each nil where it is of no form, but of a loop - in one of
@@ -1034,11 +967,11 @@ with."
                                               (not (plist-get of :locals))))))))
 
 (defun replique-debug--draw-recorded (mark)
-  "Show what the unit MARK marks recorded, as `replique-debug-recorded-shown' says.
+  "Take in what the unit MARK marks recorded, and say which call it is of.
 
-Each form recorded is an overlay, which what is at point is found by,
-whatever is written - and which an edit of its text takes away, see
-`replique-debug--edited'."
+Each form recorded is an overlay, nothing written: what is at point is
+found by it - said by eldoc and browsed - and an edit of its text takes it
+away, see `replique-debug--edited'."
   (replique-debug--forget-recorded mark)
   (with-current-buffer (overlay-buffer mark)
     (let* ((recorded (overlay-get mark 'replique-debug-recorded-said))
@@ -1076,57 +1009,25 @@ whatever is written - and which an edit of its text takes away, see
       (replique-debug--write-recorded mark forms))))
 
 (defun replique-debug--write-recorded (mark forms)
-  "Write the values of FORMS, recorded by the unit MARK marks, over its code.
+  "Keep FORMS, recorded by the unit MARK marks, and say which call they are of.
 
-As `replique-debug-recorded-shown' says, and faded where the unit was
-edited since."
+At the end of its first line - and that they are of the code before the
+edit, where the unit was edited since.  No value is written over the code:
+the form at point says its own, by eldoc."
   (with-current-buffer (overlay-buffer mark)
     (let ((edited (overlay-get mark 'replique-debug-edited))
-          (lines (make-hash-table))
-          (shown nil)
-          (first-line (line-number-at-pos (overlay-start mark))))
+          (header nil))
       (mapc #'delete-overlay (seq-difference (overlay-get mark 'replique-debug-shown) forms))
       (dolist (o forms)
-        (let ((value (overlay-get o 'replique-debug-recorded)))
-          (overlay-put o 'replique-debug-old edited)
-          (overlay-put o 'after-string
-                       (when (eq 'every replique-debug-recorded-shown)
-                         (replique-debug--recorded-text (plist-get value :value)
-                                                        (plist-get value :times)
-                                                        nil edited)))))
-      ;; what is written at the end of a line, by line
-      (when (eq 'line replique-debug-recorded-shown)
-        (dolist (o forms)
-          (let ((line (line-number-at-pos (overlay-start o))))
-            (when (= line (line-number-at-pos (overlay-end o)))
-              (push o (gethash line lines))))))
-      (maphash (lambda (line on-it)
-                 (puthash line
-                          (mapconcat (lambda (o)
-                                       (let ((value (overlay-get o 'replique-debug-recorded)))
-                                         (replique-debug--recorded-text
-                                          (plist-get value :value) (plist-get value :times)
-                                          (plist-get value :param) edited)))
-                                     (replique-debug--outermost on-it)
-                                     "")
-                          lines))
-               lines)
+        (overlay-put o 'replique-debug-old edited))
       (when (plist-get (overlay-get mark 'replique-debug-recorded-said) :call)
-        (puthash first-line
-                 (concat (gethash first-line lines "") (replique-debug--call-text mark))
-                 lines))
-      (maphash (lambda (line text)
-                 (let* ((eol (save-excursion
-                               (goto-char (point-min))
-                               (forward-line (1- line))
-                               (line-end-position)))
-                        (o (make-overlay eol eol)))
-                   ;; the cursor stays at the end of the line, before it
-                   (put-text-property 0 1 'cursor t text)
-                   (overlay-put o 'after-string text)
-                   (push o shown)))
-               lines)
-      (overlay-put mark 'replique-debug-shown (append forms shown))
+        (let ((eol (save-excursion (goto-char (overlay-start mark)) (line-end-position)))
+              (text (replique-debug--call-text mark)))
+          ;; the cursor stays at the end of the line, before it
+          (put-text-property 0 1 'cursor t text)
+          (setq header (make-overlay eol eol))
+          (overlay-put header 'after-string text)))
+      (overlay-put mark 'replique-debug-shown (if header (cons header forms) forms))
       (replique-debug--follow-point))))
 
 (defun replique-debug--recorded (process unit)
@@ -1137,26 +1038,6 @@ Where the last call is shown: a call gone back to stays."
     (unless (or (overlay-get mark 'replique-debug-call)
                 (overlay-get mark 'replique-debug-edited))
       (replique-debug--ask-recorded mark))))
-
-(defun replique-debug-cycle-recorded ()
-  "Show recorded values the next way: one per line, after every form, none.
-
-See `replique-debug-recorded-shown'."
-  (interactive)
-  (setq replique-debug-recorded-shown
-        (pcase replique-debug-recorded-shown ('line 'every) ('every 'none) (_ 'line)))
-  (maphash (lambda (_ mark)
-             (when (and (overlay-buffer mark)
-                        (overlay-get mark 'replique-debug-recorded-said))
-               (if (overlay-get mark 'replique-debug-edited)
-                   (replique-debug--write-recorded mark (replique-debug--forms-of mark))
-                 (replique-debug--draw-recorded mark))))
-           replique-debug--units)
-  (message "replique: %s"
-           (pcase replique-debug-recorded-shown
-             ('line "a recorded value per line")
-             ('every "a recorded value after every form")
-             (_ "no recorded value written - eldoc says the one at point"))))
 
 ;;; The recorded form at point
 
@@ -1198,8 +1079,7 @@ take - or else the innermost one POS is in."
 
 For `eldoc-documentation-functions', before what says what a call takes:
 in a definition that records, which is read rather than written - written
-in, it records nothing to show - this is what there is to know.  Not cut,
-as what is written after the form is."
+in, it records nothing to show - this is what there is to know."
   (when-let* ((form (replique-debug--recorded-form-at (point)))
               (value (overlay-get form 'replique-debug-recorded)))
     (concat (propertize "⇒ " 'face 'replique-debug-recorded)
@@ -1246,12 +1126,12 @@ the time the definition's own hook writes them again - see
                  "Recorded - M-x replique-debug-uninstrument")))
 
 (defun replique-debug--edited (mark after &rest _)
-  "Fade what the unit MARK marks recorded: its code was edited.
+  "Say that what the unit MARK marks recorded is of its code before an edit.
 
 What was recorded is of the code as it was sent.  The values of the forms
 edited go: they are not of anything written any more.  The others stay,
-faded, as what they were before the edit.  Edited back to what was
-recorded, the values are shown as they were.  The process records it
+said by eldoc as what they were before the edit.  Edited back to what was
+recorded, they are what they were.  The process records it
 still, until it is evaluated again or `replique-debug-uninstrument' lets
 it go - but what it records is not shown, being of the code before.
 
@@ -1276,10 +1156,12 @@ known, see `replique-debug--form-edited'."
 (defun replique-debug-record ()
   "Evaluate the top level form around point, to record what it does.
 
-What each of its forms evaluates to is kept, call by call - the last ones
-- and written after the form: the values of the last call, as calls come,
-or of the one gone back to with \[replique-debug-recorded-before].  Each
-is a value to browse - \[replique-debug-inspect-recorded].  Nothing stops,
+What each of its forms evaluates to is kept, call by call - the last ones:
+the values of the last call, as calls come, or of the one gone back to
+with \[replique-debug-recorded-before], each said by eldoc on its form
+and a value to browse - \[replique-debug-inspect-recorded].  Which call
+it is, how many there are, and when it was made, is written after its
+first line.  Nothing stops,
 and the process does not need the debugger, only the compiler of
 replique-clj.
 
@@ -1289,8 +1171,8 @@ is reloaded, or its namespace compiled again.
 
 Recorded until `replique-debug-uninstrument', or until it is evaluated
 again the ordinary way.  Once its code is edited, the values of the forms
-edited go, and the others are faded: they are of code as it was before -
-see `replique-debug--edited'."
+edited go, and the others are of code as it was before - see
+`replique-debug--edited'."
   (interactive)
   (replique-eval--send (list (replique-eval--defun-at-point)) 'record))
 
@@ -1472,8 +1354,8 @@ From the first one, or the last, where none of it is shown."
   "Show what the loop at point did in its next iteration - N iterations on.
 
 Of a recorded definition, in the call shown: every form the loop goes
-round shows what it evaluated to in that iteration, and a form it did not
-evaluate then shows nothing.  The rest shows the whole call.  The first
+round says what it evaluated to in that iteration, and a form it did not
+evaluate then says nothing.  The rest says the whole call.  The first
 iteration, where none of the loop is shown.  \[replique-debug-whole-call]
 shows the whole call again.  The first iterations of a loop are kept, and
 the last ones - see `:debug-recorded'."
@@ -1508,10 +1390,11 @@ The last iteration, where none of the loop is shown.  See
   "Show the first iteration of the loop at point where CODE is true.
 
 CODE is evaluated with the locals in scope at point bound to what they
-were in each iteration, as `replique-debug-eval-in-call' binds them - after
-the iteration shown, or from the first one.  With BACKWARD, interactively
-the prefix argument, the iteration before it, or the last.  The iterations
-kept only."
+were in each iteration: the params to what the call was called with, and
+the names a let or a loop binds to what they were bound to, recorded, not
+evaluated again - after the iteration shown, or from the first one.
+With BACKWARD, interactively the prefix argument, the iteration before it,
+or the last.  The iterations kept only."
   (interactive (list (read-string (if current-prefix-arg "Last iteration where: "
                                     "First iteration where: ")
                                   nil 'replique-debug--find-history)
@@ -1606,108 +1489,6 @@ with it, or the params the definition was called with: see
                       ((not around) 'value)
                       (loop (list :loop loop :name (replique-debug--loop-name mark loop)))
                       (t 'calls))))))
-
-;;; A repl in a recorded call
-
-(defun replique-debug--call-label (process call)
-  "Return what the prompt of a repl of PROCESS evaluating in CALL says.
-CALL is (:unit N :call C ...), as the prompt said it: the definition, and
-the call - the last one, without C."
-  (let* ((mark (gethash (cons process (plist-get call :unit)) replique-debug--units))
-         (at (and mark (plist-get call :call)
-                  (plist-get (seq-find (lambda (c) (eql (plist-get c :call) (plist-get call :call)))
-                                       (overlay-get mark 'replique-debug-calls))
-                             :at))))
-    (format "%s, %s%s"
-            (if mark (replique-debug--unit-name mark) "gone")
-            (cond ((null (plist-get call :call)) "last call")
-                  (at (format-time-string "call %T" (/ at 1000.0)))
-                  (t "call"))
-            (if-let* ((it (plist-get call :iteration)))
-                (format ", iteration %s" (plist-get it :index))
-              ""))))
-
-(defun replique-debug--call-directive (call)
-  "Return the directive that points a repl at CALL, (:unit N :call C ...)."
-  (format "#replique/call {:unit %s%s :line %s :column %s%s}"
-          (plist-get call :unit)
-          (if (plist-get call :call) (format " :call %s" (plist-get call :call)) "")
-          (plist-get call :line) (plist-get call :column)
-          (if-let* ((it (plist-get call :iteration)))
-              (format " :iteration {:site %s :index %s}"
-                      (plist-get it :site) (plist-get it :index))
-            "")))
-
-(defun replique-debug--repl-follows (mark)
-  "Point the repl evaluating in a call of the unit MARK marks at the call shown.
-At the place of the code it was at.  Not a repl pointed elsewhere since."
-  (when-let* ((repl (overlay-get mark 'replique-debug-repl))
-              ((replique-repl-live-p repl))
-              (in (replique-repl--in-call repl))
-              (call (append (list :unit (overlay-get mark 'replique-debug-unit))
-                            (when-let* ((c (overlay-get mark 'replique-debug-call)))
-                              (list :call c))
-                            (list :line (plist-get in :line) :column (plist-get in :column))
-                            (when-let* ((it (overlay-get mark 'replique-debug-iteration)))
-                              (list :iteration it)))))
-    (unless (equal call in)
-      (replique-repl-send-directive repl (replique-debug--call-directive call)))))
-
-;;;###autoload
-(defun replique-debug-eval-in-call ()
-  "Evaluate in the call shown of the recorded definition at point.
-
-From a repl of its own, with the locals in scope at point bound to what
-they were in that call: its params, to what it was called with, and the
-locals of its lets, to what they were bound to - recorded, not evaluated
-again.  The locals of a loop, a doseq or a for, to what they were bound
-to last - or in the iteration shown, see `replique-debug-next-iteration',
-which it follows too.  A local whose value is not known is not bound: of
-a form that was not evaluated in that call, or that iteration.  In the
-namespace of the code, on the repl's own thread, and the ordinary way
-otherwise: a recorded function
-called there records that call too.
-
-It is the repl the commands act on while it is there, so what a Clojure
-buffer sends goes to it too: `\[replique-eval-last-sexp]' on a form of the
-definition evaluates it with the values it had.
-
-It follows the call shown - see `replique-debug-recorded-before' - the last
-one while the last one is followed.  Asked from another place of the code,
-it moves there.  It goes when the definition records no more - and stays
-when it is recorded again, in the calls of the definition as it is now.
-
-A ClojureScript definition is evaluated in from a ClojureScript repl on the
-runtime it was recorded in, which keeps the values - and binds a local
-whose value is not known to :replique/not-recorded."
-  (interactive)
-  (let* ((mark (replique-debug--recording-at-point))
-         (process (overlay-get mark 'replique-debug-process))
-         (place (replique-debug--origin-of mark (point)))
-         (call (append (list :unit (overlay-get mark 'replique-debug-unit))
-                       (when-let* ((c (overlay-get mark 'replique-debug-call)))
-                         (list :call c))
-                       (list :line (car place) :column (cdr place))
-                       (when-let* ((it (overlay-get mark 'replique-debug-iteration)))
-                         (list :iteration it))))
-         (keys (overlay-get mark 'replique-debug-keys))
-         (repl (overlay-get mark 'replique-debug-repl)))
-    (unless (overlay-get mark 'replique-debug-calls)
-      (user-error "Not called yet"))
-    (if (replique-repl-live-p repl)
-        (progn
-          (unless (equal call (replique-repl--in-call repl))
-            (replique-repl-send-directive repl (replique-debug--call-directive call)))
-          (setq replique-current-repl repl)
-          (pop-to-buffer (replique-repl--buffer repl)))
-      (let ((name (format "*replique-recorded %s repl*" (replique-debug--unit-name mark))))
-        (setq repl (replique-repl--open process (plist-get keys :dialect) (plist-get keys :target)
-                                        nil nil nil call))
-        ;; Renamed after it is opened, and so kept - see
-        ;; `replique-debug-eval-in-frame'
-        (with-current-buffer (replique-repl--buffer repl)
-          (rename-buffer name t))
-        (overlay-put mark 'replique-debug-repl repl)))))
 
 ;;; A buffer per stopped thread
 
@@ -2254,38 +2035,31 @@ as anywhere else.
 Its prompt says which frame, counted from where the thread stopped: a
 thread stepped on is evaluated in where it got to.  Asked from another
 frame, the repl moves there.  It goes with the buffer of the thread once
-the thread goes on - or when it is killed.
-
-In a recorded definition, evaluate in the call shown instead - see
-`replique-debug-eval-in-call'."
+the thread goes on - or when it is killed."
   (interactive)
-  (if (and (not (derived-mode-p 'replique-debug-mode))
-           (seq-find (lambda (o) (overlay-get o 'replique-debug-record))
-                     (replique-debug--marks-in (point) (1+ (point)))))
-      (replique-debug-eval-in-call)
-    (let ((index (replique-debug--frame-at-point)))
-      (replique-debug--in-this
-       (let* ((process replique-debug--process)
-              (thread replique-debug--thread)
-              (frame (list :thread thread :frame index))
-              (buffer (replique-debug--frame-repl-buffer process thread))
-              (repl (and buffer (buffer-local-value 'replique--buffer-repl buffer))))
-         (if (replique-repl-live-p repl)
-             (progn
-               (unless (equal frame (replique-repl--in-frame repl))
-                 (replique-repl-send-directive
-                  repl (format "#replique/frame {:thread %s :frame %s}" thread index)))
-               (setq replique-current-repl repl)
-               (pop-to-buffer buffer))
-           (when buffer (replique-debug--kill buffer))
-           (let ((name (format "%s repl*" (string-remove-suffix "*" (buffer-name)))))
-             ;; Renamed after it is opened, and so kept: what the handshake
-             ;; says names a buffer only where it is still named as opened -
-             ;; see `replique-repl--rename'
-             (with-current-buffer (replique-repl--buffer
-                                   (replique-repl--open process nil nil nil nil nil frame))
-               (rename-buffer name t)
-               (setq replique-debug--evaluating-in (cons process thread))))))))))
+  (let ((index (replique-debug--frame-at-point)))
+    (replique-debug--in-this
+     (let* ((process replique-debug--process)
+            (thread replique-debug--thread)
+            (frame (list :thread thread :frame index))
+            (buffer (replique-debug--frame-repl-buffer process thread))
+            (repl (and buffer (buffer-local-value 'replique--buffer-repl buffer))))
+       (if (replique-repl-live-p repl)
+           (progn
+             (unless (equal frame (replique-repl--in-frame repl))
+               (replique-repl-send-directive
+                repl (format "#replique/frame {:thread %s :frame %s}" thread index)))
+             (setq replique-current-repl repl)
+             (pop-to-buffer buffer))
+         (when buffer (replique-debug--kill buffer))
+         (let ((name (format "%s repl*" (string-remove-suffix "*" (buffer-name)))))
+           ;; Renamed after it is opened, and so kept: what the handshake
+           ;; says names a buffer only where it is still named as opened -
+           ;; see `replique-repl--rename'
+           (with-current-buffer (replique-repl--buffer
+                                 (replique-repl--open process nil nil nil nil nil frame))
+             (rename-buffer name t)
+             (setq replique-debug--evaluating-in (cons process thread)))))))))
 
 (defun replique-debug-visit-frame ()
   "Show the source of the frame at point, and its locals."

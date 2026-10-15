@@ -328,6 +328,16 @@ stopped is a thread shown running."
                               (overlays-in (point-min) (point-max)))
                   (lambda (a b) (< (overlay-start a) (overlay-start b)))))))
 
+(defun replique-debug-test--said (buffer form)
+  "Return what eldoc says the recorded FORM of BUFFER, its text, evaluated to."
+  (with-current-buffer buffer
+    (save-excursion
+      (goto-char (point-min))
+      (search-forward form)
+      (goto-char (match-beginning 0))
+      (when-let* ((text (replique-debug-eldoc)))
+        (substring-no-properties text)))))
+
 (ert-deftest replique-debug-test-a-step-shows-the-form-and-its-value ()
   "The form the thread stopped after, and what it evaluated to after it; the
 values before it stay, dimmed, and go with the thread."
@@ -588,10 +598,9 @@ says it is stepped through: by where it was read from."
         :calls '((:call 4 :thread "main" :at 0) (:call 5 :thread "worker" :at 0))
         :values values))
 
-(ert-deftest replique-debug-test-what-is-recorded-is-written-after-its-forms ()
+(ert-deftest replique-debug-test-what-is-recorded-is-said-on-its-forms ()
   "The values of the last call, as calls come - or of a call gone back to,
-which stays - each a value to browse."
-  (let ((replique-debug-recorded-shown 'every))
+which stays - each a value to browse.  Only which call it is is written."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (let ((source (find-file-noselect replique-debug-test--file))
@@ -609,20 +618,11 @@ which stays - each a value to browse."
                                     :value "2" :times 1)
                              (:site 2 :line 3 :column 3 :end-line 5 :end-column 7
                                     :value "2" :times 3))))))
-        ;; by where the forms start: the let, then (inc n)
-        (should (equal '((" ⇒ 2 ×3" . replique-debug-recorded)
-                         (" ⇒ 2" . replique-debug-recorded))
-                       (seq-remove (lambda (s) (string-match-p "◂" (car s)))
-                                   (replique-debug-test--after-strings source))))
-        (should (seq-find (lambda (s) (string-match-p "◂ call 2 of 2, the last · worker" (car s)))
-                          (replique-debug-test--after-strings source)))
-        ;; the value painted as Clojure, over the face of what is recorded
-        (with-current-buffer source
-          (let* ((o (seq-find (lambda (o) (overlay-get o 'replique-debug-recorded))
-                              (overlays-in (point-min) (point-max))))
-                 (text (overlay-get o 'after-string)))
-            (should (equal '(font-lock-number-face replique-debug-recorded)
-                           (get-text-property (string-search "2" text) 'face text)))))
+        (let ((shown (replique-debug-test--after-strings source)))
+          (should (= 1 (length shown)))
+          (should (string-match-p "\\`  ◂ call 2 of 2, the last · worker" (caar shown))))
+        (should (equal "⇒ 2 ×3" (replique-debug-test--said source "(let")))
+        (should (equal "⇒ 2" (replique-debug-test--said source "(inc n)")))
         ;; a line above it, written since: the forms are where they are now
         (with-current-buffer source
           (goto-char (point-min))
@@ -667,7 +667,7 @@ which stays - each a value to browse."
                                                             :debug-recorded))))
         ;; let go of, it shows nothing
         (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
-        (should-not (replique-debug-test--after-strings source)))))))
+        (should-not (replique-debug-test--after-strings source))))))
 
 (ert-deftest replique-debug-test-a-definition-recorded-has-one-view ()
   "Each value browsed is browsed in the same buffer, named after the
@@ -733,83 +733,11 @@ records no more."
           (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 7))
           (should-not (buffer-live-p view)))))))
 
-(ert-deftest replique-debug-test-a-repl-evaluates-in-a-recorded-call ()
-  "Opened on the call shown, at the place of point as the code was read,
-named after the definition - following the call shown, carried over to the
-definition recorded again, and gone with it."
-  (replique-debug-test--with-source
-    (replique-debug-test--with
-      (let* ((source (find-file-noselect replique-debug-test--file))
-             (opened nil)
-             (directives nil)
-             (replique-current-repl nil)
-             (buffer (generate-new-buffer "*replique: debug-test clj*"))
-             (repl (replique-repl--make :process process :buffer buffer)))
-        (replique-debug--event process
-                               (list :tag "event" :event "debug-instrumented" :unit 7
-                                     :ns "user" :file replique-debug-test--file :line 2
-                                     :column 1 :end-line 5 :end-column 8 :record t
-                                     :breaks-only t))
-        (cl-letf (((symbol-function 'replique-repl--open)
-                   (lambda (&rest args)
-                     (setq opened args)
-                     (with-current-buffer buffer (setq-local replique--buffer-repl repl))
-                     (setq replique-current-repl repl)
-                     repl))
-                  ((symbol-function 'replique-repl-live-p) (lambda (r) (eq r repl)))
-                  ((symbol-function 'replique-repl-send-directive)
-                   (lambda (_repl directive) (push directive directives))))
-          (with-current-buffer source
-            (goto-char (point-min))
-            (search-forward "(inc")
-            (should-error (replique-debug-eval-in-call) :type 'user-error)
-            (replique-debug-test--answer
-             :debug-recorded
-             (replique-debug-test--recorded
-              5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1))))
-            ;; a line written above it since: where point was as it was read
-            (save-excursion (goto-char (point-min)) (insert "\n"))
-            (replique-debug-eval-in-frame)
-            (should (equal (list process nil nil nil nil nil '(:unit 7 :line 3 :column 15))
-                           opened))
-            (should (equal "*replique-recorded f repl*" (buffer-name buffer)))
-            (should (equal "f, last call"
-                           (replique-debug--call-label process '(:unit 7 :line 3 :column 15))))
-            ;; the call before: the repl goes there
-            (setf (replique-repl--in-call repl) '(:unit 7 :line 3 :column 15))
-            (replique-debug-recorded-before)
-            (replique-debug-test--answer
-             :debug-recorded
-             (replique-debug-test--recorded
-              4 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "1" :times 1))))
-            (should (equal '("#replique/call {:unit 7 :call 4 :line 3 :column 15}") directives))
-            (should (equal (format-time-string "f, call %T" 0)
-                           (replique-debug--call-label process '(:unit 7 :call 4))))
-            ;; asked again, from another place: it moves there, not opened again
-            (setq opened nil)
-            (setf (replique-repl--in-call repl) '(:unit 7 :call 4 :line 3 :column 15))
-            (search-forward "n)")
-            (replique-debug-eval-in-call)
-            (should-not opened)
-            (should (equal "#replique/call {:unit 7 :call 4 :line 3 :column 18}" (car directives)))
-            ;; recorded again, it evaluates in the calls of what is recorded now
-            (setf (replique-repl--in-call repl) '(:unit 7 :call 4 :line 3 :column 18))
-            (replique-debug--event process
-                                   (list :tag "event" :event "debug-instrumented" :unit 8
-                                         :ns "user" :file replique-debug-test--file :line 3
-                                         :column 1 :end-line 6 :end-column 8 :record t
-                                         :breaks-only t))
-            (should (equal "#replique/call {:unit 8 :line 3 :column 18}" (car directives)))
-            (should (buffer-live-p buffer))
-            ;; let go of, it goes
-            (replique-debug--event process '(:tag "event" :event "debug-uninstrumented" :unit 8))
-            (should-not (buffer-live-p buffer))))))))
-
-(ert-deftest replique-debug-test-a-definition-edited-fades-what-it-recorded ()
+(ert-deftest replique-debug-test-a-definition-edited-keeps-what-it-recorded ()
   "What was recorded is of the code as it was sent: once it is edited, the
-values of the forms edited go and the others are faded, browsed still - and
-not asked for again.  Edited back, they are as they were.  The definition is
-still let go of the ordinary way."
+values of the forms edited go and the others are said as before the edit,
+browsed still - and not asked for again.  Edited back, they are as they
+were.  The definition is still let go of the ordinary way."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (let ((source (find-file-noselect replique-debug-test--file))
@@ -826,10 +754,8 @@ still let go of the ordinary way."
           5 '((:site 1 :line 3 :column 11 :end-line 3 :end-column 18 :value "2" :times 1)
               (:site 3 :line 5 :column 5 :end-line 5 :end-column 6 :value "2" :times 1))))
         (setq mark (gethash (cons process 7) replique-debug--units))
-        (should (equal '((" ⇒ 2" . replique-debug-recorded) (" ⇒ 2" . replique-debug-recorded))
-                       (seq-remove (lambda (s) (string-match-p "◂" (car s)))
-                                   (replique-debug-test--after-strings source))))
-        ;; the cursor is put against the form, before the value
+        (should (equal "⇒ 2" (replique-debug-test--said source "(inc n)")))
+        ;; the cursor is put at the end of the line, before which call it is
         (with-current-buffer source
           (should (seq-every-p (lambda (o) (get-text-property 0 'cursor (overlay-get o 'after-string)))
                                (seq-filter (lambda (o) (overlay-get o 'after-string))
@@ -838,20 +764,19 @@ still let go of the ordinary way."
         (with-current-buffer source
           (goto-char (point-min))
           (insert ";; above\n"))
-        (should (= 3 (length (replique-debug-test--after-strings source))))
+        (should (= 1 (length (replique-debug-test--after-strings source))))
+        (should (equal "⇒ 2" (replique-debug-test--said source "(inc n)")))
         (should-not (overlay-get mark 'replique-debug-edited))
-        ;; written in a form: its value goes, the other's is faded
+        ;; written in a form: its value goes, the other's is of before the edit
         (with-current-buffer source
           (search-forward "(inc n")
           (insert " 1"))
         (should (overlay-get mark 'replique-debug-edited))
         (should (overlay-get mark 'before-string))
         (let ((shown (replique-debug-test--after-strings source)))
-          (should (equal '(" ⇒ 2" . replique-debug-recorded-edited)
-                         (seq-find (lambda (s) (equal " ⇒ 2" (car s))) shown)))
-          (should (= 1 (length (seq-filter (lambda (s) (string-match-p "⇒" (car s))) shown))))
-          (should (seq-find (lambda (s) (string-match-p "◂ call 2 of 2, before the edit" (car s)))
-                            shown)))
+          (should (= 1 (length shown)))
+          (should (string-match-p "◂ call 2 of 2, before the edit" (caar shown))))
+        (should-not (replique-debug-test--said source "(inc n 1)"))
         (replique-debug--event process '(:tag "event" :event "debug-recorded" :unit 7))
         (should-not (replique-debug-test--asked :debug-recorded))
         (with-current-buffer source
@@ -869,9 +794,9 @@ still let go of the ordinary way."
           (search-forward "(inc n 1")
           (delete-char -2))
         (should-not (overlay-get mark 'replique-debug-edited))
-        (should (equal '((" ⇒ 2" . replique-debug-recorded) (" ⇒ 2" . replique-debug-recorded))
-                       (seq-remove (lambda (s) (string-match-p "◂" (car s)))
-                                   (replique-debug-test--after-strings source))))
+        (should (equal "⇒ 2" (replique-debug-test--said source "(inc n)")))
+        (should-not (string-match-p "before the edit"
+                                    (caar (replique-debug-test--after-strings source))))
         (with-current-buffer source
           (replique-debug-uninstrument))
         (should (equal '(:op :debug-uninstrument :unit 7)
@@ -902,49 +827,32 @@ their own, a literal, and a form over two lines; return its buffer."
           (:site 7 :line 3 :column 3 :end-line 5 :end-column 11 :value "12" :times 3))))
     source))
 
-(ert-deftest replique-debug-test-a-value-is-written-per-line ()
-  "At the end of a line, what its outermost forms evaluated to - a form over
-two lines is no line's, and a literal is nobody's; \\[replique-debug-cycle-recorded]
-goes to a value after every form, and to none."
+(ert-deftest replique-debug-test-only-which-call-is-written ()
+  "No value is written over the code: which call is shown, at the end of the
+first line of the definition, where the cursor stays before it."
   (replique-debug-test--with-source
     (replique-debug-test--with
-      (let* ((replique-debug-recorded-shown 'line)
-             (source (replique-debug-test--recording process))
-             (shown (lambda ()
-                      ;; the call said, whatever the time zone
-                      (mapcar (lambda (s) (if (string-prefix-p "  ◂ call 2 of 2, the last · worker"
-                                                               (car s))
-                                              "◂"
-                                            (car s)))
-                              (replique-debug-test--after-strings source)))))
-        (should (equal '("◂" " ⇒ 2" " ⇒ 2" " ⇒ 10")
-                       (funcall shown)))
-        ;; at the ends of the lines, where the cursor stays before them
+      (let ((source (replique-debug-test--recording process)))
+        (should (equal '("◂")
+                       (mapcar (lambda (s) (if (string-prefix-p "  ◂ call 2 of 2, the last · worker"
+                                                                (car s))
+                                               "◂"
+                                             (car s)))
+                               (replique-debug-test--after-strings source))))
         (with-current-buffer source
           (dolist (o (overlays-in (point-min) (point-max)))
             (when-let* ((text (overlay-get o 'after-string)))
-              (should (= (overlay-start o) (save-excursion (goto-char (overlay-start o))
+              (should (= (overlay-start o) (save-excursion (goto-char (point-min))
+                                                           (search-forward "(defn")
                                                            (line-end-position))))
-              (should (get-text-property 0 'cursor text)))))
-        (replique-debug-cycle-recorded)
-        (should (eq 'every replique-debug-recorded-shown))
-        (should (equal '(" ⇒ 12 ×3" " ⇒ 2" " ⇒ 1" " ⇒ 12" " ⇒ 2" " ⇒ 10"
-                         "◂")
-                       (seq-sort-by (lambda (text) (if (string-match-p "◂" text) 1 0)) #'<
-                                    (funcall shown))))
-        (replique-debug-cycle-recorded)
-        (should (eq 'none replique-debug-recorded-shown))
-        (should (equal '("◂") (funcall shown)))
-        (replique-debug-cycle-recorded)
-        (should (equal 4 (length (funcall shown))))))))
+              (should (get-text-property 0 'cursor text)))))))))
 
 (ert-deftest replique-debug-test-eldoc-says-the-value-of-the-form-at-point ()
   "Before what a call takes, whatever is written: the form just written, or
 the innermost point is in - highlighted, and the one browsed."
   (replique-debug-test--with-source
     (replique-debug-test--with
-      (let* ((replique-debug-recorded-shown 'none)
-             (source (replique-debug-test--recording process))
+      (let* ((source (replique-debug-test--recording process))
              (inspected nil))
         (with-current-buffer source
           (should (eq #'replique-debug-eldoc (car eldoc-documentation-functions)))
@@ -974,21 +882,15 @@ the innermost point is in - highlighted, and the one browsed."
 
 ;;; What a function was called with
 
-(ert-deftest replique-debug-test-the-args-are-written-on-the-params ()
-  "What the fn was called with is the value of its params: after each, or at
-the end of their line, named - said by eldoc, and browsed, each."
+(ert-deftest replique-debug-test-the-args-are-said-on-the-params ()
+  "What the fn was called with is the value of its params: said by eldoc,
+and browsed, each."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (with-temp-file replique-debug-test--file
         (insert "(ns user)\n(defn f [n & {:keys [k]}]\n  (inc n))\n"))
-      (let* ((replique-debug-recorded-shown 'line)
-             (source (find-file-noselect replique-debug-test--file))
-             (inspected nil)
-             (shown (lambda ()
-                      ;; without the call shown, said on the first line
-                      (seq-remove #'string-empty-p
-                                  (mapcar (lambda (s) (replace-regexp-in-string "  ◂.*" "" (car s)))
-                                          (replique-debug-test--after-strings source))))))
+      (let* ((source (find-file-noselect replique-debug-test--file))
+             (inspected nil))
         (with-current-buffer source (replique-clojure-mode))
         (replique-debug--event process
                                (list :tag "event" :event "debug-instrumented" :unit 7
@@ -1002,10 +904,6 @@ the end of their line, named - said by eldoc, and browsed, each."
               (:site 2 :kind "enter" :line 2 :column 1 :end-line 3 :end-column 10
                      :value "[1 {:k 2}]" :times 1 :params ("n" "&" "p__1")
                      :args ("1" "(:k 2)")))))
-        ;; a param destructured is named as it is written
-        (should (equal '(" n ⇒ 1 {:keys [k]} ⇒ (:k 2)" " ⇒ 2") (funcall shown)))
-        (replique-debug-cycle-recorded)
-        (should (equal '(" ⇒ 1" " ⇒ (:k 2)" " ⇒ 2") (funcall shown)))
         (with-current-buffer source
           (goto-char (point-min))
           (search-forward "[n")
@@ -1017,19 +915,14 @@ the end of their line, named - said by eldoc, and browsed, each."
             (replique-debug-inspect-recorded))
           (should (equal '(:debug (:site 2 :arg 1 :call 5)) inspected)))))))
 
-(ert-deftest replique-debug-test-a-local-is-written-named ()
+(ert-deftest replique-debug-test-a-local-is-said-on-its-name ()
   "What a name a loop or a let bound was bound to is a value of its own,
-named as a param is at the end of its line."
+said on the name as a param's is."
   (replique-debug-test--with-source
     (replique-debug-test--with
       (with-temp-file replique-debug-test--file
         (insert "(ns user)\n(defn f [xs]\n  (doseq [x xs] (inc x)))\n"))
-      (let* ((replique-debug-recorded-shown 'line)
-             (source (find-file-noselect replique-debug-test--file))
-             (shown (lambda ()
-                      (seq-remove #'string-empty-p
-                                  (mapcar (lambda (s) (replace-regexp-in-string "  ◂.*" "" (car s)))
-                                          (replique-debug-test--after-strings source))))))
+      (let ((source (find-file-noselect replique-debug-test--file)))
         (with-current-buffer source (replique-clojure-mode))
         (replique-debug--event process
                                (list :tag "event" :event "debug-instrumented" :unit 7
@@ -1042,7 +935,7 @@ named as a param is at the end of its line."
           5 '((:site 1 :kind "local" :line 3 :column 11 :end-line 3 :end-column 12
                      :value "3" :times 2)
               (:site 2 :line 3 :column 17 :end-line 3 :end-column 24 :value "4" :times 2))))
-        (should (equal '(" x ⇒ 3 ×2 ⇒ 4 ×2") (funcall shown)))
+        (should (equal "⇒ 4 ×2" (replique-debug-test--said source "(inc x)")))
         (with-current-buffer source
           (goto-char (point-min))
           (search-forward "[x ")
@@ -1057,8 +950,7 @@ one browsed - and the whole call again."
     (replique-debug-test--with
       (with-temp-file replique-debug-test--file
         (insert "(ns user)\n(defn f [xs]\n  (doseq [x xs] (inc x)))\n"))
-      (let* ((replique-debug-recorded-shown 'line)
-             (source (find-file-noselect replique-debug-test--file))
+      (let* ((source (find-file-noselect replique-debug-test--file))
              (loops '((:site 1 :line 3 :column 3 :end-line 3 :end-column 25
                              :iterations 25 :kept ((1 9) (16 25)))))
              (answer (lambda (iteration x)
@@ -1094,7 +986,8 @@ one browsed - and the whole call again."
                          (funcall answer '(:site 1 :index 1) "0")))
           (should (string-match-p "call 2 of 2 · worker · .* · doseq x, iteration 1 of 25"
                                   (funcall shown)))
-          (should (string-match-p (regexp-quote " x ⇒ 0 ⇒ …") (funcall shown)))
+          (should (equal "⇒ 0" (replique-debug-test--said source "x xs")))
+          (should (equal "⇒ …" (replique-debug-test--said source "(inc x)")))
           (should-error (replique-debug-previous-iteration) :type 'user-error)
           (replique-debug-next-iteration 8)
           (should (equal '(:site 1 :index 9) (plist-get (funcall answer '(:site 1 :index 9) "8")
@@ -1159,8 +1052,7 @@ fn and its params."
     (replique-debug-test--with
       (with-temp-file replique-debug-test--file
         (insert "(ns user)\n(defn f [xs]\n  (reduce (fn [acc x] (+ acc x)) 0 xs))\n"))
-      (let* ((replique-debug-recorded-shown 'line)
-             (source (find-file-noselect replique-debug-test--file))
+      (let* ((source (find-file-noselect replique-debug-test--file))
              (loops '((:site 1 :fn t :line 3 :column 11 :end-line 3 :end-column 33
                              :iterations 3 :kept ((1 3)))))
              (sum '(:site 2 :line 3 :column 23 :end-line 3 :end-column 32 :value "1" :times 1))
@@ -1509,10 +1401,9 @@ the inner one and out of it, and the repl gets the value."
 
 (ert-deftest replique-debug-test-a-defun-is-recorded ()
   "A definition evaluated to record, called twice in a process started
-without the debugger: what its forms evaluated to in the last call is
-written after them, the call before is gone back to, and a value browsed."
-  (let ((replique-debug-recorded-shown 'every)
-        (jar (replique-debug-test--compiler)))
+without the debugger: what its forms evaluated to in the last call is said
+on them, the call before is gone back to, and a value browsed."
+  (let ((jar (replique-debug-test--compiler)))
     (replique-test-with-project dir
       (with-temp-file (expand-file-name "deps.edn" dir)
         (insert (format "{:paths [\"src\"] :deps {org.clojure/clojure {:local/root %S}}}" jar)))
@@ -1532,9 +1423,9 @@ written after them, the call before is gone back to, and a value browsed."
                            (car (seq-difference replique-processes known)))))
                (repl nil)
                (source nil)
-               (shown (lambda ()
-                        (seq-remove (lambda (s) (string-match-p "◂" (car s)))
-                                    (replique-debug-test--after-strings source)))))
+               (said (lambda (form)
+                       (and (buffer-live-p source) (replique-debug-test--marks source)
+                            (replique-debug-test--said source form)))))
           (unwind-protect
               (save-window-excursion
                 (setq repl (replique-repl process))
@@ -1549,22 +1440,19 @@ written after them, the call before is gone back to, and a value browsed."
                          (lambda () (replique-debug-test--marks source)) 30))
                 (replique-repl-send-code repl "(recorded/rf {:a 1})")
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 4 ×3" (funcall said "(* x y)")))
                          30))
-                (should (member '(" ⇒ [0 2 4]" . replique-debug-recorded) (funcall shown)))
+                (should (equal "⇒ [0 2 4]" (funcall said "(mapv")))
                 (replique-repl-send-code repl "(recorded/rf {:a 2})")
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 6 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 6 ×3" (funcall said "(* x y)")))
                          30))
                 (with-current-buffer source
                   (goto-char (point-min))
                   (search-forward "(inc (:a")
                   (replique-debug-recorded-before))
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 4 ×3" (funcall said "(* x y)")))
                          30))
                 (with-current-buffer source
                   (replique-debug-inspect-recorded))
@@ -1580,33 +1468,16 @@ written after them, the call before is gone back to, and a value browsed."
                                                               (replique-debug-test--text)))))
                                      (buffer-list)))
                          30))
-                ;; evaluated in, with its locals
-                (with-current-buffer source
-                  (search-forward "(mapv")
-                  (replique-debug-eval-in-call))
-                (let ((in-call (with-current-buffer source
-                                 (overlay-get (replique-debug--recording-at-point)
-                                              'replique-debug-repl))))
-                  (should (replique-test-wait-for
-                           (lambda () (replique-repl--in-call in-call)) 60))
-                  (replique-repl-send-code in-call "[m (* x 10)]")
-                  (should (replique-test-wait-for
-                           (lambda () (string-match-p "^\\[{:a 1} 20\\]$"
-                                                      (replique-test-text in-call)))
-                           30))
-                  ;; the last call, followed
-                  (with-current-buffer source (replique-debug-recorded-after))
-                  (should (replique-test-wait-for
-                           (lambda () (null (plist-get (replique-repl--in-call in-call) :call)))
-                           30))
-                  (replique-repl-send-code in-call "(* x 10)")
-                  (should (replique-test-wait-for
-                           (lambda () (string-match-p "^30$" (replique-test-text in-call)))
-                           30))
-                  ;; let go of, it shows nothing, and the repl goes
-                  (with-current-buffer source (replique-debug-uninstrument))
-                  (should (replique-test-wait-for (lambda () (null (funcall shown))) 30))
-                  (should-not (buffer-live-p (replique-repl--buffer in-call)))))
+                ;; the last call, followed
+                (with-current-buffer source (replique-debug-recorded-after))
+                (should (replique-test-wait-for
+                         (lambda () (equal "⇒ 6 ×3" (funcall said "(* x y)")))
+                         30))
+                ;; let go of, it shows nothing
+                (with-current-buffer source (replique-debug-uninstrument))
+                (should (replique-test-wait-for
+                         (lambda () (null (replique-debug-test--after-strings source)))
+                         30)))
             (when (buffer-live-p source) (kill-buffer source))
             (dolist (b (buffer-list))
               (when (with-current-buffer b (derived-mode-p 'replique-inspect-mode))
@@ -1618,10 +1489,9 @@ written after them, the call before is gone back to, and a value browsed."
 
 (ert-deftest replique-debug-test-a-clojurescript-defun-is-recorded ()
   "A .cljs definition evaluated to record in a node repl, called twice: what
-its forms evaluated to in the last call is written after them, the call
-before is gone back to, and a value browsed in the node program."
-  (let ((replique-debug-recorded-shown 'every)
-        (jar (replique-debug-test--compiler))
+its forms evaluated to in the last call is said on them, the call before
+is gone back to, and a value browsed in the node program."
+  (let ((jar (replique-debug-test--compiler))
         (cljs (expand-file-name "../replique-cljs" (replique-test-project))))
     (unless (file-directory-p cljs) (ert-skip (format "No ClojureScript compiler at %s" cljs)))
     (unless (executable-find "node") (ert-skip "No node"))
@@ -1646,9 +1516,9 @@ before is gone back to, and a value browsed in the node program."
                            (car (seq-difference replique-processes known)))))
                (repl nil)
                (source nil)
-               (shown (lambda ()
-                        (seq-remove (lambda (s) (string-match-p "◂" (car s)))
-                                    (replique-debug-test--after-strings source)))))
+               (said (lambda (form)
+                       (and (buffer-live-p source) (replique-debug-test--marks source)
+                            (replique-debug-test--said source form)))))
           (unwind-protect
               (save-window-excursion
                 (setq repl (replique-repl process :cljs :node))
@@ -1663,24 +1533,21 @@ before is gone back to, and a value browsed in the node program."
                          (lambda () (replique-debug-test--marks source)) 60))
                 (replique-repl-send-code repl "(recorded/rf {:a 1})")
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 4 ×3" (funcall said "(* x y)")))
                          30))
-                (should (member '(" ⇒ [0 2 4]" . replique-debug-recorded) (funcall shown)))
+                (should (equal "⇒ [0 2 4]" (funcall said "(mapv")))
                 (should (seq-find (lambda (s) (string-match-p "· node" (car s)))
                                   (replique-debug-test--after-strings source)))
                 (replique-repl-send-code repl "(recorded/rf {:a 2})")
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 6 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 6 ×3" (funcall said "(* x y)")))
                          30))
                 (with-current-buffer source
                   (goto-char (point-min))
                   (search-forward "(inc (:a")
                   (replique-debug-recorded-before))
                 (should (replique-test-wait-for
-                         (lambda () (member '(" ⇒ 4 ×3" . replique-debug-recorded)
-                                            (funcall shown)))
+                         (lambda () (equal "⇒ 4 ×3" (funcall said "(* x y)")))
                          30))
                 (with-current-buffer source
                   (replique-debug-inspect-recorded))
@@ -1695,22 +1562,6 @@ before is gone back to, and a value browsed in the node program."
                                                               (replique-debug-test--text)))))
                                      (buffer-list)))
                          30))
-                ;; evaluated in, in the node program, with its locals
-                (with-current-buffer source
-                  (search-forward "(mapv")
-                  (replique-debug-eval-in-call))
-                (let ((in-call (with-current-buffer source
-                                 (overlay-get (replique-debug--recording-at-point)
-                                              'replique-debug-repl))))
-                  (should (replique-test-wait-for
-                           (lambda () (replique-repl--in-call in-call)) 120))
-                  (replique-repl-send-code in-call "[m (* x 10)]")
-                  (should (replique-test-wait-for
-                           (lambda () (string-match-p "^\\[{:a 1} 20\\]$"
-                                                      (replique-test-text in-call)))
-                           30))
-                  (when (replique-repl-live-p in-call)
-                    (replique-conn-close (replique-repl--conn in-call))))
                 ;; evaluated again the ordinary way, it is let go of
                 (with-current-buffer source
                   (goto-char (point-min))
@@ -1718,7 +1569,7 @@ before is gone back to, and a value browsed in the node program."
                   (replique-eval-defun))
                 (should (replique-test-wait-for
                          (lambda () (and (null (replique-debug-test--marks source))
-                                         (null (funcall shown))))
+                                         (null (replique-debug-test--after-strings source))))
                          30)))
             (when (buffer-live-p source) (kill-buffer source))
             (dolist (b (buffer-list))
@@ -1731,10 +1582,9 @@ before is gone back to, and a value browsed in the node program."
 
 (ert-deftest replique-debug-test-a-clojurescript-loop-is-gone-round ()
   "A loop of a .cljs definition recorded in a node repl, an iteration at a
-time: what its code evaluated then is written, a repl evaluates in it, and
-an iteration is found by what holds in it."
-  (let ((replique-debug-recorded-shown 'every)
-        (jar (replique-debug-test--compiler))
+time: what its code evaluated then is said, and an iteration is found by
+what holds in it."
+  (let ((jar (replique-debug-test--compiler))
         (cljs (expand-file-name "../replique-cljs" (replique-test-project))))
     (unless (file-directory-p cljs) (ert-skip (format "No ClojureScript compiler at %s" cljs)))
     (unless (executable-find "node") (ert-skip "No node"))
@@ -1759,7 +1609,10 @@ an iteration is found by what holds in it."
                (repl nil)
                (source nil)
                (shown (lambda ()
-                        (mapconcat #'car (replique-debug-test--after-strings source) ""))))
+                        (mapconcat #'car (replique-debug-test--after-strings source) "")))
+               (said (lambda ()
+                       (and (replique-debug-test--marks source)
+                            (replique-debug-test--said source "(inc x)")))))
           (unwind-protect
               (save-window-excursion
                 (setq repl (replique-repl process :cljs :node))
@@ -1774,7 +1627,7 @@ an iteration is found by what holds in it."
                          (lambda () (replique-debug-test--marks source)) 60))
                 (replique-repl-send-code repl "(iterated/il [1 2 3])")
                 (should (replique-test-wait-for
-                         (lambda () (string-match-p (regexp-quote " ⇒ 4 ×3") (funcall shown)))
+                         (lambda () (equal "⇒ 4 ×3" (funcall said)))
                          30))
                 (with-current-buffer source
                   (goto-char (point-min))
@@ -1783,25 +1636,12 @@ an iteration is found by what holds in it."
                 (should (replique-test-wait-for
                          (lambda () (string-match-p "doseq x, iteration 1 of 3" (funcall shown)))
                          30))
-                (should (string-match-p (regexp-quote " ⇒ 2") (funcall shown)))
+                (should (equal "⇒ 2" (funcall said)))
                 (with-current-buffer source (replique-debug-next-iteration))
                 (should (replique-test-wait-for
                          (lambda () (string-match-p "iteration 2 of 3" (funcall shown)))
                          30))
-                (should (string-match-p (regexp-quote " ⇒ 3") (funcall shown)))
-                ;; evaluated in, in that iteration
-                (with-current-buffer source (replique-debug-eval-in-call))
-                (let ((in-call (with-current-buffer source
-                                 (overlay-get (replique-debug--recording-at-point)
-                                              'replique-debug-repl))))
-                  (should (replique-test-wait-for
-                           (lambda () (replique-repl--in-call in-call)) 120))
-                  (replique-repl-send-code in-call "(* x 10)")
-                  (should (replique-test-wait-for
-                           (lambda () (string-match-p "^20$" (replique-test-text in-call)))
-                           30))
-                  (when (replique-repl-live-p in-call)
-                    (replique-conn-close (replique-repl--conn in-call))))
+                (should (equal "⇒ 3" (funcall said)))
                 ;; found by what holds in it
                 (with-current-buffer source (replique-debug-find-iteration "(= x 3)"))
                 (should (replique-test-wait-for
@@ -1811,7 +1651,7 @@ an iteration is found by what holds in it."
                 (should (replique-test-wait-for
                          (lambda () (not (string-match-p "iteration" (funcall shown))))
                          30))
-                (should (string-match-p (regexp-quote " ⇒ 4 ×3") (funcall shown))))
+                (should (equal "⇒ 4 ×3" (funcall said))))
             (when (buffer-live-p source) (kill-buffer source))
             (when repl
               (replique-conn-close (replique-repl--conn repl))
