@@ -451,6 +451,30 @@ first - a cell browsed on its own, and the way it prints with T."
                     :expandable t :truncated t :via "label" :key "iteration 12" :pad 12))
         :total 2 :more nil :open "" :close ""))
 
+(ert-deftest replique-inspect-test-a-label-of-an-outline-can-be-above-its-value ()
+  "Code, which can be long: its value on the line under it, indented - the
+other labels padded among themselves."
+  (replique-inspect-test--with
+    (with-current-buffer (replique-inspect-show process nil '(:debug (:loop 3)) "loop")
+      (replique-inspect-test--answer
+       (list :tag "reply" :view 7
+             :root (list :node 0 :value "…" :kind "outline" :count 3
+                         :expandable t :truncated t)
+             :children
+             (list (replique-inspect-test--line 1 "{:a 1}" :via "label"
+                                                :key "(some (fn [x] (long x)) code)"
+                                                :above t :pad 3)
+                   (replique-inspect-test--line 2 "2" :via "label" :key "x" :pad 3)
+                   (replique-inspect-test--line 3 "3" :via "label" :key "acc" :pad 3))
+             :total 3 :more nil :open "" :close ""))
+      (should (equal (concat "(some (fn [x] (long x)) code)\n"
+                             "  {:a 1}\n"
+                             "x   2\n"
+                             "acc 3\n")
+                     (replique-inspect-test--text)))
+      (replique-inspect-test--goto "{:a 1}")
+      (should (eql 1 (get-text-property (point) 'replique-inspect-node))))))
+
 (ert-deftest replique-inspect-test-what-is-not-data-is-an-outline ()
   "A heading a line, its label apart from the value - and an outline in it
 opened under it, as magit opens a section."
@@ -536,9 +560,9 @@ of a frame - which the process knows, and which is left to it."
       (should (equal '(:op :inspect-def :view 8 :node 2 :name "b")
                      (replique-inspect-test--asked))))))
 
-(ert-deftest replique-inspect-test-a-value-recorded-or-traced-is-defined-where-its-code-is ()
+(ert-deftest replique-inspect-test-a-value-recorded-is-defined-where-its-code-is ()
   "The process knows the namespace of the code: none is said."
-  (dolist (source '((:debug (:site 12 :call 3)) (:trace (:call 4 :arg 0))))
+  (dolist (source '((:debug (:site 12 :call 3)) (:debug (:cursor (:unit 1 :call 2 :at 3)))))
     (replique-inspect-test--with
       (with-current-buffer (replique-inspect-show process nil source "a value")
         (replique-inspect-test--answer

@@ -197,6 +197,20 @@ one.")
 (defvar-local replique-inspect--error nil
   "Why the view could not be opened, shown in place of the value.")
 
+(defvar-local replique-inspect-preamble-function nil
+  "A function writing at point what is shown above the value, or nil.
+
+What a buffer that is more than a view writes of its own: the view is
+written after it, and a view opened on another value in the same buffer
+keeps it - see `replique-recording'.  Where it returns `alone', what it
+wrote is all the buffer shows, and the view is not written.")
+(put 'replique-inspect-preamble-function 'permanent-local t)
+
+(defvar-local replique-inspect-rendered-function nil
+  "A function called once the buffer is written, point where it is left, or nil.
+What a buffer that is more than a view does with what it shows.")
+(put 'replique-inspect-rendered-function 'permanent-local t)
+
 ;;; Asking the process
 
 (defun replique-inspect--live-process ()
@@ -585,9 +599,16 @@ What a debugger says of values, labelled with what is not part of them."
   "Return how wide the labels of the children of ID, an outline, are written."
   (apply #'max 0 (mapcar (lambda (child)
                            (let ((line (plist-get (replique-inspect--node child) :line)))
-                             (max (string-width (or (plist-get line :key) ""))
-                                  (or (plist-get line :pad) 0))))
+                             (if (plist-get line :above)
+                                 0
+                               (max (string-width (or (plist-get line :key) ""))
+                                    (or (plist-get line :pad) 0)))))
                          (plist-get (replique-inspect--node id) :children))))
+
+(defun replique-inspect--above-p (id)
+  "Return non-nil when the label of the node ID is on a line of its own.
+Above what is under it, indented on the line after: code, which can be long."
+  (plist-get (plist-get (replique-inspect--node id) :line) :above))
 
 (defun replique-inspect--label (id &optional alone)
   "Return what the node ID is written after: its key in a map, or nil.
@@ -599,7 +620,7 @@ space - unless ALONE on its line."
       ;; not part of the value, and not painted as Clojure
       ("label" (replique-inspect--part
                 (concat (propertize key 'face 'replique-inspect-label)
-                        (if alone
+                        (if (or alone (plist-get line :above))
                             ""
                           (make-string (- (1+ (replique-inspect--pad
                                                (plist-get (replique-inspect--node id) :parent)))
@@ -647,9 +668,10 @@ What is open in it is laid out the way it prints."
 (defun replique-inspect--insert-outline (id)
   "Write the node ID, an outline, open: a heading a line.
 
-Each its label, and what is under it after it - or, an outline itself, on
-the lines under it, indented.  Where it is shown on its own, from where it
-is written; under a label, from the line after it."
+Each its label, and what is under it after it - or, an outline itself or
+a label said to be above it, on the lines under it, indented.  Where it
+is shown on its own, from where it is written; under a label, from the
+line after it."
   (let* ((node (replique-inspect--node id))
          (parent (plist-get node :parent))
          (nested (and parent (replique-inspect--outline-p parent)
@@ -664,13 +686,22 @@ is written; under a label, from the line after it."
         (insert (replique-inspect--part "\n" id)
                 (replique-inspect--part (make-string indent ?\s) child)))
       (setq first nil)
-      (if (replique-inspect--open-p child)
-          (progn
-            (insert (replique-inspect--label child (replique-inspect--outline-p child)))
-            (replique-inspect--insert-value child))
-        (replique-inspect--insert-entry
-         (cons child (concat (replique-inspect--label child)
-                             (replique-inspect--closed child))))))
+      (let ((under (when (replique-inspect--above-p child)
+                     (concat (replique-inspect--part "\n" child)
+                             (replique-inspect--part (make-string (+ indent 2) ?\s) child)))))
+        (cond
+         ((replique-inspect--open-p child)
+          (insert (replique-inspect--label child (replique-inspect--outline-p child))
+                  (or under ""))
+          (replique-inspect--insert-value child))
+         (under
+          (insert (replique-inspect--label child) under)
+          (replique-inspect--set child :column (current-column) :at (point))
+          (insert (replique-inspect--closed child)))
+         (t
+          (replique-inspect--insert-entry
+           (cons child (concat (replique-inspect--label child)
+                               (replique-inspect--closed child))))))))
     (when (plist-get node :more)
       (unless first
         (insert (replique-inspect--part "\n" id)
@@ -885,11 +916,16 @@ that node instead."
          (at (replique-inspect--at-point))
          (anchor (replique-inspect--anchor at))
          (offset (when anchor (- (point) anchor)))
+         ;; on no part of the value: on what is written above it, maybe
+         (line (and replique-inspect-preamble-function (line-number-at-pos)))
          (row (when (and window (>= (point) (window-start window)))
                 (let ((row (count-lines (window-start window) (line-beginning-position))))
                   (when (< row (window-body-height window)) row)))))
     (erase-buffer)
     (cond
+     ((and replique-inspect-preamble-function
+           (eq 'alone (funcall replique-inspect-preamble-function)))
+      (setq at nil))
      (replique-inspect--error
       (insert (propertize replique-inspect--error 'face 'replique-exception) "\n"))
      ((null replique-inspect--nodes)
@@ -903,7 +939,14 @@ that node instead."
                        (if (replique-inspect--on-p (+ anchor offset) at)
                            (+ anchor offset)
                          anchor)))
+                   (when line
+                     (save-excursion
+                       (goto-char (point-min))
+                       (forward-line (1- line))
+                       (point)))
                    (point-min)))
+    (when replique-inspect-rendered-function
+      (funcall replique-inspect-rendered-function))
     (when (and window (window-live-p window))
       (set-window-point window (point))
       (when row
@@ -1130,10 +1173,9 @@ frame, an entry of a map whose keys are symbols."
 A value looked at, kept to work with at the repl - a local of a stopped
 thread in particular, which is gone once the thread goes on.  Defined in
 the namespace of the code the value comes from - the frame\='s, for the
-locals of a frame, the code recorded\='s, for a value recorded, and the
-function\='s, for a traced call - and in the namespace of the Clojure repl
-otherwise.  Interactively, the name is asked for, what the node is called
-being the default."
+locals of a frame, and the code recorded\='s, for a value recorded - and
+in the namespace of the Clojure repl otherwise.  Interactively, the name
+is asked for, what the node is called being the default."
   (interactive
    (let ((default (replique-inspect--default-name (replique-inspect--node-at-point))))
      (list (read-string (format-prompt "Define var" default) nil nil default))))
@@ -1141,8 +1183,7 @@ being the default."
     (user-error "A value of a ClojureScript runtime is not defined in the process"))
   (when (string-blank-p name) (user-error "A var needs a name"))
   (let ((id (replique-inspect--node-at-point))
-        (ns (unless (or (plist-get replique-inspect--source :debug)
-                        (plist-get replique-inspect--source :trace))
+        (ns (unless (plist-get replique-inspect--source :debug)
               (or (when-let* ((repl (replique-repl-for-dialect :clj)))
                     (replique-repl--ns repl))
                   (user-error "No Clojure repl to say which namespace")))))

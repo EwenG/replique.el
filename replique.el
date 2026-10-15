@@ -65,12 +65,16 @@
 ;;   M-x replique-debug-keep-locals  compile code that keeps its locals,
 ;;                               which starting a stopped call over needs
 ;;
-;; A function traced says each time it is called what it was called with
-;; and returned, and its calls are a tree - see `replique-trace'.
+;; What a function recorded did is gone through a value at a time - see
+;; `replique-recording' - and its calls, with those of the others recorded,
+;; are a tree.
 ;;
-;;   C-c C-d T                   trace functions: at point, around it, of
-;;                               the namespace, or those a branch changed
-;;   C-c C-d c                   the calls traced, as a tree
+;;   C-c C-d r                   record functions: at point, around it, of
+;;                               the namespace, or those a branch changed -
+;;                               see `replique-record'
+;;   C-c C-d v                   go through what one did, from the form at
+;;                               point
+;;   C-c C-d c                   the calls recorded, as a tree
 ;;
 ;; That mode turns `replique-mode' on, so the commands below are bound in a
 ;; Clojure file without anything having to be turned on by hand.
@@ -99,7 +103,8 @@
 (require 'replique-stale)
 (require 'replique-inspect)
 (require 'replique-debug)
-(require 'replique-trace)
+(require 'replique-recording)
+(require 'replique-record)
 
 (defconst replique--version (package-get-version)
   "Which replique this is, read from the Version header of this file.
@@ -133,17 +138,10 @@ happened to be current, which is a buffer of somebody else's.")
     (define-key map (kbd "C-c C-d d") #'replique-debug-defun)
     (define-key map (kbd "C-c C-d b") #'replique-debug-break)
     (define-key map (kbd "C-c C-d u") #'replique-debug-uninstrument)
-    (define-key map (kbd "C-c C-d r") #'replique-debug-record)
-    (define-key map (kbd "C-c C-d v") #'replique-debug-inspect-recorded)
-    (define-key map (kbd "C-c C-d p") #'replique-debug-recorded-before)
-    (define-key map (kbd "C-c C-d n") #'replique-debug-recorded-after)
-    (define-key map (kbd "C-c C-d ]") #'replique-debug-next-iteration)
-    (define-key map (kbd "C-c C-d [") #'replique-debug-previous-iteration)
-    (define-key map (kbd "C-c C-d w") #'replique-debug-whole-call)
-    (define-key map (kbd "C-c C-d s") #'replique-debug-find-iteration)
+    (define-key map (kbd "C-c C-d r") #'replique-record)
+    (define-key map (kbd "C-c C-d v") #'replique-recording)
     (define-key map (kbd "C-c C-d e") #'replique-debug-eval-in-frame)
-    (define-key map (kbd "C-c C-d T") #'replique-trace)
-    (define-key map (kbd "C-c C-d c") #'replique-trace-calls)
+    (define-key map (kbd "C-c C-d c") #'replique-recording-calls)
     map)
   "Keymap of `replique-mode'.")
 
