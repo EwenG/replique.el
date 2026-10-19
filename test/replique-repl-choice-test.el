@@ -468,6 +468,71 @@ ClojureScript has: a handshake naming reflection is refused."
           (when (process-live-p proc) (delete-process proc)))
         (setq replique-repl-choice-test--procs nil)))))
 
+;;; Where a runtime's own output goes
+
+(defun replique-repl-choice-test--live-buffer (repl)
+  "Make the buffer of REPL a repl buffer its connection writes into."
+  (let ((proc (replique-conn--proc (replique-repl--conn repl))))
+    (with-current-buffer (replique-repl--buffer repl)
+      (replique-repl-mode)
+      (setq replique--buffer-repl repl)
+      (set-process-buffer proc (current-buffer))
+      (set-marker (process-mark proc) (point-max)))))
+
+(defun replique-repl-choice-test--prompt (repl)
+  "Write a prompt in the buffer of REPL, the way a prompt frame does."
+  (replique-repl--frame repl '(:tag "prompt" :ns "cljs.user")))
+
+(ert-deftest replique-repl-choice-test-a-page-prints-into-the-chosen-repl-on-it ()
+  "Not the most recent, when another one on the same runtime was chosen,
+and never one on another runtime or a Clojure repl."
+  (replique-repl-choice-test--with-repls ((chosen "cljs" "browser")
+                                          (node "cljs" "node")
+                                          (recent "cljs" "browser")
+                                          (clj nil nil))
+    (ignore node clj)
+    (should (eq recent (replique-repl--of-runtime process :browser)))
+    (setq replique-current-repl chosen)
+    (should (eq chosen (replique-repl--of-runtime process :browser)))
+    (should (eq node (replique-repl--of-runtime process :node)))
+    (setq replique-current-repl clj)
+    (should (eq recent (replique-repl--of-runtime process :browser)))))
+
+(ert-deftest replique-repl-choice-test-a-page-prints-above-the-prompt ()
+  "What is being typed at the prompt stays after it, and output that
+arrives in pieces reads as one line."
+  (replique-repl-choice-test--with-repls ((cljs "cljs" "browser"))
+    (replique-repl-choice-test--live-buffer cljs)
+    (replique-repl--insert cljs "1\n")
+    (replique-repl-choice-test--prompt cljs)
+    (with-current-buffer (replique-repl--buffer cljs)
+      (goto-char (point-max))
+      (insert "(+ 1"))
+    (should (replique-repl--runtime-output process "browser" "clicked"))
+    (should (replique-repl--runtime-output process "browser" " twice\n"))
+    (with-current-buffer (replique-repl--buffer cljs)
+      (should (equal "1\nclicked twice\ncljs.user=> (+ 1"
+                     (buffer-substring-no-properties (point-min) (point-max))))
+      (should (= (point) (point-max)))
+      ;; And the repl's next output still goes after the prompt
+      (should (string-suffix-p
+               "cljs.user=> "
+               (buffer-substring-no-properties
+                (point-min)
+                (process-mark (replique-conn--proc (replique-repl--conn cljs)))))))))
+
+(ert-deftest replique-repl-choice-test-a-page-with-no-repl-prints-in-the-process-buffer ()
+  (replique-repl-choice-test--with-repls ((clj nil nil))
+    (ignore clj)
+    (should-not (replique-repl--runtime-output process "browser" "hello\n"))
+    (unwind-protect
+        (progn
+          (replique-process--event process '(:tag "event" :event "out" :string "hello\n"
+                                                  :dialect "cljs" :target "browser"))
+          (with-current-buffer (replique-process-buffer process)
+            (should (equal "hello\n" (buffer-string)))))
+      (kill-buffer (replique-process-buffer process)))))
+
 (provide 'replique-repl-choice-test)
 
 ;;; replique-repl-choice-test.el ends here

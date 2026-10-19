@@ -419,11 +419,26 @@ Which is how a feature that asked the process to tell it something is
 told: an `inspect-changed\=' event belongs to whoever is inspecting - see
 `replique-inspect\='.")
 
+(defvar replique-process-runtime-output-function nil
+  "Called with a process, a target and what its runtime printed on its own.
+
+Output of a ClojureScript runtime that no evaluation was waiting for - a
+callback in the page, a timer - which is the program of a ClojureScript
+repl talking, and so is shown in that repl rather than here.  The target
+is the string the event names it with, or nil.  Returns non-nil when it
+found a repl to show it in; output it did not is shown here, like
+anything else the process printed.  See `replique-repl\='.")
+
 (defun replique-process--event (process frame)
   "Handle FRAME, an unsolicited frame from the control connection of PROCESS."
   (pcase (plist-get frame :event)
     ("analysis" (run-hook-with-args 'replique-process-analysis-functions process frame))
-    ("out" (replique-process--insert process (plist-get frame :string)))
+    ("out" (unless (and (equal "cljs" (plist-get frame :dialect))
+                        replique-process-runtime-output-function
+                        (funcall replique-process-runtime-output-function
+                                 process (plist-get frame :target)
+                                 (plist-get frame :string)))
+             (replique-process--insert process (plist-get frame :string))))
     ("err" (replique-process--insert process (plist-get frame :string) 'replique-stderr))
     ;; Put in the buffer and nowhere else, like anything else the process
     ;; printed.  A message of its own here was a message whatever the buffer

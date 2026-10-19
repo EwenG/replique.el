@@ -256,6 +256,76 @@ is one."
 ;; no repls, and a repl is what an evaluation belongs to
 (setq replique-echo-awaited-function #'replique-repl--awaited-p)
 
+;;; What a runtime prints on its own
+;;
+;; A ClojureScript runtime prints into the repl evaluating in it, and while
+;; none is, the process has nobody in particular to give the output to: a
+;; click handler in the page, a timer, a fetch coming back.  It sends it as
+;; an event instead, the way it sends what the JVM prints - but what the
+;; JVM prints belongs to the process, and what a page prints belongs to the
+;; program a ClojureScript repl is a repl of.  So it goes to that repl.
+;;
+;; Above the prompt rather than after it: the prompt is where somebody may
+;; be typing, and output written at the process mark would land between the
+;; prompt and what they typed.
+
+(defun replique-repl--of-runtime (process target)
+  "Return the repl of PROCESS the runtime of TARGET prints into, or nil.
+
+TARGET is a keyword, or nil for whichever runtime.  The repl the commands
+are pointed at when it is one of them, then the most recent."
+  (let ((of-it (lambda (repl)
+                 (and (replique-repl-live-p repl)
+                      (eq process (replique-repl--process repl))
+                      (eq :cljs (replique-repl-dialect repl))
+                      (or (null target) (eq target (replique-repl-target repl)))))))
+    (if (funcall of-it replique-current-repl)
+        replique-current-repl
+      (seq-find of-it (replique-process--repls process)))))
+
+(defun replique-repl--insert-above-prompt (repl string)
+  "Insert STRING in the buffer of REPL just before the prompt it ends with.
+
+What is typed after the prompt stays where it is, and so does point.
+Where the buffer does not end with a prompt, STRING goes at the end like
+any other output."
+  (let* ((buffer (replique-repl--buffer repl))
+         (proc (replique-conn--proc (replique-repl--conn repl)))
+         (pmark (and (buffer-live-p buffer) (process-mark proc))))
+    (if (not (and (replique-repl--at-prompt repl)
+                  (eq buffer (marker-buffer pmark))
+                  (> pmark (with-current-buffer buffer (point-min)))
+                  (with-current-buffer buffer (replique-prompt-at-p (1- pmark)))))
+        (replique-repl--insert repl string)
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t)
+              (start (or (previous-single-property-change
+                          pmark replique-prompt-property)
+                         (point-min))))
+          (save-excursion
+            (goto-char start)
+            ;; Before the markers, so that those at the prompt's start -
+            ;; comint's own record of where the prompt is among them - move
+            ;; with it
+            (insert-before-markers
+             (propertize string
+                         'field 'output
+                         'inhibit-line-move-field-capture t
+                         'rear-nonsticky t))))))))
+
+(defun replique-repl--runtime-output (process target string)
+  "Show STRING, printed by the runtime of TARGET in PROCESS, in its repl.
+
+Return non-nil when there was a repl to show it in.  See
+`replique-process-runtime-output-function'."
+  (when-let* ((repl (replique-repl--of-runtime
+                     process (and target (intern (concat ":" target))))))
+    (replique-repl--unattended repl string)
+    (replique-repl--insert-above-prompt repl string)
+    t))
+
+(setq replique-process-runtime-output-function #'replique-repl--runtime-output)
+
 (defun replique-repl--ended (repl frame)
   "Tell whoever is waiting for the evaluation of REPL that FRAME ended it.
 
